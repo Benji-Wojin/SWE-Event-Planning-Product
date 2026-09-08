@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#164a35">
+  <meta name="description" content="Gather brings event tasks, people, and decisions into one clear plan.">
+  <title>Gather — Less chasing. More coming together.</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css?v=coordination-1">
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <button class="mobile-overlay" id="mobileOverlay" aria-label="Close navigation" tabindex="-1"></button>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#overview" aria-label="Gather home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-name">gather</span></a>
+      <button class="event-switcher" data-action="event-info"><span class="event-symbol">FD</span><span class="event-switcher-copy"><small>YOUR SHARED PLAN</small><strong>Field Day 2026</strong></span><span aria-hidden="true">⌄</span></button>
+      <div class="nav-label">WORKSPACE</div>
+      <nav class="nav-list" id="mainNav">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon" data-icon="grid"></span>Overview</button>
+        <button class="nav-item" data-view="tasks"><span class="nav-icon" data-icon="check"></span>Shared tasks<span class="nav-count" id="taskNavCount"></span></button>
+        <button class="nav-item" data-view="inbox"><span class="nav-icon" data-icon="mail"></span>Email inbox<span class="nav-count" id="inboxNavCount"></span></button>
+        <button class="nav-item" data-view="updates"><span class="nav-icon" data-icon="activity"></span>Team updates</button>
+        <button class="nav-item" data-view="team"><span class="nav-icon" data-icon="people"></span>People</button>
+        <button class="nav-item" data-view="timeline"><span class="nav-icon" data-icon="calendar"></span>Timeline</button>
+        <button class="nav-item" data-view="details"><span class="nav-icon" data-icon="copy"></span>Private details</button>
+      </nav>
+      <div class="nav-label">THINK AHEAD</div>
+      <nav class="nav-list">
+        <button class="nav-item" data-action="thought-partner"><span class="nav-icon" data-icon="spark"></span>Thought partner<span class="nav-count" id="aiNavCount"></span></button>
+        <button class="nav-item" data-view="memory"><span class="nav-icon" data-icon="memory"></span>Event memory</button>
+      </nav>
+      <div class="sidebar-note"><span data-icon="leaf"></span><strong>A little less chasing.</strong><p>Every decision, update, and next step has a home here.</p></div>
+      <div class="profile" id="profile"></div>
+    </aside>
+    <main class="main-content" id="mainContent">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="mobileMenu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu"></span></button>
+        <div class="breadcrumb"><span>Field Day 2026</span><span aria-hidden="true">/</span><strong id="breadcrumbCurrent">Overview</strong></div>
+        <div class="top-actions">
+          <button class="demo-pill" data-action="demo-info">Local demo</button>
+          <label class="actor-control"><span class="sr-only">Demo member</span><select id="actorSelect" class="select-input" aria-label="Demo member"></select></label>
+          <button class="btn btn-secondary btn-small" data-action="invite"><span data-icon="plus"></span>Invite</button>
+        </div>
+      </header>
+      <div class="storage-warning" id="storageWarning" role="status" hidden>Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.</div>
+      <div class="page-wrap" id="viewRoot"></div>
+    </main>
+  </div>
+  <div class="dialog-backdrop" id="dialogBackdrop" hidden>
+    <section class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle" tabindex="-1"></section>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <noscript><p>Please enable JavaScript to use the Gather prototype.</p></noscript>
+  <script src="store.js?v=coordination-1"></script>
+  <script src="app.js?v=coordination-1"></script>
+</body>
+</html>
