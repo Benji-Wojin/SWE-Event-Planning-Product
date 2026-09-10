@@ -52,7 +52,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -62,6 +62,7 @@ before(async () => {
       gmail: 'app/api/gmail/[action]/route.ts',
       security: 'lib/security.ts',
       gmailCore: 'lib/gmail.ts',
+      demo: 'app/api/demo/route.ts',
     },
     outdir: directory,
     bundle: true,
@@ -90,8 +91,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -406,4 +407,88 @@ test('private original is owner-scoped, no-store, and absent from shared exports
   assert.equal((await gmailApi.GET(new Request(url))).status,401);
   owner();
   assert.ok(!(await (await workspace.GET()).text()).includes('SECRET123'));
+});
+
+const demoRead = (actor = 'jack') => demoApi.GET(new Request('https://gather.example/api/demo?as=' + actor));
+const demoWrite = (actor, data, origin) => demoApi.POST(request('/api/demo?as=' + actor, data, origin));
+test('demo is authenticated, owner-scoped, and isolated from the real workspace', async () => {
+  globalThis.__gatherUser = null;
+  assert.equal((await demoRead()).status, 401);
+  globalThis.__gatherUser = { userId:'outsider', email:'other@example.com', displayName:'Other' };
+  assert.equal((await demoRead()).status, 403);
+  owner();
+  const original = sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  const jack = await (await demoRead()).json();
+  assert.equal(jack.actor, 'jack');
+  assert.equal(jack.members[0].name, 'Jack Morgan');
+  assert.equal(jack.privateDetails.length,2);
+  assert.ok(!JSON.stringify(jack).includes('SECRET123'));
+  assert.ok(!jack.tasks.some(t => t.title === 'Real task'));
+  const jules = await (await demoRead('jules')).json();
+  assert.equal(jules.actor,'jules');
+  assert.equal(jules.revision,jack.revision);
+  assert.deepEqual(jules.privateDetails,[]);
+  assert.ok(!JSON.stringify(jules).includes('DEMO-FLIGHT-24'));
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data, original);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM workspaces WHERE id LIKE 'demo:%'").get().n,1);
+});
+test('demo role rules reject cross-owner edits, assignment, verification, and identity injection', async () => {
+  owner();
+  const state = await (await demoRead('maya')).json();
+  const base = { revision: state.revision, taskId:'dietary', action:'update', values:{note:'Updated'} };
+  assert.equal((await demoWrite('maya',{...base,taskId:'bus'})).status,403);
+  for(const values of [{owner:'maya'},{requiresVerification:false},{title:'Changed'}]) assert.equal((await demoWrite('maya',{...base,values})).status,403);
+  assert.equal((await demoWrite('maya',{...base,action:'verify'})).status,403);
+  assert.equal((await demoWrite('maya',{...base,actor:'jack'})).status,400);
+  assert.equal((await demoWrite('maya',{...base,workspaceId:'main'})).status,400);
+  assert.equal((await demoWrite('maya',base,'https://evil.example')).status,403);
+  assert.equal((await demoRead('not-a-profile')).status,400);
+  assert.equal((await demoWrite('maya',{...base,action:'reset',confirmReset:true})).status,403);
+});
+test('all four perspectives share assignment, comments, completion and verification', async () => {
+  owner();
+  const original = sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  let current = await (await demoRead('jack')).json();
+  async function save(actor, action, taskId, values = {}) {
+    const response = await demoWrite(actor,{action,taskId,values,revision:current.revision});
+    assert.equal(response.status,200,await response.clone().text());
+    current=await response.json();
+  }
+  await save('jack','update','wayfinding',{owner:'dev'});
+  await save('dev','accept','wayfinding');
+  assert.equal(current.tasks.find(t => t.id === 'wayfinding').acceptedBy,'dev');
+  await save('maya','comment','bus',{text:'Guest count is now final.'});
+  assert.equal(current.tasks.find(t => t.id === 'bus').comments.at(-1).actor,'maya');
+  await save('jules','complete','bus',{note:'Both buses confirmed. Ready for organizer verification.'});
+  let bus=current.tasks.find(t => t.id === 'bus');
+  assert.equal(bus.status,'progress');
+  assert.equal(bus.reportedBy,'Jules Miller');
+  await save('jack','verify','bus');
+  bus=current.tasks.find(t => t.id === 'bus');
+  assert.equal(bus.status,'done');
+  assert.equal(bus.verifiedBy,'jack');
+  for(const actor of ['jack','maya','jules','dev']) {
+    const view=await (await demoRead(actor)).json();
+    assert.equal(view.actor,actor);
+    assert.equal(view.revision,current.revision);
+    assert.equal(view.tasks.find(t => t.id === 'bus').status,'done');
+  }
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+});
+test('stale demo tabs cannot overwrite newer updates and restart only resets the demo', async () => {
+  owner();
+  const original = sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  const before=await (await demoRead('maya')).json();
+  const update={action:'comment',taskId:'dietary',values:{text:'Newest update'},revision:before.revision};
+  assert.equal((await demoWrite('maya',update)).status,200);
+  assert.equal((await demoWrite('dev',{...update,values:{text:'Stale overwrite'}})).status,409);
+  const current=await (await demoRead()).json();
+  assert.ok(!JSON.stringify(current).includes('Stale overwrite'));
+  assert.equal((await demoWrite('jack',{action:'reset',revision:current.revision})).status,400);
+  assert.equal((await demoWrite('jack',{action:'reset',revision:current.revision,confirmReset:true})).status,200);
+  const reset=await (await demoRead('jules')).json();
+  assert.ok(reset.revision>current.revision);
+  assert.equal(reset.tasks.find(t => t.id === 'bus').status,'blocked');
+  assert.ok(!JSON.stringify(reset).includes('Newest update'));
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
 });

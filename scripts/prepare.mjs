@@ -17,7 +17,7 @@ html = html
   );
 html = html.replace(
   '<div class="top-actions">',
-  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
+  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
 );
 html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
