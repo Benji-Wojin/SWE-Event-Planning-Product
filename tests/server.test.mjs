@@ -363,6 +363,7 @@ test('Gmail review copies only explicitly approved text', async () => {
     .run();
   const data = {
     id: 'mail-1',
+    taskId: 'bus',
     title: 'Speaker arrival',
     summary: 'Transport is confirmed.',
     confirmShared: true,
@@ -383,4 +384,26 @@ test('Gmail review copies only explicitly approved text', async () => {
   assert.ok(raw.includes('Transport is confirmed.'));
   for (const field of ['ABC123', 'SECRET123', 'private@example.com'])
     assert.ok(!raw.includes(field));
+  const shared = JSON.parse(raw).state.messages.find(m => m.externalId === 'review:mail-1');
+  assert.equal(shared.linkedTaskId, 'bus');
+  const imported = await (await gmailApi.GET(new Request('https://gather.example/api/gmail/messages'))).json();
+  assert.equal(imported.messages[0].sharedMessageId, shared.id);
+  assert.equal(imported.messages[0].taskId, 'bus');
+  assert.ok(imported.tasks.some(t => t.id === 'bus'));
+});
+test('private original is owner-scoped, no-store, and absent from shared exports', async () => {
+  owner();
+  const url = 'https://gather.example/api/gmail/original?id=mail-1';
+  const response = await gmailApi.GET(new Request(url));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.equal((await response.json()).body, 'Confirmation SECRET123');
+  assert.equal((await gmailApi.GET(new Request(url.replace('mail-1','missing')))).status,404);
+  await db.prepare('INSERT INTO mail_messages (id,user_id,provider_id,payload,received_at) VALUES (?,?,?,?,?)')
+    .bind('outsider-mail','outsider','other-provider',await security.seal({body:'OTHER-SECRET'},'mail:outsider-mail'),new Date().toISOString()).run();
+  assert.equal((await gmailApi.GET(new Request(url.replace('mail-1','outsider-mail')))).status,404);
+  globalThis.__gatherUser = null;
+  assert.equal((await gmailApi.GET(new Request(url))).status,401);
+  owner();
+  assert.ok(!(await (await workspace.GET()).text()).includes('SECRET123'));
 });

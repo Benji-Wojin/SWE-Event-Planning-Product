@@ -23,8 +23,18 @@ html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
+html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 writeFileSync('public/workspace.html', html);
+writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 let app = readFileSync('legacy/app.js', 'utf8');
+const inboxStart=app.indexOf('  function inboxView(s) {');
+const inboxEnd=app.indexOf('  function teamView(s) {',inboxStart);
+if(inboxStart<0||inboxEnd<0)throw new Error('Inbox view insertion point is missing.');
+app=app.slice(0,inboxStart)+readFileSync('legacy/inbox-view.js','utf8')+'\n'+app.slice(inboxEnd);
+app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).get('message')||''")
+  .replace('ui.reviewDirty=false;', 'clearPrivateOriginal();ui.reviewDirty=false;')
+  .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
+  .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
   'addTask',
   'updateTask',
@@ -114,7 +124,7 @@ app = app
   );
 app = app.replace(
   '  setDrawer(false);\n  navigate',
-  "  window.addEventListener('gather-tool-updated',()=>{closeDialog();render();});\n  setDrawer(false);\n  navigate",
+  "  window.addEventListener('gather-tool-updated',()=>{closeDialog();render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),20000);\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
 );
 writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(

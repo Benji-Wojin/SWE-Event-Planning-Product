@@ -59,7 +59,7 @@
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${subtitle}</p></div><div class="header-actions">${actions}</div></div>`;
   const addButton = `<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`;
-  const sourceButton = task => store.getState().messages.filter(m=>m.appliedTaskId===task.id).map((m,i)=>`<button class="text-button" data-action="source" data-id="${h(m.id)}" title="${h(m.subject)}">${icon('mail')} Original email${i?` ${i+1}`:''}</button>`).join('');
+  const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} All emails & changes (${group.messages.length})</button>`:'';};
 
   function taskRow(task) {
     const done = task.status==='done';
@@ -158,6 +158,7 @@
   }
 
   function render() {
+    ui.reviewDirty=false;
     const s=store.getState();
     $('#taskNavCount').textContent=s.tasks.filter(t=>t.status!=='done').length;
     $('#inboxNavCount').textContent=pending(s).length;
@@ -246,7 +247,8 @@
   }
   function pasteDialog() {
     const threads=[...new Map(store.getState().messages.map(m=>[m.threadId,[m.threadId,m.subject]])).values()];
-    openDialog('Bring an email into the plan.',`<p class="warning-note">This text becomes shared planning data. Remove booking references, private links, and personal details first. Store those separately in Private details.</p><form id="pasteForm"><label class="field">Sender<input name="sender" required maxlength="200" placeholder="Maya Singh"></label><label class="field section-gap">Conversation<select name="threadId">${options([['','New conversation'],...threads],'')}</select></label><label class="field section-gap">Subject<input name="subject" required maxlength="180" placeholder="Catering numbers confirmed"></label><label class="field section-gap">Email text<textarea name="body" required rows="8" maxlength="12000" placeholder="Paste the new reply. Remove private details first."></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Review next step ${icon('arrow')}</button></div></form>`);
+    const group=GatherInbox.conversations(store.getState()).find(g=>g.key===ui.conversationKey);
+    openDialog('Add an email to a task',`<p class="warning-note">This text becomes shared planning data. Remove booking references, private links, and personal details first.</p><form id="pasteForm"><label class="field">Task<select name="taskId">${options([['','Let Gather suggest a task'],...store.getState().tasks.map(t=>[t.id,t.title])],group?.taskId||'')}</select></label><label class="field section-gap">Sender<input name="sender" required maxlength="200" placeholder="Maya Singh"></label><details class="section-gap"><summary>Link an existing email thread (optional)</summary><label class="field">Email thread<select name="threadId">${options([['','New email thread'],...threads],'')}</select></label></details><label class="field section-gap">Subject<input name="subject" required maxlength="180" placeholder="Catering numbers confirmed"></label><label class="field section-gap">Email text<textarea name="body" required rows="6" maxlength="12000" placeholder="Paste the new reply. Remove private details first."></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add to conversation</button></div></form>`);
   }
   async function copyText(text) {
     try {await navigator.clipboard.writeText(text);return true;}catch{return false;}
@@ -327,10 +329,18 @@
       if(action==='digest')digestDialog();
       if(action==='copy-digest'){const text=digestText(store.getState());if(await copyText(text))toast('Current summary copied.');else copyFallback(text);}
       if(action==='copy-draft'){const text=store.getState().drafts.find(d=>d.id===id).text;if(await copyText(text))toast('Draft copied. Nothing sent.');else copyFallback(text);}
-      if(action==='source'||action==='select-message'){ui.messageId=id;if(!$('#dialogBackdrop').hidden)closeDialog();navigate('inbox');}
+      if(action==='source'||action==='select-message'){ui.messageId=id;if(!$('#dialogBackdrop').hidden)closeDialog();if(ui.view==='inbox')render();else navigate('inbox');}
+      if(action==='select-conversation'){ui.messageId='';ui.conversationKey=id;render();}
+      if(action==='task-conversation'){ui.messageId='';ui.conversationKey='task:'+id;closeDialog();navigate('inbox');}
+      if(action==='refresh-inbox')await refreshInbox(true);
       if(action==='paste-email')pasteDialog();
       if(action==='sample-reply'){const confirmed=el.dataset.step==='confirmed';const m=store.addMessage({sender:'Jules Miller',subject:'Re: Northstar buses for Field Day',threadId:'thread-bus',externalId:`gather-sample-bus-${confirmed?'confirmed':'deposit'}`,body:confirmed?'Payment received. Booking confirmed. Both buses are booked for Field Day. — Jules':'The buses are reserved, but we still need the deposit. I cannot confirm the booking until Jack approves payment. — Jules'},ui.actor);ui.messageId=m.id;navigate('inbox');toast('Sample reply added. No task changed until you review.');}
-      if(action==='refresh-proposal'){store.refreshProposal(id,$('#emailTask')?.value);render();toast('Comparison refreshed. Review the current values before applying.');}
+      if(action==='refresh-proposal'){
+        if(ui.savingProposal)return;
+        const taskId=$('#emailTask')?.value;ui.savingProposal=true;
+        try{if(store.refresh)await store.refresh(()=>true);store.refreshProposal(id,taskId);render();toast('Comparison refreshed. Review the current values before applying.');}
+        finally{ui.savingProposal=false;}
+      }
       if(action==='ignore-message'){store.ignoreMessage(id,ui.actor);ui.messageId='';render();toast('Set aside. The plan was not changed.');}
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Acceptance recorded separately from assignment.');}
       if(action==='report-task')responseDialog(id);
@@ -367,7 +377,12 @@
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added with a clear next step.');}
       if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);closeDialog();render();toast(`Update recorded by ${member(ui.actor).name}.`);}
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id);toast('Comment saved with the task.');}
-      if(form.id==='emailReviewForm'){const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
+      if(form.id==='emailReviewForm'){
+        if(ui.savingProposal)return;
+        ui.savingProposal=true;const button=$('button[type="submit"]',form);button.disabled=true;button.textContent='Saving…';
+        try{const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
+        finally{ui.savingProposal=false;if(form.isConnected)updateChangePreview();}
+      }
       if(form.id==='pasteForm'){const m=store.addMessage(data,ui.actor);ui.messageId=m.id;closeDialog();navigate('inbox');toast('Message saved. Review its next step before applying.');}
       if(form.id==='feedbackForm'){store.addMemory({...data,rating:Number(data.rating)},ui.actor);closeDialog();render();thoughtDialog();toast('Learning saved. Your planning suggestions have changed.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
@@ -390,6 +405,7 @@
 
   document.addEventListener('change',event=>{
     const el=event.target;
+    if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(el.id==='actorSelect'){lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
     if(el.id==='ownerFilter'){ui.owner=el.value;render();}
     if(el.id==='statusFilter'){ui.status=el.value;render();}
@@ -398,12 +414,14 @@
       $('#existingTaskField').hidden=!update;
       $('#emailTask').required=update;
       if(update)$('#emailTask').value='';
+      updateChangePreview();
     }
     if(el.id==='emailTask'){
-      const form=$('#emailReviewForm');if(el.value&&form){store.refreshProposal(form.dataset.id,el.value);render();}
+      const form=$('#emailReviewForm');if(el.value&&form){try{store.refreshProposal(form.dataset.id,el.value);render();}catch(error){toast(error.message);}}
     }
   });
   document.addEventListener('input',event=>{
+    if(event.target.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(event.target.id==='taskSearch'){
       ui.search=event.target.value;
       const tasks=filteredTasks(store.getState());

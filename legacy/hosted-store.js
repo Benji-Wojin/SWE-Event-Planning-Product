@@ -2,6 +2,7 @@
   let snapshot;
   const listeners = new Set();
   let queue = Promise.resolve();
+  let mutationGeneration = 0;
   async function request(body) {
     const response = await fetch('/api/workspace', {
       method: body ? 'POST' : 'GET',
@@ -54,6 +55,14 @@
         listeners.add(fn);
         return () => listeners.delete(fn);
       },
+      refresh: async (canApply) => {
+        await queue;
+        const base=snapshot.revision, generation=mutationGeneration;
+        const latest=await request();
+        if(latest.revision===snapshot.revision)return {changed:false};
+        if(snapshot.revision!==base||mutationGeneration!==generation||!canApply())return {pending:true};
+        publish(latest);return {changed:true};
+      },
     };
     const count = {
       addTask: 1,
@@ -77,6 +86,7 @@
     methods.forEach(
       (method) =>
         (store[method] = (...args) => {
+          mutationGeneration++;
           args = args.slice(0, count[method]);
           while (args.length < count[method]) args.push(null);
           const revision = snapshot.revision;
@@ -167,7 +177,7 @@
         },
       });
     }
-    // Keep the displayed revision stable. Other-tab changes require reload, never silent form rebasing.
+    // Refresh only while idle; edited proposals are never silently rebased.
   } catch (error) {
     const root = document.getElementById('viewRoot');
     const heading = document.createElement('h1');

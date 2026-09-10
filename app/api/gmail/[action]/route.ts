@@ -53,18 +53,28 @@ export async function GET(request: Request) {
         .bind(user.userId)
         .all<any>();
       const { store } = await loadWorkspace(user);
-      const shared = store.getState().messages;
+      const state = store.getState(), shared = state.messages;
+      const imported = await Promise.all(rows.results.map(async (row) => {
+        const original = await unseal(row.payload, 'mail:' + row.id);
+        const linked = shared.find((m: any) => m.externalId === 'review:' + row.id);
+        const taskId = linked?.appliedTaskId || linked?.linkedTaskId || (linked?.suggested?.mode === 'update' ? linked.suggested.taskId : '');
+        return { ...original, id: row.id, reviewed: !!linked, sharedMessageId: linked?.id || '', taskId: state.tasks.some((t: any) => t.id === taskId) ? taskId : '', threadKey: JSON.stringify([original.mailbox || '', original.threadId || row.id]) };
+      }));
       return json({
-        messages: await Promise.all(
-          rows.results.map(async (row) => ({
-            ...(await unseal(row.payload, 'mail:' + row.id)),
-            id: row.id,
-            reviewed: shared.some(
-              (m: any) => m.externalId === 'review:' + row.id,
-            ),
-          })),
-        ),
+        tasks: state.tasks.map((t: any) => ({ id: t.id, title: t.title })),
+        messages: imported.map((m: any) => {
+          const known = [...new Set(imported.filter((other: any) => other.threadKey === m.threadKey && other.taskId).map((other: any) => other.taskId))];
+          const taskId = m.taskId || (known.length === 1 ? known[0] : '');
+          return { ...m, taskId, taskTitle: state.tasks.find((t: any) => t.id === taskId)?.title || '' };
+        }),
       });
+    }
+    if (action === 'original') {
+      const row = await env.DB.prepare('SELECT id,payload FROM mail_messages WHERE id=? AND user_id=?')
+        .bind(url.searchParams.get('id') || '', user.userId).first<any>();
+      if (!row) throw new HttpError(404, 'Private email not found.');
+      const original = await unseal(row.payload, 'mail:' + row.id);
+      return json({ subject: original.subject, sender: original.sender, body: original.body, receivedAt: original.receivedAt });
     }
     if (action === 'callback') {
       const state = url.searchParams.get('state');
@@ -335,6 +345,7 @@ export async function POST(request: Request) {
             externalId: 'review:' + row.id,
             threadId,
             receivedAt: original.receivedAt,
+            taskId: data.taskId || undefined,
           },
         ],
         revision: workspaceRow.revision,

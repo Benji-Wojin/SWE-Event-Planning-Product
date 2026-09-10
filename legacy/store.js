@@ -258,7 +258,7 @@
       const fresh = message.body.split(/\n(?:On .+wrote:|From:|>)/i)[0];
       const body = fresh.toLowerCase();
       const subject = message.subject.toLowerCase();
-      const threadTasks = [...new Set(state.messages.filter(item => item.id !== message.id && item.threadId === message.threadId && item.appliedTaskId).map(item => item.appliedTaskId))];
+      const threadTasks = [...new Set(state.messages.filter(item => item.id !== message.id && item.threadId === message.threadId && (item.appliedTaskId||item.linkedTaskId)).map(item => item.appliedTaskId||item.linkedTaskId))];
       const topic = /bus|northstar|transport/.test(subject) ? "bus" : /diet|allergen/.test(subject) ? "dietary" : /cater|menu/.test(subject) ? "catering" : /volunteer|briefing/.test(subject) ? "briefing" : "";
       const existing = state.tasks.find(task => task.id === selectedTaskId) || (threadTasks.length === 1 ? state.tasks.find(task => task.id === threadTasks[0]) : null) || (threadTasks.length > 1 ? null : state.tasks.find(task => task.id === topic) || state.tasks.find(task => normalize(message.subject).includes(normalize(task.title))));
       const person = state.members.find((member) => normalize(message.sender).includes(normalize(member.name)) || normalize(message.sender).split(" ").includes(member.name.split(" ")[0].toLowerCase()));
@@ -276,7 +276,8 @@
       const receivedAt=data.receivedAt && !Number.isNaN(Date.parse(data.receivedAt)) ? new Date(data.receivedAt).toISOString() : timestamp();
       const message = { id: messageId, sender: clean(data.sender, 200) || "Pasted email", subject: clean(data.subject, 200), body: clean(data.body, 15000), receivedAt, threadId: clean(data.threadId,200) || `thread-${messageId}`, sourceType: data.externalId?.startsWith('review:')?'gmail-reviewed':'pasted', externalId: clean(data.externalId,300) };
       if (!message.subject || !message.body) throw new Error("Add an email subject and message.");
-      message.suggested = proposeMessage(message);
+      if(data.taskId){taskById(data.taskId);message.linkedTaskId=data.taskId;}
+      message.suggested = proposeMessage(message,data.taskId);
       state.messages.unshift(message);
       entry(actor, `added email for review: ${message.subject}`, "", "email-imported");
       save();
@@ -286,7 +287,8 @@
       assertFresh();
       const message = state.messages.find(item => item.id === messageId);
       if (!message || message.appliedTaskId || message.ignoredAt) throw new Error('Only pending messages can be reviewed.');
-      message.suggested = proposeMessage(message, taskId || message.suggested.taskId);
+      if(taskId){taskById(taskId);message.linkedTaskId=taskId;}
+      message.suggested = proposeMessage(message, taskId || message.linkedTaskId || message.suggested.taskId);
       save(); return copy(message);
     }
     function ignoreMessage(messageId, actor = 'jack') {
@@ -312,10 +314,10 @@
         const newer = state.messages.some(item => item.appliedTaskId === task.id && item.receivedAt > message.receivedAt);
         if (newer && approved.confirmConflict !== true && approved.confirmConflict !== 'on') throw new Error('A newer email is already in the plan. Confirm that you intend to apply this older message.');
         if (task.requiresVerification && proposed.status === 'done' && task.status !== 'done') proposed.status = 'progress';
-        before = copy({title:task.title,owner:task.owner,status:task.status,dueDate:task.dueDate,note:task.note,revision:task.revision});
+        before = copy({title:task.title,owner:task.owner,status:task.status,dueDate:task.dueDate,note:task.note,category:task.category,revision:task.revision});
         patchTask(task, proposed, actor);
       } else {
-        task = createTask({ ...proposed, category: approved.category || "Guest care" }, actor);
+        task = createTask(proposed, actor);
       }
       task.sourceMessageId = message.id;
       task.updatedAt = timestamp();
@@ -335,7 +337,7 @@
       if (message.suggested.signal === 'acceptance' && task.owner && normalize(message.sender) === normalize(state.members.find(item=>item.id===task.owner)?.name)) { task.acceptedAt = timestamp(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
       message.appliedAt = timestamp();
       message.appliedBy = actor;
-      message.approved = copy(proposed);
+      message.approved = {...copy(proposed),...Object.fromEntries(['title','owner','status','dueDate','note','category'].map(field=>[field,task[field]]))};
       message.appliedRevision = task.revision;
       entry(actor, `applied ${message.sender}’s email to ${task.title}${task.status === "done" ? " and recorded it complete" : ""}`, task.id, "email-applied");
       save();
