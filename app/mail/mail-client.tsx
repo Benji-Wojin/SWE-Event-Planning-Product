@@ -26,7 +26,7 @@ export function MailInbox() {
     setNotice(
       value.messages.length
         ? ''
-        : 'No Gmail messages imported yet. Connect Gmail and sync your project label in settings.',
+        : 'No imported messages. Connect and sync Gmail in settings.',
     );
   }
   useEffect(() => {
@@ -76,10 +76,10 @@ export function MailInbox() {
                   {g.title}
                 </strong>
                 <span className="mt-1 block break-all text-sm font-normal text-muted-foreground">
-                  {g.messages.length} emails in this conversation
+                  {g.messages.length} emails
                 </span>
                 <span className="mt-2 block text-xs">
-                  {g.messages.filter((m: any) => !m.reviewed).length} need a shareable summary
+                  {g.messages.filter((m: any) => !m.reviewed).length} need review
                 </span>
               </span>
             </Button>
@@ -113,7 +113,7 @@ export function MailInbox() {
               </p>
               {message.reviewed ? (
                 <p className="rounded-lg bg-secondary p-4 text-base">
-                  <a className="underline" href={'/?message=' + encodeURIComponent(message.sharedMessageId)}>Open this task conversation and review its changes →</a>
+                  <a className="underline" href={'/?message=' + encodeURIComponent(message.sharedMessageId)}>Review task changes →</a>
                 </p>
               ) : (
                 <form
@@ -145,13 +145,13 @@ export function MailInbox() {
                   }}
                 >
                   <h3 className="text-lg font-semibold">
-                    Prepare a shareable update
+                    Shared update
                   </h3>
                   <div className="space-y-2">
-                    <Label htmlFor="relatedTask">Keep this email with a task</Label>
+                    <Label htmlFor="relatedTask">Related task</Label>
                     <Select name="taskId" defaultValue={message.taskId || ''}>
                       <SelectTrigger id="relatedTask" className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="">Suggest a task from the summary</SelectItem>{tasks.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}</SelectContent>
+                      <SelectContent><SelectItem value="">Suggest from summary</SelectItem>{tasks.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
@@ -161,12 +161,12 @@ export function MailInbox() {
                       name="title"
                       maxLength={200}
                       required
-                      placeholder="For example, confirm speaker transport"
+                      placeholder="Confirm speaker transport"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="safeSummary">
-                      What should the planning team know?
+                      Shareable summary
                     </Label>
                     <Textarea
                       id="safeSummary"
@@ -189,7 +189,7 @@ export function MailInbox() {
                     </Label>
                   </div>
                   <Button type="submit" disabled={busy || !confirmed}>
-                    {busy ? 'Saving…' : 'Continue to task changes →'}
+                    {busy ? 'Saving…' : 'Review task changes →'}
                   </Button>
                   <p className="text-sm text-muted-foreground">
                     Only the title and summary above are copied. The original

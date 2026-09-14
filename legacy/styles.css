@@ -41,10 +41,7 @@ h1,h2,h3,h4{font-family:'Manrope','DM Sans',sans-serif;color:var(--ink)}
 .nav-icon{width:19px;height:19px;display:grid;place-items:center}
 .nav-count{display:grid;place-items:center;margin-left:auto;min-width:23px;min-height:22px;border-radius:6px;padding:1px 6px;background:#e2e7d8;color:#546a50;font-size:12px;font-weight:600}
 .active .nav-count{background:rgba(255,255,255,.15);color:#fff}
-.sidebar-note{margin:auto 0 22px;padding:27px 12px 0;color:#7d8976;font-size:12px;line-height:1.65}
-.sidebar-note strong{display:block;color:#586d50;font-size:13px;margin-bottom:5px;font-weight:600}
-.sidebar-note svg{width:18px;height:18px;margin-bottom:8px}
-.profile{display:flex;align-items:center;gap:10px;border-top:1px solid #dae0cf;padding:18px 9px 0}
+.profile{margin-top:auto;display:flex;align-items:center;gap:10px;border-top:1px solid #dae0cf;padding:18px 9px 0}
 .avatar{--avatar-bg:#e8ddc8;--avatar-ink:#745d38;width:34px;height:34px;flex:0 0 auto;display:inline-flex;justify-content:center;align-items:center;border-radius:50%;background:var(--avatar-bg);color:var(--avatar-ink);font-size:12px;font-weight:650;line-height:1}
 .avatar-small{width:26px;height:26px;font-size:10px}
 .profile-copy{display:flex;flex:1;min-width:0;flex-direction:column}

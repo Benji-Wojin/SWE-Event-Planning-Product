@@ -81,7 +81,7 @@ test('reader exposes field comparison, preserves selected history, and escapes e
   assert.doesNotMatch(html, /<img/);
   store.applyMessage(message.id);
   html = context.inboxView(store.getState());
-  assert.match(html, /ACCEPTED UPDATE/);
+  assert.match(html, /<h3>Accepted<\/h3>/);
   assert.doesNotMatch(html, /id="emailReviewForm"/);
   assert.equal(context.ui.messageId, message.id);
 });
