@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Gather — Your shared event plan',
+  title: 'Gather — Event planning',
   description:
-    'Tasks, decisions, event learning, and private organizer details in one place.',
+    'Event planning workspace.',
 };
 
 export default function RootLayout({

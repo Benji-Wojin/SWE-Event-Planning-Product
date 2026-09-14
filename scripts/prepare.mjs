@@ -101,7 +101,7 @@ app = app.replace(
 );
 app = app.replace(
   'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.',
-  'This response is for the signed-in task owner. Guest links and teammate invitations are not enabled in this owner-private release.',
+  'Only the signed-in task owner can respond. Guest access is not enabled.',
 );
 app = app.replace(
   'Switch the demo member to this task’s owner to try their response.',
@@ -110,11 +110,11 @@ app = app.replace(
 app = app.replace('[add your shared workspace link]', '${location.origin}');
 app = app.replace(
   'Team invitations are a draft in this local prototype. No invite or email will be sent.',
-  'This release is private to your account. This draft does not grant access or send an invitation. Team onboarding is not enabled yet.',
+  'Private to your account. Invitation drafts do not send messages or grant access; team onboarding is not enabled.',
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Your private Gather workspace','<p>Changes are saved to the server under your signed-in account. Field Day tasks and teammates are starter examples; sample teammates are not signed-in users.</p><p>Gmail requires Google setup in Gmail &amp; account. Inbox suggestions use conservative rules, not a connected AI model. Review every proposed change. No email is sent.</p><p>Private bookings and Gmail originals are excluded from the shared export. This owner-only pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info','<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Suggestions are rule-based; no AI model is connected. Nothing is sent automatically.</p><p>Bookings and Gmail originals are excluded from shared exports. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')

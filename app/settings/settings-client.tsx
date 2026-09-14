@@ -61,11 +61,11 @@ export function GmailSettings() {
             ? 'Checking your connection…'
             : status.connected
               ? 'Gmail connected. Only your selected label is imported when you sync.'
-              : 'Gmail is not connected. Complete the setup below to enable it.')}
+              : 'Gmail not connected.')}
       </p>
       <Card>
         <CardHeader>
-          <CardTitle className="text-xl">1. Google connection setup</CardTitle>
+          <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5 text-base">
           <p>
@@ -157,7 +157,7 @@ export function GmailSettings() {
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">
-            2. Authorize your Gmail account
+            2. Gmail access
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-base">
@@ -184,15 +184,12 @@ export function GmailSettings() {
         <Card>
           <CardHeader>
             <CardTitle className="text-xl">
-              3. Choose what belongs in this project
+              3. Import label
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5 text-base">
             <p>
-              Create a Gmail label such as <strong>Gather / Field Day</strong>{' '}
-              and apply it to relevant messages. You can also create a Gmail
-              filter that applies this label to the event’s subject lines or
-              trusted senders.
+              Create a Gmail label and apply it to messages you want to import.
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-2">
@@ -219,7 +216,7 @@ export function GmailSettings() {
                     await gmailRequest('label', { labelId: label });
                     await refresh();
                     setNotice(
-                      'Project label saved. Sync to review matching messages.',
+                      'Label saved. Sync to import messages.',
                     );
                   })
                 }
@@ -268,7 +265,7 @@ export function GmailSettings() {
                 </Button>
               )}
               <a className="rounded-lg border px-3 py-2 text-sm" href="/mail">
-                Review private Gmail inbox →
+                Private inbox →
               </a>
             </div>
             <p className="text-sm text-muted-foreground">

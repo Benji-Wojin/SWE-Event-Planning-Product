@@ -24,15 +24,14 @@ export default async function Settings() {
         Organizer settings
       </p>
       <h1 className="mb-3 text-3xl font-semibold">
-        The right emails. One clear plan.
+        Gmail settings
       </h1>
       <p className="mb-7 text-base text-muted-foreground">
-        Signed in as {user.displayName}. This workspace is currently private to
-        your account.
+        Signed in as {user.displayName}. Private to your account.
       </p>
       <GmailSettings />
       <a href="/" className="mt-7 inline-block text-primary underline">
-        Back to the shared plan
+        Shared plan
       </a>
     </main>
   );

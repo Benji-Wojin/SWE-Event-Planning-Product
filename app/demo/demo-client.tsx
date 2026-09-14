@@ -11,10 +11,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 
 const profiles = [
-  { id: 'jack', name: 'Jack Morgan', role: 'Organizer', initials: 'JM', focus: 'See the whole plan, assign work, and verify completion.' },
-  { id: 'maya', name: 'Maya Singh', role: 'Guests & catering', initials: 'MS', focus: 'Keep guest needs and the catering plan moving.' },
-  { id: 'jules', name: 'Jules Miller', role: 'Transport & logistics', initials: 'JL', focus: 'Coordinate the buses and report when everything is ready.' },
-  { id: 'dev', name: 'Dev Kim', role: 'Activities & volunteers', initials: 'DK', focus: 'Bring the program and volunteer team together.' },
+  { id: 'jack', name: 'Jack Morgan', role: 'Organizer', initials: 'JM' },
+  { id: 'maya', name: 'Maya Singh', role: 'Guests & catering', initials: 'MS' },
+  { id: 'jules', name: 'Jules Miller', role: 'Transport & logistics', initials: 'JL' },
+  { id: 'dev', name: 'Dev Kim', role: 'Activities & volunteers', initials: 'DK' },
 ];
 const statusNames: Record<string, string> = { todo: 'To do', progress: 'In progress', blocked: 'Blocked', done: 'Done' };
 const shortName = (id: string) => profiles.find(p => p.id === id)?.name.split(' ')[0] || 'Unassigned';
@@ -76,7 +76,7 @@ export function DemoWorkspace({ actor }: { actor: string }) {
     try {
       const result = await request({ action, taskId, values, revision, ...(action === 'reset' ? { confirmReset: true } : {}) });
       publish(result);
-      if (mounted.current) setNotice(action === 'reset' ? 'Demo restarted for all four profiles. Your real project is unchanged.' : 'Saved as ' + profile.name.split(' ')[0] + '. The other demo views will see this update.');
+      if (mounted.current) setNotice(action === 'reset' ? 'Demo restarted for all four profiles. Your real project is unchanged.' : 'Saved as ' + profile.name.split(' ')[0] + '.');
       return true;
     } catch (error) {
       if (mounted.current) setNotice(error instanceof Error ? error.message : 'Could not save your update.');
@@ -93,50 +93,50 @@ export function DemoWorkspace({ actor }: { actor: string }) {
     <span className={'demo-task-check ' + task.status}>{task.status === 'done' ? <CheckCircle2 size={20} /> : <span />}</span>
     <span className="demo-task-copy"><strong>{task.title}</strong><span>{task.note}</span><small>{shortName(task.owner)} · Due {date(task.dueDate)}{task.acceptedAt ? ' · Ownership accepted' : ''}</small></span>
     <Status task={task} /><ArrowUpRight size={17} aria-hidden="true" />
-  </button>)}{!items.length && <p className="demo-empty">Nothing here right now. Jack can assign work from the team view.</p>}</div>;
+  </button>)}{!items.length && <p className="demo-empty">No tasks.</p>}</div>;
 
   return <div className="demo-app">
     <header className="demo-topbar"><a href="/" className="demo-logo">gather<span>●</span></a><span className="demo-label"><Users size={15} /> Four-person demo</span><a href="/" className="demo-back">Back to real workspace ↗</a></header>
     <main className="demo-main">
       <section className="demo-launcher" aria-label="Four demo profiles">
-        <div className="demo-section-heading"><h1>One project. Four perspectives.</h1><p>Choose a profile, or use ↗ to open each in its own tab.</p></div>
+        <div className="demo-section-heading"><h1>Demo profiles</h1></div>
         <div className="demo-profiles">{profiles.map(p => <div key={p.id} className={'demo-profile ' + (actor === p.id ? 'active' : '')}>
           <a href={'/demo?as=' + p.id} aria-current={actor === p.id ? 'page' : undefined} className="demo-profile-main"><span className={'demo-avatar ' + p.id}>{p.initials}</span><span><strong>{p.name.split(' ')[0]} {actor === p.id && <small>Viewing</small>}</strong><span>{p.role}</span></span></a>
           <a className="demo-open-tab" href={'/demo?as=' + p.id} target="_blank" rel="noopener noreferrer" aria-label={'Open ' + p.name + ' in a new tab'} title={'Open ' + p.name + ' in a new tab'}><ArrowUpRight size={20} /></a>
         </div>)}</div>
-        <p className="demo-safety">Simulated profiles under your sign-in. One separate, saved demo project. No real Gmail or bookings are connected.</p>
+        <p className="demo-safety">Simulated profiles. Separate demo data; no Gmail or real bookings.</p>
       </section>
       <section className="demo-project">
-        <div><p className="demo-eyebrow">FIELD DAY / REDWOOD GROVE / OCT 3</p><h2>{admin ? 'The whole event, in view.' : 'Your part of the plan.'}</h2><p>{profile.focus}</p></div>
+        <div><p className="demo-eyebrow">REDWOOD GROVE · OCT 3</p><h2>Field Day</h2></div>
         <div className="demo-progress"><span><strong>{completed} / {tasks.length || '—'}</strong> tasks complete</span><Progress value={tasks.length ? completed / tasks.length * 100 : 0} aria-label="Event tasks completed" /><p role="status">{syncState}</p></div>
       </section>
       <div className="demo-message" role="status" hidden={!notice}>{notice}</div>
-      <details className="demo-walkthrough"><summary>A 60-second walkthrough</summary><ol><li>Open Jules and Jack in separate tabs. In Jules’s view, open “Confirm final bus count” and report it complete.</li><li>In Jack’s view, open the task under “Needs verification” and verify it. Both views show the same saved result.</li><li>As Jack, assign “Confirm wayfinding signs” to Dev. Open Dev’s view to accept it. Switch to Maya to show her different task list.</li><li>Compare Jack’s sample booking details with the teammate view. Restart the demo as Jack when you’re ready to present again.</li></ol></details>
+      <details className="demo-walkthrough"><summary>Demo instructions</summary><ol><li>Open Jules and Jack in separate tabs. In Jules’s view, open “Confirm final bus count” and report it complete.</li><li>In Jack’s view, open the task under “Needs verification” and verify it. Both views show the same saved result.</li><li>As Jack, assign “Confirm wayfinding signs” to Dev. Open Dev’s view to accept it. Switch to Maya to show her different task list.</li><li>Compare Jack’s sample booking details with the teammate view. Restart the demo as Jack when you’re ready to present again.</li></ol></details>
       {!snapshot ? <div className="demo-loading"><p>{syncState}</p><Button variant="outline" onClick={() => void refresh()}>Retry connection</Button><a href="/signin-with-chatgpt?return_to=%2Fdemo" target="_top">Sign in again</a></div> : <div className="demo-workspace">
         <section className="demo-work-panel">
           <div className="demo-panel-heading"><div><span className={'demo-avatar small ' + actor}>{profile.initials}</span><h3>{profile.name.split(' ')[0]}’s workspace</h3></div><span className="demo-role">{admin ? 'Organizer access' : 'Teammate access'}</span></div>
           <Tabs value={tab} onValueChange={value => setTab(String(value))}>
-            <TabsList variant="line" className="demo-tabs"><TabsTrigger value="mine">My tasks · {mine.length}</TabsTrigger><TabsTrigger value="all">Whole project · {tasks.length}</TabsTrigger>{admin && <TabsTrigger value="checks">Needs verification · {awaiting.length}</TabsTrigger>}</TabsList>
+            <TabsList variant="line" className="demo-tabs"><TabsTrigger value="mine">My tasks · {mine.length}</TabsTrigger><TabsTrigger value="all">All tasks · {tasks.length}</TabsTrigger>{admin && <TabsTrigger value="checks">Needs verification · {awaiting.length}</TabsTrigger>}</TabsList>
             <TabsContent value="mine">{taskList(mine)}</TabsContent><TabsContent value="all">{taskList(tasks)}</TabsContent>{admin && <TabsContent value="checks">{taskList(awaiting)}</TabsContent>}
           </Tabs>
-          <p className="demo-permission-note">{admin ? 'Jack can assign work, update any task, and verify completion.' : 'You can update your own tasks and comment on any task. Only Jack can assign work or verify completion.'}</p>
+          <p className="demo-permission-note">{admin ? 'Organizer: edit, assign, and verify tasks.' : 'Report on your tasks; comment on any task. Only Jack can assign or verify.'}</p>
         </section>
         <aside className="demo-context">
-          <section className="demo-activity"><h3><Clock3 size={18} /> Team activity</h3><p>Same project. Updates from every profile.</p><div>{snapshot.activity.slice(0,10).map((item: any) => <article key={item.id}><span className={'demo-avatar small ' + item.actor}>{profiles.find(p => p.id === item.actor)?.initials || '?'}</span><div><p><strong>{shortName(item.actor)}</strong> {item.text}</p><time>{time(item.at)}</time></div></article>)}</div></section>
-          <section className="demo-private"><h3><LockKeyhole size={18} /> Organizer-only details</h3>{admin ? <><p>Fictional booking examples. Never real credentials.</p>{snapshot.privateDetails.map((item: any) => <div key={item.reference}><strong>{item.title}</strong><span>{item.detail}</span><code>{item.reference}</code></div>)}</> : <p>You can see the transport task, but booking codes are only visible in Jack’s demo view.</p>}</section>
+          <section className="demo-activity"><h3><Clock3 size={18} /> Team activity</h3><div>{snapshot.activity.slice(0,10).map((item: any) => <article key={item.id}><span className={'demo-avatar small ' + item.actor}>{profiles.find(p => p.id === item.actor)?.initials || '?'}</span><div><p><strong>{shortName(item.actor)}</strong> {item.text}</p><time>{time(item.at)}</time></div></article>)}</div></section>
+          <section className="demo-private"><h3><LockKeyhole size={18} /> Organizer-only details</h3>{admin ? <><p>Fictional booking examples. Never real credentials.</p>{snapshot.privateDetails.map((item: any) => <div key={item.reference}><strong>{item.title}</strong><span>{item.detail}</span><code>{item.reference}</code></div>)}</> : <p>Booking codes are visible only to Jack.</p>}</section>
         </aside>
       </div>}
-      <footer className="demo-footer"><span>Changes stay in this demo and sync between its open tabs.</span>{admin && <Button variant="ghost" disabled={!snapshot || busy} onClick={() => setResetOpen(true)}><RotateCcw size={15} /> Restart demo</Button>}</footer>
+      <footer className="demo-footer"><span>Demo changes sync across tabs.</span>{admin && <Button variant="ghost" disabled={!snapshot || busy} onClick={() => setResetOpen(true)}><RotateCcw size={15} /> Restart demo</Button>}</footer>
     </main>
     <Dialog open={!!edit} onOpenChange={open => { if (!open && !busy) setEdit(null); }}>
       <DialogContent className="demo-task-dialog" showCloseButton={!busy}>
-        {edit && <><DialogHeader><DialogTitle className="text-xl pr-6">{edit.task.title}</DialogTitle><DialogDescription>Viewing as {profile.name}. Changes are shared with the four demo profiles.</DialogDescription></DialogHeader>
+        {edit && <><DialogHeader><DialogTitle className="text-xl pr-6">{edit.task.title}</DialogTitle><DialogDescription>Viewing as {profile.name}.</DialogDescription></DialogHeader>
           <div className="demo-dialog-meta"><Status task={snapshot.tasks.find((t: any) => t.id === edit.task.id) || edit.task} /><span>Owner: {shortName(edit.task.owner)}</span><span>Due {date(edit.task.dueDate)}</span></div>
           <section className="demo-task-context"><h4>Latest update</h4><p>{edit.task.note || 'No update yet.'}</p></section>
           {notice && <p className="demo-message" role="status">{notice}</p>}
           {stale && <div className="demo-stale"><p>The project changed while this task was open. Refresh before saving; your unsaved text will be discarded.</p><Button type="button" variant="outline" disabled={busy} onClick={() => openTask(snapshot.tasks.find((t: any) => t.id === edit.task.id))}>Refresh task & discard edits</Button></div>}
           {edit.task.requiresVerification && edit.task.reportedAt && !edit.task.verifiedAt && <div className="demo-verification"><p>{edit.task.reportedBy} reported this complete. Waiting for Jack’s verification.</p>{admin && <Button disabled={busy || stale} onClick={async () => { if (await mutate('verify',edit.task.id,{},edit.revision)) setEdit(null); }}><CheckCircle2 size={16} /> Verify completion</Button>}</div>}
-          {edit.task.owner === actor && edit.task.status !== 'done' ? <section className="demo-task-report"><h4>Your update</h4><p>Tell the team what happened, or what you need help with.</p><form key={'report:' + edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
+          {edit.task.owner === actor && edit.task.status !== 'done' ? <section className="demo-task-report"><h4>Your update</h4><form key={'report:' + edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
             event.preventDefault();
             const response = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value;
             const note = String(new FormData(event.currentTarget).get('note') || '').trim();
@@ -148,8 +148,8 @@ export function DemoWorkspace({ actor }: { actor: string }) {
             <div className="demo-dialog-actions"><Button type="submit" name="response" value="complete" disabled={busy || stale || !!edit.task.reportedAt}>Report complete</Button><Button type="submit" name="response" value="blocked" variant="outline" disabled={busy || stale}>Report blocked</Button><Button type="submit" name="response" value="progress" variant="ghost" disabled={busy || stale}>Share progress</Button></div>
             <p className="demo-permission-note">{edit.task.reportedAt ? 'Reporting a blocker or new progress replaces your pending completion report.' : edit.task.requiresVerification ? 'Your completion report will wait for Jack’s verification.' : 'Reporting complete marks this task done and records your name.'}</p>
           </form>{!edit.task.acceptedAt && <Button variant="ghost" disabled={busy || stale} onClick={async () => { if (await mutate('accept',edit.task.id,{},edit.revision)) setEdit(null); }}>Accept responsibility</Button>}</section> : !admin && edit.task.owner !== actor ? <p className="demo-permission-note">{shortName(edit.task.owner)} reports progress on this task. You can join the conversation below.</p> : null}
-          <section className="demo-comments"><h4><MessageSquare size={16} /> Task conversation</h4>{(snapshot.tasks.find((t: any) => t.id === edit.task.id)?.comments || []).map((comment: any) => <article key={comment.id}><strong>{shortName(comment.actor)} <time>{time(comment.at)}</time></strong><p>{comment.text}</p></article>)}
-            <form onSubmit={async event => { event.preventDefault(); const form=event.currentTarget; const text=String(new FormData(form).get('text') || ''); if (await mutate('comment',edit.task.id,{text},edit.revision)) setEdit(null); }}><Label htmlFor="demo-comment">Add a team update</Label><Textarea id="demo-comment" name="text" placeholder="Keep the team in the loop…" maxLength={5000} required rows={2} /><Button variant="outline" disabled={busy || stale} type="submit">Post as {profile.name.split(' ')[0]}</Button></form>
+          <section className="demo-comments"><h4><MessageSquare size={16} /> Comments</h4>{(snapshot.tasks.find((t: any) => t.id === edit.task.id)?.comments || []).map((comment: any) => <article key={comment.id}><strong>{shortName(comment.actor)} <time>{time(comment.at)}</time></strong><p>{comment.text}</p></article>)}
+            <form onSubmit={async event => { event.preventDefault(); const form=event.currentTarget; const text=String(new FormData(form).get('text') || ''); if (await mutate('comment',edit.task.id,{text},edit.revision)) setEdit(null); }}><Label htmlFor="demo-comment">Add a comment</Label><Textarea id="demo-comment" name="text" placeholder="Comment…" maxLength={5000} required rows={2} /><Button variant="outline" disabled={busy || stale} type="submit">Post as {profile.name.split(' ')[0]}</Button></form>
           </section>
           {admin && <details className="demo-organizer"><summary>Edit task details <span>Organizer only</span></summary><form key={'organizer:' + edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
             event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget));

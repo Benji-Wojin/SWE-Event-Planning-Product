@@ -21,10 +21,9 @@ export default async function Mail() {
       <p className="mb-2 text-sm uppercase tracking-widest text-muted-foreground">
         Organizer-only inbox
       </p>
-      <h1 className="text-3xl font-semibold">What changed in your email?</h1>
+      <h1 className="text-3xl font-semibold">Gmail inbox</h1>
       <p className="mb-7 mt-3 text-base text-muted-foreground">
-        Review the original privately. Write the update your team needs—leave
-        confirmation codes and personal details out.
+        Share summaries without confirmation codes or personal details.
       </p>
       <MailInbox />
     </main>
