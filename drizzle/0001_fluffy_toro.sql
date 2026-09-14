@@ -1,0 +1,1 @@
+ALTER TABLE `gmail_connections` ADD `generation` text DEFAULT 'initial' NOT NULL;
