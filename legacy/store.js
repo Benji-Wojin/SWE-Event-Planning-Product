@@ -209,10 +209,19 @@
     function updateTask(taskId, patch, actor = "jack") {
       actorId(actor);
       const task = taskById(taskId);
+      if (actor !== 'jack') {
+        if (task.owner !== actor) throw new Error('Only the assigned owner can report progress on this task.');
+        if (Object.keys(patch).some(field => !['status', 'note'].includes(field))) throw new Error('Only the organizer can edit task details.');
+        if (task.status === 'done') throw new Error('This task is complete. Add a comment or ask the organizer to reopen it.');
+        if (patch.status === 'done') throw new Error('Use Report complete to record your completion.');
+        if (!['progress', 'blocked'].includes(patch.status) || !clean(patch.note)) throw new Error('Report progress or a blocker with a short note.');
+      }
       if (task.requiresVerification && task.status !== 'done' && patch.status === 'done' && actor !== 'jack') throw new Error('Report completion first so the organizer can verify it.');
       if (patch.requiresVerification !== undefined && taskFields(patch,task).requiresVerification !== task.requiresVerification && actor !== 'jack') throw new Error('Only the organizer can change verification requirements.');
       const previousStatus = task.status;
+      const supersedesReport = task.owner === actor && task.reportedAt && Object.keys(patch).every(field => ['status', 'note'].includes(field)) && ['progress', 'blocked'].includes(patch.status) && clean(patch.note);
       const changed = patchTask(task, patch, actor);
+      if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
       if (changed.length) {
         let text = `updated ${task.title}`;
         let type = "updated";

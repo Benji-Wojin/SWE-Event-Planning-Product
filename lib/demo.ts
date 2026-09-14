@@ -63,7 +63,7 @@ export async function mutateDemo(user: Awaited<ReturnType<typeof administrator>>
       }
       case 'comment': store.addComment(task.id, values.text, actor); break;
       case 'accept': store.acceptTask(task.id, actor); break;
-      case 'complete': store.reportCompletion(task.id, values.note || 'Work completed in the team demo.', actor); break;
+      case 'complete': store.reportCompletion(task.id, values.note, actor); break;
       case 'verify':
         if (!admin) throw new HttpError(403, 'Only Jack can verify completion.');
         store.verifyTask(task.id, actor); break;
