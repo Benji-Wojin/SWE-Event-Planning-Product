@@ -46,7 +46,7 @@ export function DemoWorkspace({ actor }: { actor: string }) {
       body: payload ? JSON.stringify(payload) : undefined,
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not connect to the demo.');
+    if (!response.ok) throw new Error(data && typeof data === 'object' && 'error' in data && typeof data.error === 'string' ? data.error : 'Could not connect to the demo.');
     return data;
   };
   const publish = (data: any) => {
@@ -131,26 +131,35 @@ export function DemoWorkspace({ actor }: { actor: string }) {
     <Dialog open={!!edit} onOpenChange={open => { if (!open && !busy) setEdit(null); }}>
       <DialogContent className="demo-task-dialog" showCloseButton={!busy}>
         {edit && <><DialogHeader><DialogTitle className="text-xl pr-6">{edit.task.title}</DialogTitle><DialogDescription>Viewing as {profile.name}. Changes are shared with the four demo profiles.</DialogDescription></DialogHeader>
-          <div className="demo-dialog-meta"><Status task={snapshot.tasks.find((t: any) => t.id === edit.task.id) || edit.task} /><span>Owner: {shortName(edit.task.owner)}</span></div>
+          <div className="demo-dialog-meta"><Status task={snapshot.tasks.find((t: any) => t.id === edit.task.id) || edit.task} /><span>Owner: {shortName(edit.task.owner)}</span><span>Due {date(edit.task.dueDate)}</span></div>
+          <section className="demo-task-context"><h4>Latest update</h4><p>{edit.task.note || 'No update yet.'}</p></section>
           {notice && <p className="demo-message" role="status">{notice}</p>}
           {stale && <div className="demo-stale"><p>The project changed while this task was open. Refresh before saving; your unsaved text will be discarded.</p><Button type="button" variant="outline" disabled={busy} onClick={() => openTask(snapshot.tasks.find((t: any) => t.id === edit.task.id))}>Refresh task & discard edits</Button></div>}
-          {(admin || edit.task.owner === actor) ? <form key={edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
-            event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget));
-            if (await mutate('update', edit.task.id, data, edit.revision)) setEdit(null);
+          {edit.task.requiresVerification && edit.task.reportedAt && !edit.task.verifiedAt && <div className="demo-verification"><p>{edit.task.reportedBy} reported this complete. Waiting for Jack’s verification.</p>{admin && <Button disabled={busy || stale} onClick={async () => { if (await mutate('verify',edit.task.id,{},edit.revision)) setEdit(null); }}><CheckCircle2 size={16} /> Verify completion</Button>}</div>}
+          {edit.task.owner === actor && edit.task.status !== 'done' ? <section className="demo-task-report"><h4>Your update</h4><p>Tell the team what happened, or what you need help with.</p><form key={'report:' + edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
+            event.preventDefault();
+            const response = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value;
+            const note = String(new FormData(event.currentTarget).get('note') || '').trim();
+            if (!note) { setNotice('Add a short note so the team knows what happened.'); return; }
+            if (!['complete', 'blocked', 'progress'].includes(response || '')) { setNotice('Choose Report complete, Report blocked, or Share progress.'); return; }
+            if (await mutate(response === 'complete' ? 'complete' : 'update', edit.task.id, response === 'complete' ? {note} : {status:response,note}, edit.revision)) setEdit(null);
           }}>
-            {admin && <div className="space-y-2"><Label htmlFor="demo-owner">Assigned to</Label><Select name="owner" defaultValue={edit.task.owner || ''}><SelectTrigger id="demo-owner" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="">Unassigned</SelectItem>{profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>}
-            {edit.task.status !== 'done' && <div className="space-y-2"><Label htmlFor="demo-status">Status</Label><Select name="status" defaultValue={edit.task.status}><SelectTrigger id="demo-status" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{['todo','progress','blocked'].map(value => <SelectItem key={value} value={value}>{statusNames[value]}</SelectItem>)}</SelectContent></Select></div>}
-            <div className="space-y-2"><Label htmlFor="demo-note">Progress note</Label><Textarea id="demo-note" name="note" defaultValue={edit.task.note} rows={3} maxLength={5000} /></div>
-            <div className="demo-dialog-actions"><Button type="submit" disabled={busy || stale}>{busy ? 'Saving…' : 'Save update'}</Button>
-              {edit.task.owner === actor && !edit.task.acceptedAt && edit.task.status !== 'done' && <Button type="button" variant="outline" disabled={busy || stale} onClick={async () => { if (await mutate('accept',edit.task.id,{},edit.revision)) setEdit(null); }}>Accept responsibility</Button>}
-              {edit.task.owner === actor && edit.task.status !== 'done' && !edit.task.reportedAt && <Button type="button" variant="outline" disabled={busy || stale} onClick={async event => { const form = event.currentTarget.closest('form')!; const note = String(new FormData(form).get('note') || '').trim(); if (!note) { setNotice('Add a completion note first.'); return; } if (await mutate('complete',edit.task.id,{note},edit.revision)) setEdit(null); }}>Report complete</Button>}
-              {admin && edit.task.requiresVerification && edit.task.reportedAt && !edit.task.verifiedAt && <Button type="button" disabled={busy || stale} onClick={async () => { if (await mutate('verify',edit.task.id,{},edit.revision)) setEdit(null); }}><CheckCircle2 size={16} /> Verify completion</Button>}
-            </div>
-            {edit.task.requiresVerification && <p className="demo-permission-note">Reporting completion keeps this task in progress until Jack verifies it.</p>}
-          </form> : <p className="demo-readonly">{edit.task.note}<span>This task belongs to {shortName(edit.task.owner)}. You can add a comment below.</span></p>}
+            <Label htmlFor="demo-report-note" className="sr-only">What happened or what is blocking you?</Label><Textarea id="demo-report-note" name="note" placeholder="What’s finished? What’s blocking you?" rows={3} maxLength={3000} required />
+            <div className="demo-dialog-actions"><Button type="submit" name="response" value="complete" disabled={busy || stale || !!edit.task.reportedAt}>Report complete</Button><Button type="submit" name="response" value="blocked" variant="outline" disabled={busy || stale}>Report blocked</Button><Button type="submit" name="response" value="progress" variant="ghost" disabled={busy || stale}>Share progress</Button></div>
+            <p className="demo-permission-note">{edit.task.reportedAt ? 'Reporting a blocker or new progress replaces your pending completion report.' : edit.task.requiresVerification ? 'Your completion report will wait for Jack’s verification.' : 'Reporting complete marks this task done and records your name.'}</p>
+          </form>{!edit.task.acceptedAt && <Button variant="ghost" disabled={busy || stale} onClick={async () => { if (await mutate('accept',edit.task.id,{},edit.revision)) setEdit(null); }}>Accept responsibility</Button>}</section> : !admin && edit.task.owner !== actor ? <p className="demo-permission-note">{shortName(edit.task.owner)} reports progress on this task. You can join the conversation below.</p> : null}
           <section className="demo-comments"><h4><MessageSquare size={16} /> Task conversation</h4>{(snapshot.tasks.find((t: any) => t.id === edit.task.id)?.comments || []).map((comment: any) => <article key={comment.id}><strong>{shortName(comment.actor)} <time>{time(comment.at)}</time></strong><p>{comment.text}</p></article>)}
             <form onSubmit={async event => { event.preventDefault(); const form=event.currentTarget; const text=String(new FormData(form).get('text') || ''); if (await mutate('comment',edit.task.id,{text},edit.revision)) setEdit(null); }}><Label htmlFor="demo-comment">Add a team update</Label><Textarea id="demo-comment" name="text" placeholder="Keep the team in the loop…" maxLength={5000} required rows={2} /><Button variant="outline" disabled={busy || stale} type="submit">Post as {profile.name.split(' ')[0]}</Button></form>
           </section>
+          {admin && <details className="demo-organizer"><summary>Edit task details <span>Organizer only</span></summary><form key={'organizer:' + edit.task.id + ':' + edit.revision} className="demo-edit-form" onSubmit={async event => {
+            event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget));
+            if (await mutate('update', edit.task.id, data, edit.revision)) setEdit(null);
+          }}>
+            <div className="space-y-2"><Label htmlFor="demo-owner">Assigned to</Label><Select name="owner" defaultValue={edit.task.owner || ''}><SelectTrigger id="demo-owner" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="">Unassigned</SelectItem>{profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+            {edit.task.status !== 'done' && <div className="space-y-2"><Label htmlFor="demo-status">Status</Label><Select name="status" defaultValue={edit.task.status}><SelectTrigger id="demo-status" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{['todo','progress','blocked'].map(value => <SelectItem key={value} value={value}>{statusNames[value]}</SelectItem>)}</SelectContent></Select></div>}
+            <div className="space-y-2"><Label htmlFor="demo-note">Latest update</Label><Textarea id="demo-note" name="note" defaultValue={edit.task.note} rows={3} maxLength={3000} /></div>
+            <Button type="submit" disabled={busy || stale}>{busy ? 'Saving…' : 'Save task details'}</Button>
+          </form></details>}
         </>}
       </DialogContent>
     </Dialog>
