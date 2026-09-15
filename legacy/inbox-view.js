@@ -1,16 +1,23 @@
   function inboxView(s) {
     const groups=GatherInbox.conversations(s);
-    const group=groups.find(g=>g.messages.some(m=>m.id===ui.messageId))||groups.find(g=>g.key===ui.conversationKey)||groups[0];
-    const selected=group?.messages.find(m=>m.id===ui.messageId)||group?.pending[0]||group?.latest;
-    ui.messageId=selected?.id||'';ui.conversationKey=group?.key||'';
-    return pageHeading('','Email inbox','Grouped by task',`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Add email</button>`)+`
-      <div class="inbox-utilities"><span>${groups.length} conversations · ${pending(s).length} emails need review</span><button class="text-button" data-action="refresh-inbox">Check for updates</button><a class="text-button" href="/mail" target="_top">Gmail imports</a><details class="inbox-demo"><summary>Try sample replies</summary><div class="inline"><button class="btn btn-secondary btn-small" data-action="sample-reply" data-step="pending">Buses awaiting deposit</button><button class="btn btn-secondary btn-small" data-action="sample-reply" data-step="confirmed">Booking confirmed</button></div></details></div>
+    const active=groups.find(g=>g.messages.some(m=>m.id===ui.messageId))||groups.find(g=>g.key===ui.conversationKey);
+    const selected=active?.messages.find(m=>m.id===ui.messageId)||active?.pending[0]||active?.latest;
+    ui.messageId=selected?.id||'';ui.conversationKey=active?.key||'';
+    return pageHeading('','Email briefing','',`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Add email</button>`)+`
+      <div class="briefing-tools"><span>${groups.filter(g=>g.pending.length).length} tasks need review</span><button class="text-button" data-action="refresh-inbox">Refresh</button><details><summary>Sources & setup</summary><div class="inline"><a class="text-button" href="/mail" target="_top">Private Gmail imports</a><button class="text-button" data-action="sample-reply" data-step="pending">Sample: deposit pending</button><button class="text-button" data-action="sample-reply" data-step="confirmed">Sample: booking confirmed</button></div></details></div>
       <div id="inboxSyncNotice" class="notice" role="status" hidden></div>
-      <div class="conversation-layout section-gap"><nav class="conversation-list" aria-label="Task conversations">${groups.map(g=>`<button class="conversation-button ${g.key===group?.key?'selected':''}" data-action="select-conversation" data-id="${h(g.key)}" aria-current="${g.key===group?.key?'true':'false'}"><span class="conversation-type">${g.task?'TASK':'NEEDS A TASK'}</span><strong>${h(g.title)}</strong><span class="conversation-preview">${h(g.latest.subject)}</span><span class="conversation-counts"><span>${g.messages.length} ${g.messages.length===1?'email':'emails'}</span><span class="${g.pending.length?'review-count':'review-clear'}">${g.pending.length?g.pending.length+' to review':'Up to date'}</span></span></button>`).join('')||empty('No conversations yet.','Add an email and choose its task.')}</nav>
-      ${group?`<section class="task-conversation"><header class="conversation-heading"><div><h2>${h(group.title)}</h2><p>${group.task?`${statusBadge(group.task.status)} <span>${h(member(group.task.owner).name)} · ${dayLabel(group.task.dueDate)}</span>`:'Choose a task for these emails.'}</p></div>${group.task?`<button class="btn btn-secondary btn-small" data-action="task" data-id="${h(group.taskId)}">Open task</button>`:''}</header><div class="conversation-workspace">
-        <section class="conversation-history" aria-label="Emails for this task"><div class="conversation-section-heading"><h3>Email history</h3><span>Newest first</span></div>${group.messages.map(m=>`<article class="conversation-email ${m.id===selected.id?'selected':''}"><button class="conversation-email-select" data-action="select-message" data-id="${h(m.id)}" aria-pressed="${m.id===selected.id}"><span class="conversation-email-meta"><strong>${h(m.sender)}</strong><time datetime="${h(m.receivedAt)}">${timeLabel(m.receivedAt)}</time></span><span class="conversation-email-subject">${h(m.subject)}</span><span class="email-review-state">${m.appliedTaskId?'Accepted':m.ignoredAt?'Set aside':'Needs review'}</span>${m.id!==selected.id?`<span class="conversation-preview">${h(m.body.slice(0,120))}</span>`:''}</button>${m.id===selected.id?`<div class="conversation-email-body">${h(m.body)}</div>${m.sourceType==='gmail-reviewed'?`<div class="source-privacy-note">Organizer-approved summary. <button class="text-button" data-action="private-original" data-id="${h(m.externalId.slice(7))}">View private Gmail original</button><div id="privateOriginal" hidden></div></div>`:''}`:''}</article>`).join('')}<button class="text-button add-conversation-email" data-action="paste-email">${icon('plus')} Add email</button></section>
-        <aside class="conversation-review" aria-label="Review proposed task change">${emailReader(selected,s)}</aside>
-      </div></section>`:`<section class="panel">${empty('No email selected.','')}</section>`}</div>`;
+      <div class="briefing-feed section-gap">${groups.map(g=>{
+        const expanded=g.key===active?.key,b=GatherInbox.briefing(g,s,expanded?selected:undefined),m=b.message;
+        return `<article class="briefing-card ${expanded?'expanded':''}">
+          <header class="briefing-card-heading"><div><span class="briefing-label ${b.pending?'needs-review':''}">${h(b.label)}</span><h2>${h(g.title)}</h2></div><span class="briefing-count">${g.pending.length?g.pending.length+' to review':'Reviewed'}</span></header>
+          <p class="briefing-attribution">${h(m.sender)} · ${timeLabel(m.receivedAt)}${b.historical?' · Historical email':''}</p>
+          <p class="briefing-summary">${h(b.summary)}</p>
+          <div class="briefing-next"><span>Suggested next step</span><p>${h(b.next)}</p></div>
+          <div class="briefing-actions"><button class="btn ${b.pending?'btn-primary':'btn-secondary'} btn-small" data-action="${expanded?'close-briefing':'select-conversation'}" data-id="${h(g.key)}" aria-expanded="${expanded}" aria-controls="briefing-${h(g.key)}">${expanded?'Close review':b.pending?'Review suggestion':'View history'}</button>${g.task?`<button class="text-button" data-action="task" data-id="${h(g.taskId)}">Open task</button><span class="muted">${h(member(g.task.owner).name)} · Due ${dayLabel(g.task.dueDate)}</span>`:''}</div>
+          <div id="briefing-${h(g.key)}" class="briefing-review" ${expanded?'':'hidden'}>${expanded?`<div class="briefing-review-heading"><h3>${b.pending?'Review suggestion':'Saved decision'}</h3><span>${h(m.sender)} · ${timeLabel(m.receivedAt)}</span></div>${b.stale&&b.historical?'<p class="warning-note">The task also changed since this proposal. Refresh the comparison before accepting.</p>':''}${emailReader(m,s)}`:''}</div>
+          <details class="briefing-sources"><summary>Source emails (${g.messages.length})</summary><p class="muted">Summaries use selected email text and rule-based suggestions. Review the source for full context.</p>${g.messages.map(source=>`<article class="briefing-source"><div class="inline"><strong>${h(source.sender)}</strong><time>${timeLabel(source.receivedAt)}</time><span>${source.appliedTaskId?'Accepted':source.ignoredAt?'Set aside':'Not applied'}</span></div><p>${h(source.subject)}</p><div class="inline"><button class="text-button" data-action="select-message" data-id="${h(source.id)}">${source.id===selected?.id?'Reviewing this update':'Review this update'}</button></div><details class="briefing-original"><summary>${source.sourceType==='gmail-reviewed'?'View shared summary':'View email text'}</summary><div class="conversation-email-body">${h(source.body)}</div>${expanded&&source.id===m.id&&source.sourceType==='gmail-reviewed'?`<div class="source-privacy-note">Organizer-approved summary. <button class="text-button" data-action="private-original" data-id="${h(source.externalId.slice(7))}">View private Gmail original</button><div id="privateOriginal" hidden></div></div>`:''}</details></article>`).join('')}</details>
+        </article>`;
+      }).join('')||empty('No email updates.','Add an email or import a reviewed Gmail summary.')}</div>`;
   }
   const changeNames={title:'Task name',owner:'Owner',status:'Status',dueDate:'Due date',note:'Progress note',category:'Category'};
   function changeValue(key,value) {
@@ -18,6 +25,7 @@
     return key==='note'?`<div class="diff-note">${text}</div>`:text;
   }
   function changePreview(message,s,values=message.suggested) {
+    if(GatherInbox.analysisOutdated(message))return '<p class="warning-note">Refresh this suggestion before reviewing its changes. The previous email analysis is out of date.</p>';
     const diff=GatherInbox.changes(message,s,values);
     return `<div class="change-summary-heading"><span class="eyebrow">${diff.isNew?'CREATE A TASK':'BEFORE YOU ACCEPT'}</span><h3>${diff.isNew?'New task':diff.changed.length?`${diff.changed.length} ${diff.changed.length===1?'field will':'fields will'} change`:'No task fields will change'}</h3>${!diff.isNew?`<p>Task: ${h(diff.current?.title||'Select a task')}</p>`:''}</div>
       ${diff.changed.length?`<table class="change-table"><thead><tr><th scope="col">Field</th><th scope="col">${diff.isNew?'Before':'Current'}</th><th scope="col">${diff.isNew?'New task':'After accepting'}</th></tr></thead><tbody>${diff.changed.map(f=>`<tr><th scope="row">${changeNames[f.key]}</th><td>${diff.isNew?'—':changeValue(f.key,f.before)}</td><td>${changeValue(f.key,f.after)}</td></tr>`).join('')}</tbody></table>`:'<p class="change-noop">Accepting will attach this email as a source; no field values change.</p>'}
@@ -32,7 +40,7 @@
       return `<div class="review-result"><h3>Accepted</h3><p>Recorded by ${h(member(m.appliedBy).name)} · ${timeLabel(m.appliedAt)}</p>${fields.length?`<table class="change-table"><thead><tr><th>Field</th><th>Before</th><th>Accepted</th></tr></thead><tbody>${fields.map(key=>`<tr><th scope="row">${changeNames[key]}</th><td>${m.before?changeValue(key,m.before[key]):'—'}</td><td>${changeValue(key,m.approved[key])}</td></tr>`).join('')}</tbody></table>`:'<p>Email attached. No task fields changed.</p>'}<p class="unchanged-fields">Saved changes; the task may have newer updates.</p></div>`;
     }
     const p=m.suggested||{},current=p.mode==='update'?s.tasks.find(t=>t.id===p.taskId):null;
-    const stale=current&&p.baseRevision!==current.revision;
+    const stale=GatherInbox.analysisOutdated(m)||(current&&p.baseRevision!==current.revision);
     const older=current&&s.messages.some(item=>item.appliedTaskId===current.id&&item.receivedAt>m.receivedAt);
     return `<form class="proposal-form" id="emailReviewForm" data-id="${h(m.id)}"><div id="changePreview" aria-live="polite">${changePreview(m,s)}</div>
       <div class="proposal-explanation"><strong>Reason</strong><p>${h(p.reason||'Check these changes against the email.')}</p></div>
@@ -59,7 +67,7 @@
     $('#changePreview').innerHTML=changePreview(message,s,values);
     const current=values.mode==='update'?s.tasks.find(t=>t.id===values.taskId):null;
     const submit=$('button[type="submit"]',form);
-    submit.disabled=!!ui.savingProposal||!!(values.mode==='update'&&(!current||Number(values.expectedRevision)!==current.revision));
+    submit.disabled=!!ui.savingProposal||GatherInbox.analysisOutdated(message)||!!(values.mode==='update'&&(!current||Number(values.expectedRevision)!==current.revision));
     const conflict=$('.conflict-approval',form);if(conflict){conflict.hidden=values.mode!=='update';const checkbox=$('input',conflict);checkbox.disabled=values.mode!=='update';checkbox.required=values.mode==='update';}
     const warning=$('.stale-proposal',form);if(warning)warning.hidden=values.mode!=='update';
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';

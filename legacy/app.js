@@ -6,7 +6,7 @@
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
   const ui = { view:'overview', actor:'jack', tab:'all', owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
-  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email inbox',updates:'Team updates',team:'People',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
+  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
   const icons = {
@@ -60,7 +60,7 @@
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
   const addButton = `<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`;
-  const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} All emails & changes (${group.messages.length})</button>`:'';};
+  const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
 
   function taskRow(task) {
     const done = task.status==='done';
@@ -98,7 +98,7 @@
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
         <section class="ai-panel" id="thoughtPartner"><h2>Suggestions</h2>${suggestions.slice(0,2).map(insightMarkup).join('') || '<p>No suggestions.</p>'}<button class="text-button" data-action="thought-partner">All suggestions (${suggestions.length}) ${icon('arrow')}</button></section>
-        <section class="panel email-preview"><div class="panel-heading"><div><h2 class="section-title">Emails to review</h2></div></div>${emails.slice(0,2).map(m=>`<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(m.subject)}</strong><span>${h(m.sender)}</span></span>${icon('arrow')}</button>`).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email inbox ${icon('arrow')}</button></section>
+        <section class="panel email-preview"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
       <section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
   }
@@ -120,7 +120,7 @@
     const messages=s.messages.filter(m=>!m.ignoredAt);
     const selected=messages.find(m=>m.id===ui.messageId) || messages.find(m=>!m.appliedTaskId) || messages[0];
     ui.messageId=selected?.id || '';
-    return pageHeading('','Email inbox','',`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Paste an email</button>`)+`
+    return pageHeading('','Email briefing','',`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Paste an email</button>`)+`
       <div class="notice">Local email review · no mailbox is connected. Do not paste private confirmation emails here. Put booking references in <button class="text-button" data-view="details">Private details</button>.</div>
       <div class="intake-demo"><span>Try a changing conversation:</span><button class="btn btn-secondary btn-small" data-action="sample-reply" data-step="pending">1. Buses awaiting deposit</button><button class="btn btn-secondary btn-small" data-action="sample-reply" data-step="confirmed">2. Booking confirmed</button><span class="muted">Sample replies · review each before applying</span></div>
       <div class="intake-layout section-gap"><section class="panel message-list" aria-label="Emails to review">${messages.map(m=>`<button class="message-button ${m.id===selected?.id?'selected':''}" data-action="select-message" data-id="${h(m.id)}"><span class="message-sender">${h(m.sender)}</span><strong class="message-subject">${h(m.subject)}</strong><span class="message-preview">${h(m.body.slice(0,95))}</span><span class="message-status ${m.appliedTaskId?'is-applied':''}">${m.appliedTaskId?'✓ Added to the plan':'Needs review'}</span></button>`).join('')}</section>
@@ -336,6 +336,7 @@
       if(action==='copy-draft'){const text=store.getState().drafts.find(d=>d.id===id).text;if(await copyText(text))toast('Draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='source'||action==='select-message'){ui.messageId=id;if(!$('#dialogBackdrop').hidden)closeDialog();if(ui.view==='inbox')render();else navigate('inbox');}
       if(action==='select-conversation'){ui.messageId='';ui.conversationKey=id;render();}
+      if(action==='close-briefing'){ui.messageId='';ui.conversationKey='';render();}
       if(action==='task-conversation'){ui.messageId='';ui.conversationKey='task:'+id;closeDialog();navigate('inbox');}
       if(action==='refresh-inbox')await refreshInbox(true);
       if(action==='paste-email')pasteDialog();
