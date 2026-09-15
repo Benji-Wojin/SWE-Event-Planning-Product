@@ -65,6 +65,7 @@
         { id: "email-dietary", sender: "Maya Singh", subject: "Dietary follow-up complete", body: "Hi Jack, all fourteen remaining guests have replied. I have recorded every dietary requirement and shared the list with Green Table. The dietary follow-up is complete. We can move on to approving the menu. — Maya", receivedAt: ago(0, 1), suggested: { mode: "update", taskId: "dietary", title: "Collect dietary needs", owner: "maya", dueDate: day(1), status: "done", note: "Maya reports that all fourteen remaining guests responded and the dietary list was shared with Green Table." } },
         { id: "email-quiet", sender: "Redwood Grove events team", subject: "Quiet space signs for Field Day", body: "Hello Jack, we can reserve the shaded area by the east entrance as your quiet rest area. Could someone on your team prepare signs and mark it on the guest map? Please confirm the owner before we finalize the site layout.", receivedAt: ago(0, 3), suggested: { mode: "new", taskId: "", title: "Prepare quiet-area signs and guest map", owner: "", dueDate: day(4), status: "todo", note: "The venue can reserve the shaded area by the east entrance. Assign someone to make signs and update the guest map." } },
       ];
+      messages.forEach(message=>Object.assign(message.suggested,{analysisVersion:2,signal:message.suggested.status==='done'?'completion-report':message.suggested.status==='blocked'?'blocker':'unclear'}));
       return {
         version: 3, event: { name: "Field Day 2026", date: "2026-10-03", location: "Redwood Grove" }, members: copy(MEMBERS), tasks, messages,
         activity: [
@@ -264,19 +265,22 @@
     }
     function proposeMessage(message, selectedTaskId) {
       // Only inspect the new text; quoted earlier messages must not reassert old claims.
-      const fresh = message.body.split(/\n(?:On .+wrote:|From:|>)/i)[0];
-      const body = fresh.toLowerCase();
+      const fresh = message.body.split(/(?:^|\n)[ \t]*(?:On .+wrote:|From:|>)/i)[0];
+      const body = fresh.toLowerCase().replace(/[’‘]/g,"'");
       const subject = message.subject.toLowerCase();
       const threadTasks = [...new Set(state.messages.filter(item => item.id !== message.id && item.threadId === message.threadId && (item.appliedTaskId||item.linkedTaskId)).map(item => item.appliedTaskId||item.linkedTaskId))];
       const topic = /bus|northstar|transport/.test(subject) ? "bus" : /diet|allergen/.test(subject) ? "dietary" : /cater|menu/.test(subject) ? "catering" : /volunteer|briefing/.test(subject) ? "briefing" : "";
       const existing = state.tasks.find(task => task.id === selectedTaskId) || (threadTasks.length === 1 ? state.tasks.find(task => task.id === threadTasks[0]) : null) || (threadTasks.length > 1 ? null : state.tasks.find(task => task.id === topic) || state.tasks.find(task => normalize(message.subject).includes(normalize(task.title))));
       const person = state.members.find((member) => normalize(message.sender).includes(normalize(member.name)) || normalize(message.sender).split(" ").includes(member.name.split(" ")[0].toLowerCase()));
-      const isBlocked = /\b(blocked|waiting|pending|cannot|can't)\b|need.*approv|not (?:yet )?(?:complete|done|confirmed)|still need/.test(body);
-      const isDone = (body.match(/[^.!?\n]+[.!?]?/g)||[]).some(sentence => /\b(complete|completed|finished|done|confirmed)\b/.test(sentence) && !/\b(not|isn't|is not|haven't|hasn't|will|would|could|should|please|if|can|after|once|unless|until|might|may)\b|\?/.test(sentence));
+      const blockerText=body.replace(/\b(?:no longer|not) (?:blocked|waiting|pending)\b/g,'');
+      const isBlocked = /\b(blocked|waiting|pending|cannot|can't)\b|need.*approv|not (?:yet )?(?:complete|done|confirmed)|still need/.test(blockerText);
+      const completionCaveat=/\b(?:not|never|isn't|aren't|wasn't|weren't|haven't|hasn't|can't|cannot|will|would|could|should|please|if|can|after|once|unless|until|might|may|except|but|however|still|remaining)\b|\?/;
+      const unresolved=/\b(?:not|never|cannot|except|remaining|pending|waiting|blocked|still need|nobody|no one|none)\b|\b\w+n't\b/.test(blockerText);
+      const isDone = !unresolved && (body.match(/[^.!?\n]+[.!?]?/g)||[]).some(sentence => /\b(complete|completed|finished|done|confirmed)\b/.test(sentence) && !completionCaveat.test(sentence));
       const accepted = /\bi(?:'m| am) on it\b|\bi (?:accept|can take|will handle)\b/.test(body);
       const explicitDate = fresh.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
       const tomorrow = new Date(message.receivedAt); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      return { mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: explicitDate && validDate(explicitDate) ? explicitDate : /tomorrow/.test(body) ? tomorrow.toISOString().slice(0,10) : existing?.dueDate || "", status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh, baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
+      return { analysisVersion:2, mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: explicitDate && validDate(explicitDate) ? explicitDate : /tomorrow/.test(body) ? tomorrow.toISOString().slice(0,10) : existing?.dueDate || "", status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh, baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
     }
     function addMessage(data, actor = "jack") {
       actorId(actor);
@@ -312,6 +316,7 @@
       if (!message) throw new Error("That email could not be found.");
       if (message.appliedTaskId) return copy(taskById(message.appliedTaskId));
       if (message.ignoredAt) throw new Error('This message was set aside. It cannot change the plan.');
+      if (message.suggested.analysisVersion !== 2) throw new Error('Refresh this suggestion before accepting. Its email analysis is out of date.');
       const proposed = Object.fromEntries(['mode','taskId','title','owner','status','dueDate','note','category'].map(field => [field,approved[field] ?? message.suggested[field]]).filter(([,value])=>value!==undefined));
       const completionReport = message.suggested.signal === 'completion-report' || (!message.suggested.signal && message.suggested.status === 'done') || (approved.status === 'done' && message.suggested.status !== 'done');
       if (!["new", "update"].includes(proposed.mode)) throw new Error("Choose whether to create or update a task.");

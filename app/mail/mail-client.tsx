@@ -103,9 +103,9 @@ export function MailInbox() {
                 </h2>
                 <p className="break-all text-sm">{message.sender}</p>
               </div>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-sans text-base leading-relaxed">
+              <details><summary className="cursor-pointer text-sm font-medium">View original email</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words font-sans text-base leading-relaxed">
                 {message.body}
-              </pre>
+              </pre></details>
               <p className="text-sm text-muted-foreground">
                 Text preview, up to 24,000 characters. HTML-only emails may show
                 only a short snippet; attachments are not imported. Check Gmail
@@ -113,7 +113,7 @@ export function MailInbox() {
               </p>
               {message.reviewed ? (
                 <p className="rounded-lg bg-secondary p-4 text-base">
-                  <a className="underline" href={'/?message=' + encodeURIComponent(message.sharedMessageId)}>Review task changes →</a>
+                  <a className="underline" href={'/?message=' + encodeURIComponent(message.sharedMessageId)}>Review briefing →</a>
                 </p>
               ) : (
                 <form
@@ -189,12 +189,12 @@ export function MailInbox() {
                     </Label>
                   </div>
                   <Button type="submit" disabled={busy || !confirmed}>
-                    {busy ? 'Saving…' : 'Review task changes →'}
+                    {busy ? 'Saving…' : 'Review briefing →'}
                   </Button>
                   <p className="text-sm text-muted-foreground">
                     Only the title and summary above are copied. The original
                     stays private, and no task changes until you approve it in
-                    the shared inbox.
+                    the email briefing.
                   </p>
                 </form>
               )}

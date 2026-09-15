@@ -19,11 +19,11 @@ export default async function Mail() {
         </nav>
       </header>
       <p className="mb-2 text-sm uppercase tracking-widest text-muted-foreground">
-        Organizer-only inbox
+        Organizer only
       </p>
-      <h1 className="text-3xl font-semibold">Gmail inbox</h1>
+      <h1 className="text-3xl font-semibold">Gmail sources</h1>
       <p className="mb-7 mt-3 text-base text-muted-foreground">
-        Share summaries without confirmation codes or personal details.
+        Import a safe summary into the email briefing. Original emails remain private.
       </p>
       <MailInbox />
     </main>
