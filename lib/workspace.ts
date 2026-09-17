@@ -69,6 +69,9 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  addDependency: 2,
+  removeDependency: 2,
+  resumeTask: 1,
   claimTask: 1,
   addTask: 1,
   updateTask: 2,
@@ -96,13 +99,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment'].includes(method))
+  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
   const [a, b] = input.args;
-  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask'].includes(method)) {
+  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
     if (method === 'updateTask' && (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some(key => !['status', 'note'].includes(key))))
@@ -113,6 +116,15 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   let result;
   try {
     switch (method) {
+      case 'addDependency':
+        result = store.addDependency(a, b, user.actorId);
+        break;
+      case 'removeDependency':
+        result = store.removeDependency(a, b, user.actorId);
+        break;
+      case 'resumeTask':
+        result = store.resumeTask(a, user.actorId);
+        break;
       case 'claimTask':
         result = store.claimTask(a, user.actorId);
         break;
