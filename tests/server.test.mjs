@@ -535,6 +535,32 @@ test('full demo organizer actions work and cannot mutate live data; teammate RPC
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
 });
 
+test('dependency RPC is owner-scoped, revision-safe, persistent and isolated from the real project', async () => {
+  owner();
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  let current=await (await demoRead()).json();
+  const rpc=async(actor,method,args)=>demoWrite(actor,{method,args,revision:current.revision});
+  current=await (await rpc('jack','resetDemo',[true])).json();
+  const blocked=await rpc('maya','updateTask',['dietary',{status:'blocked',note:'Need budget approval for guest calls.'}]);
+  assert.equal(blocked.status,200);
+  current=await blocked.json();
+  const child=current.state.tasks.find(t=>t.id===current.state.tasks.find(t=>t.id==='dietary').dependencies[0].taskId);
+  assert.equal(child.owner,'');
+  for(const [method,args] of [['resumeTask',['dietary']],['addDependency',['dietary',{title:'Forged work'}]],['removeDependency',['dietary',child.id]]])
+    assert.equal((await rpc('jules',method,args)).status,403);
+  assert.equal((await rpc('maya','addDependency',['dietary',{title:'Forged assignment',owner:'jules'}])).status,400);
+  const stale=current.revision;
+  current=await (await rpc('dev','claimTask',[child.id])).json();
+  const conflict=await demoWrite('maya',{method:'addDependency',args:['dietary',{title:'Stale follow-up'}],revision:stale});
+  assert.equal(conflict.status,409);
+  current=await (await rpc('dev','reportCompletion',[child.id,'Budget approved: $50 for guest calls.'])).json();
+  assert.match(current.state.tasks.find(t=>t.id==='dietary').comments.at(-1).text,/Budget approved: \$50/);
+  current=await (await rpc('maya','resumeTask',['dietary'])).json();
+  assert.equal(current.state.tasks.find(t=>t.id==='dietary').status,'progress');
+  assert.equal((await (await demoRead('jules')).json()).state.tasks.find(t=>t.id==='dietary').status,'progress');
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+});
+
 test('demo booking storage is isolated, organizer-only and absent from exports', async () => {
   owner();
   const originals=sqlite.prepare('SELECT * FROM private_records ORDER BY id').all();

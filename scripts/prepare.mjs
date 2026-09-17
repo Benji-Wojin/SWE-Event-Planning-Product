@@ -36,6 +36,7 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'addDependency', 'removeDependency', 'resumeTask',
   'claimTask',
   'resetDemo',
   'addTask',

@@ -63,7 +63,8 @@ function taskDialogHtml(actor,id='dietary',identity) {
     timeLabel:value=>value,relative:value=>value,completionText:()=>'',
     commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:()=>'',
   });
-  vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function taskDialog('),source.indexOf('  function newTaskDialog(')),context);
+  context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
+  vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;
 }

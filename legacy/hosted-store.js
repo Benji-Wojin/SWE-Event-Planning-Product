@@ -38,6 +38,7 @@
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'addDependency', 'removeDependency', 'resumeTask',
     'claimTask',
     ...(demo ? ['resetDemo'] : []),
     'addTask',
@@ -94,6 +95,9 @@
       },
     };
     const count = {
+      addDependency: 2,
+      removeDependency: 2,
+      resumeTask: 1,
       claimTask: 1,
       resetDemo: 1,
       addTask: 1,

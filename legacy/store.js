@@ -118,6 +118,7 @@
         list(value.drafts, (draft) => strings(draft, ["id", "taskId", "text"]) && validTime(draft.at)) && list(value.dismissed, (dismissed) => typeof dismissed === "string");
     }
     function save(notify = true) {
+      if (notify) deliverDependencyResults();
       try {
         if (!storage) throw new Error("Storage is unavailable");
         const serialized = JSON.stringify(state);
@@ -129,11 +130,23 @@
     }
     // Additive migration: preserve the existing browser workspace and source history.
     state.event = { outdoor: true, transportNeeded: true, guestCount: 120, dietaryOutstanding: 14, cateringDeadline: day(2), ...state.event };
+    const migrateDependencies = state.tasks.filter(task => !Array.isArray(task.dependencies));
     state.tasks.forEach((task) => {
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
+      task.dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
+      task.blockerFingerprint = typeof task.blockerFingerprint === 'string' ? task.blockerFingerprint : '';
     });
+    // Older plans get unambiguous links only. Loading never creates follow-up work.
+    for (const task of migrateDependencies.filter(task => task.status === 'blocked')) {
+      const specs = blockerSpecs(task);
+      for (const spec of specs) {
+        const matches = spec.match ? state.tasks.filter(other => other.id !== task.id && spec.match.test(other.title) && !dependsOn(other.id, task.id)) : [];
+        if (matches.length === 1) task.dependencies.push({ taskId: matches[0].id, reason: task.note, automatic: true, key: spec.key, createdAt: task.updatedAt, delivered: '' });
+      }
+      if (task.dependencies.length === specs.length) task.blockerFingerprint = normalize(task.note);
+    }
     state.messages.forEach((message) => {
       message.threadId ||= `thread-${message.suggested.taskId || message.id}`;
       message.sourceType ||= 'sample';
@@ -181,8 +194,9 @@
     function createTask(data, actor) {
       const fields = taskFields(data);
       const at = timestamp();
-      const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [] };
+      const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
+      if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
     function patchTask(task, patch, actor) {
@@ -198,12 +212,15 @@
       task.updatedBy = actor;
       if (task.status === "done" && previousStatus !== "done") { task.completedAt = task.updatedAt; task.completedBy = actor; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
       else if (task.status !== "done") { task.completedAt = ""; task.completedBy = ""; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
+      if (task.status === 'done' && previousStatus !== 'done') captureCompletion(task, actor);
+      else if (task.status !== 'done') task.completionResult = null;
       return changed;
     }
     function addTask(data, actor = "jack") {
       actorId(actor);
       const task = createTask(data, actor);
       entry(actor, `created ${task.title}`, task.id, "created");
+      syncBlocker(task, actor);
       save();
       return copy(task);
     }
@@ -217,13 +234,14 @@
         if (patch.status === 'done') throw new Error('Use Report complete to record your completion.');
         if (!['progress', 'blocked'].includes(patch.status) || !clean(patch.note)) throw new Error('Report progress or a blocker with a short note.');
       }
-      if (task.requiresVerification && task.status !== 'done' && patch.status === 'done' && actor !== 'jack') throw new Error('Report completion first so the organizer can verify it.');
+      if (task.requiresVerification && !task.verifiedAt && patch.status === 'done') throw new Error('This task requires a completion report and organizer verification. Open the task and use Verify completion.');
       if (patch.requiresVerification !== undefined && taskFields(patch,task).requiresVerification !== task.requiresVerification && actor !== 'jack') throw new Error('Only the organizer can change verification requirements.');
       const previousStatus = task.status;
       const supersedesReport = task.owner === actor && task.reportedAt && Object.keys(patch).every(field => ['status', 'note'].includes(field)) && ['progress', 'blocked'].includes(patch.status) && clean(patch.note);
       const changed = patchTask(task, patch, actor);
       if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
-      if (changed.length) {
+      const linked = syncBlocker(task, actor);
+      if (changed.length || linked) {
         let text = `updated ${task.title}`;
         let type = "updated";
         if (changed.includes("status")) {
@@ -347,13 +365,15 @@
         task.completionReportedBy = message.sender;
         task.completionReportSourceId = message.id;
       }
+      if (completionReport && task.status === 'done' && !task.verifiedAt) captureCompletion(task, actor, message.sender);
       message.appliedTaskId = task.id;
       if (message.suggested.signal === 'acceptance' && task.owner && normalize(message.sender) === normalize(state.members.find(item=>item.id===task.owner)?.name)) { task.acceptedAt = timestamp(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
       message.appliedAt = timestamp();
       message.appliedBy = actor;
       message.approved = {...copy(proposed),...Object.fromEntries(['title','owner','status','dueDate','note','category'].map(field=>[field,task[field]]))};
-      message.appliedRevision = task.revision;
       entry(actor, `applied ${message.sender}’s email to ${task.title}${task.status === "done" ? " and recorded it complete" : ""}`, task.id, "email-applied");
+      syncBlocker(task, actor);
+      message.appliedRevision = task.revision;
       save();
       return copy(task);
     }
@@ -381,6 +401,8 @@
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
       task.verifiedAt = ''; task.verifiedBy = '';
+      task.blockerFingerprint = '';
+      if (task.status === 'done') captureCompletion(task, actor, task.reportedBy);
       entry(actor, `reported ${task.title} complete${task.requiresVerification ? '; awaiting organizer verification' : ''}`, task.id, 'reported'); save(); return copy(task);
     }
     function verifyTask(taskId, actor = 'jack') {
@@ -390,6 +412,7 @@
       const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };
       patchTask(task, { status: 'done' }, actor); Object.assign(task, report);
       task.verifiedAt = timestamp(); task.verifiedBy = actor; task.revision++;
+      captureCompletion(task, actor, task.reportedBy);
       entry(actor, `verified completion of ${task.title}`, task.id, 'verified'); save(); return copy(task);
     }
     function recordFollowup(taskId, afterDate, actor = 'jack') {
@@ -434,6 +457,128 @@
       entry(actor,'updated a lesson’s applicability and outcome','','memory-updated'); save(); return copy(memory);
     }
     function memoryApplies(memory) { return memory.active && memory.outcome !== 'did-not-help' && (memory.scope === 'always' || memory.scope === 'outdoor' && state.event.outdoor || memory.scope === 'transport' && state.event.transportNeeded || memory.scope === 'same-venue' && memory.venue === state.event.location); }
+
+    // Dependencies are explicit task links. Detection uses only shared blocker notes,
+    // never private mail or booking details, and does not assume a follow-up owner.
+    function blockerSpecs(task) {
+      const note = normalize(task.note);
+      const rules = [
+        { key: 'dietary', test: /dietary|allerg|food restrictions/, title: 'Collect dietary restrictions', category: 'Food & drink', match: /(?:collect|gather|confirm|resolve|finali[sz]e|obtain|follow.?up).*?(?:dietary|allerg|food restrictions)/i },
+        { key: 'passengers', test: /passenger count|rider count|transport numbers/, title: 'Confirm passenger count', category: 'Transport', match: /(?:collect|confirm|finali[sz]e|gather).*?(?:passenger|rider|transport numbers)/i },
+        { key: 'budget:' + task.id, test: /budget|approv.*(?:cost|extra|fund|payment|deposit)|(?:cost|extra|fund|payment|deposit).*approv/, title: clean('Approve budget: ' + task.title, 200), category: task.category, match: null },
+      ];
+      const clauses = task.note.toLowerCase().split(/[.;\n]|\b(?:and|but|however)\b/).filter(clause =>
+        !/\b(?:no longer (?:blocked|waiting)|not (?:blocked|waiting))\b/.test(clause) &&
+        (!/\b(?:resolved|complete|completed|collected|received|confirmed|approved|done)\b/.test(clause) || /\b(?:not|pending|waiting|missing|still|need|lack|without|unconfirmed)\b/.test(clause)));
+      const matches = rules.filter(rule => clauses.some(clause => rule.test.test(clause)));
+      return matches.length ? matches : [{ key: 'custom:' + task.id + ':' + note, title: clean('Resolve blocker: ' + task.title, 200), category: task.category, match: null }];
+    }
+    function dependsOn(taskId, targetId, visited = new Set()) {
+      if (taskId === targetId) return true;
+      if (visited.has(taskId)) return false;
+      visited.add(taskId);
+      return (state.tasks.find(t => t.id === taskId)?.dependencies || []).some(link => dependsOn(link.taskId, targetId, visited));
+    }
+    function dependencyComment(task, text, actor, sourceTaskId, kind) {
+      const comment = { id: id('comment'), actor, text, at: timestamp(), sourceTaskId, kind };
+      task.comments.push(comment);
+      task.revision++;
+      entry(actor, text, task.id, kind);
+    }
+    function linkDependency(task, prerequisite, actor, automatic, key = '') {
+      if (dependsOn(prerequisite.id, task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
+      const existing = task.dependencies.find(link => link.taskId === prerequisite.id);
+      if (existing) return existing;
+      const link = { taskId: prerequisite.id, reason: task.note, automatic, key, createdAt: timestamp(), delivered: '' };
+      task.dependencies.push(link);
+      dependencyComment(task, `Waiting on “${prerequisite.title}”.`, actor, prerequisite.id, 'dependency-linked');
+      return link;
+    }
+    function syncBlocker(task, actor) {
+      if (task.status !== 'blocked') { task.blockerFingerprint = ''; return false; }
+      const fingerprint = normalize(task.note);
+      if (!fingerprint || task.blockerFingerprint === fingerprint) return false;
+      // Reuse an active prerequisite for reworded reports. Previous follow-up work
+      // stays intact when an additional blocker is reported.
+      for (const spec of blockerSpecs(task)) {
+        const current = task.dependencies.find(link => link.key === spec.key && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
+        if (!current) {
+          const matches = state.tasks.filter(t => t.id !== task.id && t.status !== 'done' && !dependsOn(t.id, task.id) &&
+            (spec.match ? spec.match.test(t.title) : t.blockerOriginKey === spec.key));
+          let prerequisite = matches.length === 1 ? matches[0] : null;
+          if (!prerequisite) {
+            prerequisite = createTask({ title: spec.title, category: spec.category, owner: '', dueDate: task.dueDate,
+              note: `Needed for “${task.title}”.\n${task.note}\n\nAdd the result when reporting complete. It will be shared with linked tasks.` }, actor);
+            prerequisite.blockerOriginKey = spec.key;
+            entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
+          }
+          linkDependency(task, prerequisite, actor, true, spec.key);
+        }
+      }
+      task.blockerFingerprint = fingerprint;
+      return true;
+    }
+    function canManageDependencies(task, actor) {
+      actorId(actor);
+      if (actor !== 'jack' && task.owner !== actor) throw new Error('Only this task’s owner or the organizer can change its blockers.');
+      if (task.status !== 'blocked') throw new Error('Report this task blocked before linking follow-up work.');
+    }
+    function addDependency(taskId, data, actor = 'jack') {
+      const task = taskById(taskId); canManageDependencies(task, actor);
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title'].includes(key))) throw new Error('Choose an existing task or enter a follow-up title.');
+      let prerequisite;
+      if (data.taskId) {
+        if (data.title) throw new Error('Choose a task or create one, not both.');
+        prerequisite = taskById(data.taskId);
+        if (dependsOn(prerequisite.id, task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
+      } else {
+        if (!clean(data.title)) throw new Error('Name the follow-up task.');
+        prerequisite = createTask({ title: data.title, category: task.category, dueDate: task.dueDate, note: `Needed for “${task.title}”.\n${task.note}\n\nShare the result when reporting complete.` }, actor);
+        entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
+      }
+      linkDependency(task, prerequisite, actor, false);
+      task.blockerFingerprint = normalize(task.note);
+      save(); return copy(prerequisite);
+    }
+    function removeDependency(taskId, prerequisiteId, actor = 'jack') {
+      const task = taskById(taskId); canManageDependencies(task, actor);
+      const link = task.dependencies.find(item => item.taskId === prerequisiteId);
+      if (!link) throw new Error('That task is no longer linked.');
+      task.dependencies = task.dependencies.filter(item => item !== link);
+      task.blockerFingerprint = normalize(task.note);
+      dependencyComment(task, `Removed blocker link to “${taskById(prerequisiteId).title}”. The follow-up task is unchanged.`, actor, prerequisiteId, 'dependency-removed');
+      save(); return copy(task);
+    }
+    function dependencyResolved(task) { return task && task.status === 'done' && (!task.requiresVerification || Boolean(task.verifiedAt)); }
+    function captureCompletion(task, actor, reporter = '') {
+      task.completionResult = { text: task.note, at: timestamp(), actor, reporter, verifiedBy: task.verifiedBy || '' };
+    }
+    function deliverDependencyResults() {
+      for (const task of state.tasks) for (const link of task.dependencies) {
+        const prerequisite = state.tasks.find(t => t.id === link.taskId);
+        if (!prerequisite) continue;
+        const actor = dependencyResolved(prerequisite) ? prerequisite.completionResult?.actor || prerequisite.completedBy || 'jack' : prerequisite.updatedBy || 'jack';
+        if (!dependencyResolved(prerequisite)) {
+          if (link.delivered && link.delivered !== 'open') dependencyComment(task, `“${prerequisite.title}” is no longer resolved. Review this dependency.`, actor, prerequisite.id, 'dependency-reopened');
+          link.delivered = 'open';
+          continue;
+        }
+        if (!prerequisite.completionResult) captureCompletion(prerequisite, actor, prerequisite.reportedBy || '');
+        const result = prerequisite.completionResult;
+        const token = JSON.stringify(result);
+        if (link.delivered === token) continue;
+        link.delivered = token;
+        dependencyComment(task, `“${prerequisite.title}” is complete.\n${result.text || 'No result was provided. Ask for details before resuming.'}\n${task.status === 'blocked' ? 'Review the result and resume when all blockers are resolved.' : 'Result shared with this task.'}`, actor, prerequisite.id, 'dependency-result');
+      }
+    }
+    function resumeTask(taskId, actor = 'jack') {
+      const task = taskById(taskId); canManageDependencies(task, actor);
+      if (!task.dependencies.length || task.dependencies.some(link => !dependencyResolved(state.tasks.find(t => t.id === link.taskId)))) throw new Error('Some linked work is still open or awaiting verification.');
+      patchTask(task, { status: 'progress', note: 'Resumed after reviewing the results from: ' + task.dependencies.map(link => taskById(link.taskId).title).join('; ') + '.' }, actor);
+      task.blockerFingerprint = '';
+      entry(actor, `reviewed the results and resumed ${task.title}`, task.id, 'dependency-resumed');
+      save(); return copy(task);
+    }
     function suggestionCandidates() {
       const rules = [
         { id: "rain", title: "Add a rain plan", body: "The venue is outdoors. Choose a backup location, an owner, and a weather decision deadline.", source: "Outdoor venue · no rain plan in tasks", category: "Venue", reason: "missing-weather-plan", match: /\brain\b|weather|wet.weather/, task: { title: "Create a rain plan and decision deadline", category: "Venue", owner: "jack", dueDate: day(7), note: "Confirm a backup location, choose when to make the weather call, and prepare a guest update." } },
@@ -476,7 +621,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, addTask, updateTask, addComment, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, addTask, updateTask, addComment, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
