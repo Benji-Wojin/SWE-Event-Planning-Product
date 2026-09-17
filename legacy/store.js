@@ -240,7 +240,11 @@
       const supersedesReport = task.owner === actor && task.reportedAt && Object.keys(patch).every(field => ['status', 'note'].includes(field)) && ['progress', 'blocked'].includes(patch.status) && clean(patch.note);
       const changed = patchTask(task, patch, actor);
       if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
-      const linked = syncBlocker(task, actor);
+      // Status/assignment edits must not turn an old context note into a blocker.
+      const blockerReport = patch.note !== undefined && (changed.includes('note') ||
+        patch.status === 'blocked' && Object.keys(patch).every(field => ['status','note'].includes(field)));
+      const linked = blockerReport ? syncBlocker(task, actor) : false;
+      if (task.status !== 'blocked') task.blockerFingerprint = '';
       if (changed.length || linked) {
         let text = `updated ${task.title}`;
         let type = "updated";
@@ -461,7 +465,6 @@
     // Dependencies are explicit task links. Detection uses only shared blocker notes,
     // never private mail or booking details, and does not assume a follow-up owner.
     function blockerSpecs(task) {
-      const note = normalize(task.note);
       const rules = [
         { key: 'dietary', test: /dietary|allerg|food restrictions/, title: 'Collect dietary restrictions', category: 'Food & drink', match: /(?:collect|gather|confirm|resolve|finali[sz]e|obtain|follow.?up).*?(?:dietary|allerg|food restrictions)/i },
         { key: 'passengers', test: /passenger count|rider count|transport numbers/, title: 'Confirm passenger count', category: 'Transport', match: /(?:collect|confirm|finali[sz]e|gather).*?(?:passenger|rider|transport numbers)/i },
@@ -471,7 +474,7 @@
         !/\b(?:no longer (?:blocked|waiting)|not (?:blocked|waiting))\b/.test(clause) &&
         (!/\b(?:resolved|complete|completed|collected|received|confirmed|approved|done)\b/.test(clause) || /\b(?:not|pending|waiting|missing|still|need|lack|without|unconfirmed)\b/.test(clause)));
       const matches = rules.filter(rule => clauses.some(clause => rule.test.test(clause)));
-      return matches.length ? matches : [{ key: 'custom:' + task.id + ':' + note, title: clean('Resolve blocker: ' + task.title, 200), category: task.category, match: null }];
+      return matches.length ? matches : [{ key: 'custom:' + task.id, title: clean('Resolve blocker: ' + task.title, 200), category: task.category, match: null }];
     }
     function dependsOn(taskId, targetId, visited = new Set()) {
       if (taskId === targetId) return true;
@@ -494,19 +497,68 @@
       dependencyComment(task, `Waiting on “${prerequisite.title}”.`, actor, prerequisite.id, 'dependency-linked');
       return link;
     }
+    function genericLink(task, link) {
+      return link.automatic && (link.key === 'custom:' + task.id || link.key?.startsWith('custom:' + task.id + ':'));
+    }
+    function unusedPlaceholder(task) {
+      const candidates = task.dependencies.filter(link => genericLink(task, link) && !link.independent).map(link => ({link, task: state.tasks.find(t => t.id === link.taskId)})).filter(({task: child}) =>
+        child && child.blockerOriginKey?.startsWith('custom:') && child.title.startsWith('Resolve blocker: ') &&
+        child.status === 'todo' && !child.owner && child.revision === (child.blockerAutoRevision || 1) &&
+        !child.comments.length && !child.dependencies.length && !child.acceptedAt && !child.reportedAt && !child.completedAt && !child.completionResult &&
+        !child.requiresVerification && !child.followupAfter && !child.sourceMessageId && !child.memoryId && !child.suggestionId &&
+        !state.drafts.some(draft => draft.taskId === child.id) &&
+        !state.messages.some(message => [message.linkedTaskId,message.appliedTaskId,message.suggested?.taskId].includes(child.id)) &&
+        state.tasks.filter(parent => parent.dependencies.some(link => link.taskId === child.id)).length === 1);
+      return candidates.length === 1 ? candidates[0] : null;
+    }
+    function refinePlaceholder(parent, placeholder, spec, actor, automatic = true) {
+      const child = placeholder.task, link = placeholder.link, previousTitle = child.title;
+      const previousReason = link.reason;
+      patchTask(child, { title: spec.title, category: spec.category || parent.category,
+        note: `Needed for “${parent.title}”.\n${parent.note}\n\nAdd the result when reporting complete. It will be shared with linked tasks.` }, actor);
+      child.blockerOriginKey = spec.key;
+      child.blockerAutoRevision = child.revision;
+      Object.assign(link, {key: spec.key, reason: parent.note, automatic});
+      dependencyComment(parent, `Updated follow-up “${previousTitle}” to “${child.title}”.${previousReason !== parent.note ? '\nPrevious blocker: ' + previousReason : ''}`, actor, child.id, 'dependency-refined');
+      return child;
+    }
+    function mergePlaceholder(parent, placeholder, target, actor) {
+      // Keep the entire unused placeholder in the export/audit history. Never
+      // discard a claimed, edited, shared or otherwise used task.
+      state.retiredBlockerTasks ||= [];
+      state.retiredBlockerTasks.push({...copy(placeholder.task), mergedInto: target.id, retiredAt: timestamp(), retiredBy: actor});
+      state.tasks = state.tasks.filter(task => task.id !== placeholder.task.id);
+      parent.dependencies = parent.dependencies.filter(link => link !== placeholder.link);
+      dependencyComment(parent, `Merged unused follow-up “${placeholder.task.title}” into “${target.title}”. Original retained in the plan export.`, actor, target.id, 'dependency-merged');
+    }
     function syncBlocker(task, actor) {
       if (task.status !== 'blocked') { task.blockerFingerprint = ''; return false; }
       const fingerprint = normalize(task.note);
       if (!fingerprint || task.blockerFingerprint === fingerprint) return false;
-      // Reuse an active prerequisite for reworded reports. Previous follow-up work
-      // stays intact when an additional blocker is reported.
+      let placeholder = /\b(?:also|another|additional|separate)\b/i.test(task.note) ? null : unusedPlaceholder(task);
+      // A generic follow-up is one placeholder, not a new task for every wording.
       for (const spec of blockerSpecs(task)) {
-        const current = task.dependencies.find(link => link.key === spec.key && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
+        const generic = spec.key.startsWith('custom:');
+        const current = task.dependencies.find(link => (link.key === spec.key || generic && (genericLink(task,link) || !link.automatic)) && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
+        if (current && placeholder && current === placeholder.link && generic) {
+          refinePlaceholder(task, placeholder, spec, actor);
+          placeholder = null;
+        } else if (current && placeholder && !generic) {
+          mergePlaceholder(task, placeholder, taskById(current.taskId), actor);
+          placeholder = null;
+        }
         if (!current) {
           const matches = state.tasks.filter(t => t.id !== task.id && t.status !== 'done' && !dependsOn(t.id, task.id) &&
+            !t.blockerOriginKey?.startsWith('custom:') &&
             (spec.match ? spec.match.test(t.title) : t.blockerOriginKey === spec.key));
           let prerequisite = matches.length === 1 ? matches[0] : null;
-          if (!prerequisite) {
+          if (prerequisite && placeholder) {
+            mergePlaceholder(task, placeholder, prerequisite, actor);
+            placeholder = null;
+          } else if (!prerequisite && placeholder) {
+            prerequisite = refinePlaceholder(task, placeholder, spec, actor);
+            placeholder = null;
+          } else if (!prerequisite) {
             prerequisite = createTask({ title: spec.title, category: spec.category, owner: '', dueDate: task.dueDate,
               note: `Needed for “${task.title}”.\n${task.note}\n\nAdd the result when reporting complete. It will be shared with linked tasks.` }, actor);
             prerequisite.blockerOriginKey = spec.key;
@@ -525,18 +577,31 @@
     }
     function addDependency(taskId, data, actor = 'jack') {
       const task = taskById(taskId); canManageDependencies(task, actor);
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title'].includes(key))) throw new Error('Choose an existing task or enter a follow-up title.');
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title','additional'].includes(key)) || data.additional !== undefined && typeof data.additional !== 'boolean') throw new Error('Choose an existing task or enter a follow-up title.');
+      const placeholder = data.additional ? null : unusedPlaceholder(task);
       let prerequisite;
       if (data.taskId) {
         if (data.title) throw new Error('Choose a task or create one, not both.');
         prerequisite = taskById(data.taskId);
         if (dependsOn(prerequisite.id, task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
+        if (placeholder && placeholder.task.id !== prerequisite.id) mergePlaceholder(task, placeholder, prerequisite, actor);
       } else {
         if (!clean(data.title)) throw new Error('Name the follow-up task.');
-        prerequisite = createTask({ title: data.title, category: task.category, dueDate: task.dueDate, note: `Needed for “${task.title}”.\n${task.note}\n\nShare the result when reporting complete.` }, actor);
-        entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
+        prerequisite = state.tasks.find(child => task.dependencies.some(link => link.taskId === child.id) && normalize(child.title) === normalize(data.title) && child.status !== 'done');
+        if (prerequisite && placeholder && placeholder.task.id !== prerequisite.id && !data.additional) mergePlaceholder(task, placeholder, prerequisite, actor);
+        if (!prerequisite && placeholder) prerequisite = refinePlaceholder(task, placeholder, {title: data.title, key: blockerSpecs({...task,note:clean(data.title)})[0].key}, actor, false);
+        if (!prerequisite) {
+          prerequisite = createTask({ title: data.title, category: task.category, dueDate: task.dueDate, note: `Needed for “${task.title}”.\n${task.note}\n\nShare the result when reporting complete.` }, actor);
+          entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
+        }
       }
-      linkDependency(task, prerequisite, actor, false);
+      linkDependency(task, prerequisite, actor, false, blockerSpecs({...task,note:prerequisite.title})[0].key);
+      if (data.additional) {
+        for (const link of task.dependencies.filter(link => genericLink(task,link) && !link.independent)) {
+          link.independent = true;
+          task.revision++;
+        }
+      }
       task.blockerFingerprint = normalize(task.note);
       save(); return copy(prerequisite);
     }

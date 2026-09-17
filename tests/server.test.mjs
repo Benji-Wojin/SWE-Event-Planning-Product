@@ -561,6 +561,31 @@ test('dependency RPC is owner-scoped, revision-safe, persistent and isolated fro
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
 });
 
+test('demo blocker naming reuses one task and cannot overwrite a concurrent claim', async () => {
+  owner();
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  let current=await (await demoRead()).json();
+  const rpc=async(actor,method,args)=>{
+    const response=await demoWrite(actor,{method,args,revision:current.revision});
+    assert.equal(response.status,200,await response.clone().text());
+    current=await response.json(); return current.result;
+  };
+  const parent=await rpc('jack','addTask',[{title:'Inspect stage',owner:'dev',status:'blocked',note:'Need an inspection.'}]);
+  const id=parent.dependencies[0].taskId;
+  const named=await rpc('dev','addDependency',[parent.id,{title:'Inspect the stage supports'}]);
+  assert.equal(named.id,id);
+  assert.equal(current.state.tasks.find(t=>t.id===parent.id).dependencies.length,1);
+  const other=await rpc('jack','addTask',[{title:'Arrange lights',owner:'dev',status:'blocked',note:'Need help.'}]);
+  const followup=other.dependencies[0].taskId, stale=current.revision;
+  await rpc('jules','claimTask',[followup]);
+  const response=await demoWrite('dev',{method:'addDependency',args:[other.id,{title:'Inspect the fuse box'}],revision:stale});
+  assert.equal(response.status,409);
+  const reloaded=await (await demoRead('dev')).json();
+  assert.equal(reloaded.state.tasks.find(t=>t.id===followup).owner,'jules');
+  assert.equal(reloaded.state.tasks.find(t=>t.id===other.id).dependencies.length,1);
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+});
+
 test('demo booking storage is isolated, organizer-only and absent from exports', async () => {
   owner();
   const originals=sqlite.prepare('SELECT * FROM private_records ORDER BY id').all();
