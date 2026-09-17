@@ -492,3 +492,86 @@ test('stale demo tabs cannot overwrite newer updates and restart only resets the
   assert.ok(!JSON.stringify(reset).includes('Newest update'));
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
 });
+
+test('full demo uses the real workspace contract and atomically arbitrates task claims', async () => {
+  owner();
+  const before=await (await demoRead('maya')).json();
+  assert.equal(before.identity.role,'member');
+  assert.equal(before.identity.actorId,'maya');
+  assert.deepEqual(before.state.tasks,before.tasks);
+  assert.ok(Array.isArray(before.suggestions)&&Array.isArray(before.state.messages)&&Array.isArray(before.state.memories));
+  const payload={method:'claimTask',args:['wayfinding'],revision:before.revision};
+  const results=await Promise.all(['maya','dev'].map(actor=>demoWrite(actor,payload)));
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+  const winner=await results.find(r=>r.status===200).json();
+  const task=winner.state.tasks.find(t=>t.id==='wayfinding');
+  assert.equal(task.owner,task.acceptedBy);
+  assert.equal(winner.result.id,'wayfinding');
+  assert.equal(winner.state.activity.filter(a=>a.type==='claimed'&&a.taskId===task.id).length,1);
+  for(const actor of ['jack','maya','jules','dev'])assert.equal((await (await demoRead(actor)).json()).state.tasks.find(t=>t.id===task.id).owner,task.owner);
+  assert.equal((await demoWrite('jules',{...payload,revision:winner.revision})).status,400);
+});
+
+test('full demo organizer actions work and cannot mutate live data; teammate RPC is constrained', async () => {
+  owner();
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  let current=await (await demoRead()).json();
+  const rpc=async(method,args)=>{
+    const res=await demoWrite('jack',{method,args,revision:current.revision});
+    assert.equal(res.status,200,await res.clone().text());current=await res.json();return current.result;
+  };
+  const task=await rpc('addTask',[{title:'Demo-only task',owner:'',note:'Sample work'}]);
+  await rpc('updateTask',[task.id,{title:'Demo-only renamed task',dueDate:'2027-02-01'}]);
+  await rpc('addMemory',[{change:'Provide maps before arrival',wentWell:'Shared updates',rating:4}]);
+  await rpc('updateEvent',[{guestCount:150}]);
+  const message=await rpc('addMessage',[{sender:'Sample vendor',subject:'Signage update',body:'Signs are ready for review.',taskId:task.id}]);
+  await rpc('applyMessage',[message.id,{}]);
+  assert.equal(current.state.event.guestCount,150);
+  assert.ok(current.state.messages.some(m=>m.id===message.id&&m.appliedTaskId));
+  for(const [method,args] of [['addTask',[{title:'Forbidden'}]],['updateTask',['dietary',{owner:'maya'}]],['updateEvent',[{guestCount:1}]],['applyMessage',[message.id,{}]],['verifyTask',['bus']],['resetDemo',[true]]])
+    assert.equal((await demoWrite('maya',{method,args,revision:current.revision})).status,403,method);
+  assert.equal((await demoWrite('maya',{method:'claimTask',args:[task.id,'jack'],revision:current.revision})).status,400);
+  assert.equal((await demoWrite('maya',{method:'claimTask',args:[task.id],revision:current.revision,workspaceId:'main'})).status,400);
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+});
+
+test('demo booking storage is isolated, organizer-only and absent from exports', async () => {
+  owner();
+  const originals=sqlite.prepare('SELECT * FROM private_records ORDER BY id').all();
+  const gmail=sqlite.prepare('SELECT * FROM gmail_connections ORDER BY user_id').all();
+  const url='/api/demo?as=jack&resource=private&action=records';
+  const response=await demoApi.GET(new Request('https://gather.example'+url));
+  assert.equal(response.status,200);
+  const {records,revision}=await response.json();
+  assert.equal(records.length,2);
+  const data={...records[0],reference:'DEMO-CHANGED',revision};
+  assert.equal((await demoApi.POST(request(url,data))).status,200);
+  assert.equal((await (await demoApi.GET(new Request('https://gather.example'+url))).json()).records[0].reference,'DEMO-CHANGED');
+  for(const actor of ['maya','jules','dev']){
+    const path=url.replace('as=jack','as='+actor);
+    assert.equal((await demoApi.GET(new Request('https://gather.example'+path))).status,403);
+    assert.equal((await demoApi.POST(request(path,data))).status,403);
+    assert.ok(!(await (await demoRead(actor)).text()).includes('DEMO-CHANGED'));
+  }
+  const shared=await (await demoRead()).json();
+  assert.ok(!JSON.stringify(shared.exportState).includes('DEMO-'));
+  assert.ok(!sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('demo-bookings:owner-1').data.includes('DEMO-CHANGED'));
+  assert.deepEqual(sqlite.prepare('SELECT * FROM private_records ORDER BY id').all(),originals);
+  assert.deepEqual(sqlite.prepare('SELECT * FROM gmail_connections ORDER BY user_id').all(),gmail);
+  assert.equal((await demoWrite('jack',{method:'resetDemo',args:[true],revision:shared.revision})).status,200);
+  assert.equal((await (await demoApi.GET(new Request('https://gather.example'+url))).json()).records[0].reference,'DEMO-FLIGHT-24');
+  assert.equal((await demoApi.POST(request(url,data))).status,409,'Old forms cannot resurrect pre-reset bookings');
+  const fresh=await (await demoApi.GET(new Request('https://gather.example'+url))).json();
+  const concurrent=await Promise.all(['one','two'].map(title=>demoApi.POST(request(url,{title,type:'Hotel',reference:'DEMO-'+title,revision:fresh.revision}))));
+  assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
+});
+
+test('real workspace claims use authenticated actor, not a submitted persona',async()=>{
+  owner();
+  const before=await(await workspace.GET()).json();
+  const data={method:'claimTask',args:['wayfinding'],revision:before.revision};
+  const res=await workspace.POST(request('/api/workspace',data));
+  assert.equal(res.status,200);
+  assert.equal((await res.json()).result.acceptedBy,'jack');
+  assert.equal((await workspace.POST(request('/api/workspace',data))).status,409);
+});

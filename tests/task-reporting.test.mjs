@@ -93,4 +93,22 @@ test('task dialog leads with context and reporting, with editor hidden from team
   assert.match(jack,/<details class="task-organizer section-gap"><summary>Edit task details/);
   assert.ok(jack.indexOf('id="commentForm"') < jack.indexOf('id="taskDetailForm"'));
   assert.doesNotMatch(taskDialogHtml('jack','dietary',{role:'member'}),/taskDetailForm/);
+  assert.match(taskDialogHtml('maya','wayfinding'), /data-action="claim"[^>]*>Claim task/);
+  assert.doesNotMatch(maya, /data-action="claim"/);
+});
+
+test('claiming assigns and accepts once without altering task details or stealing assigned work', () => {
+  const store=create(), before=store.getState().tasks.find(t=>t.id==='wayfinding');
+  const claimed=store.claimTask('wayfinding','maya');
+  assert.equal(claimed.owner,'maya');
+  assert.equal(claimed.acceptedBy,'maya');
+  assert.ok(claimed.acceptedAt);
+  assert.equal(claimed.revision,before.revision+1);
+  for(const key of ['title','dueDate','category','status','note'])assert.equal(claimed[key],before[key]);
+  const saved=store.exportState();
+  for(const actor of ['maya','dev'])assert.throws(()=>store.claimTask('wayfinding',actor),/already has an owner/);
+  assert.equal(store.exportState(),saved);
+  assert.equal(store.getState().activity.filter(a=>a.type==='claimed'&&a.taskId==='wayfinding').length,1);
+  const done=store.addTask({title:'Finished unassigned task',status:'done'});
+  assert.throws(()=>store.claimTask(done.id,'maya'),/Completed tasks/);
 });

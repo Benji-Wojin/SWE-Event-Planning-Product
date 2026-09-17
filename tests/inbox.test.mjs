@@ -72,7 +72,7 @@ test('reader exposes field comparison, preserves selected history, and escapes e
   const store = create();
   const message = add(store, 'bus', { body: '<img src=x onerror=alert(1)> Waiting for approval.' });
   const escape = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const context = vm.createContext({ GatherInbox, store, ui: { messageId: message.id }, h: escape, icon: () => '', pageHeading: () => '', pending: s => s.messages.filter(m => !m.appliedTaskId && !m.ignoredAt), empty: () => '', statusBadge: v => v, member: id => ({ name: id || 'Unassigned' }), dayLabel: x => x || 'No due date', timeLabel: x => x, statuses: { blocked: 'Blocked', progress: 'In progress', done: 'Done', todo: 'To do' }, options: () => '', ownerOptions: () => '', statusOptions: () => '' });
+  const context = vm.createContext({ GatherInbox, store, window: {}, isOrganizer: () => true, ui: { messageId: message.id }, h: escape, icon: () => '', pageHeading: () => '', pending: s => s.messages.filter(m => !m.appliedTaskId && !m.ignoredAt), empty: () => '', statusBadge: v => v, member: id => ({ name: id || 'Unassigned' }), dayLabel: x => x || 'No due date', timeLabel: x => x, statuses: { blocked: 'Blocked', progress: 'In progress', done: 'Done', todo: 'To do' }, options: () => '', ownerOptions: () => '', statusOptions: () => '' });
   vm.runInContext(readFileSync('legacy/inbox-view.js','utf8'),context);
   let html = context.inboxView(store.getState());
   assert.match(html, /BEFORE YOU ACCEPT/);

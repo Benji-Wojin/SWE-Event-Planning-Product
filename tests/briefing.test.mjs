@@ -70,7 +70,7 @@ test('the selected source determines the briefing; older and stale proposals sta
 test('briefing feed starts with summaries, keeps raw sources collapsed, and reviews one exact email',()=>{
   const store=create(),m=add(store,'<img src=x onerror=alert(1)> Deposit is pending.');
   const h=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const context=vm.createContext({GatherInbox,store,ui:{messageId:''},h,icon:()=>'',pageHeading:(_e,t)=>t,empty:()=>'',member:id=>({name:id}),dayLabel:x=>x,timeLabel:x=>x,statuses:{blocked:'Blocked',progress:'In progress',done:'Done',todo:'To do'},options:()=>'',ownerOptions:()=>'',statusOptions:()=>''});
+  const context=vm.createContext({GatherInbox,store,window:{},isOrganizer:()=>true,ui:{messageId:''},h,icon:()=>'',pageHeading:(_e,t)=>t,empty:()=>'',member:id=>({name:id}),dayLabel:x=>x,timeLabel:x=>x,statuses:{blocked:'Blocked',progress:'In progress',done:'Done',todo:'To do'},options:()=>'',ownerOptions:()=>'',statusOptions:()=>''});
   vm.runInContext(readFileSync('legacy/inbox-view.js','utf8'),context);
   let html=context.inboxView(store.getState());
   assert.match(html,/Email briefing/);
@@ -85,4 +85,10 @@ test('briefing feed starts with summaries, keeps raw sources collapsed, and revi
   assert.match(html,/BEFORE YOU ACCEPT/);
   assert.match(html,/After accepting/);
   assert.equal((html.match(/id="emailReviewForm"/g)||[]).length,1);
+  context.window.GatherMode={demo:true};
+  assert.doesNotMatch(context.inboxView(store.getState()),/href="\/(?:mail|settings)"/);
+  context.isOrganizer=()=>false;
+  html=context.inboxView(store.getState());
+  assert.match(html,/Only the organizer can accept/);
+  assert.doesNotMatch(html,/id="emailReviewForm"|data-action="sample-reply"|data-action="paste-email"/);
 });

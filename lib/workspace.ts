@@ -69,6 +69,7 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  claimTask: 1,
   addTask: 1,
   updateTask: 2,
   addComment: 2,
@@ -87,16 +88,7 @@ const arity: Record<string, number> = {
   acceptSuggestion: 1,
   dismissSuggestion: 1,
 };
-export async function mutateWorkspace(
-  user: Awaited<ReturnType<typeof principal>>,
-  input: any,
-) {
-  const { row, store } = await loadWorkspace(user);
-  if (input.revision !== row.revision)
-    throw new HttpError(
-      409,
-      'The plan changed in another tab. Reload this page, review the latest plan, and retry.',
-    );
+export function applyWorkspaceAction(store: any, user: { actorId: string; role: string }, input: any) {
   const method = String(input.method);
   if (
     !Object.hasOwn(arity, method) ||
@@ -104,15 +96,26 @@ export async function mutateWorkspace(
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin')
+  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment'].includes(method))
     throw new HttpError(
       403,
-      'Only the organizer can modify this private pilot.',
+      'Only the organizer can make this change.',
     );
   const [a, b] = input.args;
+  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask'].includes(method)) {
+    const task = store.getState().tasks.find((task: any) => task.id === a);
+    if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
+    if (method === 'updateTask' && (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some(key => !['status', 'note'].includes(key))))
+      throw new HttpError(403, 'Only the organizer can edit task details.');
+    if (method === 'updateTask' && (task.status === 'done' || !['progress', 'blocked'].includes(b.status) || !String(b.note || '').trim()))
+      throw new HttpError(400, 'Report progress or a blocker on an open task with a short note.');
+  }
   let result;
   try {
     switch (method) {
+      case 'claimTask':
+        result = store.claimTask(a, user.actorId);
+        break;
       case 'addTask':
         result = store.addTask(a, user.actorId);
         break;
@@ -171,6 +174,18 @@ export async function mutateWorkspace(
       e instanceof Error ? e.message : 'Check this update.',
     );
   }
+  return result;
+}
+export async function mutateWorkspace(
+  user: Awaited<ReturnType<typeof principal>>,
+  input: any,
+) {
+  const { row, store } = await loadWorkspace(user);
+  if (Object.keys(input).some(key => !['method', 'args', 'revision'].includes(key)))
+    throw new HttpError(400, 'Unsupported workspace request field.');
+  if (input.revision !== row.revision)
+    throw new HttpError(409, 'The plan changed in another tab. Reload this page, review the latest plan, and retry.');
+  const result = applyWorkspaceAction(store, user, input);
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(
