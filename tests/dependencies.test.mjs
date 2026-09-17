@@ -138,3 +138,93 @@ test('generic blockers remain distinct and completed results are immutable on or
   assert.throws(()=>store.updateTask('volunteers',{status:'done'}),/verification/);
   assert.equal(store.exportState(),before);
 });
+
+test('naming a generic follow-up refines the same task; rewording, reload and retries do not duplicate it', () => {
+  const store=create();
+  const parent=store.addTask({title:'Install lighting',owner:'dev'});
+  store.updateTask(parent.id,{status:'blocked',note:'We need an inspection.'},'dev');
+  const followupId=task(store,parent.id).dependencies[0].taskId;
+  const count=store.getState().tasks.length;
+  store.updateTask(parent.id,{status:'blocked',note:'We need an inspection of the fuse box.'},'dev');
+  assert.equal(store.getState().tasks.length,count);
+  assert.equal(task(store,parent.id).dependencies[0].taskId,followupId);
+  assert.match(task(store,followupId).note,/fuse box/);
+  const named=store.addDependency(parent.id,{title:'Inspect the fuse box'},'dev');
+  assert.equal(named.id,followupId);
+  assert.equal(named.title,'Inspect the fuse box');
+  assert.equal(task(store,parent.id).dependencies.length,1);
+  let raw=store.exportState();
+  const reloaded=GatherStore.createStore({storage:{getItem:k=>k===GatherStore.STORAGE_KEY?raw:null,setItem:(_k,value)=>{raw=value;}}});
+  reloaded.addDependency(parent.id,{title:'Inspect the fuse box'},'dev');
+  reloaded.updateTask(parent.id,{status:'blocked',note:'Still waiting for the fuse box inspection.'},'dev');
+  assert.equal(reloaded.getState().tasks.length,count);
+  assert.equal(task(reloaded,parent.id).dependencies.length,1);
+});
+
+test('a clarified blocker specializes its placeholder or merges it into existing work with recoverable history', () => {
+  const store=create();
+  const parent=store.addTask({title:'Approve evening meal',owner:'dev',status:'blocked',note:'Need help.'});
+  const generic=task(store,parent.dependencies[0].taskId);
+  store.updateTask(parent.id,{status:'blocked',note:'Waiting for budget approval.'},'dev');
+  assert.equal(task(store,parent.id).dependencies.length,1);
+  assert.equal(task(store,parent.id).dependencies[0].taskId,generic.id);
+  assert.match(task(store,generic.id).title,/Approve budget/);
+  const other=store.addTask({title:'Approve lunch menu',owner:'dev',status:'blocked',note:'Need help.'});
+  const old=task(store,other.dependencies[0].taskId);
+  store.updateTask(other.id,{status:'blocked',note:'Waiting for dietary restrictions.'},'dev');
+  assert.deepEqual(task(store,other.id).dependencies.map(d=>d.taskId),['dietary']);
+  assert.equal(task(store,old.id),undefined);
+  const retired=JSON.parse(store.exportState()).retiredBlockerTasks.find(t=>t.id===old.id);
+  assert.equal(retired.note,old.note);
+  assert.equal(retired.mergedInto,'dietary');
+  assert.equal(task(store,'dietary').owner,'maya');
+});
+
+test('status-only and unrelated organizer edits do not create tasks from stale context', () => {
+  const store=create();
+  const parent=store.addTask({title:'Confirm lunch',owner:'dev',note:'Review options.'});
+  const count=store.getState().tasks.length;
+  store.updateTask(parent.id,{status:'blocked'});
+  store.updateTask(parent.id,{dueDate:'2027-04-01'});
+  store.updateTask(parent.id,{title:'Confirm lunch',owner:'dev',status:'blocked',note:'Review options.'});
+  assert.equal(store.getState().tasks.length,count);
+  assert.equal(task(store,parent.id).dependencies.length,0);
+  store.updateTask(parent.id,{status:'blocked',note:'Waiting for dietary restrictions.'},'dev');
+  assert.deepEqual(task(store,parent.id).dependencies.map(d=>d.taskId),['dietary']);
+});
+
+test('claimed, edited and shared work is not repurposed; explicitly additional blockers stay separate', () => {
+  for (const protect of ['claim','edit','comment','shared','additional']) {
+    const store=create();
+    const parent=store.addTask({title:'Set up lights',owner:'dev',status:'blocked',note:'Need an inspection.'});
+    const id=parent.dependencies[0].taskId;
+    if(protect==='claim')store.claimTask(id,'jules');
+    if(protect==='edit')store.updateTask(id,{note:'Electrician booked for 9 AM.'});
+    if(protect==='comment')store.addComment(id,'Call Sam first.','maya');
+    if(protect==='shared')store.addDependency('catering',{taskId:id,additional:true},'maya');
+    const before=task(store,id);
+    const result=store.addDependency(parent.id,{title:'Check the circuit breaker',additional:protect==='additional'},'dev');
+    assert.notEqual(result.id,id,protect);
+    assert.deepEqual(task(store,id),before,protect);
+    assert.equal(task(store,parent.id).dependencies.length,2,protect);
+  }
+});
+
+test('named blockers remain reusable after inference, parent renames and later separate-blocker reports', () => {
+  const store=create();
+  const parent=store.addTask({title:'Book venue',owner:'dev',status:'blocked',note:'Need help.'});
+  const id=parent.dependencies[0].taskId;
+  store.updateTask(parent.id,{title:'Book event venue'});
+  const named=store.addDependency(parent.id,{title:'Approve budget'},'dev');
+  assert.equal(named.id,id);
+  store.updateTask(parent.id,{status:'blocked',note:'Waiting for budget approval.'},'dev');
+  assert.equal(task(store,parent.id).dependencies.length,1);
+  const other=store.addTask({title:'Install lights',owner:'dev',status:'blocked',note:'Need an electrician.'});
+  const electrical=other.dependencies[0].taskId;
+  store.addDependency(other.id,{taskId:'dietary',additional:true},'dev');
+  store.updateTask(other.id,{status:'blocked',note:'Waiting for dietary needs.'},'dev');
+  assert.equal(task(store,other.id).dependencies.length,2);
+  assert.ok(task(store,electrical));
+  store.reportCompletion('dietary','Dietary list is shared.','maya');
+  assert.throws(()=>store.resumeTask(other.id,'dev'),/still open/);
+});
