@@ -3,8 +3,8 @@
     const active=groups.find(g=>g.messages.some(m=>m.id===ui.messageId))||groups.find(g=>g.key===ui.conversationKey);
     const selected=active?.messages.find(m=>m.id===ui.messageId)||active?.pending[0]||active?.latest;
     ui.messageId=selected?.id||'';ui.conversationKey=active?.key||'';
-    return pageHeading('','Email briefing','',`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Add email</button>`)+`
-      <div class="briefing-tools"><span>${groups.filter(g=>g.pending.length).length} tasks need review</span><button class="text-button" data-action="refresh-inbox">Refresh</button><details><summary>Sources & setup</summary><div class="inline"><a class="text-button" href="/mail" target="_top">Private Gmail imports</a><button class="text-button" data-action="sample-reply" data-step="pending">Sample: deposit pending</button><button class="text-button" data-action="sample-reply" data-step="confirmed">Sample: booking confirmed</button></div></details></div>
+    return pageHeading('','Email briefing','',isOrganizer()?`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Add email</button>`:'')+`
+      <div class="briefing-tools"><span>${groups.filter(g=>g.pending.length).length} tasks need review</span><button class="text-button" data-action="refresh-inbox">Refresh</button>${isOrganizer()?`<details><summary>Sources & setup</summary><div class="inline">${window.GatherMode?.demo?'<button class="text-button" data-action="demo-email">Demo email setup</button>':'<a class="text-button" href="/mail" target="_top">Private Gmail imports</a>'}<button class="text-button" data-action="sample-reply" data-step="pending">Sample: deposit pending</button><button class="text-button" data-action="sample-reply" data-step="confirmed">Sample: booking confirmed</button></div></details>`:''}</div>
       <div id="inboxSyncNotice" class="notice" role="status" hidden></div>
       <div class="briefing-feed section-gap">${groups.map(g=>{
         const expanded=g.key===active?.key,b=GatherInbox.briefing(g,s,expanded?selected:undefined),m=b.message;
@@ -42,6 +42,7 @@
     const p=m.suggested||{},current=p.mode==='update'?s.tasks.find(t=>t.id===p.taskId):null;
     const stale=GatherInbox.analysisOutdated(m)||(current&&p.baseRevision!==current.revision);
     const older=current&&s.messages.some(item=>item.appliedTaskId===current.id&&item.receivedAt>m.receivedAt);
+    if(!isOrganizer())return `<div class="review-card">${changePreview(m,s)}<p class="notice">Only the organizer can accept email suggestions. You can report progress or comment on the linked task.</p></div>`;
     return `<form class="proposal-form" id="emailReviewForm" data-id="${h(m.id)}"><div id="changePreview" aria-live="polite">${changePreview(m,s)}</div>
       <div class="proposal-explanation"><strong>Reason</strong><p>${h(p.reason||'Check these changes against the email.')}</p></div>
       ${stale?'<div class="warning-note stale-proposal">The task changed since this suggestion. Refresh the comparison before accepting.</div>':''}
@@ -73,12 +74,13 @@
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
   async function refreshInbox(manual=false) {
-    if(!store.refresh||ui.syncing||document.hidden||ui.view!=='inbox')return;
+    if(!store.refresh||ui.syncing||document.hidden||ui.view==='details')return;
     ui.syncing=true;
     try {
-      const result=await store.refresh(()=>ui.view==='inbox'&&!ui.reviewDirty&&$('#dialogBackdrop').hidden&&!ui.savingProposal);
+      const result=await store.refresh(()=>!ui.reviewDirty&&$('#dialogBackdrop').hidden&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
       if(result.changed){render();if(manual)toast('Conversation history updated.');}
-      else if(result.pending){const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
+      const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!result.pending;
+      if(result.pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
       else if(manual)toast('You have the latest conversation history.');
     } catch(error) {if(manual)toast(error.message);}
     finally {ui.syncing=false;}
@@ -87,6 +89,7 @@
   let privateOriginalEpoch=0;
   function clearPrivateOriginal(){privateOriginalEpoch++;const panel=$('#privateOriginal');if(panel){panel.replaceChildren();panel.hidden=true;}}
   async function showPrivateOriginal(id){
+    if(window.GatherMode?.demo){toast('Demo emails have no private Gmail originals.');return;}
     const panel=$('#privateOriginal');if(!panel)return;
     if(!panel.hidden){clearPrivateOriginal();return;}
     const ticket=++privateOriginalEpoch;panel.hidden=false;panel.textContent='Loading private original…';

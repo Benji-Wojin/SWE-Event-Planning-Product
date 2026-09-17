@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { bookingRecord } from '@/lib/bookings';
 import {
   administrator,
   body,
@@ -35,37 +36,7 @@ export async function POST(request: Request) {
     const action = new URL(request.url).pathname.split('/').pop();
     if (action === 'lock') return json({ hidden: true });
     if (action !== 'records') throw new HttpError(404, 'Not found.');
-    const text = (key: string, max: number) =>
-      String(data[key] ?? '')
-        .trim()
-        .slice(0, max);
-    const record = {
-      id: text('id', 100) || crypto.randomUUID(),
-      title: text('title', 160),
-      type: text('type', 30),
-      provider: text('provider', 160),
-      traveler: text('traveler', 160),
-      date: text('date', 10),
-      reference: text('reference', 160),
-      details: text('details', 2000),
-      taskId: text('taskId', 100),
-    };
-    if (
-      !record.title ||
-      !record.reference ||
-      !['Flight', 'Hotel', 'Transport', 'Venue', 'Other'].includes(record.type)
-    )
-      throw new HttpError(
-        400,
-        'Add a title, booking type, and confirmation reference.',
-      );
-    if (
-      record.date &&
-      (!/^\d{4}-\d{2}-\d{2}$/.test(record.date) ||
-        Number.isNaN(Date.parse(record.date)) ||
-        new Date(record.date).toISOString().slice(0, 10) !== record.date)
-    )
-      throw new HttpError(400, 'Choose a valid booking date.');
+    const record = bookingRecord(data);
     if (
       data.id &&
       !(await env.DB.prepare('SELECT id FROM private_records WHERE id=?')

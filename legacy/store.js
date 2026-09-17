@@ -357,6 +357,16 @@
       save();
       return copy(task);
     }
+    function claimTask(taskId, actor = 'jack') {
+      actorId(actor); const task = taskById(taskId);
+      if (task.owner) throw new Error('This task already has an owner. Refresh to see who claimed it.');
+      if (task.status === 'done') throw new Error('Completed tasks cannot be claimed.');
+      patchTask(task, { owner: actor }, actor);
+      task.acceptedAt = timestamp(); task.acceptedBy = actor;
+      task.acceptedSourceId = ''; task.acceptedRecordedBy = '';
+      entry(actor, `claimed ${task.title}`, task.id, 'claimed');
+      save(); return copy(task);
+    }
     function acceptTask(taskId, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       if (task.owner !== actor) throw new Error('Only the assigned owner can accept this commitment.');
@@ -466,7 +476,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, addTask, updateTask, addComment, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, addTask, updateTask, addComment, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

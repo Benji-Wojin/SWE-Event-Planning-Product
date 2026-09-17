@@ -59,14 +59,14 @@
   const latestUpdate = task => {const last=task.comments.at(-1);return last&&last.at===task.updatedAt?last.text:task.note;};
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
-  const addButton = `<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`;
+  const addButton = isOrganizer()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
 
   function taskRow(task) {
     const done = task.status==='done';
     return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
-      <td><button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button><div class="commitment-note">${h(commitment(task))}</div></td>
+      <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}</td><td>${due(task)}</td>
       <td><div class="task-meta">${h(member(task.updatedBy).name.split(' ')[0])} · ${relative(task.updatedAt)}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
       <td><button class="icon-button" data-action="task" data-id="${h(task.id)}" aria-label="Open ${h(task.title)}">${icon('arrow')}</button></td></tr>`;
@@ -93,7 +93,7 @@
       </section>
       <div class="workspace-grid"><div class="stack">
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
-          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'task':'followup'}" data-id="${h(t.id)}">${!t.owner?'Assign owner':'Draft follow-up'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
+          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':isOrganizer()?'followup':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':isOrganizer()?'Draft follow-up':'Open task'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
@@ -104,7 +104,7 @@
   }
 
   function filteredTasks(s) {
-    return s.tasks.filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return s.tasks.filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
@@ -112,7 +112,7 @@
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',addButton)+`
-      <section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div><label class="search-input">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Find a task or person…" aria-label="Search tasks"></label></div>
+      <section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div><label class="search-input">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Find a task or person…" aria-label="Search tasks"></label></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div class="task-table-wrap"><table class="task-table"><thead><tr><th><span class="sr-only">Completion</span></th><th scope="col">TASK</th><th scope="col">OWNER</th><th scope="col">STATUS</th><th scope="col">DUE</th><th scope="col">LATEST UPDATE</th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
@@ -144,7 +144,7 @@
       <label class="field full-width">Progress note<textarea name="note" rows="3" maxlength="3000">${h(p.note||'')}</textarea></label>${older?'<label class="check-field full-width"><input name="confirmConflict" type="checkbox" required> I reviewed the newer update and intend to apply this older message.</label>':''}</div><div class="form-actions"><button type="button" class="text-button" data-action="ignore-message" data-id="${h(m.id)}">Set aside · no task change</button><button class="btn btn-primary" type="submit" ${stale?'disabled':''}>Apply reviewed change ${icon('arrow')}</button></div><p class="muted">Recorded by ${h(member(ui.actor).name)}. Completion reports do not imply independent verification.</p></form>`}${conversation.length?`<div class="thread-context"><h3>Same conversation</h3>${conversation.map(item=>`<button class="text-button" data-action="source" data-id="${h(item.id)}">${h(item.subject)} · ${item.appliedTaskId?'Applied':item.ignoredAt?'Set aside':'Needs review'} ${icon('arrow')}</button>`).join('')}</div>`:''}</section>`;
   }
   function teamView(s) {
-    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invite someone</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">I’ll take this</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invite someone</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineView(s) {
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -160,6 +160,8 @@
   function render() {
     ui.reviewDirty=false;
     const s=store.getState();
+    $('.event-switcher strong').textContent=s.event.name;
+    $('.breadcrumb > span').textContent=s.event.name;
     $('#taskNavCount').textContent=s.tasks.filter(t=>t.status!=='done').length;
     $('#inboxNavCount').textContent=pending(s).length;
     $('#aiNavCount').textContent=store.getSuggestions().length;
@@ -209,6 +211,13 @@
     if(ui.lastFocus?.isConnected)ui.lastFocus.focus();
     else $('#viewRoot').querySelector('button')?.focus();
   }
+  function showPendingUpdate() {
+    const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
+    if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
+    const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
+    note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
+    $('.dialog-body').prepend(note);
+  }
   function taskDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
@@ -217,10 +226,11 @@
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+      ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}">Verify completion</button>`:''}</div>`:''}
-      ${own&&task.status!=='done'?`<section class="task-report section-gap"><h3>Your update</h3><form id="responseForm" data-id="${h(id)}"><label class="field"><span class="sr-only">What happened or what is blocking you?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="What’s finished? What’s blocking you?"></textarea></label><div class="task-report-actions"><button class="btn btn-primary" type="submit" name="response" value="completed" ${awaiting?'disabled':''}>Report complete</button><button class="btn btn-secondary" type="submit" name="response" value="blocked">Report blocked</button><button class="text-button" type="submit" name="response" value="progress">Share progress</button></div></form><p class="muted">${awaiting?'Reporting a blocker or new progress replaces your pending completion report.':task.requiresVerification?'Your completion report will wait for organizer verification.':'Reporting complete marks this task done and records your name.'}</p>${!task.acceptedAt?`<button class="text-button" data-action="accept-task" data-id="${h(id)}">Accept responsibility</button>`:''}</section>`:!own&&!organizer?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
+      ${own&&task.status!=='done'?`<section class="task-report section-gap"><h3>Your update</h3><form id="responseForm" data-id="${h(id)}"><label class="field"><span class="sr-only">What happened or what is blocking you?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="What’s finished? What’s blocking you?"></textarea></label><div class="task-report-actions"><button class="btn btn-primary" type="submit" name="response" value="completed" ${awaiting?'disabled':''}>Report complete</button><button class="btn btn-secondary" type="submit" name="response" value="blocked">Report blocked</button><button class="text-button" type="submit" name="response" value="progress">Share progress</button></div></form><p class="muted">${awaiting?'Reporting a blocker or new progress replaces your pending completion report.':task.requiresVerification?'Your completion report will wait for organizer verification.':'Reporting complete marks this task done and records your name.'}</p>${!task.acceptedAt?`<button class="text-button" data-action="accept-task" data-id="${h(id)}">Accept responsibility</button>`:''}</section>`:!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
       ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options(['Transport','Food & drink','Venue','Program','Guest care'].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
   }
@@ -265,7 +275,9 @@
 
   let privateEpoch=0, privateTimer;
   async function privateApi(path,body,session=ui.privateSession) {
-    const response=await fetch(`/api/private/${path}`,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Gather-CSRF':session?.csrf||''}:{},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'same-origin'});
+    if(window.GatherMode?.demo&&path==='records'&&body)body={...body,revision:ui.privateRevision};
+    const url=window.GatherMode?window.GatherMode.privateUrl(path):`/api/private/${path}`;
+    const response=await fetch(url,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Gather-CSRF':session?.csrf||''}:{},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'same-origin'});
     if(!(response.headers.get('content-type')||'').includes('application/json'))throw new Error('Start the Gather local server to use protected private details.');
     const result=await response.json();
     if(!response.ok){if(response.status===401){ui.privateSession=null;ui.privateRecords=[];ui.privateState='locked';}throw new Error(result.error||'Private details are unavailable.');}
@@ -280,6 +292,7 @@
     const request=ui.privateSession?privateApi('lock',{}).catch(()=>{}):Promise.resolve();clearPrivate();await request;
   }
   async function loadPrivate() {
+    if(!isOrganizer()){ui.privateState='locked';render();return;}
     const ticket=++privateEpoch;
     try{
       const config=await privateApi('config');if(ticket!==privateEpoch||ui.view!=='details')return;
@@ -288,12 +301,13 @@
       let session;try {session=await privateApi('session');}catch{session=null;}
       if(ticket!==privateEpoch||ui.view!=='details')return;
       ui.privateSession=session;
-      if(ui.privateSession){const result=await privateApi('records');if(ticket!==privateEpoch||ui.view!=='details')return;ui.privateRecords=result.records;ui.privateState='unlocked';privateTimer=setTimeout(()=>{lockPrivate();toast('Private details locked after the administrator session ended.');},Math.max(0,ui.privateSession.expiresAt-Date.now()));}
+      if(ui.privateSession){const result=await privateApi('records');if(ticket!==privateEpoch||ui.view!=='details')return;ui.privateRecords=result.records;ui.privateRevision=result.revision;ui.privateState='unlocked';privateTimer=setTimeout(()=>{lockPrivate();toast('Private details locked after the administrator session ended.');},Math.max(0,ui.privateSession.expiresAt-Date.now()));}
       else ui.privateState='locked';render();
     }catch(error){if(ticket!==privateEpoch)return;ui.privateRecords=[];ui.privateState='unavailable';ui.privateError=error.message;render();}
   }
   function privateView(s) {
-    const heading=pageHeading('','Private bookings','Organizer only',ui.privateState==='unlocked'?`<button class="btn btn-secondary" data-action="lock-private">Lock</button><button class="btn btn-primary" data-action="new-booking">${icon('plus')} Add booking</button>`:'');
+    const heading=pageHeading('','Private bookings',window.GatherMode?.demo?'Sample bookings · fictional details only':'Organizer only',ui.privateState==='unlocked'?`<button class="btn btn-secondary" data-action="lock-private">Lock</button><button class="btn btn-primary" data-action="new-booking">${icon('plus')} Add booking</button>`:'');
+    if(!isOrganizer())return heading+'<section class="panel private-panel"><h2>Organizer access required</h2><p>Booking codes are not shared with participants.</p></section>';
     if(ui.privateState==='loading')return heading+'<section class="panel private-panel"><p role="status">Checking the local private-details service…</p></section>';
     if(ui.privateState==='unavailable')return heading+`<section class="panel private-panel"><h2>Private details are not available on this preview server.</h2><p>${h(ui.privateError)}</p><p class="notice">No booking information has been loaded or saved in browser storage.</p><button class="btn btn-secondary" data-action="reload-private">Try again</button></section>`;
     if(ui.privateState!=='unlocked')return heading+`<section class="panel private-panel"><span class="eyebrow">LOCAL ADMINISTRATOR · ENCRYPTED STORAGE</span><h2>${ui.privateConfigured?'Unlock private event details':'Set up private event details'}</h2><p>A separate administrator passphrase protects this local store. Choosing Jack in the demo does not unlock it.</p>${ui.actor==='jack'?`<form id="privateLoginForm"><label class="field">${ui.privateConfigured?'Administrator passphrase':'Create a passphrase (12+ characters)'}<input type="password" name="passphrase" required minlength="12" autocomplete="${ui.privateConfigured?'current-password':'new-password'}"></label>${ui.privateConfigured?'':'<label class="field section-gap">Confirm passphrase<input type="password" name="confirm" required minlength="12" autocomplete="new-password"></label>'}<p class="warning-note">${ui.privateConfigured?'Private details are never included in shared task exports.':'Keep your passphrase somewhere safe. There is no password reset or recovery. Data is encrypted on this computer—not synced to a team account.'}</p><button class="btn btn-primary" type="submit">${ui.privateConfigured?'Unlock private details':'Create encrypted private store'}</button></form>`:'<p class="notice">Switch to Jack’s administrator preview, then sign in with the separate private-details passphrase.</p>'}</section>`;
@@ -309,6 +323,7 @@
     openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until Jack confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}"><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`);
   }
   function contextDialog() {
+    if(!isOrganizer()){const e=store.getState().event;openDialog('Event details',`<h3>${h(e.name)}</h3><p>${h(e.location)} · ${dayLabel(e.date)}</p><p>${e.guestCount} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;}
     const e=store.getState().event;openDialog('Event details',`<form id="contextForm"><div class="form-grid"><label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Update event context</button></div></form>`);
   }
   function memoryEditDialog(id) {
@@ -329,7 +344,11 @@
       if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();toast(t.status==='done'?'Task reopened. Its history is preserved.':`Marked done by ${member(ui.actor).name}. Recorded in team updates.`);}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
       if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
-      if(action==='claim'){store.updateTask(id,{owner:ui.actor},ui.actor);store.acceptTask(id,ui.actor);render();toast(`Accepted by ${member(ui.actor).name}.`);}
+      if(action==='claim'){if(el.disabled)return;el.disabled=true;try{store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}finally{if(el.isConnected)el.disabled=false;}}
+      if(action==='reload-workspace')location.reload();
+      if(action==='demo-email')openDialog('Demo email', '<p>This demo uses sample email updates. It does not connect to Gmail or read your mailbox.</p><p>Open Email briefing to review suggested changes.</p>', '<button class="btn btn-primary" data-view="inbox">Open email briefing</button>');
+      if(action==='demo-reset'&&window.GatherMode?.demo&&isOrganizer())openDialog('Restart demo?', '<p>Reset sample tasks, email decisions, comments, feedback, and sample bookings for all four profiles. Your real project is unchanged.</p>', '<button class="btn btn-secondary" data-action="close-dialog">Cancel</button><button class="btn btn-primary" data-action="confirm-demo-reset">Restart demo</button>');
+      if(action==='confirm-demo-reset'&&window.GatherMode?.demo&&isOrganizer()){el.disabled=true;try{store.resetDemo(true);clearPrivate();closeDialog();render();toast('Demo restarted. Your real project is unchanged.');}finally{if(el.isConnected)el.disabled=false;}}
       if(action==='followup')followupDialog(id);
       if(action==='digest')digestDialog();
       if(action==='copy-digest'){const text=digestText(store.getState());if(await copyText(text))toast('Current summary copied.');else copyFallback(text);}
@@ -371,7 +390,7 @@
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Gather workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='gather-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}
-    }catch(error){toast(error.message||'Please try again.');}
+    }catch(error){if(error.status===409)showPendingUpdate();toast(error.message||'Please try again.');}
   });
 
   document.addEventListener('submit',async event=>{
@@ -410,14 +429,14 @@
         const button=$('button[type="submit"]',form);button.disabled=true;
         try{await privateApi('records',{...data,id:form.dataset.id});form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
-    }catch(error){toast(error.message||'Please check the form and try again.');}
+    }catch(error){if(error.status===409)showPendingUpdate();toast(error.message||'Please check the form and try again.');}
     finally{if(taskForm&&form.isConnected){delete form.dataset.saving;submitButtons.forEach(([button,disabled])=>button.disabled=disabled);}}
   });
 
   document.addEventListener('change',event=>{
     const el=event.target;
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
-    if(el.id==='actorSelect'){lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
+    if(el.id==='actorSelect'){if(window.GatherMode?.demo){window.top.location.href='/demo?as='+encodeURIComponent(el.value);return;}lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
     if(el.id==='ownerFilter'){ui.owner=el.value;render();}
     if(el.id==='statusFilter'){ui.status=el.value;render();}
     if(el.id==='emailMode'){
@@ -456,6 +475,7 @@
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
   window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)));
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();});
+  if(window.GatherMode?.demo&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
   navigate(location.hash.slice(1)||'overview');
 })();

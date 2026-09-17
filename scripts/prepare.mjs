@@ -36,6 +36,8 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'claimTask',
+  'resetDemo',
   'addTask',
   'updateTask',
   'addComment',
@@ -70,7 +72,7 @@ app = app.replace(
 );
 app = app.replace(
   /if\(ui\.privateState!=='unlocked'\)return heading\+.*?;\n/,
-  `if(ui.privateState!=='unlocked')return heading+'<section class="panel private-panel"><h2>Private details hidden</h2><p>Your signed-in organizer account is required to view these records.</p><button class="btn btn-primary" data-action="reload-private">Show private details</button><a class="btn btn-secondary" href="/signout-with-chatgpt?return_to=%2F" target="_top">Sign out &amp; lock</a></section>';\n`,
+  `if(ui.privateState!=='unlocked')return heading+'<section class="panel private-panel"><h2>Private details hidden</h2><p>Organizer access is required to view these records.</p><button class="btn btn-primary" data-action="reload-private">Show private details</button>'+(window.GatherMode?.demo?'':'<a class="btn btn-secondary" href="/signout-with-chatgpt?return_to=%2F" target="_top">Sign out &amp; lock</a>')+'</section>';\n`,
 );
 app = app.replace(
   'Signed in as the local administrator · encrypted on this computer · session expires in 15 minutes. Team login and cloud sharing are not connected.',
@@ -107,14 +109,14 @@ app = app.replace(
   'Switch the demo member to this task’s owner to try their response.',
   'Only this task’s assigned account can submit its response.',
 );
-app = app.replace('[add your shared workspace link]', '${location.origin}');
+app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):""}');
 app = app.replace(
   'Team invitations are a draft in this local prototype. No invite or email will be sent.',
   'Private to your account. Invitation drafts do not send messages or grant access; team onboarding is not enabled.',
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info','<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Suggestions are rule-based; no AI model is connected. Nothing is sent automatically.</p><p>Bookings and Gmail originals are excluded from shared exports. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>This is the same app with separate sample data. Open profiles in separate tabs to show task claiming, reporting, and organizer review.</p><p>Gmail is not connected here. Suggestions are rule-based. Only enter fictional booking details.</p>':'<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Suggestions are rule-based; no AI model is connected. Nothing is sent automatically.</p><p>Bookings and Gmail originals are excluded from shared exports. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')
@@ -124,7 +126,7 @@ app = app
   );
 app = app.replace(
   '  setDrawer(false);\n  navigate',
-  "  window.addEventListener('gather-tool-updated',()=>{closeDialog();render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),20000);\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
+  "  window.addEventListener('gather-tool-updated',()=>{closeDialog();render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);\n  window.addEventListener('focus',()=>refreshInbox());\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
 );
 writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(

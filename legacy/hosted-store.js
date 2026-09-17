@@ -1,10 +1,18 @@
 (async function () {
+  const params = new URLSearchParams(location.search);
+  const demo = params.get('demo') === '1';
+  const actor = params.get('as') || 'jack';
+  const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : '/api/workspace';
+  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : '/');
+  window.GatherMode = Object.freeze({ demo, actor, privateUrl: path => demo
+    ? endpoint + '&resource=private&action=' + encodeURIComponent(path)
+    : '/api/private/' + path });
   let snapshot;
   const listeners = new Set();
   let queue = Promise.resolve();
   let mutationGeneration = 0;
   async function request(body) {
-    const response = await fetch('/api/workspace', {
+    const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
       headers: body
         ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
@@ -16,16 +24,22 @@
     const result = await response.json();
     if (!response.ok) {
       if (response.status === 401)
-        window.top.location.href = '/signin-with-chatgpt?return_to=%2F';
-      throw new Error(result.error || 'Unable to save. Reload and try again.');
+        window.top.location.href = signIn;
+      const error = new Error(result.error || 'Unable to save. Reload and try again.');
+      error.status = response.status;
+      throw error;
     }
     return result;
   }
   function publish(next) {
+    if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor))
+      throw new Error('The workspace identity changed. Reload to continue.');
     snapshot = next;
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'claimTask',
+    ...(demo ? ['resetDemo'] : []),
     'addTask',
     'updateTask',
     'addComment',
@@ -47,6 +61,21 @@
   try {
     publish(await request());
     window.GatherIdentity = snapshot.identity;
+    document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
+    if (demo) {
+      document.body.classList.add('demo-mode');
+      const bar = document.createElement('section');
+      bar.className = 'demo-toolbar';
+      bar.setAttribute('aria-label', 'Demo profiles');
+      const profiles = [['jack','Jack'],['maya','Maya'],['jules','Jules'],['dev','Dev']];
+      bar.innerHTML = '<div><strong>Demo</strong><span>Sample data · simulated profiles</span></div><nav aria-label="Switch demo profile">' + profiles.map(([id,name]) =>
+        '<span class="demo-profile-link ' + (actor === id ? 'active' : '') + '"><a href="/demo?as=' + id + '" target="_top" ' + (actor === id ? 'aria-current="page"' : '') + '>' + name + '</a><a href="/demo?as=' + id + '" target="_blank" rel="noopener noreferrer" aria-label="Open ' + name + ' in a new tab">↗</a></span>'
+      ).join('') + '</nav><a class="text-button" href="/" target="_top">Exit demo</a>' + (actor === 'jack' ? '<button class="text-button" data-action="demo-reset">Restart demo</button>' : '');
+      document.querySelector('.topbar').before(bar);
+      document.querySelector('.top-actions a[href="/demo"]')?.remove();
+      const settings = document.querySelector('.top-actions a[href="/settings"]');
+      if (settings) settings.outerHTML = '<button class="btn btn-secondary btn-small" data-action="demo-email">Email setup</button>';
+    }
     const store = {
       getState: () => structuredClone(snapshot.state),
       getSuggestions: () => structuredClone(snapshot.suggestions),
@@ -65,6 +94,8 @@
       },
     };
     const count = {
+      claimTask: 1,
+      resetDemo: 1,
       addTask: 1,
       updateTask: 2,
       addComment: 2,
@@ -103,7 +134,7 @@
     const script = document.createElement('script');
     script.src = '/gather-assets/app.js';
     document.body.append(script);
-    if (document.modelContext?.registerTool) {
+    if (!demo && document.modelContext?.registerTool) {
       const lifecycle = new AbortController();
       window.addEventListener('pagehide', () => lifecycle.abort(), {
         once: true,
@@ -185,7 +216,7 @@
     const p = document.createElement('p');
     p.textContent = error.message;
     const a = document.createElement('a');
-    a.href = '/signin-with-chatgpt?return_to=%2F';
+    a.href = signIn;
     a.target = '_top';
     a.textContent = 'Sign in again';
     root.replaceChildren(heading, p, a);
