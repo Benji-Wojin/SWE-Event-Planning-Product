@@ -133,7 +133,7 @@ writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(
   'public/gather-assets/styles.css',
   readFileSync('legacy/styles.css', 'utf8') +
-    '\n[hidden]{display:none!important} .top-actions{flex-wrap:wrap}',
+    '\n[hidden]{display:none!important}',
 );
 writeFileSync(
   'public/gather-assets/hosted-store.js',
