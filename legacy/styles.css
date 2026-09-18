@@ -48,12 +48,15 @@ h1,h2,h3,h4{font-family:'Manrope','DM Sans',sans-serif;color:var(--ink)}
 .profile-copy strong{font-size:14px;font-weight:650}
 .profile-copy small{font-size:12px;color:var(--muted)}
 .main-content{min-height:100vh;margin-left:230px}
-.topbar{height:72px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 38px;border-bottom:1px solid var(--line);background:rgba(250,251,246,.94);position:sticky;top:0;z-index:30;backdrop-filter:blur(12px)}
-.breadcrumb{display:flex;align-items:center;gap:11px;min-width:0;color:var(--muted);font-size:13px}
+.topbar{min-height:72px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 16px;padding:12px 38px;border-bottom:1px solid var(--line);background:rgba(250,251,246,.94);position:sticky;top:0;z-index:30;backdrop-filter:blur(12px)}
+.breadcrumb{display:flex;flex:1 1 10rem;align-items:center;gap:11px;min-width:0;color:var(--muted);font-size:.875rem}
+.breadcrumb>span:first-child,.breadcrumb strong{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .breadcrumb strong{color:var(--ink);font-weight:550}
 .breadcrumb svg{width:14px;height:14px;color:#a1aca1}
 .breadcrumb b{color:#b6bfb1;font-weight:400}
-.top-actions{display:flex;align-items:center;gap:12px}
+.top-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px;min-width:0;max-width:100%;margin-left:auto}
+.top-actions>*{flex:0 0 auto;max-width:100%}
+.topbar .top-actions .btn{font-size:.875rem;white-space:normal;overflow-wrap:anywhere}
 .demo-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid #dee5d5;border-radius:6px;padding:4px 8px;color:#6d7c62;font-size:11px;font-weight:500;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:41px;padding:9px 15px;border:1px solid transparent;border-radius:8px;font-size:13px;font-weight:600;line-height:1.3;text-decoration:none;white-space:nowrap;transition:background .15s,border-color .15s,box-shadow .15s}
 .btn-primary{color:#fff;background:var(--green);border-color:var(--green);box-shadow:0 2px 2px rgba(24,62,47,.06)}
@@ -466,14 +469,14 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
   html{scrollbar-gutter:auto}
   .sidebar{transform:translateX(-100%);transition:transform .22s ease;box-shadow:10px 0 35px rgba(33,52,27,.07);width:250px;z-index:60}.sidebar.open{transform:translateX(0)}
   .mobile-overlay{position:fixed;inset:0;z-index:50;display:block;background:rgba(33,47,26,.3);opacity:0;visibility:hidden;transition:opacity .2s,visibility .2s;backdrop-filter:blur(2px)}.mobile-overlay.open{opacity:1;visibility:visible}
-  .main-content{margin-left:0}.topbar{height:62px;padding:0 20px;gap:10px}.mobile-menu{display:inline-flex}
-  .breadcrumb{flex:1;gap:7px;font-size:12px}.top-actions{gap:8px}.top-actions .btn{min-height:34px;font-size:12px;padding:7px 10px}.top-actions .demo-pill{display:none}
+  .main-content{margin-left:0}.topbar{min-height:62px;padding:10px 20px;gap:10px}.mobile-menu{display:inline-flex}
+  .breadcrumb{gap:7px}.top-actions{gap:8px}.top-actions .btn{min-height:36px;padding:8px 10px}.top-actions .demo-pill{display:none}
   .page-wrap{padding:27px 22px 48px}.page-heading h1{font-size:31px;letter-spacing:-1.2px}.page-heading{margin-bottom:23px}.page-heading p{font-size:13px}.page-heading .header-actions{max-width:180px}
   .toast{left:50%}.dialog-backdrop{padding:20px}.dialog{max-height:calc(100dvh - 40px)}
 }
 @media(max-width:600px){
   body{font-size:14px}.topbar{padding-inline:13px}.breadcrumb>span:first-child,.breadcrumb>b,.breadcrumb>svg{display:none}.breadcrumb strong{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-  .top-actions .btn{min-height:33px;padding:7px 9px;font-size:11px}.top-actions .btn svg{width:14px;height:14px}
+  .top-actions{flex-basis:100%;justify-content:flex-start}.top-actions .btn svg{width:14px;height:14px}
   .page-wrap{padding:25px 17px 38px}.page-heading{display:block}.page-heading h1{font-size:29px;line-height:1.22}.page-heading p{line-height:1.6}.eyebrow{font-size:10px}
   .page-heading .header-actions{max-width:none;margin-top:17px;justify-content:flex-start;gap:8px}.page-heading .header-actions .btn{min-height:36px;padding:8px 12px;font-size:12px}
   .briefing-banner{padding:17px;gap:12px}.briefing-icon{width:35px;height:35px;flex-basis:35px;border-radius:9px}.briefing-icon svg{width:18px;height:18px}.briefing-copy{min-width:calc(100% - 48px)}
