@@ -27,6 +27,37 @@
   };
   const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name] || icons.grid}"/></svg>`;
   const fillIcons = root => $$('[data-icon]', root).forEach(el => el.innerHTML = icon(el.dataset.icon));
+  const focusable = root => $$('a[href],button,input,select,textarea,summary,[tabindex]',root).filter(el=>el.tabIndex>=0&&!el.matches(':disabled')&&el.getClientRects().length&&!el.closest('[hidden],[inert]'));
+  function restoreFocus(previous,root=document) {
+    if(!previous)return false;
+    const target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
+      el.tagName===previous.tagName&&['action','id','view','filter'].every(key=>el.dataset[key]===previous.dataset[key])&&
+      (previous.dataset.id||el.textContent===previous.textContent));
+    if(!target||!root.contains(target)||target.closest('[hidden],[inert]'))return false;
+    target.focus({preventScroll:true});return true;
+  }
+  function saveLock(root,submitter) {
+    const previousFocus=document.activeElement;
+    ui.pendingSave=true;
+    root.dataset.saving='true';root.setAttribute('aria-busy','true');
+    const controls=$$('button,input,select,textarea',root).map(el=>[el,el.disabled]);
+    if(root.matches('button'))controls.push([root,root.disabled]);
+    controls.forEach(([el])=>el.disabled=true);
+    const label=submitter?.innerHTML;
+    if(submitter)submitter.textContent='Saving…';
+    return ()=>{
+      ui.pendingSave=false;delete root.dataset.saving;root.removeAttribute('aria-busy');
+      controls.forEach(([el,disabled])=>{if(el.isConnected)el.disabled=disabled;});
+      if(submitter?.isConnected)submitter.innerHTML=label;
+      if(previousFocus?.isConnected&&root.isConnected&&document.activeElement===document.body)restoreFocus(previousFocus,root);
+    };
+  }
+  function formError(form,error) {
+    if(!form?.isConnected)return;
+    let message=$('.form-error',form);
+    if(!message){message=document.createElement('p');message.className='form-error';message.setAttribute('role','alert');form.prepend(message);}
+    message.textContent=error.message||'Please check the form and try again.';
+  }
   const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const dayLabel = value => !value ? 'No due date' : new Date(value+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
   const timeLabel = value => !value ? 'No update yet' : new Date(value).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
@@ -65,7 +96,7 @@
 
   function taskRow(task) {
     const done = task.status==='done';
-    return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
+    return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}${dependencyInfo(task).ready?'<div class="dependency-ready-label">Ready to resume</div>':''}</td><td>${due(task)}</td>
@@ -146,7 +177,7 @@
       <label class="field full-width">Progress note<textarea name="note" rows="3" maxlength="3000">${h(p.note||'')}</textarea></label>${older?'<label class="check-field full-width"><input name="confirmConflict" type="checkbox" required> I reviewed the newer update and intend to apply this older message.</label>':''}</div><div class="form-actions"><button type="button" class="text-button" data-action="ignore-message" data-id="${h(m.id)}">Set aside · no task change</button><button class="btn btn-primary" type="submit" ${stale?'disabled':''}>Apply reviewed change ${icon('arrow')}</button></div><p class="muted">Recorded by ${h(member(ui.actor).name)}. Completion reports do not imply independent verification.</p></form>`}${conversation.length?`<div class="thread-context"><h3>Same conversation</h3>${conversation.map(item=>`<button class="text-button" data-action="source" data-id="${h(item.id)}">${h(item.subject)} · ${item.appliedTaskId?'Applied':item.ignoredAt?'Set aside':'Needs review'} ${icon('arrow')}</button>`).join('')}</div>`:''}</section>`;
   }
   function teamView(s) {
-    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invite someone</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invitation draft</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineView(s) {
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -160,7 +191,10 @@
   }
 
   function render() {
+    const pendingReview=ui.reviewDirty&&ui.view==='inbox'&&ui.dialogKind==='task'?$('#emailReviewForm'):null;
+    const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
     ui.reviewDirty=false;
+    const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const s=store.getState();
     $('.event-switcher strong').textContent=s.event.name;
     $('.breadcrumb > span').textContent=s.event.name;
@@ -173,9 +207,17 @@
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
     $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const currentReview=$('#emailReviewForm');
+    if(reviewDraft&&currentReview?.dataset.id===reviewDraft.id){
+      for(const field of reviewDraft.fields){const input=currentReview.elements.namedItem(field.name);if(input){input.value=field.value;if(input.type==='checkbox')input.checked=field.checked;}}
+      const details=$('.proposal-edit',currentReview);if(details)details.open=reviewDraft.expanded;
+      ui.reviewDirty=true;updateChangePreview();
+    }
     fillIcons(document);
+    if(previousFocus&&!previousFocus.isConnected)restoreFocus(previousFocus,$('#viewRoot'));
   }
   function navigate(view) {
+    if(ui.pendingSave){history.replaceState(null,'',`#${ui.view}`);return;}
     if(!labels[view]) view='overview';
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
@@ -187,13 +229,20 @@
   }
   function setDrawer(open) {
     const mobile=matchMedia('(max-width:800px)').matches;
+    const wasOpen=$('#sidebar').classList.contains('open');
+    const focusInDrawer=$('#sidebar').contains(document.activeElement)||document.activeElement===$('#mobileOverlay');
     $('#sidebar').classList.toggle('open',open);
     $('#mobileOverlay').classList.toggle('open',open&&mobile);
     $('#mobileMenu').setAttribute('aria-expanded',String(open));
     $('#sidebar').inert=mobile&&!open;
+    $('#mainContent').inert=mobile&&open;
+    $('#sidebar').toggleAttribute('aria-modal',mobile&&open);
+    if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';focusable($('#sidebar'))[0]?.focus();}
+    else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='') {
-    ui.lastFocus=document.activeElement;
+    if($('#sidebar').classList.contains('open'))setDrawer(false);
+    if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     ui.dialogKind=kind;
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
     $('#dialog').innerHTML=`<div class="dialog-header"><h2 id="dialogTitle">${h(title)}</h2><button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
@@ -201,7 +250,7 @@
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
     document.body.style.overflow='hidden';
-    requestAnimationFrame(()=>{const first=$$('input,select,textarea', $('#dialog')).find(el=>!el.closest('details:not([open])')) || $('.dialog-close');first?.focus();});
+    requestAnimationFrame(()=>{const controls=focusable($('#dialog'));(controls.find(el=>el.matches('input,select,textarea'))||controls[0]||$('#dialog')).focus();});
   }
   function closeDialog() {
     $('#dialogBackdrop').hidden=true;
@@ -210,8 +259,8 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
-    if(ui.lastFocus?.isConnected)ui.lastFocus.focus();
-    else $('#viewRoot').querySelector('button')?.focus();
+    if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
+    ui.lastFocus=null;
   }
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
@@ -236,9 +285,23 @@
       ${dependents.length?`<h3>Needed by</h3><div class="dependency-targets">${dependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared in these tasks. Their owners decide when to resume.</p>':''}`:''}
     </section>`;
   }
-  function taskDialog(id) {
+  function taskDrafts(exclude='') {
+    if(ui.dialogKind!=='task')return [];
+    return $$('#dialog form').filter(form=>form.id!==exclude).flatMap(form=>
+      $$('input[name],textarea[name],select[name]',form).filter(input=>{
+        if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
+        const initial=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)?.value??input.options[0]?.value??''):input.defaultValue;
+        return input.value!==initial;
+      }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked})));
+  }
+  function taskDialog(id,submittedForm='') {
     const task=store.getState().tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
+    const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
+    const drafts=sameTask?taskDrafts(submittedForm):[];
+    const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
+    const previousFocus=sameTask?document.activeElement:null;
+    const scroll=sameTask?$('#dialog').scrollTop:0;
     ui.detailId=id;
     const organizer=isOrganizer(), own=task.owner===ui.actor;
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
@@ -251,7 +314,12 @@
       ${dependencyMarkup(task)}
       ${own&&task.status!=='done'?`<section class="task-report section-gap"><h3>Your update</h3><form id="responseForm" data-id="${h(id)}"><label class="field"><span class="sr-only">What happened or what is blocking you?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="What’s finished? What’s blocking you?"></textarea></label><div class="task-report-actions"><button class="btn btn-primary" type="submit" name="response" value="completed" ${awaiting?'disabled':''}>Report complete</button><button class="btn btn-secondary" type="submit" name="response" value="blocked">Report blocked</button><button class="text-button" type="submit" name="response" value="progress">Share progress</button></div></form><p class="muted">${awaiting?'Reporting a blocker or new progress replaces your pending completion report.':task.requiresVerification?'Your completion report will wait for organizer verification.':'Reporting complete marks this task done and records your name.'}</p>${!task.acceptedAt?`<button class="text-button" data-action="accept-task" data-id="${h(id)}">Accept responsibility</button>`:''}</section>`:!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options(['Transport','Food & drink','Venue','Program','Guest care'].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
+    if(sameTask){
+      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
+      for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
+      requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
+    }
   }
   function newTaskDialog() {
     openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
@@ -262,7 +330,7 @@
     const r=reason(task);
     const saved=store.getState().drafts.find(d=>d.taskId===id);
     const draft=saved?.text || `Hi ${task.owner?member(task.owner).name.split(' ')[0]:'team'}, quick check-in on “${task.title}”.\n\n${latestUpdate(task)?`The last update was: “${latestUpdate(task)}”\n\n`:''}${task.status==='blocked'?'What decision or help would unblock this, and who do you need it from?':!task.owner?'Who can take ownership, and what is a realistic next checkpoint?':'What is done so far, and what is the next concrete step?'}${task.dueDate?` We had ${dayLabel(task.dueDate)} as the target—does that still work?`:''}\n\nThanks,\n${member(ui.actor).name.split(' ')[0]}`;
-    openDialog('Follow-up draft',`<div class="followup-context"><div><strong>${h(task.title)}</strong><p>${r?h(r.label):'Check-in'} · Last updated ${relative(task.updatedAt)}</p></div></div><form id="followupForm" data-id="${h(id)}"><label class="field section-gap">Your message<textarea name="text" required rows="10" maxlength="6000">${h(draft)}</textarea></label><p class="notice">Draft only. Saving or copying does not send it.</p><div class="form-actions"><button class="btn btn-primary" type="submit">${icon('copy')} Save & copy draft</button><button type="button" class="text-button" data-action="record-followup" data-id="${h(id)}">Record as sent</button></div></form>`, '',false,'followup');
+    openDialog('Follow-up draft',`<div class="followup-context"><div><strong>${h(task.title)}</strong><p>${r?h(r.label):'Check-in'} · Last updated ${relative(task.updatedAt)}</p></div></div><form id="followupForm" data-id="${h(id)}"><label class="field section-gap">Your message<textarea name="text" required rows="10" maxlength="5000">${h(draft)}</textarea></label><p class="notice">Draft only. Saving or copying does not send it.</p><div class="form-actions"><button class="btn btn-primary" type="submit">${icon('copy')} Save & copy draft</button><button type="button" class="text-button" data-action="record-followup" data-id="${h(id)}">Record as sent</button></div></form>`, '',false,'followup');
   }
   function digestText(s) {
     return `${s.event.name} — ${new Date().toLocaleDateString()}\n\nCOMPLETED\n${completed(s).map(t=>`• ${t.title} — ${completionText(t)} (${timeLabel(t.completedAt)})`).join('\n')||'No completed tasks yet.'}\n\nNEEDS ATTENTION\n${attention(s).map(t=>`• ${t.title} — ${member(t.owner).name}; ${reason(t).label}. ${t.note||''}`).join('\n')||'No outstanding attention items.'}\n\nEMAIL TO REVIEW\n${pending(s).map(m=>`• ${m.subject} — ${m.sender}`).join('\n')||'All messages reviewed.'}`;
@@ -277,7 +345,7 @@
   }
   function thoughtDialog() {
     const suggestions=store.getSuggestions();
-    openDialog('Suggestions',`<div class="notice">Rule-based suggestions from tasks and feedback. No AI or RSVP service connected.</div><button class="btn btn-secondary section-gap" data-action="event-context">Update event context</button><div class="ai-panel section-gap">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    openDialog('Suggestions',`<div class="notice">Rule-based suggestions from tasks and feedback. No AI or RSVP service connected.</div><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
   }
   function pasteDialog() {
     const threads=[...new Map(store.getState().messages.map(m=>[m.threadId,[m.threadId,m.subject]])).values()];
@@ -297,9 +365,9 @@
     if(window.GatherMode?.demo&&path==='records'&&body)body={...body,revision:ui.privateRevision};
     const url=window.GatherMode?window.GatherMode.privateUrl(path):`/api/private/${path}`;
     const response=await fetch(url,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Gather-CSRF':session?.csrf||''}:{},body:body?JSON.stringify(body):undefined,cache:'no-store',credentials:'same-origin'});
-    if(!(response.headers.get('content-type')||'').includes('application/json'))throw new Error('Start the Gather local server to use protected private details.');
+    if(!(response.headers.get('content-type')||'').includes('application/json'))throw new Error('Could not load private details. Reload or sign in again.');
     const result=await response.json();
-    if(!response.ok){if(response.status===401){ui.privateSession=null;ui.privateRecords=[];ui.privateState='locked';}throw new Error(result.error||'Private details are unavailable.');}
+    if(!response.ok){if(response.status===401){ui.privateSession=null;ui.privateRecords=[];ui.privateState='locked';}const error=new Error(result.error||'Private details are unavailable.');error.status=response.status;throw error;}
     return result;
   }
   function clearPrivate() {
@@ -311,8 +379,10 @@
     const request=ui.privateSession?privateApi('lock',{}).catch(()=>{}):Promise.resolve();clearPrivate();await request;
   }
   async function loadPrivate() {
+    if(document.hidden){clearPrivate();return;}
     if(!isOrganizer()){ui.privateState='locked';render();return;}
     const ticket=++privateEpoch;
+    clearTimeout(privateTimer);ui.privateState='loading';ui.privateRecords=[];render();
     try{
       const config=await privateApi('config');if(ticket!==privateEpoch||ui.view!=='details')return;
       ui.privateConfigured=config.configured;
@@ -336,6 +406,7 @@
     if(!ui.privateSession||ui.actor!=='jack')return toast('Unlock private details as the local administrator first.');
     const record=ui.privateRecords.find(item=>item.id===id)||{};
     openDialog(record.title||'Add a private booking',`<p class="notice">Only the authenticated local administrator can retrieve these details. They do not enter task notes, activity, email review, or workspace exports.</p><form id="bookingForm" data-id="${h(record.id||'')}"><div class="form-grid"><label class="field">Booking type<select name="type">${options(['Flight','Hotel','Transport','Venue','Other'].map(x=>[x,x]),record.type||'Flight')}</select></label><label class="field">Booking date<input type="date" name="date" value="${h(record.date||'')}"></label><label class="field full-width">Title<input name="title" required maxlength="160" placeholder="Guest speaker arrival" value="${h(record.title||'')}"></label><label class="field">Airline / hotel / provider<input name="provider" maxlength="160" value="${h(record.provider||'')}"></label><label class="field">Traveler / booked for<input name="traveler" maxlength="160" value="${h(record.traveler||'')}"></label><label class="field full-width">Confirmation reference<input id="privateReference" type="password" name="reference" required maxlength="160" autocomplete="off" value="${h(record.reference||'')}"></label><div class="inline full-width"><button type="button" class="text-button" data-action="reveal-reference">Show / hide reference</button><button type="button" class="text-button" data-action="copy-reference">Copy reference</button></div><label class="field full-width">Itinerary / private logistics notes<textarea name="details" rows="4" maxlength="2000">${h(record.details||'')}</textarea></label><label class="field full-width">Related task (optional)<select name="taskId">${options([['','Not linked'],...store.getState().tasks.map(task=>[task.id,task.title])],record.taskId||'')}</select></label></div><div class="form-actions"><button type="submit" class="btn btn-primary">Save encrypted details</button></div></form>`,'',true,'private');
+    $('#bookingForm').dataset.version=record.version||'';
   }
   function responseDialog(id,preview=false) {
     const task=store.getState().tasks.find(item=>item.id===id);if(!task)return;
@@ -343,19 +414,23 @@
   }
   function contextDialog() {
     if(!isOrganizer()){const e=store.getState().event;openDialog('Event details',`<h3>${h(e.name)}</h3><p>${h(e.location)} · ${dayLabel(e.date)}</p><p>${e.guestCount} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;}
-    const e=store.getState().event;openDialog('Event details',`<form id="contextForm"><div class="form-grid"><label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Update event context</button></div></form>`);
+    const e=store.getState().event;openDialog('Event details',`<form id="contextForm"><div class="form-grid"><label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">${isOrganizer()?'Update event context':'Event details'}</button></div></form>`);
   }
   function memoryEditDialog(id) {
     const m=store.getState().memories.find(item=>item.id===id);if(!m)return;
-    openDialog('Edit feedback',`<form id="memoryEditForm" data-id="${h(id)}"><label class="field">What should we do differently?<textarea name="change" required rows="3">${h(m.change)}</textarea></label>${memoryFields(m)}<label class="field section-gap">Did the change help?<select name="outcome">${options([['untested','Not evaluated yet'],['helped','It helped'],['did-not-help','It did not help — stop suggesting']],m.outcome)}</select></label><label class="field section-gap">Outcome notes<textarea name="outcomeNote" rows="3">${h(m.outcomeNote)}</textarea></label><label class="field section-gap">Suggest in future planning<select name="active">${options([['true','Yes, when the context matches'],['false','Retire this lesson']],String(m.active))}</select></label><div class="form-actions"><button class="btn btn-primary" type="submit">Save lesson & outcome</button></div></form>`);
+    openDialog('Edit feedback',`<form id="memoryEditForm" data-id="${h(id)}"><label class="field">What should we do differently?<textarea name="change" required rows="3" maxlength="3000">${h(m.change)}</textarea></label>${memoryFields(m)}<label class="field section-gap">Did the change help?<select name="outcome">${options([['untested','Not evaluated yet'],['helped','It helped'],['did-not-help','It did not help — stop suggesting']],m.outcome)}</select></label><label class="field section-gap">Outcome notes<textarea name="outcomeNote" rows="3" maxlength="2000">${h(m.outcomeNote)}</textarea></label><label class="field section-gap">Suggest in future planning<select name="active">${options([['true','Yes, when the context matches'],['false','Retire this lesson']],String(m.active))}</select></label><div class="form-actions"><button class="btn btn-primary" type="submit">Save lesson & outcome</button></div></form>`);
   }
   function memoryFields(m={}) {return `<label class="field section-gap">When does this apply?<select name="scope">${options([['always','All events'],['outdoor','Outdoor events only'],['transport','When organized transport is needed'],['same-venue','At this venue only']],m.scope||'always')}</select></label><label class="field section-gap">Context / exceptions<textarea name="context" rows="2" maxlength="2000" placeholder="Useful for arrivals above 100 people; reconsider for smaller events…">${h(m.context||'')}</textarea></label>`;}
 
   document.addEventListener('click',async event=>{
+    if(ui.pendingSave){event.preventDefault();return;}
     const el=event.target.closest('[data-action], [data-view]');
     if(!el)return;
-    if(el.dataset.view){if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
+    if(el.dataset.view){event.preventDefault();if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
     const {action,id}=el.dataset;
+    const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
+    const saveRoot=el.closest('#dialog')||el.closest('form')||el;
+    const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
       if(action==='add-task')newTaskDialog();
@@ -363,7 +438,7 @@
       if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()||(t.requiresVerification&&t.status!=='done')){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();toast(t.status==='done'?'Task reopened. Its history is preserved.':`Marked done by ${member(ui.actor).name}. Recorded in team updates.`);}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
       if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
-      if(action==='claim'){if(el.disabled)return;el.disabled=true;try{store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}finally{if(el.isConnected)el.disabled=false;}}
+      if(action==='claim'){store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}
       if(action==='reload-workspace')location.reload();
       if(action==='demo-email')openDialog('Demo email', '<p>This demo uses sample email updates. It does not connect to Gmail or read your mailbox.</p><p>Open Email briefing to review suggested changes.</p>', '<button class="btn btn-primary" data-view="inbox">Open email briefing</button>');
       if(action==='demo-reset'&&window.GatherMode?.demo&&isOrganizer())openDialog('Restart demo?', '<p>Reset sample tasks, email decisions, comments, feedback, and sample bookings for all four profiles. Your real project is unchanged.</p>', '<button class="btn btn-secondary" data-action="close-dialog">Cancel</button><button class="btn btn-primary" data-action="confirm-demo-reset">Restart demo</button>');
@@ -378,11 +453,12 @@
       if(action==='task-conversation'){ui.messageId='';ui.conversationKey='task:'+id;closeDialog();navigate('inbox');}
       if(action==='refresh-inbox')await refreshInbox(true);
       if(action==='paste-email')pasteDialog();
-      if(action==='sample-reply'){const confirmed=el.dataset.step==='confirmed';const m=store.addMessage({sender:'Jules Miller',subject:'Re: Northstar buses for Field Day',threadId:'thread-bus',externalId:`gather-sample-bus-${confirmed?'confirmed':'deposit'}`,body:confirmed?'Payment received. Booking confirmed. Both buses are booked for Field Day. — Jules':'The buses are reserved, but we still need the deposit. I cannot confirm the booking until Jack approves payment. — Jules'},ui.actor);ui.messageId=m.id;navigate('inbox');toast('Sample reply added. No task changed until you review.');}
+      if(action==='sample-reply'){const confirmed=el.dataset.step==='confirmed';const m=store.addMessage({sender:'Jules Miller',subject:'Re: Northstar buses for Field Day',threadId:'thread-bus',externalId:`gather-sample-bus-${confirmed?'confirmed':'deposit'}`,body:confirmed?'Payment received. Booking confirmed. Both buses are booked for Field Day. — Jules':'The buses are reserved, but we still need the deposit. I cannot confirm the booking until Jack approves payment. — Jules'},ui.actor);ui.messageId=m.id;render();toast('Sample reply added. No task changed until you review.');}
       if(action==='refresh-proposal'){
         if(ui.savingProposal)return;
         const taskId=$('#emailTask')?.value;ui.savingProposal=true;
-        try{if(store.refresh)await store.refresh(()=>true);store.refreshProposal(id,taskId);render();toast('Comparison refreshed. Review the current values before applying.');}
+        try{if(store.refresh)await store.refresh(()=>true);const latest=store.getState().messages.find(message=>message.id===id);if(!latest||latest.appliedTaskId||latest.ignoredAt){render();toast('Showing the latest saved decision.');}else{store.refreshProposal(id,taskId);render();toast('Comparison refreshed. Review the current values before applying.');}}
+        catch(error){render();throw error;}
         finally{ui.savingProposal=false;}
       }
       if(action==='ignore-message'){store.ignoreMessage(id,ui.actor);ui.messageId='';render();toast('Set aside. The plan was not changed.');}
@@ -401,7 +477,11 @@
       if(action==='booking')bookingDialog(id);
       if(action==='reveal-reference'){const input=$('#privateReference');if(input)input.type=input.type==='password'?'text':'password';}
       if(action==='copy-reference'){const input=$('#privateReference');if(input){if(await copyText(input.value))toast('Reference copied. Clear your clipboard after use.');else {input.type='text';input.select();toast('Select and copy the reference manually.');}}}
-      if(action==='record-followup'){openDialog('Record your follow-up',`<p class="notice">Use this only after you have sent the message yourself. Gather does not send it.</p><form id="recordFollowupForm" data-id="${h(id)}"><label class="field">Check again on<input name="afterDate" type="date" required min="${dateKey()}"></label><div class="form-actions"><button class="btn btn-primary" type="submit">I sent it · record checkpoint</button></div></form>`);}
+      if(action==='record-followup'){
+        const draft=$('#followupForm');
+        if(draft){const text=draft.elements.text.value.trim();if(!text)throw new Error('Add your follow-up text before recording it.');store.saveDraft(id,text,ui.actor);render();}
+        openDialog('Record your follow-up',`<p class="notice">Your draft is saved. Confirm only after you have sent it yourself. Gather does not send it.</p><form id="recordFollowupForm" data-id="${h(id)}"><label class="field">Check again on<input name="afterDate" type="date" required min="${dateKey()}"></label><div class="form-actions"><button class="btn btn-secondary" type="button" data-action="followup" data-id="${h(id)}">Back to draft</button><button class="btn btn-primary" type="submit">I sent it · record checkpoint</button></div></form>`);
+      }
       if(action==='feedback')feedbackDialog();
       if(action==='thought-partner')thoughtDialog();
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
@@ -411,33 +491,33 @@
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Gather workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='gather-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}
-    }catch(error){if(error.status===409)showPendingUpdate();toast(error.message||'Please try again.');}
+    }catch(error){if(error.status===409)showPendingUpdate();const errorForm=saveRoot.matches('form')?saveRoot:el.closest('form');if(errorForm)formError(errorForm,error);toast(error.message||'Please try again.');}
+    finally{release();}
   });
 
   document.addEventListener('submit',async event=>{
     const form=event.target;
     if(!form.id)return;
     event.preventDefault();
-    if(form.dataset.saving==='true')return;
+    if(ui.pendingSave||form.dataset.saving==='true')return;
     const data=Object.fromEntries(new FormData(form));
-    const taskForm=['responseForm','taskDetailForm','commentForm','dependencyForm'].includes(form.id);
-    const submitButtons=taskForm?$$('button[type="submit"]',form).map(button=>[button,button.disabled]):[];
-    if(taskForm){form.dataset.saving='true';submitButtons.forEach(([button])=>button.disabled=true);}
+    $('.form-error',form)?.remove();
+    const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
-      if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);closeDialog();render();toast(`Update recorded by ${member(ui.actor).name}.`);}
-      if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id);toast('Comment posted.');}
+      if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id==='emailReviewForm'){
         if(ui.savingProposal)return;
         ui.savingProposal=true;const button=$('button[type="submit"]',form);button.disabled=true;button.textContent='Saving…';
         try{const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
-        finally{ui.savingProposal=false;if(form.isConnected)updateChangePreview();}
+        finally{ui.savingProposal=false;}
       }
-      if(form.id==='pasteForm'){const m=store.addMessage(data,ui.actor);ui.messageId=m.id;closeDialog();navigate('inbox');toast('Message saved. Review its next step before applying.');}
+      if(form.id==='pasteForm'){const m=store.addMessage(data,ui.actor);ui.messageId=m.id;closeDialog();release();navigate('inbox');toast('Message saved. Review its next step before applying.');}
       if(form.id==='feedbackForm'){store.addMemory({...data,rating:Number(data.rating)},ui.actor);closeDialog();render();thoughtDialog();toast('Feedback saved.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
-      if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id);toast('Follow-up saved.');}
-      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');closeDialog();render();taskDialog(id);toast(response==='blocked'?'Blocker saved. Follow-up work is linked below.':response==='progress'?'Progress saved.':'Report saved.');}
+      if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
+      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);toast(response==='blocked'?'Blocker saved. Follow-up work is linked below.':response==='progress'?'Progress saved.':'Report saved.');}
       if(form.id==='contextForm'){store.updateEvent(data,ui.actor);closeDialog();render();thoughtDialog();toast('Event details saved.');}
       if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);closeDialog();render();toast('Feedback updated.');}
       if(form.id==='recordFollowupForm'){store.recordFollowup(form.dataset.id,data.afterDate,ui.actor);closeDialog();render();toast('Follow-up recorded.');}
@@ -449,18 +529,20 @@
       }
       if(form.id==='bookingForm'){
         const button=$('button[type="submit"]',form);button.disabled=true;
-        try{await privateApi('records',{...data,id:form.dataset.id});form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
+        const ticket=privateEpoch;
+        try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
-    }catch(error){if(error.status===409)showPendingUpdate();toast(error.message||'Please check the form and try again.');}
-    finally{if(taskForm&&form.isConnected){delete form.dataset.saving;submitButtons.forEach(([button,disabled])=>button.disabled=disabled);}}
+    }catch(error){if(error.status===409)showPendingUpdate();formError(form,error);toast(error.message||'Please check the form and try again.');}
+    finally{release();if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 
   document.addEventListener('change',event=>{
     const el=event.target;
+    if(ui.pendingSave)return;
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(el.id==='actorSelect'){if(window.GatherMode?.demo){window.top.location.href='/demo?as='+encodeURIComponent(el.value);return;}lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
-    if(el.id==='ownerFilter'){ui.owner=el.value;render();}
-    if(el.id==='statusFilter'){ui.status=el.value;render();}
+    if(el.id==='ownerFilter'){ui.owner=el.value;renderTaskRows();}
+    if(el.id==='statusFilter'){ui.status=el.value;renderTaskRows();}
     if(el.id==='emailMode'){
       const update=el.value==='update';
       $('#existingTaskField').hidden=!update;
@@ -469,25 +551,31 @@
       updateChangePreview();
     }
     if(el.id==='emailTask'){
-      const form=$('#emailReviewForm');if(el.value&&form){try{store.refreshProposal(form.dataset.id,el.value);render();}catch(error){toast(error.message);}}
+      const form=$('#emailReviewForm');if(el.value&&form){const target=el.value;const release=saveLock(form);ui.savingProposal=true;try{store.refreshProposal(form.dataset.id,target);if(form.isConnected)render();}catch(error){formError(form,error);toast(error.message);}finally{ui.savingProposal=false;release();if(form.isConnected)updateChangePreview();}}
     }
   });
+  function renderTaskRows() {
+    const tasks=filteredTasks(store.getState());
+    $('#taskRows').innerHTML=tasks.map(taskRow).join('');
+    $('#taskEmpty').hidden=!!tasks.length;
+    $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;
+  }
   document.addEventListener('input',event=>{
     if(event.target.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(event.target.id==='taskSearch'){
       ui.search=event.target.value;
-      const tasks=filteredTasks(store.getState());
-      $('#taskRows').innerHTML=tasks.map(taskRow).join('');
-      $('#taskEmpty').hidden=!!tasks.length;
-      $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;
+      renderTaskRows();
     }
   });
-  $('#dialogBackdrop').addEventListener('click',event=>{if(event.target===$('#dialogBackdrop'))closeDialog();});
+  $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop'))closeDialog();});
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape'){if(!$('#dialogBackdrop').hidden)closeDialog();else setDrawer(false);}
-    if(event.key==='Tab'&&!$('#dialogBackdrop').hidden){
-      const controls=$$('button:not([disabled]),input,select,textarea,[tabindex="0"]',$('#dialog')).filter(el=>el.getClientRects().length);
+    if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden)closeDialog();else setDrawer(false);}
+    const scope=!$('#dialogBackdrop').hidden?$('#dialog'):matchMedia('(max-width:800px)').matches&&$('#sidebar').classList.contains('open')?$('#sidebar'):null;
+    if(event.key==='Tab'&&scope){
+      const controls=focusable(scope);
       const first=controls[0],last=controls.at(-1);
+      if(!first){event.preventDefault();scope.focus();return;}
+      if(!scope.contains(document.activeElement)){event.preventDefault();(event.shiftKey?last:first).focus();return;}
       if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
       if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
     }

@@ -83,9 +83,13 @@ export async function gmail(userId: string, path: string) {
     };
     await saveConnection(userId, conn);
   }
+  return gmailWithToken(conn.accessToken, path);
+}
+
+export async function gmailWithToken(accessToken: string, path: string) {
   const response = await fetch(
     'https://gmail.googleapis.com/gmail/v1/users/me/' + path,
-    { headers: { Authorization: 'Bearer ' + conn.accessToken } },
+    { headers: { Authorization: 'Bearer ' + accessToken } },
   );
   if (!response.ok)
     throw new HttpError(

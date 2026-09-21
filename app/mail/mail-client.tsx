@@ -66,7 +66,9 @@ export function MailInbox() {
               key={g.key}
               variant={group?.key === g.key ? 'secondary' : 'outline'}
               className="h-auto w-full justify-start whitespace-normal px-4 py-4 text-left"
+              disabled={busy}
               onClick={() => {
+                if (saving.current) return;
                 setSelected((g.messages.find((m: any) => !m.reviewed) || g.messages[0]).id);
                 setConfirmed(false);
               }}
@@ -89,7 +91,7 @@ export function MailInbox() {
           <Card key={message.id}>
             <CardContent className="space-y-5 pt-2">
               <div className="flex flex-wrap gap-2" aria-label="Emails in this conversation">
-                {group.messages.map((m: any, index: number) => <Button key={m.id} variant={m.id === message.id ? 'secondary' : 'outline'} size="sm" onClick={() => { setSelected(m.id); setConfirmed(false); }}>
+                {group.messages.map((m: any, index: number) => <Button key={m.id} variant={m.id === message.id ? 'secondary' : 'outline'} size="sm" disabled={busy} onClick={() => { if (saving.current) return; setSelected(m.id); setConfirmed(false); }}>
                   Email {group.messages.length - index} · {m.reviewed ? 'Summary saved' : 'Needs review'}
                 </Button>)}
               </div>
@@ -118,6 +120,7 @@ export function MailInbox() {
               ) : (
                 <form
                   className="space-y-4 rounded-xl bg-muted p-5"
+                  aria-busy={busy}
                   onSubmit={async (event) => {
                     event.preventDefault();
                     if (saving.current) return;
@@ -149,7 +152,7 @@ export function MailInbox() {
                   </h3>
                   <div className="space-y-2">
                     <Label htmlFor="relatedTask">Related task</Label>
-                    <Select name="taskId" defaultValue={message.taskId || ''}>
+                    <Select name="taskId" defaultValue={message.taskId || ''} disabled={busy}>
                       <SelectTrigger id="relatedTask" className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent><SelectItem value="">Suggest from summary</SelectItem>{tasks.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}</SelectContent>
                     </Select>
@@ -159,6 +162,7 @@ export function MailInbox() {
                     <Input
                       id="summaryTitle"
                       name="title"
+                      disabled={busy}
                       maxLength={200}
                       required
                       placeholder="Confirm speaker transport"
@@ -171,6 +175,7 @@ export function MailInbox() {
                     <Textarea
                       id="safeSummary"
                       name="summary"
+                      disabled={busy}
                       rows={4}
                       maxLength={3000}
                       required
@@ -180,6 +185,7 @@ export function MailInbox() {
                   <div className="flex items-start gap-3">
                     <Checkbox
                       id="confirmShared"
+                      disabled={busy}
                       checked={confirmed}
                       onCheckedChange={(value) => setConfirmed(value)}
                     />

@@ -13,6 +13,7 @@ import {
   configuration,
   connection,
   gmail,
+  gmailWithToken,
   readPlain,
   redirectUri,
   saveConnection,
@@ -129,6 +130,12 @@ export async function GET(request: Request) {
           400,
           'Google did not grant offline access. Reconnect and approve access.',
         );
+      if (!token.access_token || !Number.isFinite(token.expires_in) || token.expires_in <= 0)
+        throw new HttpError(502, 'Google returned an incomplete authorization. Start again in Gmail settings.');
+      // Confirm the account before replacing a working connection or consuming state.
+      const profile = await gmailWithToken(token.access_token, 'profile');
+      if (typeof profile.emailAddress !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(profile.emailAddress))
+        throw new HttpError(502, 'Google could not confirm the Gmail account. Start again in Gmail settings.');
       const generation = crypto.randomUUID();
       const payload = await seal(
         {
@@ -138,6 +145,7 @@ export async function GET(request: Request) {
           labelId: '',
           pageToken: '',
           lastSync: '',
+          email: profile.emailAddress,
         },
         'gmail:' + user.userId,
       );
@@ -154,12 +162,6 @@ export async function GET(request: Request) {
           409,
           'This authorization was cancelled or already completed.',
         );
-      const profile = await gmail(user.userId, 'profile');
-      const conn = await connection(user.userId);
-      await saveConnection(user.userId, {
-        ...conn,
-        email: profile.emailAddress,
-      });
       return Response.redirect(
         env.GATHER_ORIGIN + '/settings?gmail=connected',
         303,
@@ -334,7 +336,13 @@ export async function POST(request: Request) {
         Array.from(new Uint8Array(hash))
           .map((x) => x.toString(16).padStart(2, '0'))
           .join('');
-      const { row: workspaceRow } = await loadWorkspace(user);
+      const { row: workspaceRow, store } = await loadWorkspace(user);
+      const existing = store.getState().messages.find((message: any) => message.externalId === 'review:' + row.id);
+      if (existing) {
+        if (existing.subject !== subject || existing.body !== summary || (existing.linkedTaskId || '') !== String(data.taskId || ''))
+          throw new HttpError(409, 'A summary of this email was already saved in another tab. Your text has not replaced it. Open the saved briefing before making another change.');
+        return json({ saved: true, id: existing.id });
+      }
       const result = await mutateWorkspace(user, {
         method: 'addMessage',
         args: [

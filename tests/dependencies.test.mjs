@@ -228,3 +228,25 @@ test('named blockers remain reusable after inference, parent renames and later s
   store.reportCompletion('dietary','Dietary list is shared.','maya');
   assert.throws(()=>store.resumeTask(other.id,'dev'),/still open/);
 });
+
+test('an explicitly additional generic blocker remains independent and prevents premature resume',()=>{
+  const store=create();
+  const parent=store.addTask({title:'Install stage',owner:'dev',status:'blocked',note:'Need an electrical inspection.'});
+  const original=parent.dependencies[0].taskId;
+  const originalNote=task(store,original).note;
+  store.updateTask(parent.id,{status:'blocked',note:'Also need fire department clearance.'},'dev');
+  const links=task(store,parent.id).dependencies;
+  assert.equal(links.length,2);
+  const additional=links.find(link=>link.taskId!==original);
+  assert.equal(additional.independent,true);
+  assert.match(task(store,additional.taskId).note,/fire department/);
+  store.updateTask(parent.id,{status:'blocked',note:'Also need fire department clearance.'},'dev');
+  assert.equal(task(store,parent.id).dependencies.length,2);
+  store.updateTask(parent.id,{status:'blocked',note:'Waiting for fire department clearance.'},'dev');
+  assert.equal(task(store,original).note,originalNote);
+  assert.equal(task(store,parent.id).dependencies.length,2);
+  store.updateTask(original,{status:'done',note:'Electrical inspection passed.'});
+  assert.throws(()=>store.resumeTask(parent.id,'dev'),/still open/);
+  store.updateTask(additional.taskId,{status:'done',note:'Fire clearance granted.'});
+  assert.equal(store.resumeTask(parent.id,'dev').status,'progress');
+});

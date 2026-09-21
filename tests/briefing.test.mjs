@@ -9,6 +9,19 @@ const create=()=>GatherStore.createStore({storage:null});
 const add=(store,body,extra={})=>store.addMessage({sender:'Jules Miller',subject:'Bus update',taskId:'bus',body,...extra});
 const group=(store,id)=>GatherInbox.conversations(store.getState()).find(g=>g.messages.some(m=>m.id===id));
 
+test('restored review modes synchronize task visibility, validation and stale-save protection',()=>{
+  const store=create(),message=add(store,'The route is ready for discussion.');
+  const form={dataset:{id:message.id},fields:{...message.suggested,expectedRevision:message.suggested.baseRevision}};
+  const taskField={},taskSelect={},preview={},submit={};
+  const elements={'#emailReviewForm':form,'#existingTaskField':taskField,'#emailTask':taskSelect,'#changePreview':preview,'button[type="submit"]':submit};
+  const context=vm.createContext({store,GatherInbox,ui:{},$:selector=>elements[selector]||null,changePreview:()=>'',FormData:class{constructor(form){return Object.entries(form.fields);}}});
+  const source=readFileSync('legacy/inbox-view.js','utf8');
+  vm.runInContext(source.slice(source.indexOf('  function updateChangePreview('),source.indexOf('  async function refreshInbox(')),context);
+  context.updateChangePreview();assert.equal(taskField.hidden,false);assert.equal(taskSelect.required,true);assert.equal(submit.disabled,false);
+  form.fields.mode='new';context.updateChangePreview();assert.equal(taskField.hidden,true);assert.equal(taskSelect.required,false);assert.equal(submit.disabled,false);
+  form.fields.mode='update';store.updateTask('bus',{note:'A newer task update.'});context.updateChangePreview();assert.equal(taskField.hidden,false);assert.equal(taskSelect.required,true);assert.equal(submit.disabled,true);
+});
+
 test('briefings preserve late caveats and exclude greetings and quoted history',()=>{
   const summary=GatherInbox.shortUpdate({body:'Hi Jack, The route is planned. I checked the schedule. However, the deposit is still pending.\n  > Booking confirmed.'});
   assert.match(summary,/route is planned/);
@@ -42,6 +55,59 @@ test('saved old analysis cannot apply until refreshed',()=>{
   assert.notEqual(store.getState().messages.find(item=>item.id===m.id).suggested.signal,'completion-report');
   store.applyMessage(m.id);
   assert.notEqual(store.getState().tasks.find(t=>t.id==='bus').status,'done');
+});
+
+test('cancelled and unconfirmed bookings never inherit an earlier completion claim',()=>{
+  for(const body of [
+    'The buses were confirmed yesterday. The booking is now cancelled.',
+    'The route is complete. The bus booking is unconfirmed.',
+    'The route is finished. The vendor canceled the buses.',
+    'The vendor cancelled the buses. The route is complete.',
+  ]) {
+    const store=create(),m=add(store,body);
+    assert.notEqual(m.suggested.signal,'completion-report',body);
+    assert.notEqual(store.applyMessage(m.id).status,'done',body);
+  }
+  for(const body of ['Both buses are confirmed.','We are no longer blocked. Both buses are confirmed.']) {
+    assert.equal(add(create(),body).suggested.signal,'completion-report');
+  }
+});
+
+test('reviewed status overrides completion inference in both preview and saved report',()=>{
+  for(const status of ['blocked','progress','todo']) {
+    const store=create();store.updateTask('bus',{requiresVerification:true});
+    const m=add(store,'Both buses are confirmed.');
+    const approved={status,note:'I checked; the deposit is still missing.'};
+    const preview=GatherInbox.changes(m,store.getState(),approved);
+    assert.equal(preview.reportsCompletion,false);
+    assert.equal(preview.waitsForVerification,false);
+    const task=store.applyMessage(m.id,approved);
+    assert.equal(task.status,status);
+    assert.equal(task.reportedAt,'');
+    assert.throws(()=>store.verifyTask('bus'),/no completion report/);
+  }
+  const store=create();store.updateTask('bus',{requiresVerification:true});
+  const m=add(store,'Deposit is pending.');
+  assert.equal(GatherInbox.changes(m,store.getState(),{status:'done'}).reportsCompletion,true);
+  const task=store.applyMessage(m.id,{status:'done',note:'I confirmed the booking separately.'});
+  assert.equal(task.status,'progress');assert.ok(task.reportedAt);
+});
+
+test('partial completion and conditional acceptance never become firm commitments',()=>{
+  for(const body of ['The bus booking is almost confirmed.','The route is partially complete.','The bus booking is 90% complete.','The booking is 99.9% complete.','We are nearly done with the buses.']) {
+    const store=create(),m=add(store,body);
+    assert.notEqual(m.suggested.signal,'completion-report',body);
+    assert.notEqual(store.applyMessage(m.id).status,'done',body);
+  }
+  for(const body of ['If I accept this task, I will need a later deadline.','I can take this if you approve the budget.','I will handle this after you approve the budget.',"It isn't true that I accept this task.",'Can I accept this task?']) {
+    const store=create(),before=store.getState().tasks.find(t=>t.id==='bus'),m=add(store,body);
+    assert.notEqual(m.suggested.signal,'acceptance',body);
+    const task=store.applyMessage(m.id);
+    assert.equal(task.acceptedAt,before.acceptedAt,body);
+    assert.notEqual(task.status,'done',body);
+  }
+  for(const body of ['The booking is 100% complete.','The booking is 100.0% complete.','Booking confirmed.'])assert.equal(add(create(),body).suggested.signal,'completion-report');
+  for(const body of ['I accept this task.',"I'm on it.",'I will handle the buses.'])assert.equal(add(create(),body).suggested.signal,'acceptance');
 });
 
 test('completion briefings describe verification requirements and do not mutate tasks',()=>{

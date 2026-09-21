@@ -626,3 +626,72 @@ test('real workspace claims use authenticated actor, not a submitted persona',as
   assert.equal((await res.json()).result.acceptedBy,'jack');
   assert.equal((await workspace.POST(request('/api/workspace',data))).status,409);
 });
+
+test('private booking edits reject stale versions and concurrent saves without losing newer details',async()=>{
+  owner();
+  const created=await privateApi.POST(request('/api/private/records',{title:'Concurrent booking',type:'Hotel',reference:'QA-REFERENCE'}));
+  assert.equal(created.status,200);
+  const {id}=await created.json();
+  const list=async()=> (await (await privateApi.GET(new Request('https://gather.example/api/private/records'))).json()).records;
+  const initial=(await list()).find(r=>r.id===id);
+  assert.match(initial.version,/^[a-f0-9]{64}$/);
+  const responses=await Promise.all(['first','second'].map(provider=>privateApi.POST(request('/api/private/records',{...initial,provider}))));
+  assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
+  const saved=(await list()).find(r=>r.id===id);
+  assert.notEqual(saved.version,initial.version);
+  assert.equal((await privateApi.POST(request('/api/private/records',{...initial,provider:'stale'}))).status,409);
+  assert.equal((await list()).find(r=>r.id===id).provider,saved.provider);
+  assert.equal((await privateApi.POST(request('/api/private/records',{...saved,version:undefined}))).status,409);
+  assert.equal((await privateApi.POST(request('/api/private/records',{...saved,provider:'updated safely'}))).status,200);
+  assert.ok(!(await (await workspace.GET()).text()).includes('QA-REFERENCE'));
+});
+
+test('Gmail review retries are idempotent but conflicting summaries cannot silently disappear',async()=>{
+  owner();
+  const data={id:'mail-1',taskId:'bus',title:'Speaker arrival',summary:'Transport is confirmed.',confirmShared:true};
+  const first=await gmailApi.POST(request('/api/gmail/review',data));
+  assert.equal(first.status,200);
+  const duplicate=await first.json();
+  for(const patch of [{title:'Corrected arrival'},{summary:'Transport is cancelled.'},{taskId:'dietary'}]){
+    const res=await gmailApi.POST(request('/api/gmail/review',{...data,...patch}));
+    assert.equal(res.status,409);
+    assert.match((await res.json()).error,/already saved/);
+  }
+  const shared=(await (await workspace.GET()).json()).state.messages.filter(m=>m.externalId==='review:mail-1');
+  assert.equal(shared.length,1);assert.equal(shared[0].id,duplicate.id);
+  assert.equal(shared[0].body,data.summary);
+});
+
+test('OAuth profile failure preserves the previous connection and a successful callback saves the verified account atomically',async()=>{
+  owner();
+  const previous={accessToken:'old-access',refreshToken:'old-refresh',email:'original@example.com',labelId:'old-label',expiresAt:Date.now()+3600000};
+  const originalPayload=await security.seal(previous,'gmail:owner-1');
+  await db.prepare('INSERT INTO gmail_connections (user_id,payload,generation) VALUES (?,?,?)').bind('owner-1',originalPayload,'old-generation').run();
+  const start=async()=>new URL((await (await gmailApi.POST(request('/api/gmail/connect',{}))).json()).url).searchParams.get('state');
+  const originalFetch=globalThis.fetch;
+  let failProfile=true;
+  globalThis.fetch=async(url,options)=>{
+    if(String(url)==='https://oauth2.googleapis.com/token')return Response.json({access_token:'new-access',refresh_token:'new-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.readonly'});
+    assert.equal(String(url),'https://gmail.googleapis.com/gmail/v1/users/me/profile');
+    assert.equal(options.headers.Authorization,'Bearer new-access');
+    return failProfile?Response.json({error:'unavailable'},{status:503}):Response.json({emailAddress:'new@example.com'});
+  };
+  try{
+    const state=await start();
+    const failed=await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state='+state+'&code=fixture-code'));
+    assert.equal(failed.status,502);
+    assert.equal(sqlite.prepare('SELECT payload FROM gmail_connections WHERE user_id=?').get('owner-1').payload,originalPayload);
+    assert.ok(sqlite.prepare('SELECT id FROM oauth_states WHERE id=?').get(state));
+    failProfile=false;
+    const nextState=await start();
+    const succeeded=await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state='+nextState+'&code=new-fixture-code'));
+    assert.equal(succeeded.status,303);
+    const current=await gmailCore.connection('owner-1');
+    assert.equal(current.email,'new@example.com');assert.equal(current.accessToken,'new-access');
+    assert.notEqual(current.generation,'old-generation');
+    assert.equal(sqlite.prepare('SELECT id FROM oauth_states WHERE id=?').get(nextState),undefined);
+  }finally{
+    globalThis.fetch=originalFetch;
+    await db.prepare('DELETE FROM gmail_connections WHERE user_id=?').bind('owner-1').run();
+  }
+});
