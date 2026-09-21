@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,29 +20,42 @@ export async function gmailRequest(
     body: body ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
-  const data: any = await response.json();
+  const data: any = await response.json().catch(() => {
+    throw new Error(response.status === 401 ? 'Your sign-in expired. Sign in again to continue.' : 'Could not reach Gmail settings. Reload and try again.');
+  });
   if (!response.ok) throw new Error(data.error || 'Gmail request failed.');
   return data;
 }
 export function GmailSettings() {
+  const pending = useRef(false);
   const [status, setStatus] = useState<any>(null),
     [labels, setLabels] = useState<any[]>([]),
     [label, setLabel] = useState(''),
     [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [loadFailed, setLoadFailed] = useState(false);
   async function refresh() {
-    const value = await gmailRequest('status');
-    setStatus(value);
-    setLabel(value.labelId);
-    if (value.connected) {
-      const choices = await gmailRequest('labels');
-      setLabels(choices.labels);
+    setLoadFailed(false);
+    try {
+      const value = await gmailRequest('status');
+      setStatus(value);
+      setLabel(value.labelId);
+      setLabels([]);
+      if (value.connected) {
+        const choices = await gmailRequest('labels');
+        setLabels(choices.labels);
+      }
+    } catch (error) {
+      setLoadFailed(true);
+      throw error;
     }
   }
   useEffect(() => {
     refresh().catch((e) => setNotice(e.message));
   }, []);
   async function run(action: () => Promise<void>) {
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     setNotice('');
     try {
@@ -50,6 +63,7 @@ export function GmailSettings() {
     } catch (e) {
       setNotice(e instanceof Error ? e.message : 'Please retry.');
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -63,6 +77,9 @@ export function GmailSettings() {
               ? 'Gmail connected. Only your selected label is imported when you sync.'
               : 'Gmail not connected.')}
       </p>
+      {loadFailed && <Button variant="outline" disabled={busy} onClick={() => void run(async () => {
+        await refresh();
+      })}>Retry connection check</Button>}
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
@@ -126,6 +143,7 @@ export function GmailSettings() {
                 <Input
                   id="clientId"
                   name="clientId"
+                  disabled={busy}
                   required
                   placeholder="…apps.googleusercontent.com"
                 />
@@ -135,6 +153,7 @@ export function GmailSettings() {
                 <Input
                   id="clientSecret"
                   name="clientSecret"
+                  disabled={busy}
                   type="password"
                   required
                   autoComplete="off"
@@ -197,6 +216,7 @@ export function GmailSettings() {
                 <NativeSelect
                   id="project-label"
                   value={label}
+                  disabled={busy}
                   onChange={(e) => setLabel(e.target.value)}
                 >
                   <NativeSelectOption value="">
@@ -210,7 +230,7 @@ export function GmailSettings() {
                 </NativeSelect>
               </div>
               <Button
-                disabled={busy || !label}
+                disabled={busy || !label || label === status.labelId}
                 onClick={() =>
                   void run(async () => {
                     await gmailRequest('label', { labelId: label });
@@ -224,7 +244,8 @@ export function GmailSettings() {
                 Save label
               </Button>
             </div>
-            {!labels.length && (
+            {label !== status.labelId && <p role="status" className="text-sm text-muted-foreground">Save the selected label before syncing.</p>}
+            {!labels.length && !busy && !loadFailed && (
               <p className="text-sm">
                 No custom labels found. Create one in Gmail, then refresh this
                 page.
@@ -232,7 +253,7 @@ export function GmailSettings() {
             )}
             <div className="flex flex-wrap gap-3">
               <Button
-                disabled={busy || !status.labelId}
+                disabled={busy || !status.labelId || label !== status.labelId}
                 onClick={() =>
                   void run(async () => {
                     const result = await gmailRequest('sync', {});
@@ -248,7 +269,7 @@ export function GmailSettings() {
               {status.hasMore && (
                 <Button
                   variant="outline"
-                  disabled={busy}
+                  disabled={busy || label !== status.labelId}
                   onClick={() =>
                     void run(async () => {
                       const result = await gmailRequest('sync', {

@@ -8,6 +8,25 @@ const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
 const metadata = task => Object.fromEntries(['title','owner','dueDate','category','requiresVerification'].map(key => [key,task[key]]));
 
+test('editing a follow-up preserves the exact text and clears the previous sent marker',()=>{
+  const store=create();
+  store.saveDraft('bus','Original message','jack');
+  store.recordFollowup('bus','2030-01-01','jack');
+  const sent=()=>store.getState().drafts.find(d=>d.taskId==='bus');
+  assert.ok(sent().manuallySentAt);
+  store.saveDraft('bus','Original message','jack');
+  assert.ok(sent().manuallySentAt);
+  store.saveDraft('bus','Edited message','jack');
+  assert.equal(sent().text,'Edited message');
+  assert.ok(!sent().manuallySentAt);
+  const before=store.exportState();
+  assert.throws(()=>store.saveDraft('bus','x'.repeat(5001),'jack'),/5,000/);
+  assert.equal(store.exportState(),before);
+  store.recordFollowup('bus','2030-01-02','jack');
+  assert.ok(sent().manuallySentAt);
+  assert.equal(sent().text,'Edited message');
+});
+
 test('teammates report their own work but cannot edit task details or complete through a generic patch', () => {
   const store = create(), before = store.exportState(), task = getTask(store);
   for (const patch of [{title:task.title}, {dueDate:task.dueDate}, {owner:'maya'}, {category:task.category}, {requiresVerification:false}, {status:'done'}, {status:'blocked',note:'  '}]) {
@@ -79,6 +98,29 @@ test('saving organizer details does not withdraw the organizer’s own pending c
   assert.equal(getTask(store).revision,task.revision);
 });
 
+test('changing a pending completion note clears the old report but metadata-only edits preserve it',()=>{
+  const store=create();store.updateTask('dietary',{requiresVerification:true});
+  store.reportCompletion('dietary','All 24 meal requirements recorded.','maya');
+  const report=getTask(store);
+  store.updateTask('dietary',{...metadata(report),status:report.status,note:report.note,dueDate:'2027-01-03'});
+  assert.equal(getTask(store).reportedAt,report.reportedAt);
+  const latest=getTask(store);
+  store.updateTask('dietary',{...metadata(latest),status:latest.status,note:'Need to collect five new guest responses.'});
+  assert.equal(getTask(store).reportedAt,'');
+  assert.equal(getTask(store).reportedBy,'');
+  assert.throws(()=>store.verifyTask('dietary'),/no completion report/);
+});
+
+test('completed tasks must be reopened before introducing verification',()=>{
+  const store=create(),before=store.exportState();
+  assert.throws(()=>store.updateTask('venue',{requiresVerification:true}),/Reopen this task/);
+  assert.equal(store.exportState(),before);
+  const venue=store.getState().tasks.find(t=>t.id==='venue');
+  store.updateTask('venue',{...metadata(venue),status:'done',note:venue.note});
+  store.updateTask('venue',{status:'todo'});
+  assert.equal(store.updateTask('venue',{requiresVerification:true}).requiresVerification,true);
+});
+
 test('task dialog leads with context and reporting, with editor hidden from teammates', () => {
   const maya=taskDialogHtml('maya');
   assert.match(maya,/Assigned to/);
@@ -112,4 +154,26 @@ test('claiming assigns and accepts once without altering task details or stealin
   assert.equal(store.getState().activity.filter(a=>a.type==='claimed'&&a.taskId==='wayfinding').length,1);
   const done=store.addTask({title:'Finished unassigned task',status:'done'});
   assert.throws(()=>store.claimTask(done.id,'maya'),/Completed tasks/);
+});
+
+test('task refresh preserves only dirty sibling fields, excluding the submitted form',()=>{
+  const forms=[
+    {id:'commentForm',inputs:[{name:'text',tagName:'TEXTAREA',value:'Posted comment',defaultValue:''}]},
+    {id:'responseForm',inputs:[{name:'note',tagName:'TEXTAREA',value:'Unsent update',defaultValue:''}]},
+    {id:'taskDetailForm',inputs:[
+      {name:'title',tagName:'INPUT',value:'Same title',defaultValue:'Same title'},
+      {name:'note',tagName:'TEXTAREA',value:'Original note',defaultValue:'Original note'},
+      {name:'owner',tagName:'SELECT',value:'dev',options:[{value:'',defaultSelected:false},{value:'maya',defaultSelected:true},{value:'dev',defaultSelected:false}]},
+      {name:'additional',type:'checkbox',value:'on',checked:true,defaultChecked:false},
+    ]},
+  ];
+  const source=readFileSync('legacy/app.js','utf8');
+  const context=vm.createContext({ui:{dialogKind:'task'},$$:(_selector,root)=>root?root.inputs:forms});
+  vm.runInContext(source.slice(source.indexOf('  function taskDrafts('),source.indexOf('  function taskDialog(')),context);
+  const drafts=JSON.parse(JSON.stringify(context.taskDrafts('commentForm')));
+  assert.deepEqual(drafts.map(field=>[field.form,field.name,field.value]),[
+    ['responseForm','note','Unsent update'],['taskDetailForm','owner','dev'],['taskDetailForm','additional','on'],
+  ]);
+  assert.equal(drafts[2].checked,true);
+  context.ui.dialogKind='private';assert.equal(context.taskDrafts().length,0);
 });

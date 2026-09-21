@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { bookingRecord } from '@/lib/bookings';
+import { bookingRecord, bookingVersion } from '@/lib/bookings';
 import {
   administrator,
   body,
@@ -24,7 +24,10 @@ export async function GET(request: Request) {
     ).all<any>();
     return json({
       records: await Promise.all(
-        rows.results.map((row) => unseal(row.payload, 'booking:' + row.id)),
+        rows.results.map(async (row) => ({
+          ...(await unseal(row.payload, 'booking:' + row.id)),
+          version: await bookingVersion(row.payload),
+        })),
       ),
     });
   });
@@ -37,32 +40,21 @@ export async function POST(request: Request) {
     if (action === 'lock') return json({ hidden: true });
     if (action !== 'records') throw new HttpError(404, 'Not found.');
     const record = bookingRecord(data);
-    if (
-      data.id &&
-      !(await env.DB.prepare('SELECT id FROM private_records WHERE id=?')
-        .bind(record.id)
-        .first())
-    )
-      throw new HttpError(404, 'Booking not found.');
-    if (!data.id) {
-      const count = await env.DB.prepare(
-        'SELECT count(*) AS n FROM private_records',
-      ).first<any>();
-      if (count.n >= 100)
-        throw new HttpError(
-          409,
-          'This pilot supports up to 100 private bookings.',
-        );
+    const payload = await seal(record, 'booking:' + record.id);
+    const at = new Date().toISOString();
+    if (data.id) {
+      const current = await env.DB.prepare('SELECT payload FROM private_records WHERE id=?').bind(record.id).first<any>();
+      if (!current) throw new HttpError(404, 'Booking not found.');
+      const conflict = () => new HttpError(409, 'This booking changed in another tab. Your edits are still here; copy them before reloading.');
+      if (data.version !== await bookingVersion(current.payload)) throw conflict();
+      const updated = await env.DB.prepare('UPDATE private_records SET payload=?,updated_at=? WHERE id=? AND payload=?')
+        .bind(payload, at, record.id, current.payload).run();
+      if (updated.meta.changes !== 1) throw conflict();
+    } else {
+      const inserted = await env.DB.prepare('INSERT INTO private_records (id,payload,updated_at) SELECT ?,?,? WHERE (SELECT count(*) FROM private_records)<100')
+        .bind(record.id, payload, at).run();
+      if (inserted.meta.changes !== 1) throw new HttpError(409, 'This pilot supports up to 100 private bookings.');
     }
-    await env.DB.prepare(
-      'INSERT INTO private_records (id,payload,updated_at) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at',
-    )
-      .bind(
-        record.id,
-        await seal(record, 'booking:' + record.id),
-        new Date().toISOString(),
-      )
-      .run();
-    return json({ saved: true, id: record.id });
+    return json({ saved: true, id: record.id, version: await bookingVersion(payload) });
   });
 }

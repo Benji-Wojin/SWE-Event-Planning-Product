@@ -65,7 +65,7 @@
         { id: "email-dietary", sender: "Maya Singh", subject: "Dietary follow-up complete", body: "Hi Jack, all fourteen remaining guests have replied. I have recorded every dietary requirement and shared the list with Green Table. The dietary follow-up is complete. We can move on to approving the menu. — Maya", receivedAt: ago(0, 1), suggested: { mode: "update", taskId: "dietary", title: "Collect dietary needs", owner: "maya", dueDate: day(1), status: "done", note: "Maya reports that all fourteen remaining guests responded and the dietary list was shared with Green Table." } },
         { id: "email-quiet", sender: "Redwood Grove events team", subject: "Quiet space signs for Field Day", body: "Hello Jack, we can reserve the shaded area by the east entrance as your quiet rest area. Could someone on your team prepare signs and mark it on the guest map? Please confirm the owner before we finalize the site layout.", receivedAt: ago(0, 3), suggested: { mode: "new", taskId: "", title: "Prepare quiet-area signs and guest map", owner: "", dueDate: day(4), status: "todo", note: "The venue can reserve the shaded area by the east entrance. Assign someone to make signs and update the guest map." } },
       ];
-      messages.forEach(message=>Object.assign(message.suggested,{analysisVersion:2,signal:message.suggested.status==='done'?'completion-report':message.suggested.status==='blocked'?'blocker':'unclear'}));
+      messages.forEach(message=>Object.assign(message.suggested,{analysisVersion:3,signal:message.suggested.status==='done'?'completion-report':message.suggested.status==='blocked'?'blocker':'unclear'}));
       return {
         version: 3, event: { name: "Field Day 2026", date: "2026-10-03", location: "Redwood Grove" }, members: copy(MEMBERS), tasks, messages,
         activity: [
@@ -208,6 +208,8 @@
       task.revision += 1;
       if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
       if (changed.includes('status') && task.status !== 'done') { task.verifiedAt = ''; task.verifiedBy = ''; task.reportedAt = ''; task.reportedBy = ''; }
+      // A pending report describes its exact note, not a later replacement.
+      if (changed.includes('note') && previousStatus !== 'done' && task.reportedAt && !task.verifiedAt) { task.reportedAt = ''; task.reportedBy = ''; }
       task.updatedAt = timestamp();
       task.updatedBy = actor;
       if (task.status === "done" && previousStatus !== "done") { task.completedAt = task.updatedAt; task.completedBy = actor; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
@@ -234,7 +236,8 @@
         if (patch.status === 'done') throw new Error('Use Report complete to record your completion.');
         if (!['progress', 'blocked'].includes(patch.status) || !clean(patch.note)) throw new Error('Report progress or a blocker with a short note.');
       }
-      if (task.requiresVerification && !task.verifiedAt && patch.status === 'done') throw new Error('This task requires a completion report and organizer verification. Open the task and use Verify completion.');
+      if (task.requiresVerification && !task.verifiedAt && task.status !== 'done' && patch.status === 'done') throw new Error('This task requires a completion report and organizer verification. Open the task and use Verify completion.');
+      if (task.status === 'done' && !task.verifiedAt && !task.requiresVerification && taskFields(patch,task).requiresVerification) throw new Error('Reopen this task before requiring organizer verification.');
       if (patch.requiresVerification !== undefined && taskFields(patch,task).requiresVerification !== task.requiresVerification && actor !== 'jack') throw new Error('Only the organizer can change verification requirements.');
       const previousStatus = task.status;
       const supersedesReport = task.owner === actor && task.reportedAt && Object.keys(patch).every(field => ['status', 'note'].includes(field)) && ['progress', 'blocked'].includes(patch.status) && clean(patch.note);
@@ -276,10 +279,11 @@
     function saveDraft(taskId, text, actor = "jack") {
       actorId(actor);
       const task = taskById(taskId);
+      if (String(text ?? '').trim().length > 5000) throw new Error('Use 5,000 characters or fewer. Your draft has not been saved.');
       const body = clean(text, 5000);
       if (!body) throw new Error("Write a message before saving a draft.");
       let draft = state.drafts.find((item) => item.taskId === taskId);
-      if (draft) Object.assign(draft, { text: body, at: timestamp() });
+      if (draft) { if(draft.text!==body)delete draft.manuallySentAt;Object.assign(draft, { text: body, at: timestamp() }); }
       else { draft = { id: id("draft"), taskId, text: body, at: timestamp() }; state.drafts.unshift(draft); }
       entry(actor, `saved follow-up draft for ${task.title}`, task.id, "draft");
       save();
@@ -297,12 +301,14 @@
       const blockerText=body.replace(/\b(?:no longer|not) (?:blocked|waiting|pending)\b/g,'');
       const isBlocked = /\b(blocked|waiting|pending|cannot|can't)\b|need.*approv|not (?:yet )?(?:complete|done|confirmed)|still need/.test(blockerText);
       const completionCaveat=/\b(?:not|never|isn't|aren't|wasn't|weren't|haven't|hasn't|can't|cannot|will|would|could|should|please|if|can|after|once|unless|until|might|may|except|but|however|still|remaining)\b|\?/;
-      const unresolved=/\b(?:not|never|cannot|except|remaining|pending|waiting|blocked|still need|nobody|no one|none)\b|\b\w+n't\b/.test(blockerText);
-      const isDone = !unresolved && (body.match(/[^.!?\n]+[.!?]?/g)||[]).some(sentence => /\b(complete|completed|finished|done|confirmed)\b/.test(sentence) && !completionCaveat.test(sentence));
-      const accepted = /\bi(?:'m| am) on it\b|\bi (?:accept|can take|will handle)\b/.test(body);
+      const unresolved=/\b(?:not|never|cannot|except|remaining|pending|waiting|blocked|still need|nobody|no one|none|cancelled|canceled|unconfirmed)\b|\b\w+n't\b/.test(blockerText);
+      const partialClaim=sentence=>/\b(?:almost|nearly|partly|partially|mostly|halfway|tentatively)\b/.test(sentence)||[...sentence.matchAll(/\b(\d+(?:\.\d+)?)\s*%/g)].some(match=>Number(match[1])<100);
+      const isDone = !unresolved && !partialClaim(body) && (body.match(/[^.!?\n]+[.!?]?/g)||[]).some(sentence => /\b(complete|completed|finished|done|confirmed)\b/.test(sentence) && !completionCaveat.test(sentence));
+      const acceptanceCaveat=/\b(?:not|never|cannot|if|after|once|unless|until|might|may|would|could|except|but|however|maybe|possibly)\b|\b\w+n't\b|\?/;
+      const accepted = !acceptanceCaveat.test(body)&&/\bi(?:'m| am) on it\b|\bi (?:accept|can take|will handle)\b/.test(body);
       const explicitDate = fresh.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
       const tomorrow = new Date(message.receivedAt); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      return { analysisVersion:2, mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: explicitDate && validDate(explicitDate) ? explicitDate : /tomorrow/.test(body) ? tomorrow.toISOString().slice(0,10) : existing?.dueDate || "", status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh, baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
+      return { analysisVersion:3, mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: explicitDate && validDate(explicitDate) ? explicitDate : /tomorrow/.test(body) ? tomorrow.toISOString().slice(0,10) : existing?.dueDate || "", status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh, baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
     }
     function addMessage(data, actor = "jack") {
       actorId(actor);
@@ -338,9 +344,9 @@
       if (!message) throw new Error("That email could not be found.");
       if (message.appliedTaskId) return copy(taskById(message.appliedTaskId));
       if (message.ignoredAt) throw new Error('This message was set aside. It cannot change the plan.');
-      if (message.suggested.analysisVersion !== 2) throw new Error('Refresh this suggestion before accepting. Its email analysis is out of date.');
+      if (message.suggested.analysisVersion !== 3) throw new Error('Refresh this suggestion before accepting. Its email analysis is out of date.');
       const proposed = Object.fromEntries(['mode','taskId','title','owner','status','dueDate','note','category'].map(field => [field,approved[field] ?? message.suggested[field]]).filter(([,value])=>value!==undefined));
-      const completionReport = message.suggested.signal === 'completion-report' || (!message.suggested.signal && message.suggested.status === 'done') || (approved.status === 'done' && message.suggested.status !== 'done');
+      const completionReport = proposed.status === 'done' && (message.suggested.signal === 'completion-report' || (!message.suggested.signal && message.suggested.status === 'done') || (approved.status === 'done' && message.suggested.status !== 'done'));
       if (!["new", "update"].includes(proposed.mode)) throw new Error("Choose whether to create or update a task.");
       let task, before;
       if (proposed.mode === "update") {
@@ -535,11 +541,14 @@
       if (task.status !== 'blocked') { task.blockerFingerprint = ''; return false; }
       const fingerprint = normalize(task.note);
       if (!fingerprint || task.blockerFingerprint === fingerprint) return false;
-      let placeholder = /\b(?:also|another|additional|separate)\b/i.test(task.note) ? null : unusedPlaceholder(task);
+      const additional = /\b(?:also|another|additional|separate)\b/i.test(task.note);
+      if (additional) task.dependencies.filter(link => genericLink(task,link)).forEach(link => { link.independent = true; });
+      let placeholder = additional ? null : unusedPlaceholder(task);
       // A generic follow-up is one placeholder, not a new task for every wording.
       for (const spec of blockerSpecs(task)) {
         const generic = spec.key.startsWith('custom:');
-        const current = task.dependencies.find(link => (link.key === spec.key || generic && (genericLink(task,link) || !link.automatic)) && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
+        if (generic && additional) spec.key += ':' + fingerprint;
+        const current = task.dependencies.find(link => (link.key === spec.key || generic && !additional && !link.independent && (genericLink(task,link) || !link.automatic)) && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
         if (current && placeholder && current === placeholder.link && generic) {
           refinePlaceholder(task, placeholder, spec, actor);
           placeholder = null;
@@ -564,7 +573,8 @@
             prerequisite.blockerOriginKey = spec.key;
             entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
           }
-          linkDependency(task, prerequisite, actor, true, spec.key);
+          const link = linkDependency(task, prerequisite, actor, true, spec.key);
+          if (generic && additional) link.independent = true;
         }
       }
       task.blockerFingerprint = fingerprint;

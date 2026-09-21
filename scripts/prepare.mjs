@@ -79,6 +79,7 @@ app = app.replace(
   'Signed in as the local administrator · encrypted on this computer · session expires in 15 minutes. Team login and cloud sharing are not connected.',
   'Organizer-only · encrypted server storage · hidden after 15 minutes of viewing. Sign out to end account access.',
 );
+app = app.replace('Private details locked after the administrator session ended.', 'Private details hidden after 15 minutes. Sign out to end account access.');
 app = app
   .replaceAll('authenticated local administrator', 'signed-in organizer')
   .replaceAll('local administrator', 'organizer')
@@ -127,7 +128,7 @@ app = app
   );
 app = app.replace(
   '  setDrawer(false);\n  navigate',
-  "  window.addEventListener('gather-tool-updated',()=>{closeDialog();render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);\n  window.addEventListener('focus',()=>refreshInbox());\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
+  "  window.addEventListener('gather-tool-updated',()=>{if(ui.pendingSave||ui.reviewDirty||!$('#dialogBackdrop').hidden)showPendingUpdate();else render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);\n  window.addEventListener('focus',()=>refreshInbox());\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
 );
 writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(

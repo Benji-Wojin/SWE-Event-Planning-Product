@@ -21,10 +21,11 @@
       credentials: 'same-origin',
       cache: 'no-store',
     });
-    const result = await response.json();
+    if (response.status === 401) window.top.location.href = signIn;
+    const result = await response.json().catch(() => {
+      throw new Error('Gather could not complete the request. Reload or sign in again.');
+    });
     if (!response.ok) {
-      if (response.status === 401)
-        window.top.location.href = signIn;
       const error = new Error(result.error || 'Unable to save. Reload and try again.');
       error.status = response.status;
       throw error;
@@ -137,6 +138,11 @@
     window.GatherStore = { createStore: () => store };
     const script = document.createElement('script');
     script.src = '/gather-assets/app.js';
+    script.onerror = () => {
+      const root = document.getElementById('viewRoot');
+      root.innerHTML = '<h1>The workspace could not be opened</h1><p>Check your connection, then reload this page.</p><button class="btn btn-secondary" type="button">Reload</button>';
+      root.querySelector('button').addEventListener('click', () => location.reload());
+    };
     document.body.append(script);
     if (!demo && document.modelContext?.registerTool) {
       const lifecycle = new AbortController();
@@ -219,10 +225,13 @@
     heading.textContent = 'Your plan could not be loaded';
     const p = document.createElement('p');
     p.textContent = error.message;
+    const retry = document.createElement('button');
+    retry.className = 'btn btn-primary';retry.textContent = 'Try again';retry.type = 'button';
+    retry.addEventListener('click', () => location.reload());
     const a = document.createElement('a');
     a.href = signIn;
     a.target = '_top';
     a.textContent = 'Sign in again';
-    root.replaceChildren(heading, p, a);
+    root.replaceChildren(heading, p, retry, a);
   }
 })();

@@ -65,6 +65,8 @@
     const form=$('#emailReviewForm');if(!form)return;
     const s=store.getState(),message=s.messages.find(m=>m.id===form.dataset.id);if(!message)return;
     const values=Object.fromEntries(new FormData(form));
+    $('#existingTaskField').hidden=values.mode!=='update';
+    $('#emailTask').required=values.mode==='update';
     $('#changePreview').innerHTML=changePreview(message,s,values);
     const current=values.mode==='update'?s.tasks.find(t=>t.id===values.taskId):null;
     const submit=$('button[type="submit"]',form);
@@ -74,14 +76,14 @@
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
   async function refreshInbox(manual=false) {
-    if(!store.refresh||ui.syncing||document.hidden||ui.view==='details')return;
+    if(!store.refresh||ui.syncing||ui.pendingSave||document.hidden||ui.view==='details')return;
     ui.syncing=true;
     try {
       const result=await store.refresh(()=>!ui.reviewDirty&&$('#dialogBackdrop').hidden&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
-      if(result.changed){render();if(manual)toast('Conversation history updated.');}
+      if(result.changed){render();if(manual)toast('Plan updated.');}
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!result.pending;
       if(result.pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
-      else if(manual)toast('You have the latest conversation history.');
+      else if(manual&&!result.changed)toast('You have the latest updates.');
     } catch(error) {if(manual)toast(error.message);}
     finally {ui.syncing=false;}
   }

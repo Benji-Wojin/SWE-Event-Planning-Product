@@ -28,7 +28,7 @@
     if(waitsForVerification)after.status='progress';
     const keys=['title','owner','status','dueDate','note','category'];
     const fields=keys.map(key=>({key,before:current?.[key]??'',after:after[key],changed:!current||String(current[key]??'')!==String(after[key])}));
-    const reportsCompletion=message.suggested?.signal==='completion-report'||(!message.suggested?.signal&&message.suggested?.status==='done')||(p.status==='done'&&message.suggested?.status!=='done');
+    const reportsCompletion=p.status==='done'&&(message.suggested?.signal==='completion-report'||(!message.suggested?.signal&&message.suggested?.status==='done')||message.suggested?.status!=='done');
     return {current,after,fields,changed:fields.filter(f=>f.changed),unchanged:fields.filter(f=>!f.changed),waitsForVerification,reportsCompletion,isNew:p.mode==='new'};
   }
   function shortUpdate(message) {
@@ -43,7 +43,7 @@
     const summary=indexes.map((index,i)=>`${i&&index>indexes[i-1]+1?'… ':''}${sentences[index]}`).join(' ');
     return summary.length<=600?summary:'Long update. Open the source email for the full context.';
   }
-  const analysisOutdated=message=>!message.appliedTaskId&&!message.ignoredAt&&message.suggested?.analysisVersion!==2;
+  const analysisOutdated=message=>!message.appliedTaskId&&!message.ignoredAt&&message.suggested?.analysisVersion!==3;
   function briefing(group,state,message=group.pending[0]||group.latest) {
     const diff=changes(message,state),pending=!message.appliedTaskId&&!message.ignoredAt;
     const outdated=analysisOutdated(message);

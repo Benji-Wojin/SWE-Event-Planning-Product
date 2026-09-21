@@ -16,7 +16,7 @@ Use Node.js 22.13 or newer and the included npm lockfile:
 ```sh
 npm ci
 npm run build
-node --test tests/inbox.test.mjs tests/server.test.mjs
+node --test tests/*.test.mjs
 ```
 
 `npm run dev` starts the development server on a supported Cloudflare runtime host. The app relies on Sites-provided identity headers and D1; a successful build alone does not supply sign-in or production data locally. The API tests use a temporary SQLite database and mocked identity, without contacting Gmail.
@@ -59,12 +59,12 @@ The original development checkout is preserved separately. This GitHub import do
 
 ## Build and validation
 
-`npm run build` reproduces the adapted legacy workspace and builds the Worker. `npx tsc --noEmit` checks the app. `node --test tests/inbox.test.mjs tests/server.test.mjs` tests grouped email review, change previews, route authorization, server identity, CSRF, stale writes, encryption boundaries, Gmail setup/state, safe review, and demo isolation using SQLite and mocked platform identity. No test mocks are included in the deployed Worker.
+`npm run build` reproduces the adapted legacy workspace and builds the Worker. `npx tsc --noEmit` checks the app. `node --test tests/*.test.mjs` runs the task reporting, dependencies, email briefing, concurrency, authorization, encryption, Gmail, and demo regression tests using SQLite and mocked platform identity. No test mocks are included in the deployed Worker.
 
 Generated Drizzle migrations are in `drizzle/` and are packaged with the deployment. Runtime secrets belong in Sites environment configuration, never in `.openai/hosting.json` or Git. `.env.example` lists required keys. D1 schema is defined in `db/schema.ts`.
 
-The current macOS 13.4 host cannot run the local Cloudflare runtime, which requires 13.5+. Production bundling works. Browser interaction QA was not requested. The read_shared_plan and add_shared_task WebMCP tools are feature-detected; no supported browser WebMCP validation context was available, so that integration is unverified.
+The current macOS 13.4 host cannot run the local Cloudflare runtime, which requires 13.5+. Production bundling works. Cleanup QA exercised the prepared workspace, four-profile demo, and Gmail pages against isolated sample-data route handlers, including mobile layouts and failed saves. This does not replace end-to-end testing of hosted sign-in or a real Gmail connection. The read_shared_plan and add_shared_task WebMCP tools are feature-detected; no supported browser WebMCP validation context was available, so that integration is unverified.
 
-The inherited toolchain still reports dependency advisories. Runtime React/RSC and Vite were updated to the patched releases identified during this pass; remaining toolchain findings need a separate dependency compatibility review before broader rollout.
+The September 2026 cleanup pins compatible patched `image-size` and `undici` versions without changing the framework beta. `npm audit --omit=dev` reports no known advisories in the installed production dependency tree. The full audit still reports nine development-tool findings (five high and four moderate); Wrangler and the Cloudflare Vite plugin also contain bundled dependency copies that npm overrides do not replace. These tooling updates need separate compatibility validation before broader rollout. This audit result is not a security certification.
 
 References: [Google Web OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [message listing](https://developers.google.com/workspace/gmail/api/guides/list-messages).
