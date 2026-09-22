@@ -69,6 +69,7 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  resolveHandoff: 3,
   addDependency: 2,
   removeDependency: 2,
   resumeTask: 1,
@@ -99,15 +100,17 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask'].includes(method))
+  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
-  const [a, b] = input.args;
-  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask'].includes(method)) {
+  const [a, b, c] = input.args;
+  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
+    if (method === 'resolveHandoff' && c?.action === 'create' && c.owner && c.owner !== user.actorId)
+      throw new HttpError(403, 'Only the organizer can assign another teammate.');
     if (method === 'updateTask' && (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some(key => !['status', 'note'].includes(key))))
       throw new HttpError(403, 'Only the organizer can edit task details.');
     if (method === 'updateTask' && (task.status === 'done' || !['progress', 'blocked'].includes(b.status) || !String(b.note || '').trim()))
@@ -116,6 +119,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   let result;
   try {
     switch (method) {
+      case 'resolveHandoff':
+        result = store.resolveHandoff(a, b, c, user.actorId);
+        break;
       case 'addDependency':
         result = store.addDependency(a, b, user.actorId);
         break;
