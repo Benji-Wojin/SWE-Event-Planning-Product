@@ -586,6 +586,42 @@ test('demo blocker naming reuses one task and cannot overwrite a concurrent clai
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
 });
 
+test('handoff RPC persists suggestions, enforces assignment permissions and resolves atomically in the full demo',async()=>{
+ owner();const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+ let current=await (await demoRead()).json();
+ const rpc=async(actor,method,args)=>{const response=await demoWrite(actor,{method,args,revision:current.revision});assert.equal(response.status,200,await response.clone().text());current=await response.json();return current.result;};
+ const parent=await rpc('jack','addTask',[{title:'Handoff API check-in desk',owner:'dev',status:'progress'}]);
+ await rpc('dev','updateTask',[parent.id,{status:'progress',note:'I need Jules to print the API name badges.'}]);
+ const suggestion=current.state.tasks.find(t=>t.id===parent.id).handoffs[0];assert.equal(suggestion.owner,'jules');
+ for(const [actor,args,status] of [
+  ['maya',[parent.id,suggestion.id,{action:'dismiss'}],403],
+  ['dev',[parent.id,suggestion.id,{action:'create',title:suggestion.title,owner:'jules'}],403],
+  ['dev',[parent.id,suggestion.id,{action:'create',title:suggestion.title,actor:'jack'}],400],
+  ['dev',[parent.id,suggestion.id,{action:'create',title:suggestion.title},'jack'],400],
+ ])assert.equal((await demoWrite(actor,{method:'resolveHandoff',args,revision:current.revision})).status,status);
+ const stale=current.revision,args=[parent.id,suggestion.id,{action:'create',title:suggestion.title,owner:''}];
+ const responses=await Promise.all([demoWrite('dev',{method:'resolveHandoff',args,revision:stale}),demoWrite('dev',{method:'resolveHandoff',args,revision:stale})]);
+ assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);current=await responses.find(r=>r.status===200).json();const child=current.result;
+ assert.equal(child.owner,'');assert.equal(current.state.tasks.find(t=>t.id===parent.id).status,'progress');
+ const retried=await rpc('dev','resolveHandoff',args);assert.equal(retried.id,child.id);assert.equal(current.state.tasks.filter(t=>t.title===suggestion.title).length,1);
+ await rpc('jules','claimTask',[child.id]);await rpc('jules','reportCompletion',[child.id,'API name badges printed.']);
+ assert.ok(current.state.tasks.find(t=>t.id===parent.id).comments.some(c=>c.kind==='dependency-result'&&c.text.includes('API name badges printed')));
+ const reloaded=await (await demoRead('maya')).json();assert.equal(reloaded.state.tasks.find(t=>t.id===parent.id).handoffs[0].status,'accepted');
+ assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+});
+
+test('organizer can confirm a suggested owner and explicit associations keep existing task ownership',async()=>{
+ owner();let current=await (await demoRead()).json();
+ const rpc=async(actor,method,args)=>{const response=await demoWrite(actor,{method,args,revision:current.revision});assert.equal(response.status,200,await response.clone().text());current=await response.json();return current.result;};
+ const parent=await rpc('jack','addTask',[{title:'Coordinate API signage',owner:'dev',status:'progress'}]);
+ await rpc('maya','addComment',[parent.id,'Jules needs to print the API venue maps.']);let suggestion=current.state.tasks.find(t=>t.id===parent.id).handoffs.find(h=>h.status==='pending');
+ const created=await rpc('jack','resolveHandoff',[parent.id,suggestion.id,{action:'create',title:suggestion.title,owner:'jules'}]);assert.equal(created.owner,'jules');assert.equal(created.acceptedAt,'');
+ await rpc('dev','addComment',[parent.id,'This is associated with Collect dietary needs.']);suggestion=current.state.tasks.find(t=>t.id===parent.id).handoffs.find(h=>h.status==='pending');
+ const target=JSON.stringify(current.state.tasks.find(t=>t.id==='dietary'));
+ await rpc('dev','resolveHandoff',[parent.id,suggestion.id,{action:'link',taskId:'dietary'}]);assert.equal(JSON.stringify(current.state.tasks.find(t=>t.id==='dietary')),target);
+ assert.equal(current.state.tasks.find(t=>t.id===parent.id).dependencies.find(l=>l.taskId==='dietary').kind,'related');
+});
+
 test('demo booking storage is isolated, organizer-only and absent from exports', async () => {
   owner();
   const originals=sqlite.prepare('SELECT * FROM private_records ORDER BY id').all();
