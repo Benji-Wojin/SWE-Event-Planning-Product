@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export function MailInbox() {
   const epoch = useRef(0);
   const saving = useRef(false);
+  const dirty = useRef(false);
   const [messages, setMessages] = useState<any[]>([]),
     [tasks, setTasks] = useState<any[]>([]),
     [selected, setSelected] = useState(''),
@@ -34,16 +35,30 @@ export function MailInbox() {
     const hide = () => {
       if (document.hidden) {
         epoch.current++;
+        dirty.current = false;
         setMessages([]);
         setSelected('');
         setConfirmed(false);
-        setNotice('Private messages hidden. Reload to view them again.');
+        setNotice('Private messages hidden and unsaved summaries cleared. Reload to view messages.');
       }
     };
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirty.current || saving.current) { event.preventDefault(); event.returnValue = ''; }
+    };
+    const leave = (event: MouseEvent) => {
+      const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      if (!(link instanceof HTMLAnchorElement) || link.target === '_blank' || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      if (saving.current || (dirty.current && !window.confirm('Discard your unsaved summary?'))) { event.preventDefault(); return; }
+      dirty.current = false;
+    };
     document.addEventListener('visibilitychange', hide);
+    window.addEventListener('beforeunload', beforeUnload);
+    document.addEventListener('click', leave);
     return () => {
       epoch.current++;
       document.removeEventListener('visibilitychange', hide);
+      window.removeEventListener('beforeunload', beforeUnload);
+      document.removeEventListener('click', leave);
     };
   }, []);
   const groups = [...messages.reduce((map: Map<string, any>, m) => {
@@ -54,6 +69,13 @@ export function MailInbox() {
   }, new Map()).values()];
   const group = groups.find((g) => g.messages.some((m: any) => m.id === selected)) || groups[0];
   const message = group?.messages.find((m: any) => m.id === selected) || group?.messages.find((m: any) => !m.reviewed) || group?.messages[0];
+  function chooseMessage(id: string) {
+    if (saving.current || id === message?.id) return;
+    if (dirty.current && !window.confirm('Discard your unsaved summary?')) return;
+    dirty.current = false;
+    setSelected(id);
+    setConfirmed(false);
+  }
   return (
     <>
       <p role="status" className="mb-5 text-sm">
@@ -68,9 +90,8 @@ export function MailInbox() {
               className="h-auto w-full justify-start whitespace-normal px-4 py-4 text-left"
               disabled={busy}
               onClick={() => {
-                if (saving.current) return;
-                setSelected((g.messages.find((m: any) => !m.reviewed) || g.messages[0]).id);
-                setConfirmed(false);
+                if (group?.key === g.key) return;
+                chooseMessage((g.messages.find((m: any) => !m.reviewed) || g.messages[0]).id);
               }}
             >
               <span className="block min-w-0">
@@ -91,7 +112,7 @@ export function MailInbox() {
           <Card key={message.id}>
             <CardContent className="space-y-5 pt-2">
               <div className="flex flex-wrap gap-2" aria-label="Emails in this conversation">
-                {group.messages.map((m: any, index: number) => <Button key={m.id} variant={m.id === message.id ? 'secondary' : 'outline'} size="sm" disabled={busy} onClick={() => { if (saving.current) return; setSelected(m.id); setConfirmed(false); }}>
+                {group.messages.map((m: any, index: number) => <Button key={m.id} variant={m.id === message.id ? 'secondary' : 'outline'} size="sm" disabled={busy} onClick={() => chooseMessage(m.id)}>
                   Email {group.messages.length - index} · {m.reviewed ? 'Summary saved' : 'Needs review'}
                 </Button>)}
               </div>
@@ -121,6 +142,7 @@ export function MailInbox() {
                 <form
                   className="space-y-4 rounded-xl bg-muted p-5"
                   aria-busy={busy}
+                  onChangeCapture={() => { dirty.current = true; }}
                   onSubmit={async (event) => {
                     event.preventDefault();
                     if (saving.current) return;
@@ -136,6 +158,8 @@ export function MailInbox() {
                         confirmShared: confirmed,
                       });
                       if (ticket !== epoch.current || document.hidden) return;
+                      dirty.current = false;
+                      saving.current = false;
                       window.location.href = '/?message=' + encodeURIComponent(result.id);
                     } catch (e) {
                       setNotice(
@@ -152,7 +176,7 @@ export function MailInbox() {
                   </h3>
                   <div className="space-y-2">
                     <Label htmlFor="relatedTask">Related task</Label>
-                    <Select name="taskId" defaultValue={message.taskId || ''} disabled={busy}>
+                    <Select name="taskId" defaultValue={message.taskId || ''} disabled={busy} onValueChange={() => { dirty.current = true; }}>
                       <SelectTrigger id="relatedTask" className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent><SelectItem value="">Suggest from summary</SelectItem>{tasks.map((t) => <SelectItem key={t.id} value={t.id}>{t.title}</SelectItem>)}</SelectContent>
                     </Select>
@@ -187,7 +211,7 @@ export function MailInbox() {
                       id="confirmShared"
                       disabled={busy}
                       checked={confirmed}
-                      onCheckedChange={(value) => setConfirmed(value)}
+                      onCheckedChange={(value) => { dirty.current = true; setConfirmed(value); }}
                     />
                     <Label htmlFor="confirmShared" className="leading-relaxed">
                       I reviewed these fields and they are safe to include in

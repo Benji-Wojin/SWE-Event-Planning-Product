@@ -43,7 +43,7 @@
     const summary=indexes.map((index,i)=>`${i&&index>indexes[i-1]+1?'… ':''}${sentences[index]}`).join(' ');
     return summary.length<=600?summary:'Long update. Open the source email for the full context.';
   }
-  const analysisOutdated=message=>!message.appliedTaskId&&!message.ignoredAt&&message.suggested?.analysisVersion!==3;
+  const analysisOutdated=message=>!message.appliedTaskId&&!message.ignoredAt&&message.suggested?.analysisVersion!==4;
   function briefing(group,state,message=group.pending[0]||group.latest) {
     const diff=changes(message,state),pending=!message.appliedTaskId&&!message.ignoredAt;
     const outdated=analysisOutdated(message);
