@@ -65,7 +65,7 @@
         { id: "email-dietary", sender: "Maya Singh", subject: "Dietary follow-up complete", body: "Hi Jack, all fourteen remaining guests have replied. I have recorded every dietary requirement and shared the list with Green Table. The dietary follow-up is complete. We can move on to approving the menu. — Maya", receivedAt: ago(0, 1), suggested: { mode: "update", taskId: "dietary", title: "Collect dietary needs", owner: "maya", dueDate: day(1), status: "done", note: "Maya reports that all fourteen remaining guests responded and the dietary list was shared with Green Table." } },
         { id: "email-quiet", sender: "Redwood Grove events team", subject: "Quiet space signs for Field Day", body: "Hello Jack, we can reserve the shaded area by the east entrance as your quiet rest area. Could someone on your team prepare signs and mark it on the guest map? Please confirm the owner before we finalize the site layout.", receivedAt: ago(0, 3), suggested: { mode: "new", taskId: "", title: "Prepare quiet-area signs and guest map", owner: "", dueDate: day(4), status: "todo", note: "The venue can reserve the shaded area by the east entrance. Assign someone to make signs and update the guest map." } },
       ];
-      messages.forEach(message=>Object.assign(message.suggested,{analysisVersion:3,signal:message.suggested.status==='done'?'completion-report':message.suggested.status==='blocked'?'blocker':'unclear'}));
+      messages.forEach(message=>Object.assign(message.suggested,{analysisVersion:4,signal:message.suggested.status==='done'?'completion-report':message.suggested.status==='blocked'?'blocker':'unclear'}));
       return {
         version: 3, event: { name: "Field Day 2026", date: "2026-10-03", location: "Redwood Grove" }, members: copy(MEMBERS), tasks, messages,
         activity: [
@@ -206,7 +206,7 @@
       const previousStatus = task.status;
       changed.forEach((field) => { task[field] = next[field]; });
       task.revision += 1;
-      if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
+      if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.followupAfter = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
       if (changed.includes('status') && task.status !== 'done') { task.verifiedAt = ''; task.verifiedBy = ''; task.reportedAt = ''; task.reportedBy = ''; }
       // A pending report describes its exact note, not a later replacement.
       if (changed.includes('note') && previousStatus !== 'done' && task.reportedAt && !task.verifiedAt) { task.reportedAt = ''; task.reportedBy = ''; }
@@ -306,9 +306,16 @@
       const isDone = !unresolved && !partialClaim(body) && (body.match(/[^.!?\n]+[.!?]?/g)||[]).some(sentence => /\b(complete|completed|finished|done|confirmed)\b/.test(sentence) && !completionCaveat.test(sentence));
       const acceptanceCaveat=/\b(?:not|never|cannot|if|after|once|unless|until|might|may|would|could|except|but|however|maybe|possibly)\b|\b\w+n't\b|\?/;
       const accepted = !acceptanceCaveat.test(body)&&/\bi(?:'m| am) on it\b|\bi (?:accept|can take|will handle)\b/.test(body);
-      const explicitDate = fresh.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0];
-      const tomorrow = new Date(message.receivedAt); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-      return { analysisVersion:3, mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: explicitDate && validDate(explicitDate) ? explicitDate : /tomorrow/.test(body) ? tomorrow.toISOString().slice(0,10) : existing?.dueDate || "", status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh, baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
+      const mentionedDates=[...new Set((body.match(/\b\d{4}-\d{2}-\d{2}\b|\btomorrow\b/g)||[]))];
+      const deadlineSentence=(body.match(/[^.!?\n]+[.!?]?/g)||[]).find(sentence=>
+        /\b(?:(?:due(?:\s+date)?|deadline)(?:\s+(?:is|on|by|for))?\s*:?\s*|(?:send|submit|finish|finished|complete|completed|deliver|confirm|respond|reply|ready|needed)\b[^.!?\n]{0,60}\bby\s+)(?:\d{4}-\d{2}-\d{2}|tomorrow)\b/.test(sentence)&&
+        !/\b(?:no|not|never|old|previous|original|ignore|ignored|cancelled|canceled|obsolete|was|had|if|unless|might|may|could|would|tentative|possibly)\b|\b\w+n't\b|\?/.test(sentence));
+      let proposedDate=existing?.dueDate||'';
+      if(mentionedDates.length===1&&deadlineSentence){
+        if(mentionedDates[0]==='tomorrow'){const tomorrow=new Date(message.receivedAt);tomorrow.setUTCDate(tomorrow.getUTCDate()+1);proposedDate=tomorrow.toISOString().slice(0,10);}
+        else if(validDate(mentionedDates[0]))proposedDate=mentionedDates[0];
+      }
+      return { analysisVersion:4, mode: existing ? "update" : "new", taskId: existing?.id || "", title: existing?.title || clean(message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/gi, ""), 200), owner: existing?.owner || person?.id || "", dueDate: proposedDate, status: isBlocked ? "blocked" : isDone ? "done" : accepted ? 'progress' : existing?.status || "todo", note: fresh || existing?.note || '', baseRevision: existing?.revision || 0, signal: isBlocked ? 'blocker' : isDone ? 'completion-report' : accepted ? 'acceptance' : 'unclear', reason: threadTasks.length > 1 ? 'This conversation has been linked to multiple tasks. Choose the correct one.' : existing ? `${threadTasks.length ? 'Matched the existing conversation' : 'Matched the subject'}. ${isBlocked ? 'A condition or blocker is still unresolved.' : isDone ? 'The sender reports completion; this is not independent verification.' : accepted ? 'The sender appears to accept the work.' : 'No clear status change. Check the proposal.'}` : 'No reliable existing-task match. Choose a task or create one.' };
     }
     function addMessage(data, actor = "jack") {
       actorId(actor);
@@ -344,7 +351,7 @@
       if (!message) throw new Error("That email could not be found.");
       if (message.appliedTaskId) return copy(taskById(message.appliedTaskId));
       if (message.ignoredAt) throw new Error('This message was set aside. It cannot change the plan.');
-      if (message.suggested.analysisVersion !== 3) throw new Error('Refresh this suggestion before accepting. Its email analysis is out of date.');
+      if (message.suggested.analysisVersion !== 4) throw new Error('Refresh this suggestion before accepting. Its email analysis is out of date.');
       const proposed = Object.fromEntries(['mode','taskId','title','owner','status','dueDate','note','category'].map(field => [field,approved[field] ?? message.suggested[field]]).filter(([,value])=>value!==undefined));
       const completionReport = proposed.status === 'done' && (message.suggested.signal === 'completion-report' || (!message.suggested.signal && message.suggested.status === 'done') || (approved.status === 'done' && message.suggested.status !== 'done'));
       if (!["new", "update"].includes(proposed.mode)) throw new Error("Choose whether to create or update a task.");
@@ -400,7 +407,7 @@
     function acceptTask(taskId, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       if (task.owner !== actor) throw new Error('Only the assigned owner can accept this commitment.');
-      if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
+      if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
       return copy(task);
     }
     function reportCompletion(taskId, note, actor = 'jack') {

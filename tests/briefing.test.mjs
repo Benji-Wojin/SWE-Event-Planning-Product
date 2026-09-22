@@ -9,6 +9,47 @@ const create=()=>GatherStore.createStore({storage:null});
 const add=(store,body,extra={})=>store.addMessage({sender:'Jules Miller',subject:'Bus update',taskId:'bus',body,...extra});
 const group=(store,id)=>GatherInbox.conversations(store.getState()).find(g=>g.messages.some(m=>m.id===id));
 
+test('ambiguous, historical and negated email dates cannot replace the current deadline',()=>{
+  for(const body of [
+    'Ignore the old deadline of 2026-10-02. The new due date is 2026-10-05.',
+    'It will not be tomorrow. I will send the revised deadline next week.',
+    'This is not due tomorrow.',
+    'The deadline is no longer 2026-10-02.',
+    'There is no deadline tomorrow.',
+    'Please stop by tomorrow to discuss the bus timetable.',
+    'The report is due next week, and we will discuss it tomorrow.',
+    'The old deadline was 2026-10-02.',
+    'Could this be due by 2026-10-02?',
+    'Our meeting is on 2026-10-02.',
+  ]){
+    const store=create();store.updateTask('bus',{dueDate:'2026-10-06'});
+    const message=add(store,body,{receivedAt:'2026-09-22T12:00:00.000Z'});
+    assert.equal(message.suggested.dueDate,'2026-10-06',body);
+    assert.equal(store.applyMessage(message.id).dueDate,'2026-10-06',body);
+  }
+  for(const [body,date] of [['The new due date is 2026-10-05.','2026-10-05'],['Please send the list by tomorrow.','2026-09-23']]){
+    const store=create();assert.equal(add(store,body,{receivedAt:'2026-09-22T12:00:00.000Z'}).suggested.dueDate,date);
+  }
+});
+
+test('header-only and quoted email extraction never erases an existing progress note',()=>{
+  for(const body of ['From: Jules Miller\nSent: Tuesday\nBoth buses are confirmed.','> The buses are confirmed.']){
+    const store=create();store.updateTask('bus',{note:'Keep the current pickup instructions.'});
+    const message=add(store,body);
+    assert.equal(message.suggested.note,'Keep the current pickup instructions.');
+    assert.equal(store.applyMessage(message.id).note,'Keep the current pickup instructions.');
+  }
+});
+
+test('previous date analysis requires an explicit refresh before acceptance',()=>{
+  const original=create(),message=add(original,'Due tomorrow.');
+  const state=JSON.parse(original.exportState());state.messages.find(m=>m.id===message.id).suggested.analysisVersion=3;
+  let raw=JSON.stringify(state);const store=GatherStore.createStore({storage:{getItem:()=>raw,setItem:(_key,value)=>raw=value}});
+  assert.equal(GatherInbox.analysisOutdated(store.getState().messages.find(m=>m.id===message.id)),true);
+  assert.throws(()=>store.applyMessage(message.id),/Refresh this suggestion/);
+  store.refreshProposal(message.id);assert.equal(store.getState().messages.find(m=>m.id===message.id).suggested.analysisVersion,4);
+});
+
 test('restored review modes synchronize task visibility, validation and stale-save protection',()=>{
   const store=create(),message=add(store,'The route is ready for discussion.');
   const form={dataset:{id:message.id},fields:{...message.suggested,expectedRevision:message.suggested.baseRevision}};

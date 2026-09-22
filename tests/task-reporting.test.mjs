@@ -8,6 +8,51 @@ const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
 const metadata = task => Object.fromEntries(['title','owner','dueDate','category','requiresVerification'].map(key => [key,task[key]]));
 
+test('reassignment clears old email acceptance and follow-up timing without erasing history',()=>{
+  const store=create(),parent=store.addTask({title:'Check the coach schedule',owner:'jules',status:'progress'});
+  const email=store.addMessage({sender:'Jules Miller',subject:'Coach schedule',taskId:parent.id,body:'I accept this task.'});
+  store.applyMessage(email.id);store.recordFollowup(parent.id,'2030-01-01');
+  const current=()=>store.getState().tasks.find(t=>t.id===parent.id);
+  assert.equal(current().acceptedSourceId,email.id);
+  store.updateTask(parent.id,{owner:'maya'});
+  for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','followupAfter'])assert.equal(current()[key],'',key);
+  store.acceptTask(parent.id,'maya');assert.equal(current().acceptedBy,'maya');assert.equal(current().acceptedSourceId,'');
+  assert.equal(store.getState().messages.find(m=>m.id===email.id).appliedTaskId,parent.id);
+  assert.ok(store.getState().activity.some(a=>a.taskId===parent.id&&a.type==='followup-recorded'));
+  const data=JSON.parse(store.exportState()),stale=data.tasks.find(t=>t.id===parent.id);stale.acceptedAt='';stale.acceptedSourceId=email.id;stale.acceptedRecordedBy='jack';
+  let raw=JSON.stringify(data);const recovered=GatherStore.createStore({storage:{getItem:()=>raw,setItem:(_key,value)=>raw=value}});
+  recovered.acceptTask(parent.id,'maya');assert.equal(recovered.getState().tasks.find(t=>t.id===parent.id).acceptedSourceId,'');
+});
+
+test('reached follow-up dates appear in attention while future dates remain quiet',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const context=vm.createContext({dateKey:()=> '2026-09-22',dependencyInfo:()=>({ready:false})});
+  vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const attention ='))+'globalThis.reason=reason;',context);
+  const task={owner:'maya',status:'progress',acceptedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),dueDate:'2026-10-06'};
+  assert.equal(context.reason({...task,followupAfter:'2026-09-22'}).key,'followup');
+  assert.equal(context.reason({...task,followupAfter:'2026-09-21'}).key,'followup');
+  assert.equal(context.reason({...task,followupAfter:'2026-09-23'}),null);
+  assert.equal(context.reason({...task,status:'done',followupAfter:'2026-09-21'}),null);
+});
+
+test('discard checks detect changed values but ignore untouched, hidden and read-only fields',()=>{
+  const source=readFileSync('legacy/app.js','utf8');let prompts=0;
+  const context=vm.createContext({$$:(_selector,root)=>root.fields,window:{confirm:()=>{prompts++;return false;}}});
+  vm.runInContext(source.slice(source.indexOf('  function hasUnsavedFields('),source.indexOf('  const unsavedDialog=')),context);
+  const root={fields:[
+    {tagName:'INPUT',type:'text',name:'title',value:'Same',defaultValue:'Same'},
+    {tagName:'TEXTAREA',name:'note',value:'Same note',defaultValue:'Same note'},
+    {tagName:'SELECT',name:'owner',value:'maya',options:[{value:'jack'},{value:'maya',defaultSelected:true}]},
+    {tagName:'INPUT',type:'checkbox',checked:false,defaultChecked:false},
+    {tagName:'INPUT',type:'hidden',value:'2',defaultValue:'1'},
+    {tagName:'TEXTAREA',readOnly:true,value:'Private preview',defaultValue:''},
+  ]};
+  assert.equal(context.confirmDiscard(root),true);assert.equal(prompts,0);
+  root.fields[0].value='Edited';assert.equal(context.hasUnsavedFields(root),true);assert.equal(context.hasUnsavedFields(root,['title']),false);assert.equal(context.confirmDiscard(root),false);assert.equal(prompts,1);
+  root.fields[0].value='Same';root.fields[2].value='jack';assert.equal(context.hasUnsavedFields(root),true);
+  root.fields[2].value='maya';root.fields[3].checked=true;assert.equal(context.hasUnsavedFields(root),true);
+});
+
 test('editing a follow-up preserves the exact text and clears the previous sent marker',()=>{
   const store=create();
   store.saveDraft('bus','Original message','jack');

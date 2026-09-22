@@ -58,6 +58,19 @@
     if(!message){message=document.createElement('p');message.className='form-error';message.setAttribute('role','alert');form.prepend(message);}
     message.textContent=error.message||'Please check the form and try again.';
   }
+  function hasUnsavedFields(root,exclude=[]) {
+    return !!root&&$$('input,textarea,select',root).some(input=>{
+      if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
+      if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
+      const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
+      return input.value!==(original??'');
+    });
+  }
+  function confirmDiscard(...roots) {
+    return !roots.some(root=>hasUnsavedFields(root))||window.confirm('Discard your unsaved changes?');
+  }
+  const unsavedDialog=()=>!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
+  const unsavedReview=()=>hasUnsavedFields($('#emailReviewForm'));
   const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const dayLabel = value => !value ? 'No due date' : new Date(value+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
   const timeLabel = value => !value ? 'No update yet' : new Date(value).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
@@ -78,6 +91,7 @@
     if(task.status==='blocked') return {key:'blocked',label:'Blocked',action:'Needs a decision',rank:0};
     if(!task.owner) return {key:'unassigned',label:'No owner',action:'Assign an owner',rank:1};
     if(task.dueDate && task.dueDate<dateKey()) return {key:'overdue',label:'Overdue',action:'Past its due date',rank:2};
+    if(task.followupAfter && task.followupAfter<=dateKey()) return {key:'followup',label:'Follow-up due',action:'Check in with the owner',rank:3};
     if(task.followupAfter && task.followupAfter>dateKey()) return null;
     if(!task.acceptedAt) return {key:'acceptance',label:'Acceptance pending',action:'Ask the owner to accept',rank:3};
     if(!task.updatedAt || Date.now()-new Date(task.updatedAt).getTime()>=3*86400000) return {key:'stale',label:'No recent update',action:'Request an update',rank:3};
@@ -191,7 +205,7 @@
   }
 
   function render() {
-    const pendingReview=ui.reviewDirty&&ui.view==='inbox'&&ui.dialogKind==='task'?$('#emailReviewForm'):null;
+    const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
     const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
     ui.reviewDirty=false;
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
@@ -213,6 +227,7 @@
       const details=$('.proposal-edit',currentReview);if(details)details.open=reviewDraft.expanded;
       ui.reviewDirty=true;updateChangePreview();
     }
+    const emailTask=$('#emailTask');if(emailTask)emailTask.dataset.previousValue=emailTask.value;
     fillIcons(document);
     if(previousFocus&&!previousFocus.isConnected)restoreFocus(previousFocus,$('#viewRoot'));
   }
@@ -426,8 +441,13 @@
     if(ui.pendingSave){event.preventDefault();return;}
     const el=event.target.closest('[data-action], [data-view]');
     if(!el)return;
-    if(el.dataset.view){event.preventDefault();if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
+    if(el.dataset.view){event.preventDefault();if(el.dataset.view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}if(!confirmDiscard($('#dialog'),el.dataset.view!==ui.view?$('#emailReviewForm'):null))return;if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
     const {action,id}=el.dataset;
+    if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
+    if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
+    const replacesDialog=['close-dialog','task','add-task','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
+    if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
     const saveRoot=el.closest('#dialog')||el.closest('form')||el;
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
@@ -457,7 +477,7 @@
       if(action==='refresh-proposal'){
         if(ui.savingProposal)return;
         const taskId=$('#emailTask')?.value;ui.savingProposal=true;
-        try{if(store.refresh)await store.refresh(()=>true);const latest=store.getState().messages.find(message=>message.id===id);if(!latest||latest.appliedTaskId||latest.ignoredAt){render();toast('Showing the latest saved decision.');}else{store.refreshProposal(id,taskId);render();toast('Comparison refreshed. Review the current values before applying.');}}
+        try{if(store.refresh)await store.refresh(()=>true);const latest=store.getState().messages.find(message=>message.id===id);if(!latest||latest.appliedTaskId||latest.ignoredAt){render();toast('Showing the latest saved decision.');}else{store.refreshProposal(id,taskId);ui.reviewDirty=false;render();toast('Comparison refreshed. Review the current values before applying.');}}
         catch(error){render();throw error;}
         finally{ui.savingProposal=false;}
       }
@@ -548,10 +568,11 @@
       $('#existingTaskField').hidden=!update;
       $('#emailTask').required=update;
       if(update)$('#emailTask').value='';
+      $('#emailTask').dataset.previousValue=$('#emailTask').value;
       updateChangePreview();
     }
     if(el.id==='emailTask'){
-      const form=$('#emailReviewForm');if(el.value&&form){const target=el.value;const release=saveLock(form);ui.savingProposal=true;try{store.refreshProposal(form.dataset.id,target);if(form.isConnected)render();}catch(error){formError(form,error);toast(error.message);}finally{ui.savingProposal=false;release();if(form.isConnected)updateChangePreview();}}
+      const form=$('#emailReviewForm');if(el.value&&form){if(hasUnsavedFields(form,['taskId','mode'])&&!window.confirm('Changing the task replaces your proposed edits. Continue?')){el.value=el.dataset.previousValue||'';updateChangePreview();return;}const target=el.value;const release=saveLock(form);ui.savingProposal=true;try{store.refreshProposal(form.dataset.id,target);if(form.isConnected){ui.reviewDirty=false;render();}}catch(error){formError(form,error);toast(error.message);}finally{ui.savingProposal=false;release();if(form.isConnected)updateChangePreview();}}if(el.isConnected)el.dataset.previousValue=el.value;
     }
   });
   function renderTaskRows() {
@@ -567,9 +588,9 @@
       renderTaskRows();
     }
   });
-  $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop'))closeDialog();});
+  $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop')&&confirmDiscard($('#dialog')))closeDialog();});
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden)closeDialog();else setDrawer(false);}
+    if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden){if(confirmDiscard($('#dialog')))closeDialog();}else setDrawer(false);}
     const scope=!$('#dialogBackdrop').hidden?$('#dialog'):matchMedia('(max-width:800px)').matches&&$('#sidebar').classList.contains('open')?$('#sidebar'):null;
     if(event.key==='Tab'&&scope){
       const controls=focusable(scope);
@@ -583,7 +604,8 @@
   $('#mobileMenu').addEventListener('click',()=>setDrawer(!$('#sidebar').classList.contains('open')));
   $('#mobileOverlay').addEventListener('click',()=>setDrawer(false));
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
-  window.addEventListener('hashchange',()=>navigate(location.hash.slice(1)));
+  window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
+  window.addEventListener('beforeunload',event=>{if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();});
   if(window.GatherMode?.demo&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
