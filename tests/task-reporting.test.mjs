@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
+import '../legacy/recovery-ui.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
@@ -127,9 +128,10 @@ function taskDialogHtml(actor,id='dietary',identity) {
     h:value=>String(value??'').replaceAll('<','&lt;'),
     statusBadge:status=>status,sourceButton:()=>'',dayLabel:value=>value,
     timeLabel:value=>value,relative:value=>value,completionText:()=>'',
-    commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:()=>'',
+    commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:items=>items.map(([value,label])=>`<option value="${value}">${label}</option>`).join(''),$:()=>null,
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
+  context.recovery=GatherRecoveryUI.create(context);
   vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;

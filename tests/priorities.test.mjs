@@ -10,9 +10,9 @@ const task = (id,patch={}) => ({id,title:id,owner:'maya',status:'progress',dueDa
 const info = (item,tasks=[item]) => GatherPriorities.analyze(item,tasks,now);
 const ranked = tasks => GatherPriorities.rank(tasks,now).map(t=>t.id);
 
-test('overdue tasks always precede upcoming work; manual priorities reorder each group',()=>{
+test('overdue work gains urgency while manual priority can promote upcoming work',()=>{
   const tasks=[task('urgent',{priority:'high'}),task('late-low',{dueDate:'2026-09-23',priority:'low'}),task('late-high',{dueDate:'2026-09-23',priority:'high'}),task('late-auto',{dueDate:'2026-09-23'}),task('today',{dueDate:'2026-09-24'}),task('today-low',{dueDate:'2026-09-24',priority:'low'})];
-  assert.deepEqual(ranked(tasks),['late-high','late-auto','late-low','urgent','today','today-low']);
+  assert.deepEqual(ranked(tasks),['late-high','urgent','late-auto','today','late-low','today-low']);
   const blocked=info(task('blocked',{dueDate:'2026-09-20',status:'blocked',owner:''}));
   assert.equal(blocked.overdue,true);
   for(const key of ['overdue','blocked','unassigned'])assert.ok(blocked.factors.some(f=>f.key===key));
@@ -20,7 +20,8 @@ test('overdue tasks always precede upcoming work; manual priorities reorder each
 
 test('automatic ranking promotes prerequisites and deadlines; related and completed links do not boost priority',()=>{
   const prerequisite=task('dietary'),parent=task('menu',{status:'blocked',dependencies:[{taskId:'dietary'}]}),today=task('today',{dueDate:'2026-09-24'});
-  assert.deepEqual(ranked([today,parent,prerequisite]),['dietary','today','menu']);
+  assert.deepEqual(ranked([today,parent,prerequisite]),['today','dietary']);
+  assert.deepEqual(ranked([today,{...parent,hardDeadline:true,dueDate:'2026-09-25'},prerequisite]),['dietary','today']);
   assert.equal(info(prerequisite,[prerequisite,{...parent,dependencies:[{taskId:'dietary',kind:'related'}]}]),null);
   assert.equal(info(prerequisite,[prerequisite,{...parent,status:'done'}]),null);
   assert.equal(info({...prerequisite,status:'done',priority:'high'}),null);
@@ -76,5 +77,5 @@ test('Needs attention filters and search preserve the shared dashboard ranking',
   const context=vm.createContext({ui:{tab:'attention',actor:'jack',owner:'',status:'',search:''},store:{getState:()=>s},GatherPriorities:{rank:tasks=>GatherPriorities.rank(tasks,now),analyze:(t,tasks)=>GatherPriorities.analyze(t,tasks,now)},member:()=>({name:'Maya'})});
   vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const pending ='))+source.slice(source.indexOf('  function filteredTasks('),source.indexOf('  const options ='))+'globalThis.attention=attention;',context);
   assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),context.attention(s).map(t=>t.id));
-  context.ui.search='late';assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),['late','later']);
+  context.ui.search='late';assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),context.attention(s).filter(t=>t.title.includes('late')).map(t=>t.id));
 });

@@ -26,6 +26,20 @@ export const settings = sqliteTable('settings', {
   id: text('id').primaryKey(),
   payload: text('payload').notNull(),
 });
+export const taskResources = sqliteTable('task_resources', {
+  id: text('id').primaryKey(),
+  contextHash: text('context_hash').notNull(),
+  location: text('location').notNull().default(''),
+  payload: text('payload').notNull().default('{}'),
+  status: text('status').notNull(),
+  lease: text('lease').notNull(),
+  startedAt: integer('started_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+});
+export const resourceUsage = sqliteTable('resource_usage', {
+  id: text('id').primaryKey(),
+  count: integer('count').notNull().default(0),
+});
 export const gmailConnections = sqliteTable('gmail_connections', {
   userId: text('user_id').primaryKey(),
   payload: text('payload').notNull(),

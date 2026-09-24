@@ -39,6 +39,7 @@
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'setNextUp', 'requestRecovery', 'resolveRecovery',
     'setTaskPriority',
     'resolveHandoff',
     'addDependency', 'removeDependency', 'resumeTask',
@@ -98,6 +99,7 @@
       },
     };
     const count = {
+      setNextUp: 2, requestRecovery: 2, resolveRecovery: 2,
       setTaskPriority: 2,
       resolveHandoff: 3,
       addDependency: 2,

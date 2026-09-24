@@ -118,6 +118,7 @@
         list(value.drafts, (draft) => strings(draft, ["id", "taskId", "text"]) && validTime(draft.at)) && list(value.dismissed, (dismissed) => typeof dismissed === "string");
     }
     function save(notify = true) {
+      for (const task of state.tasks) if (task.nextUpAt && !actionable(task)) { task.nextUpAt = ''; task.nextUpBy = ''; task.revision++; }
       if (notify) deliverDependencyResults();
       try {
         if (!storage) throw new Error("Storage is unavailable");
@@ -136,6 +137,13 @@
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
       task.priority = ['auto', 'high', 'low'].includes(task.priority) ? task.priority : 'auto';
+      task.essential = task.essential === true;
+      task.hardDeadline = task.hardDeadline === true;
+      task.originalDueDate ??= task.dueDate;
+      task.deadlineHistory = Array.isArray(task.deadlineHistory) ? task.deadlineHistory : [];
+      task.recoveryRequests = Array.isArray(task.recoveryRequests) ? task.recoveryRequests : [];
+      for (const field of ['nextUpAt','nextUpBy','planReviewAfter','followupSentAt','scope']) task[field] = typeof task[field] === 'string' ? task[field] : '';
+      task.ownerRespondedAt ??= task.updatedBy === task.owner ? task.updatedAt : task.acceptedAt || '';
       task.dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
       task.handoffs = Array.isArray(task.handoffs) ? task.handoffs : [];
       task.blockerFingerprint = typeof task.blockerFingerprint === 'string' ? task.blockerFingerprint : '';
@@ -188,6 +196,7 @@
       if (!STATUSES.includes(result.status)) throw new Error("Choose a valid task status.");
       if (data.dueDate !== undefined) result.dueDate = clean(data.dueDate, 20);
       result.dueDate ??= "";
+      if (result.hardDeadline&&!result.dueDate) throw new Error('Remove the fixed-deadline setting before clearing its date.');
       if (!validDate(result.dueDate)) throw new Error("Choose a valid due date.");
       if (data.requiresVerification !== undefined) result.requiresVerification = data.requiresVerification === true || data.requiresVerification === 'true' || data.requiresVerification === 'on';
       result.requiresVerification ??= false;
@@ -199,6 +208,7 @@
       const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
       task.priority = 'auto';
+      Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope:''});
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
@@ -207,6 +217,10 @@
       const changed = ["title", "category", "note", "owner", "status", "dueDate", "requiresVerification"].filter((field) => next[field] !== task[field]);
       if (!changed.length) return [];
       const previousStatus = task.status;
+      if (changed.includes('dueDate')) task.deadlineHistory.push({from:task.dueDate,to:next.dueDate,at:timestamp(),actor});
+      if (changed.includes('owner') || changed.includes('dueDate') || next.status === 'done') closeRecovery(task, 'superseded', actor);
+      if (changed.includes('owner')) { task.nextUpAt=''; task.nextUpBy=''; task.ownerRespondedAt=''; task.followupSentAt=''; task.planReviewAfter=''; }
+      if (changed.includes('note') && actor === next.owner) task.ownerRespondedAt = timestamp();
       changed.forEach((field) => { task[field] = next[field]; });
       task.revision += 1;
       if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.followupAfter = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
@@ -230,18 +244,100 @@
       save();
       return copy(task);
     }
-    function setTaskPriority(taskId, priority, actor = 'jack') {
+    function setTaskPriority(taskId, input, actor = 'jack') {
       actorId(actor);
       if (actor !== 'jack') throw new Error('Only the organizer can change task priority.');
+      const data = typeof input === 'string' ? {priority:input} : input;
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key=>!['priority','essential','hardDeadline'].includes(key))) throw new Error('Choose valid priority settings.');
+      const priority=data.priority;
       if (!['auto', 'high', 'low'].includes(priority)) throw new Error('Choose Automatic, High, or Low priority.');
       const task = taskById(taskId);
-      if (task.priority === priority) return copy(task);
-      task.priority = priority;
+      for (const key of ['essential','hardDeadline']) if (data[key] !== undefined && typeof data[key] !== 'boolean') throw new Error('Choose valid priority settings.');
+      if (data.hardDeadline && !task.dueDate) throw new Error('Set a due date before marking a fixed deadline.');
+      const next={priority,essential:data.essential??task.essential,hardDeadline:data.hardDeadline??task.hardDeadline};
+      if (Object.entries(next).every(([key,value])=>task[key]===value)) return copy(task);
+      Object.assign(task,next);
       task.revision += 1;
       // A planning change is not a progress update or completion report.
       entry(actor, priority === 'auto' ? `restored automatic priority for ${task.title}` : `set ${task.title} to ${priority} priority`, task.id, 'priority');
       save();
       return copy(task);
+    }
+    function closeRecovery(task, status, actor) {
+      for (const request of task.recoveryRequests || []) if (request.status === 'pending') Object.assign(request,{status,resolvedAt:timestamp(),resolvedBy:actor});
+    }
+    function actionable(task) {
+      return task.status !== 'done' && task.status !== 'blocked' && !(task.reportedAt && task.requiresVerification && !task.verifiedAt) &&
+        !(task.recoveryRequests || []).some(r=>r.status==='pending'&&r.kind==='help') &&
+        !(task.dependencies || []).some(link=>link.kind!=='related'&&!dependencyResolved(state.tasks.find(other=>other.id===link.taskId)));
+    }
+    function setNextUp(taskId, data, actor='jack') {
+      actorId(actor); const task=taskById(taskId);
+      if (task.owner!==actor) throw new Error('Only the assigned owner can choose their next tasks.');
+      if (!data || typeof data.enabled!=='boolean' || Object.keys(data).some(key=>!['enabled','replaceTaskId'].includes(key))) throw new Error('Choose whether to add or remove this task.');
+      if (!data.enabled) {
+        if (!task.nextUpAt) return copy(task);
+        task.nextUpAt='';task.nextUpBy='';task.revision++;entry(actor,`removed ${task.title} from Next up`,task.id,'next-up');save();return copy(task);
+      }
+      if (!actionable(task)) throw new Error('Resolve this task’s blocker or pending completion before adding it to Next up.');
+      if (task.nextUpAt) return copy(task);
+      const active=state.tasks.filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t));
+      const replace=data.replaceTaskId?active.find(t=>t.id===data.replaceTaskId):null;
+      if (data.replaceTaskId&&!replace) throw new Error('Choose one of your current next tasks to swap.');
+      if (active.length>=3&&!replace) throw new Error('You already have three next tasks. Choose one to swap.');
+      if (replace) {replace.nextUpAt='';replace.nextUpBy='';replace.revision++;}
+      task.nextUpAt=timestamp();task.nextUpBy=actor;task.revision++;
+      if (!task.acceptedAt) {task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';}
+      entry(actor,`committed to ${task.title} next${replace?`; moved ${replace.title} back to other work`:''}`,task.id,'next-up');save();return copy(task);
+    }
+    function requestRecovery(taskId, data, actor='jack') {
+      actorId(actor);const task=taskById(taskId);
+      if (task.owner!==actor) throw new Error('Only the assigned owner can request a plan change.');
+      if (task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt) throw new Error('This task is complete or awaiting verification.');
+      if (!data || !['date','help'].includes(data.kind) || Object.keys(data).some(key=>!['kind','note','proposedDate'].includes(key))) throw new Error('Choose a date proposal or help request.');
+      const note=clean(data.note,3000),proposedDate=data.kind==='date'?clean(data.proposedDate,20):'';
+      if (!note) throw new Error('Add a short explanation for the organizer.');
+      if (data.kind==='date'&&(!proposedDate||!validDate(proposedDate)||proposedDate===task.dueDate)) throw new Error('Propose a different valid date.');
+      const pending=task.recoveryRequests.find(r=>r.status==='pending');
+      if (pending&&pending.kind===data.kind&&pending.note===note&&pending.proposedDate===proposedDate) return copy(task);
+      closeRecovery(task,'superseded',actor);
+      task.recoveryRequests.push({id:id('request'),kind:data.kind,note,proposedDate,originalDueDate:task.dueDate,originalOwner:task.owner,createdAt:timestamp(),createdBy:actor,status:'pending'});
+      task.ownerRespondedAt=timestamp();task.revision++;
+      entry(actor,data.kind==='date'?`proposed ${proposedDate} for ${task.title}`:`asked for help with ${task.title}`,task.id,'recovery-request');save();return copy(task);
+    }
+    function resolveRecovery(taskId, data, actor='jack') {
+      actorId(actor);if(actor!=='jack')throw new Error('Only the organizer can decide a plan change.');
+      const task=taskById(taskId);
+      if (!data || !['date','reassign','scope','checkin'].includes(data.action) || Object.keys(data).some(key=>!['action','requestId','dueDate','owner','scope','note','reviewAfter','confirmHardDeadline'].includes(key))) throw new Error('Choose a valid next step.');
+      const request=data.requestId?task.recoveryRequests.find(r=>r.id===data.requestId):null;
+      if (data.requestId&&(!request||request.status!=='pending')) throw new Error('This request was already handled or replaced. Reload the task.');
+      if (!data.requestId&&task.recoveryRequests.some(r=>r.status==='pending')) throw new Error('Review the current request before changing the plan.');
+      if (task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt) throw new Error('This task is complete or awaiting verification.');
+      if (request&&(request.originalDueDate!==task.dueDate||request.originalOwner!==task.owner))throw new Error('The task changed after this request. Ask the owner to confirm it again.');
+      const note=clean(data.note,3000),reviewAfter=clean(data.reviewAfter,20),scope=clean(data.scope,3000);
+      if (!note) throw new Error('Add a short decision for the owner.');
+      if (!reviewAfter||!validDate(reviewAfter))throw new Error('Choose a valid next check-in date.');
+      let patch=null;
+      if (data.action==='date') {
+        const dueDate=clean(data.dueDate,20);
+        if (!dueDate||!validDate(dueDate)||dueDate===task.dueDate) throw new Error('Choose a different valid due date.');
+        if (task.hardDeadline&&data.confirmHardDeadline!==true)throw new Error('Confirm the external deadline has changed before moving this fixed date.');
+        patch={dueDate};
+      }
+      if (data.action==='reassign') {
+        if (!data.owner||data.owner===task.owner||!state.members.some(m=>m.id===data.owner)) throw new Error('Choose a different teammate.');
+        patch={owner:data.owner};
+      }
+      if (data.action==='scope'&&!scope)throw new Error('Describe the smaller outcome that is still needed.');
+      // Validate everything before changing the request or the task.
+      if (patch) taskFields(patch,task);
+      if (request)Object.assign(request,{status:'resolved',resolvedAt:timestamp(),resolvedBy:actor,decision:data.action,decisionNote:note});
+      if (patch) {const progress={updatedAt:task.updatedAt,updatedBy:task.updatedBy};patchTask(task,patch,actor);Object.assign(task,progress);}
+      if (data.action==='scope')task.scope=scope;
+      task.planReviewAfter=reviewAfter;task.followupAfter=reviewAfter;task.followupSentAt=timestamp();task.revision++;
+      const text=`Plan agreed: ${data.action==='date'?'Due '+patch.dueDate:data.action==='reassign'?'Reassigned to '+state.members.find(m=>m.id===patch.owner).name:data.action==='scope'?'Required outcome: '+scope:'Keep the current plan'}. ${note}\nNext check-in: ${reviewAfter}.`;
+      task.comments.push({id:id('comment'),actor,text,at:timestamp(),kind:'plan-decision'});
+      entry(actor,text,task.id,'plan-decision');save();return copy(task);
     }
     function updateTask(taskId, patch, actor = "jack") {
       actorId(actor);
@@ -289,6 +385,7 @@
       const comment = { id: id("comment"), actor, text: body, at: timestamp() };
       task.comments.push(comment);
       if (task.status !== 'done') suggestHandoffs(task, body, actor, 'comment', comment.id);
+      if (actor===task.owner) task.ownerRespondedAt=comment.at;
       task.updatedAt = comment.at;
       task.updatedBy = actor;
       entry(actor, `posted an update on ${task.title}`, task.id, "comment");
@@ -392,6 +489,8 @@
       task.updatedBy = actor;
       if (before) message.before = before;
       if (completionReport && !task.verifiedAt) {
+        closeRecovery(task,'superseded',actor);
+        task.ownerRespondedAt=task.updatedAt;
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
         task.verifiedAt = ''; task.verifiedBy = '';
       }
@@ -436,6 +535,7 @@
       if (!clean(note)) throw new Error('Add a completion note so the organizer knows what happened.');
       if (task.verifiedAt) return copy(task);
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
+      closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
       task.verifiedAt = ''; task.verifiedBy = '';
       task.blockerFingerprint = '';
@@ -455,7 +555,7 @@
     function recordFollowup(taskId, afterDate, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       if (!validDate(afterDate) || !afterDate) throw new Error('Choose the next follow-up date.');
-      task.followupAfter = afterDate;
+      task.followupAfter = afterDate;task.planReviewAfter=afterDate;task.followupSentAt=timestamp();
       const draft = state.drafts.find(item => item.taskId === taskId);
       if (draft) draft.manuallySentAt = timestamp();
       entry(actor, `recorded a follow-up sent outside Gather for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
@@ -834,7 +934,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

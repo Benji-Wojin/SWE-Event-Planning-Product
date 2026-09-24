@@ -5,6 +5,7 @@ let html = readFileSync('legacy/index.html', 'utf8')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
+  .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -24,10 +25,12 @@ html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
-html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
+writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
+writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
 let app = readFileSync('legacy/app.js', 'utf8');
 const inboxStart=app.indexOf('  function inboxView(s) {');
 const inboxEnd=app.indexOf('  function teamView(s) {',inboxStart);
@@ -38,6 +41,7 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'setNextUp', 'requestRecovery', 'resolveRecovery',
   'setTaskPriority',
   'resolveHandoff',
   'addDependency', 'removeDependency', 'resumeTask',
@@ -122,7 +126,7 @@ app = app.replace(
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>This is the same app with separate sample data. Open profiles in separate tabs to show task claiming, reporting, and organizer review.</p><p>Gmail is not connected here. Suggestions are rule-based. Only enter fictional booking details.</p>':'<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Suggestions are rule-based; no AI model is connected. Nothing is sent automatically.</p><p>Bookings and Gmail originals are excluded from shared exports. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles.</p><p>Gmail is not connected here. Only enter fictional booking details.</p><p>Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p>':'<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p><p>Bookings and Gmail originals are excluded from shared exports and AI searches. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')

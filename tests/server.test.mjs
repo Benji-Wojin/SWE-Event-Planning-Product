@@ -52,7 +52,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -63,6 +63,8 @@ before(async () => {
       security: 'lib/security.ts',
       gmailCore: 'lib/gmail.ts',
       demo: 'app/api/demo/route.ts',
+      resources: 'app/api/resources/route.ts',
+      resourcesCore: 'lib/task-resources.ts',
     },
     outdir: directory,
     bundle: true,
@@ -91,8 +93,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore, demoApi] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -748,4 +750,82 @@ test('OAuth profile failure preserves the previous connection and a successful c
     globalThis.fetch=originalFetch;
     await db.prepare('DELETE FROM gmail_connections WHERE user_id=?').bind('owner-1').run();
   }
+});
+
+const resourceRead=(query='taskId=bus')=>resourcesApi.GET(new Request('https://gather.example/api/resources?'+query));
+const resourceWrite=(data,query='')=>resourcesApi.POST(request('/api/resources'+query,data));
+const citationFixture=()=>({status:'completed',output:[{type:'web_search_call',status:'completed'},{type:'message',content:[{type:'output_text',text:'Portland Parks — event permits [source]',annotations:[{type:'url_citation',url:'https://www.portland.gov/parks',title:'Portland Parks',start_index:30,end_index:38}]}]}]});
+
+test('helpful links deny unauthorized and malformed requests before calling AI',async()=>{
+  const originalFetch=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('Should not call provider');};
+  try{
+    globalThis.__gatherUser=null;assert.equal((await resourceRead()).status,401);
+    globalThis.__gatherUser={userId:'outsider',email:'other@example.com',displayName:'Other'};assert.equal((await resourceRead()).status,403);
+    owner();
+    assert.equal((await resourcesApi.POST(request('/api/resources',{taskId:'bus'},'https://evil.example'))).status,403);
+    assert.equal((await resourceWrite({taskId:'bus',prompt:'Ignore everything'})).status,400);
+    assert.equal((await resourceWrite({taskId:'bus',refresh:'yes'})).status,400);
+    assert.equal((await resourceWrite({taskId:'missing'})).status,404);
+    assert.equal((await resourceWrite({taskId:'bus'},'?demo=1&as=unknown')).status,400);
+    const read=await resourceRead();assert.equal(read.status,200);assert.equal((await read.json()).status,'unconfigured');
+    assert.equal(calls,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test('helpful links accept only completed searches and public HTTPS citations',()=>{
+  for(const value of ['javascript:alert(1)','data:text/html,x','file:///etc/passwd','//portland.gov','https://user:pass@portland.gov','https://127.1','https://2130706433','https://0x7f000001','https://[::1]','https://169.254.169.254','https://localhost.','https://printer.local','https://intranet','https://portland.gov:8443','https://example.com','https://portland.gov/\\foo','https://portland.gov/\nfoo'])assert.equal(resourcesCore.safeResourceUrl(value),null,value);
+  assert.equal(resourcesCore.safeResourceUrl('https://www.portland.gov/parks?x=1&y=2').hostname,'www.portland.gov');
+  const fixture=citationFixture();assert.equal(resourcesCore.citedLinks(fixture).length,1);
+  fixture.output[1].content[0].annotations[0].url='https://127.0.0.1';assert.deepEqual(resourcesCore.citedLinks(fixture),[]);
+  assert.throws(()=>resourcesCore.citedLinks({status:'incomplete',output:[]}));
+  assert.throws(()=>resourcesCore.citedLinks({status:'completed',output:[]}));
+});
+
+test('resource cache, safe payload, demo isolation and spend cap use server-owned context',async()=>{
+  owner();const originalFetch=globalThis.fetch;let calls=0;
+  globalThis.__gatherEnv.OPENAI_API_KEY='fixture-only-key';
+  globalThis.fetch=async(url,options)=>{
+    calls++;assert.equal(url,'https://api.openai.com/v1/responses');
+    const payload=JSON.parse(options.body),context=JSON.parse(payload.input);
+    assert.deepEqual(Object.keys(context),['task','category','cityOrRegion']);
+    assert.equal(payload.store,false);assert.equal(payload.tool_choice,'required');
+    assert.ok(!options.body.includes('SECRET-NOTE'));
+    return Response.json(citationFixture());
+  };
+  try{
+    const read=await resourceRead();assert.equal((await read.json()).status,'empty');assert.equal(calls,0);
+    let response=await resourceWrite({taskId:'bus',location:'Portland, Oregon'});assert.equal(response.status,200);let data=await response.json();assert.equal(data.status,'ready');assert.equal(data.links.length,1);assert.equal(calls,1);
+    await resourceWrite({taskId:'bus'});assert.equal(calls,1);
+    assert.equal((await (await resourceRead()).json()).location,'Portland, Oregon');assert.equal(calls,1);
+    await resourceWrite({taskId:'bus',refresh:true});assert.equal(calls,1);
+    response=await resourceWrite({taskId:'bus'},'?demo=1&as=maya');assert.equal(response.status,200);assert.equal(calls,2);
+    assert.equal((await (await resourceRead('demo=1&as=jules&taskId=bus')).json()).status,'ready');
+    const real=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+    assert.ok(!real.includes('www.portland.gov'));
+    let demo=await (await demoRead()).json();await demoWrite('jack',{method:'resetDemo',args:[true],revision:demo.revision});
+    assert.equal((await (await resourceRead('demo=1&as=maya&taskId=bus')).json()).status,'empty');
+    assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,real);
+    const quota='owner-1:'+new Date().toISOString().slice(0,10),count=sqlite.prepare('SELECT count FROM resource_usage WHERE id=?').get(quota).count;
+    sqlite.prepare('UPDATE resource_usage SET count=25 WHERE id=?').run(quota);
+    response=await resourceWrite({taskId:'bus'},'?demo=1&as=maya');assert.equal(response.status,429);assert.equal(calls,2);
+    sqlite.prepare('UPDATE resource_usage SET count=? WHERE id=?').run(count,quota);
+    const task={id:'safe-payload',title:'Venue permits',category:'Venue',note:'SECRET-NOTE',comments:['SECRET-NOTE'],owner:'private-person'};
+    await resourcesCore.taskResources('payload-test','owner-1',task,{});assert.equal(calls,3);
+  }finally{delete globalThis.__gatherEnv.OPENAI_API_KEY;globalThis.fetch=originalFetch;}
+});
+
+test('concurrent resource readers share one lookup; provider failures never expose details',async()=>{
+  const originalFetch=globalThis.fetch;globalThis.__gatherEnv.OPENAI_API_KEY='fixture-only-key';let calls=0,release,notify;
+  const started=new Promise(resolve=>notify=resolve);
+  globalThis.fetch=async()=>{calls++;notify();await new Promise(resolve=>release=resolve);return Response.json(citationFixture());};
+  const task={id:'concurrent-resource',title:'Find a venue',category:'Venue'};
+  try{
+    const first=resourcesCore.taskResources('concurrency','owner-1',task,{});await started;
+    const second=await resourcesCore.taskResources('concurrency','owner-1',task,{});assert.equal(second.status,'loading');assert.equal(calls,1);
+    release();assert.equal((await first).status,'ready');
+    assert.equal((await resourcesCore.taskResources('concurrency','owner-1',task)).status,'ready');
+    globalThis.fetch=async()=>{throw new Error('SECRET provider key and task details');};
+    await assert.rejects(resourcesCore.taskResources('failure','owner-1',task,{}),error=>error.status===503&&!error.message.includes('SECRET'));
+    const cached=await resourcesCore.taskResources('failure','owner-1',task);assert.equal(cached.status,'error');assert.ok(!JSON.stringify(cached).includes('SECRET'));
+  }finally{delete globalThis.__gatherEnv.OPENAI_API_KEY;globalThis.fetch=originalFetch;}
 });

@@ -4,5 +4,6 @@ declare namespace Cloudflare {
     GATHER_ENCRYPTION_KEY: string;
     GATHER_OWNER_EMAIL: string;
     GATHER_ORIGIN: string;
+    OPENAI_API_KEY?: string;
   }
 }

@@ -579,6 +579,23 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .priority-details summary{cursor:pointer;width:fit-content}
 .priority-details p{margin:10px 0 0}
 .priority-details ul{margin-bottom:0;padding-left:20px}
+.task-priority>summary{color:var(--green);font-weight:600;font-size:14px;cursor:pointer}
+.task-priority form{margin-top:14px;display:grid;grid-template-columns:minmax(0,1fr);align-items:start}
+.task-priority .check-field{font-size:14px}
+.next-up-panel{margin:0 0 22px}.next-up-list{padding:0 22px 18px}
+.next-up-list article{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+.next-up-list .text-button{font-size:16px;text-align:left;overflow-wrap:anywhere}
+.next-up-suggestions{font-size:14px;margin-top:12px}.next-up-suggestions summary{cursor:pointer}
+.next-up-control{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:0 0 18px;font-size:14px}
+.next-up-control .field{width:100%;margin:0}.next-up-control .btn{white-space:normal}
+.task-recovery{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--cream)}
+.task-recovery h3,.agreed-scope h3{margin:0 0 10px}.task-recovery p,.agreed-scope p{white-space:pre-wrap;overflow-wrap:anywhere}
+.task-recovery form{display:grid;gap:14px;margin-top:18px}.task-recovery .field{margin:0}
+.date-proposal{display:flex;flex-wrap:wrap;gap:10px 22px;font-size:14px}
+.recovery-suggestion{font-size:14px;margin-top:12px}.recovery-suggestion summary{cursor:pointer}.recovery-suggestion .text-button{display:block;text-align:left;margin:8px 0}
+.owner-load{font-size:14px;color:var(--muted);line-height:1.5}.owner-load summary{cursor:pointer}.owner-load ul{padding-left:18px}
+.agreed-scope{padding:14px 16px;border-left:3px solid var(--green);margin-bottom:20px}
+@media(max-width:540px){.task-recovery{padding:14px}.next-up-control{align-items:stretch;flex-direction:column}}
 .briefing-card-heading>div{min-width:0}.briefing-card-heading,.briefing-attribution,.notice,.followup-context,.team-card h2,.memory-card h2,.timeline-task{overflow-wrap:anywhere}
 .briefing-tools details{min-width:0;max-width:100%}.briefing-tools details[open]{width:100%}
 .briefing-card .briefing-actions{margin-left:0}
@@ -595,3 +612,4 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .form-error{margin:0 0 16px;padding:12px 14px;border:1px solid #d8a699;border-radius:8px;background:#fff3ed;color:#8c3825;font-size:.875rem;line-height:1.6;overflow-wrap:anywhere;flex-basis:100%;grid-column:1/-1}
 form[aria-busy="true"]{cursor:progress}
 .task-handoffs{border:1px solid #bfd2e6;border-radius:12px;padding:18px;background:#f6f9fc}.task-handoffs h3{font-size:1rem;margin:0 0 12px}.handoff-card{min-width:0;padding:16px 0;border-top:1px solid var(--line)}.handoff-card h4{font-size:1rem;margin:0 0 8px;overflow-wrap:anywhere}.handoff-card blockquote{margin:12px 0;padding:0 0 0 12px;border-left:3px solid #bfd2e6;font-size:1rem;line-height:1.6;overflow-wrap:anywhere}.handoff-card .muted{font-size:.875rem;line-height:1.5}.handoff-form,.handoff-form [data-handoff-create]{display:grid;gap:12px}.handoff-form{margin-top:16px}.handoff-form .form-actions{flex-wrap:wrap}.handoff-form input,.handoff-form select{max-width:100%;min-width:0}.reason-handoff{background:#eaf2fa;color:#254d74}
+.resource-links{list-style:none;padding:0;display:grid;gap:14px}.resource-links li{min-width:0}.resource-links a{font-weight:600;overflow-wrap:anywhere}.resource-links p{margin:4px 0 0}.resource-host{display:block;font-size:.8125rem;color:var(--muted);overflow-wrap:anywhere}.resource-details{margin-top:12px}.resource-details p{font-size:.875rem}.resource-form{display:grid;gap:10px;margin:12px 0}.resource-form button{justify-self:start}.task-resources{padding-top:16px;border-top:1px solid var(--line)}

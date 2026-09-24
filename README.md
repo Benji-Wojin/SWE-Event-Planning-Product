@@ -14,12 +14,18 @@ Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only b
 ## Pilot boundaries
 
 - Publication is private to the owner's account. Teammate invitations and account-free guest links are not enabled. Starter teammates are examples, not real accounts. Site sharing alone does not grant app membership.
-- Suggestions use conservative local rules and event feedback, not a connected language model. No autonomous email sending, live RSVP integration, Gmail push notifications, or background sync.
+- Planning and email suggestions use conservative local rules and event feedback. Task Helpful links use OpenAI Responses web search when the server-only `OPENAI_API_KEY` is configured; otherwise they show an explicit disconnected state. No autonomous email sending, live RSVP integration, Gmail push notifications, or background sync.
 - Google OAuth needs an actual Google Cloud Web client: enable Gmail API, configure consent/testing users and `gmail.readonly`, and add the exact redirect URI displayed in settings. Google may require verification for wider deployment; testing grants may need reconnecting after seven days.
 - No production Gmail authorization was tested because no Google OAuth credentials were supplied. Do not enter passport or payment-card data. This pilot has not had an independent security assessment.
 - Disconnect revokes future Gmail access but retains imported previews and shared summaries. Changing the Google client while connected is denied. Original retention controls and account deletion UI are future work.
 - Editing `GATHER_OWNER_EMAIL` does not revoke an already-bound owner: ownership changes need deliberate membership migration. Do not rotate the encryption key without migrating existing ciphertext.
 - Private view hiding clears visible records but is not sign-out. Use Sign out to terminate account access.
+
+## Task focus and helpful links
+
+Owners can commit to up to three actionable Next up tasks, propose a date or ask for help without changing the agreed plan. Organizer decisions stay in Needs attention. Decisions record a check-in, deadline history and an owner-visible comment; fixed external dates require explicit confirmation. Ranking considers essential work and downstream deadlines, not only overdue age. Waiting parents route attention to their prerequisites. These are in-app prompts, not background email reminders.
+
+Helpful links automatically search on first task opening, then reuse results for seven days unless the task context changes. Search details allows an optional city/region and a manual refresh. Only the task name, category and optional location are sent to OpenAI (with `store:false`), not task notes, emails, comments, booking codes or participant profiles. Only cited public HTTPS links render; Gather never fetches those destination pages or makes bookings. No-location searches request general resources. Availability and suitability are not verified. Server-side leases limit a task to one lookup per minute, with a shared 25-lookups/day limit per authenticated account across the real workspace and demo. Live provider operation remains unverified until a key is provisioned and a live smoke test succeeds.
 
 ## Build and validation
 

@@ -98,12 +98,13 @@
 
   function taskRow(task) {
     const done = task.status==='done';
+    const decision=ui.tab==='attention'&&isOrganizer()?GatherPriorities.decision(task,store.getState().tasks):null;
     return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}${dependencyInfo(task).ready?'<div class="dependency-ready-label">Ready to resume</div>':''}</td><td>${due(task)}</td>
       <td><div class="task-meta">${h(member(task.updatedBy).name.split(' ')[0])} · ${relative(task.updatedAt)}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
-      <td><button class="icon-button" data-action="task" data-id="${h(task.id)}" aria-label="Open ${h(task.title)}">${icon('arrow')}</button></td></tr>`;
+      <td><button class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${h(task.id)}" aria-label="${decision?'Review plan for':'Open'} ${h(task.title)}">${decision?'Review plan':icon('arrow')}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,compact=false) {
@@ -127,7 +128,7 @@
       </section>
       <div class="workspace-grid"><div class="stack">
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
-          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':isOrganizer()?'followup':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':isOrganizer()?'Draft follow-up':'Open task'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
+          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
@@ -143,9 +144,11 @@
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
+  const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',addButton)+`
+      ${ui.tab==='mine'?recovery.nextUpPanel(s):''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div><label class="search-input">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Find a task or person…" aria-label="Search tasks"></label></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
@@ -314,10 +317,7 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked})));
   }
-  function priorityMarkup(task,organizer) {
-    const info=reason(task),value=task.priority||'auto';
-    return `<section class="task-priority" aria-label="Task priority">${organizer?`<form id="priorityForm" data-id="${h(task.id)}"><label class="field">Priority<select name="priority">${options(Object.entries(GatherPriorities.labels),value)}</select></label><button class="btn btn-secondary btn-small" type="submit">Save priority</button></form>`:`<strong>Priority: ${h(GatherPriorities.labels[value])}</strong>`}<details class="priority-details"><summary>Priority details</summary><p>Overdue tasks come first. Within overdue and upcoming tasks, High comes first and Low comes last. Automatic uses deadlines and linked work.</p>${info?`<ul>${info.factors.map(factor=>`<li>${h(factor.label)}</li>`).join('')}${value!=='auto'?`<li>${h(GatherPriorities.labels[value])} priority set by the organizer</li>`:''}</ul>`:'<p>No attention needed right now.</p>'}</details></section>`;
-  }
+  function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
   function taskDialog(id,submittedForm='') {
     const task=store.getState().tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
@@ -331,25 +331,37 @@
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
-      ${task.status!=='done'||awaiting?priorityMarkup(task,organizer):''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
+      ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}">Verify completion</button>`:''}</div>`:''}
+      ${recovery.recoveryMarkup(task,organizer)}
       ${dependencyMarkup(task)}
       ${handoffMarkup(task)}
-      ${own&&task.status!=='done'?`<section class="task-report section-gap"><h3>Your update</h3><form id="responseForm" data-id="${h(id)}"><label class="field"><span class="sr-only">What happened or what is blocking you?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="What’s finished? What’s blocking you?"></textarea></label><div class="task-report-actions"><button class="btn btn-primary" type="submit" name="response" value="completed" ${awaiting?'disabled':''}>Report complete</button><button class="btn btn-secondary" type="submit" name="response" value="blocked">Report blocked</button><button class="text-button" type="submit" name="response" value="progress">Share progress</button></div></form><p class="muted">${awaiting?'Reporting a blocker or new progress replaces your pending completion report.':task.requiresVerification?'Your completion report will wait for organizer verification.':'Reporting complete marks this task done and records your name.'}</p>${!task.acceptedAt?`<button class="text-button" data-action="accept-task" data-id="${h(id)}">Accept responsibility</button>`:''}</section>`:!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
+      ${own&&task.status!=='done'?recovery.responseMarkup(task,awaiting):!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
+      ${window.GatherResourcesUI?.markup()||''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
+      ${priorityMarkup(task,organizer)}
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
     if(sameTask){
       for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
       requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
+    syncRecoveryForms();
+    const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
+    if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
+    window.GatherResourcesUI?.mount(id,$('#dialog'));
+  }
+  function syncRecoveryForms() {
+    const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
+    if(response)recovery.syncResponse(response);
+    if(decision)recovery.syncDecision(decision);
   }
   function newTaskDialog() {
-    openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
+    openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
   }
   function followupDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
@@ -538,7 +550,9 @@
     try {
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
       if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
-      if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,data.priority,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
+      if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
+      if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
+      if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
@@ -551,7 +565,7 @@
       if(form.id==='feedbackForm'){store.addMemory({...data,rating:Number(data.rating)},ui.actor);closeDialog();render();thoughtDialog();toast('Feedback saved.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
       if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
-      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
+      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
       if(form.id==='contextForm'){store.updateEvent(data,ui.actor);closeDialog();render();thoughtDialog();toast('Event details saved.');}
       if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);closeDialog();render();toast('Feedback updated.');}
       if(form.id==='recordFollowupForm'){store.recordFollowup(form.dataset.id,data.afterDate,ui.actor);closeDialog();render();toast('Follow-up recorded.');}
@@ -574,6 +588,9 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
+    if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
+    if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
+    if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(el.id==='actorSelect'){if(window.GatherMode?.demo){window.top.location.href='/demo?as='+encodeURIComponent(el.value);return;}lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
     if(el.id==='ownerFilter'){ui.owner=el.value;renderTaskRows();}
@@ -591,7 +608,7 @@
     }
   });
   function renderTaskRows() {
-    const tasks=filteredTasks(store.getState());
+    const s=store.getState(),tasks=filteredTasks(s);
     $('#taskRows').innerHTML=tasks.map(taskRow).join('');
     $('#taskEmpty').hidden=!!tasks.length;
     $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;
