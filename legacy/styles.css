@@ -571,6 +571,14 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .task-title,.task-name-button,.timeline-task>strong,.email-copy strong{font-size:.875rem;overflow-wrap:anywhere}
 .task-summary>p,.feed-copy,.activity-content,.insight p,.memory-card p,.comment p{font-size:.875rem;overflow-wrap:anywhere}
 .task-facts{flex-wrap:wrap;gap:16px 36px}.task-facts>div{min-width:0}.task-facts dd{overflow-wrap:anywhere}
+.task-priority{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:16px 0}
+.task-priority form{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.task-priority .field{flex:1;min-width:140px;margin:0}
+.task-priority .btn{min-height:42px;font-size:14px}
+.priority-details{margin-top:12px;color:var(--muted);font-size:14px;line-height:1.5}
+.priority-details summary{cursor:pointer;width:fit-content}
+.priority-details p{margin:10px 0 0}
+.priority-details ul{margin-bottom:0;padding-left:20px}
 .briefing-card-heading>div{min-width:0}.briefing-card-heading,.briefing-attribution,.notice,.followup-context,.team-card h2,.memory-card h2,.timeline-task{overflow-wrap:anywhere}
 .briefing-tools details{min-width:0;max-width:100%}.briefing-tools details[open]{width:100%}
 .briefing-card .briefing-actions{margin-left:0}

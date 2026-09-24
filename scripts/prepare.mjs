@@ -4,6 +4,7 @@ let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
+  .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -25,6 +26,7 @@ html = html.replace(
 );
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 writeFileSync('public/workspace.html', html);
+writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 let app = readFileSync('legacy/app.js', 'utf8');
 const inboxStart=app.indexOf('  function inboxView(s) {');
@@ -36,6 +38,7 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'setTaskPriority',
   'resolveHandoff',
   'addDependency', 'removeDependency', 'resumeTask',
   'claimTask',

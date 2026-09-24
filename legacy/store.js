@@ -135,6 +135,7 @@
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
+      task.priority = ['auto', 'high', 'low'].includes(task.priority) ? task.priority : 'auto';
       task.dependencies = Array.isArray(task.dependencies) ? task.dependencies : [];
       task.handoffs = Array.isArray(task.handoffs) ? task.handoffs : [];
       task.blockerFingerprint = typeof task.blockerFingerprint === 'string' ? task.blockerFingerprint : '';
@@ -197,6 +198,7 @@
       const at = timestamp();
       const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
+      task.priority = 'auto';
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
@@ -225,6 +227,19 @@
       entry(actor, `created ${task.title}`, task.id, "created");
       syncBlocker(task, actor);
       if(['progress','blocked'].includes(task.status)&&task.note)suggestHandoffs(task,task.note,actor,'note','');
+      save();
+      return copy(task);
+    }
+    function setTaskPriority(taskId, priority, actor = 'jack') {
+      actorId(actor);
+      if (actor !== 'jack') throw new Error('Only the organizer can change task priority.');
+      if (!['auto', 'high', 'low'].includes(priority)) throw new Error('Choose Automatic, High, or Low priority.');
+      const task = taskById(taskId);
+      if (task.priority === priority) return copy(task);
+      task.priority = priority;
+      task.revision += 1;
+      // A planning change is not a progress update or completion report.
+      entry(actor, priority === 'auto' ? `restored automatic priority for ${task.title}` : `set ${task.title} to ${priority} priority`, task.id, 'priority');
       save();
       return copy(task);
     }
@@ -819,7 +834,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

@@ -411,6 +411,24 @@ test('private original is owner-scoped, no-store, and absent from shared exports
 
 const demoRead = (actor = 'jack') => demoApi.GET(new Request('https://gather.example/api/demo?as=' + actor));
 const demoWrite = (actor, data, origin) => demoApi.POST(request('/api/demo?as=' + actor, data, origin));
+test('task priority RPC persists in real and demo workspaces, rejects teammates and conflicts, and preserves progress',async()=>{
+  owner();
+  let live=await (await workspace.GET()).json();
+  const before=live.state.tasks.find(t=>t.id==='dietary');
+  const response=await workspace.POST(request('/api/workspace',{method:'setTaskPriority',args:['dietary','high'],revision:live.revision}));
+  assert.equal(response.status,200);live=await response.json();
+  const after=live.state.tasks.find(t=>t.id==='dietary');assert.equal(after.priority,'high');
+  assert.deepEqual({...after,priority:before.priority,revision:before.revision},before);
+  assert.equal((await (await workspace.GET()).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
+  let demo=await (await demoRead()).json(),revision=demo.revision;
+  assert.equal((await demoWrite('maya',{method:'setTaskPriority',args:['dietary','low'],revision})).status,403);
+  assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','urgent'],revision})).status,400);
+  const saved=await demoWrite('jack',{method:'setTaskPriority',args:['dietary','low'],revision});assert.equal(saved.status,200);demo=await saved.json();
+  assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','auto'],revision})).status,409);
+  for(const actor of ['jack','maya','dev','jules'])assert.equal((await (await demoRead(actor)).json()).state.tasks.find(t=>t.id==='dietary').priority,'low');
+  assert.equal((await (await workspace.GET()).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
+  assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','auto'],revision:demo.revision})).status,200);
+});
 test('demo is authenticated, owner-scoped, and isolated from the real workspace', async () => {
   globalThis.__gatherUser = null;
   assert.equal((await demoRead()).status, 401);

@@ -69,6 +69,7 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  setTaskPriority: 2,
   resolveHandoff: 3,
   addDependency: 2,
   removeDependency: 2,
@@ -119,6 +120,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   let result;
   try {
     switch (method) {
+      case 'setTaskPriority':
+        result = store.setTaskPriority(a, b, user.actorId);
+        break;
       case 'resolveHandoff':
         result = store.resolveHandoff(a, b, c, user.actorId);
         break;

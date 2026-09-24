@@ -84,21 +84,8 @@
   const person = id => `<span class="person-chip">${avatar(id,true)}<span>${h(member(id).name.split(' ')[0])}</span></span>`;
   const statusBadge = status => `<span class="status-badge status-${h(status)}">${h(statuses[status])}</span>`;
   const due = task => `<span class="${task.status!=='done' && task.dueDate && task.dueDate<dateKey()?'due-overdue':''}">${task.dueDate===dateKey()?'Today':dayLabel(task.dueDate)}</span>`;
-  const reason = task => {
-    if(task.reportedAt && task.requiresVerification && !task.verifiedAt) return {key:'verification',label:'Verify completion',action:'The owner reports this is finished',rank:0};
-    if(task.status==='done') return null;
-    if(dependencyInfo(task).ready) return {key:'ready',label:'Ready to resume',action:'Review the results from linked tasks',rank:-1};
-    if(task.status==='blocked') return {key:'blocked',label:'Blocked',action:'Needs a decision',rank:0};
-    if(!task.owner) return {key:'unassigned',label:'No owner',action:'Assign an owner',rank:1};
-    if(task.dueDate && task.dueDate<dateKey()) return {key:'overdue',label:'Overdue',action:'Past its due date',rank:2};
-    if((task.handoffs||[]).some(item=>item.status==='pending'))return {key:'handoff',label:'Suggested follow-up',action:'Review linked work',rank:3};
-    if(task.followupAfter && task.followupAfter<=dateKey()) return {key:'followup',label:'Follow-up due',action:'Check in with the owner',rank:3};
-    if(task.followupAfter && task.followupAfter>dateKey()) return null;
-    if(!task.acceptedAt) return {key:'acceptance',label:'Acceptance pending',action:'Ask the owner to accept',rank:3};
-    if(!task.updatedAt || Date.now()-new Date(task.updatedAt).getTime()>=3*86400000) return {key:'stale',label:'No recent update',action:'Request an update',rank:3};
-    return null;
-  };
-  const attention = s => s.tasks.filter(t=>reason(t)).sort((a,b)=>reason(a).rank-reason(b).rank || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks);
+  const attention = s => GatherPriorities.rank(s.tasks);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
   const completed = s => s.tasks.filter(t=>t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => task.completionReportedBy ? `${task.completionReportedBy} reported complete · recorded by ${member(task.completedBy).name}` : `Marked done by ${member(task.completedBy).name}`;
@@ -151,7 +138,7 @@
   }
 
   function filteredTasks(s) {
-    return s.tasks.filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
@@ -327,6 +314,10 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked})));
   }
+  function priorityMarkup(task,organizer) {
+    const info=reason(task),value=task.priority||'auto';
+    return `<section class="task-priority" aria-label="Task priority">${organizer?`<form id="priorityForm" data-id="${h(task.id)}"><label class="field">Priority<select name="priority">${options(Object.entries(GatherPriorities.labels),value)}</select></label><button class="btn btn-secondary btn-small" type="submit">Save priority</button></form>`:`<strong>Priority: ${h(GatherPriorities.labels[value])}</strong>`}<details class="priority-details"><summary>Priority details</summary><p>Overdue tasks come first. Within overdue and upcoming tasks, High comes first and Low comes last. Automatic uses deadlines and linked work.</p>${info?`<ul>${info.factors.map(factor=>`<li>${h(factor.label)}</li>`).join('')}${value!=='auto'?`<li>${h(GatherPriorities.labels[value])} priority set by the organizer</li>`:''}</ul>`:'<p>No attention needed right now.</p>'}</details></section>`;
+  }
   function taskDialog(id,submittedForm='') {
     const task=store.getState().tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
@@ -340,6 +331,7 @@
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+      ${task.status!=='done'||awaiting?priorityMarkup(task,organizer):''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
@@ -546,6 +538,7 @@
     try {
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
       if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,data.priority,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
@@ -628,7 +621,13 @@
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
   window.addEventListener('beforeunload',event=>{if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();});
+  let attentionDay=dateKey();
+  function refreshAttentionDate() {
+    if(document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
+    attentionDay=dateKey();render();
+  }
+  setInterval(refreshAttentionDate,60000);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode?.demo&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
   navigate(location.hash.slice(1)||'overview');

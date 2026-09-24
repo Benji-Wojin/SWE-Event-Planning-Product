@@ -39,6 +39,7 @@
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'setTaskPriority',
     'resolveHandoff',
     'addDependency', 'removeDependency', 'resumeTask',
     'claimTask',
@@ -97,6 +98,7 @@
       },
     };
     const count = {
+      setTaskPriority: 2,
       resolveHandoff: 3,
       addDependency: 2,
       removeDependency: 2,
