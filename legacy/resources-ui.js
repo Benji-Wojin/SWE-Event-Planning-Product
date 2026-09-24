@@ -29,28 +29,33 @@
     const node=container.querySelector('[data-resource-results]');
     if(!node)return;
     const started=Date.now();
-    const draft=container.dataset.resourceDraft;
+    let draft=container.dataset.resourceDraft;
     delete container.dataset.resourceDraft;
     function paint(data){
       const form=node.querySelector('form'),input=form?.elements.location;
       const unsaved=input&&input.value!==input.defaultValue?input.value:draft;
+      draft=undefined;
+      const focused=node.contains(document.activeElement)?document.activeElement:null;
+      const focusKind=focused?.tagName==='INPUT'?'input':focused?.tagName==='BUTTON'?'button':focused?.tagName==='SUMMARY'?'summary':null;
       const expanded=node.querySelector('details')?.open;
       render(node,data);
       if(unsaved!==undefined&&node.querySelector('input'))node.querySelector('input').value=unsaved;
       if(expanded||unsaved!==undefined)node.querySelector('details').open=true;
+      if(focusKind)node.querySelector(focusKind)?.focus({preventScroll:true});
       if(data.status==='loading'){
         if(Date.now()-started<65000)setTimeout(()=>{if(node.isConnected)show(undefined,true);},2000);
         else{render(node,{...data,status:'error'});}
       }
     }
     async function show(input,poll=false){
+      const previousFocus=document.activeElement,hadFocus=node.contains(previousFocus);
       const button=node.querySelector('button');if(button)button.disabled=true;
       let run=pending.get(taskId);
       const reused=Boolean(run);
       if(!run){run=(async()=>{let data=await request(taskId,input);if(!input&&!poll&&data.status==='empty')data=await request(taskId,{});return data;})();pending.set(taskId,run);}
-      try{let data=await run;if(reused)data=await request(taskId);if(node.isConnected)paint(data);}
+      try{let data=await run;if(reused)data=await request(taskId);if(node.isConnected){paint(data);if(hadFocus&&document.activeElement===document.body)node.querySelector(previousFocus.tagName.toLowerCase())?.focus({preventScroll:true});}}
       catch(error){if(node.isConnected){if(!node.querySelector('form'))paint({status:'error',links:[],location:''});let message=node.querySelector('.resource-error');if(!message){message=document.createElement('p');message.className='resource-error warning-note';message.setAttribute('role','alert');node.append(message);}message.textContent=error.message;}}
-      finally{if(pending.get(taskId)===run)pending.delete(taskId);if(button?.isConnected)button.disabled=false;}
+      finally{if(pending.get(taskId)===run)pending.delete(taskId);if(button?.isConnected)button.disabled=false;if(hadFocus&&node.isConnected&&document.activeElement===document.body){const focus=previousFocus.isConnected?previousFocus:node.querySelector(previousFocus.tagName.toLowerCase());focus?.focus({preventScroll:true});}}
     }
     node.addEventListener('submit',event=>{if(!event.target.matches('.resource-form'))return;event.preventDefault();event.stopPropagation();show({location:event.target.elements.location.value,refresh:true});});
     await show();

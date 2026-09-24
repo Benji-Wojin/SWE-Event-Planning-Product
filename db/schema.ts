@@ -17,6 +17,16 @@ export const members = sqliteTable('members', {
   name: text('name').notNull(),
   role: text('role').notNull(),
 });
+export const projectInfo = sqliteTable('project_info', {
+  scope: text('scope').primaryKey(),
+  payload: text('payload').notNull(),
+  revision: integer('revision').notNull().default(1),
+});
+export const projectUploads = sqliteTable('project_uploads', {
+  id: text('id').primaryKey(),
+  accountId: text('account_id').notNull(),
+  size: integer('size').notNull(),
+}, table => [index('project_uploads_account').on(table.accountId)]);
 export const privateRecords = sqliteTable('private_records', {
   id: text('id').primaryKey(),
   payload: text('payload').notNull(),

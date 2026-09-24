@@ -212,11 +212,13 @@
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
-    function patchTask(task, patch, actor) {
+    function patchTask(task, patch, actor, confirmHardDeadline=false) {
       const next = taskFields(patch, task);
+      if (task.hardDeadline && next.dueDate !== task.dueDate && !confirmHardDeadline) throw new Error('Confirm the vendor or external deadline changed before moving this fixed date.');
       const changed = ["title", "category", "note", "owner", "status", "dueDate", "requiresVerification"].filter((field) => next[field] !== task[field]);
       if (!changed.length) return [];
       const previousStatus = task.status;
+      if (next.status!==previousStatus && (next.status==='done'||previousStatus==='done')) {task.planReviewAfter='';task.followupAfter='';task.followupSentAt='';}
       if (changed.includes('dueDate')) task.deadlineHistory.push({from:task.dueDate,to:next.dueDate,at:timestamp(),actor});
       if (changed.includes('owner') || changed.includes('dueDate') || next.status === 'done') closeRecovery(task, 'superseded', actor);
       if (changed.includes('owner')) { task.nextUpAt=''; task.nextUpBy=''; task.ownerRespondedAt=''; task.followupSentAt=''; task.planReviewAfter=''; }
@@ -332,7 +334,7 @@
       // Validate everything before changing the request or the task.
       if (patch) taskFields(patch,task);
       if (request)Object.assign(request,{status:'resolved',resolvedAt:timestamp(),resolvedBy:actor,decision:data.action,decisionNote:note});
-      if (patch) {const progress={updatedAt:task.updatedAt,updatedBy:task.updatedBy};patchTask(task,patch,actor);Object.assign(task,progress);}
+      if (patch) {const progress={updatedAt:task.updatedAt,updatedBy:task.updatedBy};patchTask(task,patch,actor,data.confirmHardDeadline===true);Object.assign(task,progress);}
       if (data.action==='scope')task.scope=scope;
       task.planReviewAfter=reviewAfter;task.followupAfter=reviewAfter;task.followupSentAt=timestamp();task.revision++;
       const text=`Plan agreed: ${data.action==='date'?'Due '+patch.dueDate:data.action==='reassign'?'Reassigned to '+state.members.find(m=>m.id===patch.owner).name:data.action==='scope'?'Required outcome: '+scope:'Keep the current plan'}. ${note}\nNext check-in: ${reviewAfter}.`;
@@ -354,7 +356,9 @@
       if (patch.requiresVerification !== undefined && taskFields(patch,task).requiresVerification !== task.requiresVerification && actor !== 'jack') throw new Error('Only the organizer can change verification requirements.');
       const previousStatus = task.status;
       const supersedesReport = task.owner === actor && task.reportedAt && Object.keys(patch).every(field => ['status', 'note'].includes(field)) && ['progress', 'blocked'].includes(patch.status) && clean(patch.note);
-      const changed = patchTask(task, patch, actor);
+      const changed = patchTask(task, patch, actor,patch.confirmHardDeadline===true);
+      const ownerReport=task.owner===actor&&Object.keys(patch).every(field=>['status','note'].includes(field))&&['progress','blocked'].includes(patch.status)&&clean(patch.note);
+      if(ownerReport&&!changed.length&&!supersedesReport){task.ownerRespondedAt=timestamp();task.updatedAt=timestamp();task.updatedBy=actor;task.revision++;changed.push('note');}
       if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
       // Status/assignment edits must not turn an old context note into a blocker.
       const blockerReport = patch.note !== undefined && (changed.includes('note') ||
@@ -480,17 +484,19 @@
         if (newer && approved.confirmConflict !== true && approved.confirmConflict !== 'on') throw new Error('A newer email is already in the plan. Confirm that you intend to apply this older message.');
         if (task.requiresVerification && proposed.status === 'done' && task.status !== 'done') proposed.status = 'progress';
         before = copy({title:task.title,owner:task.owner,status:task.status,dueDate:task.dueDate,note:task.note,category:task.category,revision:task.revision});
-        patchTask(task, proposed, actor);
+        patchTask(task, proposed, actor,approved.confirmHardDeadline===true);
       } else {
         task = createTask(proposed, actor);
       }
       task.sourceMessageId = message.id;
       task.updatedAt = timestamp();
       task.updatedBy = actor;
+      const ownerMail=task.owner&&normalize(message.sender)===normalize(state.members.find(item=>item.id===task.owner)?.name);
+      const received=Math.min(Date.parse(message.receivedAt),Date.parse(timestamp()));
+      if(ownerMail&&received>Date.parse(task.ownerRespondedAt||'1970-01-01'))task.ownerRespondedAt=new Date(received).toISOString();
       if (before) message.before = before;
       if (completionReport && !task.verifiedAt) {
         closeRecovery(task,'superseded',actor);
-        task.ownerRespondedAt=task.updatedAt;
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
         task.verifiedAt = ''; task.verifiedBy = '';
       }
@@ -502,7 +508,7 @@
       }
       if (completionReport && task.status === 'done' && !task.verifiedAt) captureCompletion(task, actor, message.sender);
       message.appliedTaskId = task.id;
-      if (message.suggested.signal === 'acceptance' && task.owner && normalize(message.sender) === normalize(state.members.find(item=>item.id===task.owner)?.name)) { task.acceptedAt = timestamp(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
+      if (message.suggested.signal === 'acceptance' && ownerMail && received>Date.parse(task.acceptedAt||'1970-01-01')) { task.acceptedAt = new Date(received).toISOString(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
       message.appliedAt = timestamp();
       message.appliedBy = actor;
       message.approved = {...copy(proposed),...Object.fromEntries(['title','owner','status','dueDate','note','category'].map(field=>[field,task[field]]))};

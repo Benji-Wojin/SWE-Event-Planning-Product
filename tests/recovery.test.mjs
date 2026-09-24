@@ -79,3 +79,35 @@ test('a new acceptance or commitment acknowledges a check-in despite an older ow
   task.acceptedAt='2026-09-20T12:00:00Z';task.nextUpAt='2026-09-25T12:00:00Z';
   assert.equal(GatherPriorities.analyze(task,[task],new Date('2026-09-26T12:00:00Z')),null);
 });
+
+test('repeating an owner update is a real response; reopening discards an old check-in',()=>{
+  let at=now.getTime();const store=GatherStore.createStore({storage:null,now:()=>at});
+  const task=store.addTask({title:'Program check',owner:'maya',status:'progress',note:'Still on track.',dueDate:'2026-10-20'});
+  store.acceptTask(task.id,'maya');at+=60000;store.recordFollowup(task.id,'2026-09-25');at+=86400000;
+  store.updateTask(task.id,{status:'progress',note:'Still on track.'},'maya');
+  assert.equal(get(store,task.id).ownerRespondedAt,new Date(at).toISOString());
+  assert.equal(GatherPriorities.decision(get(store,task.id),[],new Date(at)),null);
+  store.resolveRecovery(task.id,{...decision,reviewAfter:'2026-10-30'});
+  store.reportCompletion(task.id,'Finished.','maya');store.updateTask(task.id,{status:'progress'});
+  assert.equal(get(store,task.id).planReviewAfter,'');assert.equal(get(store,task.id).followupAfter,'');
+});
+
+test('owner email acknowledges its received time, not approval time; other senders do not count',()=>{
+  for(const [sender,offset,answered] of [['Maya Singh',3600000,true],['Maya Singh',-3600000,false],['Vendor',3600000,false]]){
+    let at=now.getTime();const store=GatherStore.createStore({storage:null,now:()=>at});
+    const task=store.addTask({title:'Plan program',owner:'maya',status:'progress',dueDate:'2026-10-20'});
+    store.acceptTask(task.id,'maya');at+=60000;const sent=at;store.recordFollowup(task.id,'2026-09-25');at+=86400000;
+    const message=store.addMessage({sender,taskId:task.id,subject:'Program update',body:'Still reviewing the options.',receivedAt:new Date(sent+offset).toISOString()});
+    store.applyMessage(message.id);
+    assert.equal(GatherPriorities.decision(get(store,task.id),[],new Date(at))?.key,answered?undefined:'unanswered');
+  }
+});
+
+test('fixed dates cannot bypass confirmation through task details or email approval',()=>{
+  const store=create(),task=store.addTask({title:'Confirm venue',owner:'maya',dueDate:'2026-10-01'});store.setTaskPriority(task.id,{priority:'auto',hardDeadline:true});
+  let before=store.exportState();assert.throws(()=>store.updateTask(task.id,{dueDate:'2026-10-02'}),/external deadline/);assert.equal(store.exportState(),before);
+  store.updateTask(task.id,{dueDate:'2026-10-02',confirmHardDeadline:true});
+  const message=store.addMessage({sender:'Maya Singh',taskId:task.id,subject:'Venue date',body:'The due date changed.'});before=store.exportState();
+  assert.throws(()=>store.applyMessage(message.id,{dueDate:'2026-10-03'}),/external deadline/);assert.equal(store.exportState(),before);
+  store.applyMessage(message.id,{dueDate:'2026-10-03',confirmHardDeadline:true});assert.equal(get(store,task.id).dueDate,'2026-10-03');
+});

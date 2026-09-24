@@ -111,6 +111,8 @@ export async function GET(request: Request) {
       const config = await configuration();
       if (!config) throw new HttpError(409, 'OAuth configuration is missing.');
       const secret = await unseal(saved.payload, 'oauth:' + state);
+      if (secret.configPayload !== config.storedPayload)
+        throw new HttpError(409, 'The Gmail client changed. Start authorization again.');
       const token = await tokenRequest({
         client_id: config.clientId,
         client_secret: config.clientSecret,
@@ -151,8 +153,8 @@ export async function GET(request: Request) {
       );
       const savedConnection = await env.DB.batch([
         env.DB.prepare(
-          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
-        ).bind(payload, generation, state, user.userId, Date.now()),
+          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
+        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload),
         env.DB.prepare(
           'DELETE FROM oauth_states WHERE id=? AND user_id=?',
         ).bind(state, user.userId),
@@ -193,20 +195,21 @@ export async function POST(request: Request) {
           409,
           'Disconnect Gmail before replacing the OAuth client.',
         );
-      await env.DB.prepare(
-        'INSERT INTO settings (id,payload) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',
-      )
-        .bind(
-          'google-oauth',
-          await seal({ clientId, clientSecret }, 'google-oauth'),
-        )
-        .run();
+      const payload = await seal({ clientId, clientSecret }, 'google-oauth');
+      const saved = await env.DB.batch([
+        env.DB.prepare('INSERT INTO settings (id,payload) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM gmail_connections) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload')
+          .bind('google-oauth', payload),
+        env.DB.prepare('DELETE FROM oauth_states WHERE EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?)').bind('google-oauth', payload),
+      ]);
+      if (saved[0].meta.changes !== 1) throw new HttpError(409, 'Gmail connected while settings were changing. Disconnect it before replacing the client.');
       return json({ saved: true });
     }
     if (action === 'connect')
       return json({ url: await beginOAuth(user.userId) });
     if (action === 'label') {
       const labelId = String(data.labelId || '');
+      const starting = await connection(user.userId);
+      if (!starting) throw new HttpError(409, 'Connect Gmail first.');
       const labels = await gmail(user.userId, 'labels');
       if (
         !labels.labels.some((l: any) => l.id === labelId && l.type === 'user')
@@ -216,6 +219,8 @@ export async function POST(request: Request) {
           'Choose a project label from this Gmail account.',
         );
       const conn = await connection(user.userId);
+      if (!conn || conn.generation !== starting.generation || conn.email !== starting.email)
+        throw new HttpError(409, 'Your Gmail account changed. Reload its labels and try again.');
       await saveConnection(
         user.userId,
         { ...conn, labelId, pageToken: '', lastSync: '' },

@@ -6,7 +6,7 @@
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
   const ui = { view:'overview', actor:'jack', tab:'all', owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
-  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
+  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
   const icons = {
@@ -145,6 +145,13 @@
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
+  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
+  function confirmFixedDate(taskId,data) {
+    const task=store.getState().tasks.find(t=>t.id===taskId);
+    if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;
+    if(!window.confirm('This task has a fixed external deadline. Has the vendor or external deadline also changed?'))return false;
+    data.confirmHardDeadline=true;return true;
+  }
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',addButton)+`
@@ -211,7 +218,8 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
     const currentReview=$('#emailReviewForm');
     if(reviewDraft&&currentReview?.dataset.id===reviewDraft.id){
       for(const field of reviewDraft.fields){const input=currentReview.elements.namedItem(field.name);if(input){input.value=field.value;if(input.type==='checkbox')input.checked=field.checked;}}
@@ -549,7 +557,7 @@
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
-      if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
       if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
@@ -557,6 +565,7 @@
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
         if(ui.savingProposal)return;
+        if(data.mode==='update'&&!confirmFixedDate(data.taskId,data))return;
         ui.savingProposal=true;const button=$('button[type="submit"]',form);button.disabled=true;button.textContent='Saving…';
         try{const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
         finally{ui.savingProposal=false;}

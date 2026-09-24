@@ -27,6 +27,16 @@ Owners can commit to up to three actionable Next up tasks, propose a date or ask
 
 Helpful links automatically search on first task opening, then reuse results for seven days unless the task context changes. Search details allows an optional city/region and a manual refresh. Only the task name, category and optional location are sent to OpenAI (with `store:false`), not task notes, emails, comments, booking codes or participant profiles. Only cited public HTTPS links render; Gather never fetches those destination pages or makes bookings. No-location searches request general resources. Availability and suitability are not verified. Server-side leases limit a task to one lookup per minute, with a shared 25-lookups/day limit per authenticated account across the real workspace and demo. Live provider operation remains unverified until a key is provisioned and a live smoke test succeeds.
 
+## Event information
+
+Event info keeps a guest list and shared files separate from task conversations. Guests have a contact name, optional email/phone, type (attendee, speaker, volunteer or vendor), group, attendance and notes. These are contact records, not accounts or app members. No messages, invitations or RSVP requests are sent. Expected guest counts and other planning context remain manually maintained.
+
+Authenticated project members can add/edit guests and upload files. Organizers can archive/restore guests; uploaders and organizers can archive/restore files. The four demo perspectives use the same interface and APIs with isolated sample contacts; restarting the demo isolates its old records from the new generation. The owner-private pilot still has no real teammate onboarding.
+
+CSV imports require a preview and confirmation. Invalid rows prevent the entire import; existing emails (including archived guests) are skipped rather than overwritten. Names alone never merge records. Limits: 40 KB / 100 rows per import, 500 guest records including archived contacts. Data uses revision checks and idempotent write receipts to avoid silent overwrite and duplicate retries.
+
+Guest records and file contents are encrypted with context-bound AES-GCM. They are not included in task exports, task AI searches, or browser localStorage. Project uploads use the private Sites-managed `BUCKET` R2 binding, with authenticated attachment-only downloads. Allowed formats: PDF, TXT, CSV, PNG, JPEG, DOCX and XLSX, up to 5 MB each. A per-authenticated-account cap of 50 MB / 200 uploads includes archived files and previous demo generations. Archive is recoverable, not permanent deletion or quota reclamation; retention/deletion administration remains future work. Files are not malware-scanned. Upload only information the project team is permitted to access.
+
 ## Build and validation
 
 `npm run build` reproduces the adapted legacy workspace and builds the Worker. `npx tsc --noEmit` checks the app. `node --test tests/*.test.mjs` runs the task reporting, dependencies, email briefing, concurrency, authorization, encryption, Gmail, and demo regression tests using SQLite and mocked platform identity. No test mocks are included in the deployed Worker.

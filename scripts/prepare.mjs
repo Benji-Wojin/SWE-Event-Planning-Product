@@ -25,12 +25,13 @@ html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
-html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
+for(const name of ['guests','info-ui'])writeFileSync('public/gather-assets/'+name+'.js',readFileSync('legacy/'+name+'.js','utf8'));
 let app = readFileSync('legacy/app.js', 'utf8');
 const inboxStart=app.indexOf('  function inboxView(s) {');
 const inboxEnd=app.indexOf('  function teamView(s) {',inboxStart);

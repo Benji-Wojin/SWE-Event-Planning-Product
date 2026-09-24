@@ -45,14 +45,17 @@ const db = {
     };
   },
 };
+const uploadedObjects=new Map();
+const bucket={async put(key,bytes){uploadedObjects.set(key,new Uint8Array(bytes).slice());},async get(key){const bytes=uploadedObjects.get(key);return bytes?{arrayBuffer:async()=>bytes.slice().buffer}:null;},async delete(key){uploadedObjects.delete(key);}};
 globalThis.__gatherEnv = {
   DB: db,
+  BUCKET: bucket,
   GATHER_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
   GATHER_OWNER_EMAIL: 'owner@example.com',
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -65,6 +68,8 @@ before(async () => {
       demo: 'app/api/demo/route.ts',
       resources: 'app/api/resources/route.ts',
       resourcesCore: 'lib/task-resources.ts',
+      info: 'app/api/info/route.ts',
+      infoCore: 'lib/project-info.ts',
     },
     outdir: directory,
     bundle: true,
@@ -93,8 +98,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -753,6 +758,32 @@ test('OAuth profile failure preserves the previous connection and a successful c
 });
 
 const resourceRead=(query='taskId=bus')=>resourcesApi.GET(new Request('https://gather.example/api/resources?'+query));
+
+test('Gmail label validation cannot cross a reconnection',async()=>{
+  owner();const originalFetch=globalThis.fetch;
+  const save=async(email,generation)=>db.prepare('INSERT INTO gmail_connections (user_id,payload,generation) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation').bind('owner-1',await security.seal({accessToken:'fixture',email,expiresAt:Date.now()+3600000,labelId:''},'gmail:owner-1'),generation).run();
+  try{
+    await save('old@example.com','label-old');
+    globalThis.fetch=async()=>{await save('new@example.com','label-new');return Response.json({labels:[{id:'OLD_ONLY',type:'user'}]});};
+    const result=await gmailApi.POST(request('/api/gmail/label',{labelId:'OLD_ONLY'}));
+    assert.equal(result.status,409);assert.equal((await gmailCore.connection('owner-1')).labelId,'');
+  }finally{globalThis.fetch=originalFetch;sqlite.prepare('DELETE FROM gmail_connections WHERE user_id=?').run('owner-1');}
+});
+
+test('changing OAuth client invalidates a callback already awaiting the Gmail profile',async()=>{
+  owner();const originalFetch=globalThis.fetch;
+  try{
+    assert.equal((await gmailApi.POST(request('/api/gmail/configure',{clientId:'client-a.apps.googleusercontent.com',clientSecret:'fixture-secret-a'}))).status,200);
+    const start=await (await gmailApi.POST(request('/api/gmail/connect',{}))).json(),state=new URL(start.url).searchParams.get('state');
+    globalThis.fetch=async url=>{
+      if(String(url).includes('oauth2.googleapis.com'))return Response.json({access_token:'token-a',refresh_token:'refresh-a',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.readonly'});
+      assert.equal((await gmailApi.POST(request('/api/gmail/configure',{clientId:'client-b.apps.googleusercontent.com',clientSecret:'fixture-secret-b'}))).status,200);
+      return Response.json({emailAddress:'a@example.com'});
+    };
+    const result=await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state='+state+'&code=fixture'));
+    assert.equal(result.status,409);assert.equal(await gmailCore.connection('owner-1'),null);
+  }finally{globalThis.fetch=originalFetch;}
+});
 const resourceWrite=(data,query='')=>resourcesApi.POST(request('/api/resources'+query,data));
 const citationFixture=()=>({status:'completed',output:[{type:'web_search_call',status:'completed'},{type:'message',content:[{type:'output_text',text:'Portland Parks — event permits [source]',annotations:[{type:'url_citation',url:'https://www.portland.gov/parks',title:'Portland Parks',start_index:30,end_index:38}]}]}]});
 
@@ -828,4 +859,112 @@ test('concurrent resource readers share one lookup; provider failures never expo
     await assert.rejects(resourcesCore.taskResources('failure','owner-1',task,{}),error=>error.status===503&&!error.message.includes('SECRET'));
     const cached=await resourcesCore.taskResources('failure','owner-1',task);assert.equal(cached.status,'error');assert.ok(!JSON.stringify(cached).includes('SECRET'));
   }finally{delete globalThis.__gatherEnv.OPENAI_API_KEY;globalThis.fetch=originalFetch;}
+});
+
+const infoRead=(query='')=>infoApi.GET(new Request('https://gather.example/api/info'+query));
+const infoWrite=(data,query='')=>infoApi.POST(request('/api/info'+query,data));
+const infoContext=scope=>({scope,userId:'upload-test-'+scope,actor:'jack',name:'Jack',admin:true,demoId:'',generation:''});
+const uploadRequest=(revision,name='list.txt',content='Private guest details',query='',id=crypto.randomUUID(),origin='https://gather.example')=>{
+  const form=new FormData();form.set('file',new Blob([content]),name);form.set('revision',revision);form.set('requestId',id);
+  return new Request('https://gather.example/api/info?upload=1'+query,{method:'POST',headers:{Origin:origin,'X-Gather-Request':'1'},body:form});
+};
+
+test('event info denies anonymous, outsiders, actor injection and cross-origin writes',async()=>{
+  globalThis.__gatherUser=null;assert.equal((await infoRead()).status,401);
+  globalThis.__gatherUser={userId:'guest-only',email:'attendee@example.com',displayName:'Attendee'};
+  assert.equal((await infoRead()).status,403);
+  owner();const state=await (await infoRead()).json();assert.equal(state.guests.length,0);
+  assert.equal((await infoWrite({action:'add',guest:{name:'A'},actor:'jack',revision:state.revision,requestId:crypto.randomUUID()})).status,400);
+  assert.equal((await infoApi.POST(request('/api/info',{action:'preview',csv:'Name\nA',revision:state.revision},'https://evil.example'))).status,403);
+  assert.equal((await infoApi.POST(uploadRequest(state.revision,'x.txt','x','',crypto.randomUUID(),'https://evil.example'))).status,403);
+});
+test('guest preview is read-only, imports are atomic, deduplicated and idempotent',async()=>{
+  owner();let state=await (await infoRead()).json();const before=state.revision;
+  const csv='Name,Email,Type\nPrivate Guest,private-guest@example.com,speaker\nDuplicate,PRIVATE-GUEST@example.com,attendee\nNo email,,attendee';
+  const preview=await (await infoWrite({action:'preview',csv,revision:before})).json();assert.equal(preview.added,2);assert.equal(preview.duplicates,1);
+  assert.equal((await (await infoRead()).json()).revision,before);
+  const bad={action:'import',csv:'Name,Email\nValid,v@example.com\nInvalid,no-email',filename:'bad.csv',revision:before,requestId:crypto.randomUUID()};
+  assert.equal((await infoWrite(bad)).status,400);assert.equal((await (await infoRead()).json()).guests.length,0);
+  const input={action:'import',csv,filename:'guests.csv',revision:before,requestId:crypto.randomUUID()};
+  state=await (await infoWrite(input)).json();assert.equal(state.guests.length,2);assert.equal(state.revision,before+1);
+  assert.deepEqual(await (await infoWrite(input)).json(),state);
+  assert.equal((await infoWrite({...input,csv:'Name\nDifferent'})).status,409);
+  assert.equal((await infoWrite({...input,requestId:crypto.randomUUID()})).status,409);
+  assert.ok(!JSON.stringify(await (await workspace.GET()).json()).includes('private-guest@example.com'));
+  const raw=sqlite.prepare('SELECT payload FROM project_info WHERE scope=?').get('main').payload;
+  assert.ok(!raw.includes('Private Guest'));assert.ok(!raw.includes('private-guest@example.com'));
+});
+test('valid CSV with JSON escaping remains within the route-specific request envelope',async()=>{
+  owner();const state=await (await infoRead()).json();
+  const csv='Name,Notes\n'+Array.from({length:70},(_,i)=>'Guest '+i+','+'\\'.repeat(490)).join('\n');
+  assert.ok(Buffer.byteLength(csv)<40000);assert.ok(JSON.stringify({csv}).length>50000);
+  const response=await infoWrite({action:'preview',csv,revision:state.revision});assert.equal(response.status,200);assert.equal((await response.json()).added,70);
+});
+test('team members can contribute guests but only organizers can archive them',async()=>{
+  owner();let state=await (await infoRead('?demo=1&as=maya')).json();
+  state=await (await infoWrite({action:'add',guest:{name:'Team contribution'},revision:state.revision,requestId:crypto.randomUUID()},'?demo=1&as=maya')).json();
+  const guest=state.guests.find(g=>g.name==='Team contribution');assert.equal(guest.createdBy,'maya');
+  const archive={action:'archiveGuest',id:guest.id,archived:true,revision:state.revision,requestId:crypto.randomUUID()};
+  assert.equal((await infoWrite(archive,'?demo=1&as=maya')).status,403);
+  state=await (await infoWrite(archive,'?demo=1&as=jack')).json();assert.ok(state.guests.find(g=>g.id===guest.id).archivedAt);
+  const restore=await infoWrite({...archive,archived:false,revision:state.revision,requestId:crypto.randomUUID()},'?demo=1&as=jack');assert.equal(restore.status,200);
+  assert.equal((await infoRead('?demo=1&as=unknown')).status,400);
+});
+test('uploads are encrypted, authenticated attachments with idempotent retries',async()=>{
+  owner();let state=await (await infoRead()).json();const id=crypto.randomUUID(),revision=state.revision;
+  const payload='Private file content '+ 'x'.repeat(1024*1024);
+  let response=await infoApi.POST(uploadRequest(revision,'attendee-list.txt',payload,'',id));assert.equal(response.status,200);
+  state=await response.json();const file=state.files.at(-1);assert.equal(file.key,undefined);assert.equal(file.size,Buffer.byteLength(payload));
+  const object=uploadedObjects.get('project-files/'+file.id);assert.ok(object);assert.ok(!Buffer.from(object).includes(Buffer.from('Private file content')));
+  response=await infoRead('?file='+file.id);assert.equal(response.status,200);assert.equal(await response.text(),payload);
+  assert.match(response.headers.get('content-disposition'),/^attachment/);assert.equal(response.headers.get('x-content-type-options'),'nosniff');assert.match(response.headers.get('cache-control'),/no-store/);
+  const replay=await infoApi.POST(uploadRequest(revision,'attendee-list.txt',payload,'',id));assert.equal(replay.status,200);assert.equal((await replay.json()).files.length,state.files.length);
+  assert.equal((await infoRead('?demo=1&as=jack&file='+file.id)).status,404);
+  globalThis.__gatherUser=null;assert.equal((await infoRead('?file='+file.id)).status,401);owner();
+  state=await (await infoWrite({action:'archiveFile',id:file.id,archived:true,revision:state.revision,requestId:crypto.randomUUID()})).json();assert.equal((await infoRead('?file='+file.id)).status,404);
+  await infoWrite({action:'archiveFile',id:file.id,archived:false,revision:state.revision,requestId:crypto.randomUUID()});assert.equal((await infoRead('?file='+file.id)).status,200);
+});
+test('uploads reject unsupported, empty and oversized actual bodies',async()=>{
+  owner();const state=await (await infoRead()).json();
+  for(const [name,content,status] of [['x.html','<script>x</script>',400],['empty.txt','',400],['big.txt',new Uint8Array(6*1024*1024),413]]){
+    const source=uploadRequest(state.revision,name,content);
+    // Materialize test transport: Node's FormData producer errors on early stream cancellation.
+    const incoming=new Request(source.url,{method:'POST',headers:source.headers,body:await source.arrayBuffer()});
+    assert.equal((await infoApi.POST(incoming)).status,status);
+  }
+  assert.equal((await (await infoRead()).json()).revision,state.revision);
+});
+test('simultaneous identical upload retries keep exactly one winning object',async()=>{
+  const context=infoContext('upload-race'),state=await infoCore.readInfo(context),id=crypto.randomUUID();
+  const input={bytes:new TextEncoder().encode('Simultaneous retry').buffer,name:'retry.txt',revision:state.revision,requestId:id};
+  const before=uploadedObjects.size;
+  const results=await Promise.all([infoCore.uploadInfo(context,input),infoCore.uploadInfo(context,input)]);
+  assert.equal(results[0].files.length,1);assert.equal(results[1].files.length,1);assert.equal(results[0].files[0].id,results[1].files[0].id);
+  assert.equal(uploadedObjects.size,before+1);assert.equal(await (await infoCore.downloadInfo(context,results[0].files[0].id)).text(),'Simultaneous retry');
+});
+test('upload metadata committed before a transport error never loses its bytes',async()=>{
+  const context=infoContext('ambiguous-upload'),state=await infoCore.readInfo(context);
+  let failed=false;
+  globalThis.__gatherEnv.DB={...db,prepare(sql){const statement=db.prepare(sql),run=statement.run;statement.run=async()=>{const result=await run();if(!failed&&sql.startsWith('UPDATE project_info')){failed=true;throw new Error('Response lost after commit');}return result;};return statement;}};
+  try{
+    const result=await infoCore.uploadInfo(context,{bytes:new TextEncoder().encode('Retained content').buffer,name:'keep.txt',revision:state.revision,requestId:crypto.randomUUID()});
+    assert.equal(result.files.length,1);assert.equal(await (await infoCore.downloadInfo(context,result.files[0].id)).text(),'Retained content');
+  }finally{globalThis.__gatherEnv.DB=db;}
+});
+test('demo reset isolates guest records and files without touching real event info',async()=>{
+  owner();const real=await (await infoRead()).json(),context=await infoCore.infoContext(new Request('https://gather.example/api/info?demo=1&as=maya'));
+  let state=await (await infoRead('?demo=1&as=maya')).json();
+  state=await (await infoApi.POST(uploadRequest(state.revision,'demo.txt','Demo only','&demo=1&as=maya'))).json();const file=state.files.at(-1);
+  assert.equal((await infoWrite({action:'archiveFile',id:file.id,archived:true,revision:state.revision,requestId:crypto.randomUUID()},'?demo=1&as=jules')).status,403);
+  assert.equal((await infoRead('?demo=1&as=jules&file='+file.id)).status,200);
+  const demo=await (await demoRead()).json();assert.equal((await demoWrite('jack',{method:'resetDemo',args:[true],revision:demo.revision})).status,200);
+  assert.equal((await infoRead('?demo=1&as=maya&file='+file.id)).status,404);
+  assert.equal((await (await infoRead('?demo=1&as=maya')).json()).guests.length,2);
+  await assert.rejects(infoCore.mutateInfo(context,{action:'add',guest:{name:'Stale write'},revision:state.revision,requestId:crypto.randomUUID()}),error=>error.status===409);
+  assert.deepEqual(await (await infoRead()).json(),real);
+});
+test('storage quota includes archived and previous demo files',async()=>{
+  const context=infoContext('quota-upload'),state=await infoCore.readInfo(context),reservation=crypto.randomUUID();
+  sqlite.prepare('INSERT INTO project_uploads (id,account_id,size) VALUES (?,?,?)').run(reservation,context.userId,50*1024*1024);
+  try{await assert.rejects(infoCore.uploadInfo(context,{bytes:new Uint8Array([1]).buffer,name:'limit.txt',revision:state.revision,requestId:crypto.randomUUID()}),error=>error.status===409);}finally{sqlite.prepare('DELETE FROM project_uploads WHERE id=?').run(reservation);}
 });
