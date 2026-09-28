@@ -10,6 +10,7 @@ import {
   unsealFile,
 } from './security';
 import { demoPersona, loadDemo } from './demo';
+import { projectScope } from './projects';
 
 const guests = (globalThis as any).GatherGuests;
 const MAX_FILE = 5 * 1024 * 1024,
@@ -43,7 +44,7 @@ export async function infoContext(request: Request): Promise<Context> {
   }
   const user = await principal();
   return {
-    scope: 'main',
+    scope: await projectScope(user, request),
     userId: user.userId,
     actor: user.actorId,
     name: user.displayName,

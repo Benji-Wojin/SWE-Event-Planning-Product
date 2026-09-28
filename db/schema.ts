@@ -10,6 +10,12 @@ export const workspaces = sqliteTable('workspaces', {
   data: text('data').notNull(),
   revision: integer('revision').notNull().default(1),
 });
+export const projects = sqliteTable('projects', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  requestPayload: text('request_payload').notNull(),
+  createdAt: text('created_at').notNull(),
+}, table => [index('projects_owner').on(table.ownerId)]);
 export const members = sqliteTable('members', {
   userId: text('user_id').primaryKey(),
   actorId: text('actor_id').notNull().unique(),
@@ -31,6 +37,7 @@ export const privateRecords = sqliteTable('private_records', {
   id: text('id').primaryKey(),
   payload: text('payload').notNull(),
   updatedAt: text('updated_at').notNull(),
+  scope: text('scope').notNull().default('main'),
 });
 export const settings = sqliteTable('settings', {
   id: text('id').primaryKey(),

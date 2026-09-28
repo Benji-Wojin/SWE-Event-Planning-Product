@@ -55,7 +55,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -70,6 +70,7 @@ before(async () => {
       resourcesCore: 'lib/task-resources.ts',
       info: 'app/api/info/route.ts',
       infoCore: 'lib/project-info.ts',
+      projects: 'app/api/projects/route.ts',
     },
     outdir: directory,
     bundle: true,
@@ -98,8 +99,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore', 'projects'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -1033,4 +1034,65 @@ test('storage quota includes archived and previous demo files',async()=>{
   const context=infoContext('quota-upload'),state=await infoCore.readInfo(context),reservation=crypto.randomUUID();
   sqlite.prepare('INSERT INTO project_uploads (id,account_id,size) VALUES (?,?,?)').run(reservation,context.userId,50*1024*1024);
   try{await assert.rejects(infoCore.uploadInfo(context,{bytes:new Uint8Array([1]).buffer,name:'limit.txt',revision:state.revision,requestId:crypto.randomUUID()}),error=>error.status===409);}finally{sqlite.prepare('DELETE FROM project_uploads WHERE id=?').run(reservation);}
+});
+
+test('new projects are empty, persistent and idempotent without changing the original plan',async()=>{
+  owner();
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  const input={requestId:crypto.randomUUID(),event:{name:'Separate retreat',location:'North hall',guestCount:30}};
+  const first=await projectsApi.POST(request('/api/projects',input));assert.equal(first.status,201);
+  const {id}=await first.json();
+  assert.equal((await (await projectsApi.POST(request('/api/projects',input))).json()).id,id);
+  assert.equal((await projectsApi.POST(request('/api/projects',{...input,event:{name:'Conflicting retry'}}))).status,409);
+  const state=await (await workspace.GET(new Request('https://gather.example/api/workspace?project='+id))).json();
+  assert.equal(state.projectId,id);assert.equal(state.state.event.name,'Separate retreat');assert.equal(state.state.tasks.length,0);assert.equal(state.state.messages.length,0);assert.equal(state.state.members.length,1);
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+  const list=(await (await projectsApi.GET()).json()).projects;
+  assert.equal(list.filter(project=>project.id===id).length,1);assert.ok(list.some(project=>project.id==='main'));assert.ok(!list.some(project=>project.id.startsWith('demo')));
+  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'   '}}))).status,400);
+  assert.equal((await projectsApi.POST(request('/api/projects',input,'https://evil.example'))).status,403);
+});
+test('tasks, guests, files, bookings and reviewed email stay in their selected project',async()=>{
+  owner();
+  const create=async name=>(await (await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name}}))).json()).id;
+  const a=await create('Project A'),b=await create('Project B');
+  const read=async id=>(await workspace.GET(new Request('https://gather.example/api/workspace?project='+id))).json();
+  const before=await read('main');
+  let state=await read(a);
+  const update=await workspace.POST(request('/api/workspace?project='+a,{method:'addTask',args:[{title:'Only in A',owner:'jack',status:'todo',category:'Logistics'}],revision:state.revision}));
+  assert.equal(update.status,200);state=await update.json();const task=state.state.tasks[0];
+  assert.equal((await read(b)).state.tasks.length,0);
+  let info=await (await infoRead('?project='+a)).json();
+  info=await (await infoWrite({action:'add',guest:{name:'A guest'},revision:info.revision,requestId:crypto.randomUUID()},'?project='+a)).json();
+  assert.equal(info.guests.length,1);assert.equal((await (await infoRead('?project='+b)).json()).guests.length,0);
+  info=await (await infoApi.POST(uploadRequest(info.revision,'a-only.txt','Project A content','&project='+a))).json();
+  const file=info.files[0];assert.ok(file);
+  assert.equal((await infoRead('?project='+a+'&file='+file.id)).status,200);
+  assert.equal((await infoRead('?project='+b+'&file='+file.id)).status,404);
+  const created=await privateApi.POST(request('/api/private/records?project='+a,{title:'A booking',type:'Hotel',reference:'A-ONLY',taskId:task.id}));assert.equal(created.status,200);
+  const privateRead=async id=>(await (await privateApi.GET(new Request('https://gather.example/api/private/records?project='+id))).json()).records;
+  const record=(await privateRead(a))[0];assert.equal(record.reference,'A-ONLY');assert.equal((await privateRead(b)).length,0);
+  assert.equal((await privateApi.POST(request('/api/private/records?project='+b,{...record,taskId:'',reference:'OVERWRITE'}))).status,404);
+  assert.equal((await privateApi.POST(request('/api/private/records?project='+b,{title:'Wrong task',type:'Hotel',reference:'B',taskId:task.id}))).status,400);
+  const review=await gmailApi.POST(request('/api/gmail/review?project='+a,{id:'mail-1',title:'A update',summary:'Only project A receives this update.',confirmShared:true,taskId:task.id}));assert.equal(review.status,200);
+  assert.equal((await read(a)).state.messages.length,1);assert.equal((await read(b)).state.messages.length,0);
+  assert.deepEqual((await read('main')).state,before.state);
+  assert.equal((await resourcesApi.GET(new Request('https://gather.example/api/resources?project='+b+'&taskId='+task.id))).status,404);
+});
+test('unknown, internal and other-owner project IDs cannot read or mutate project data',async()=>{
+  owner();const id=(await (await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Private project'}}))).json()).id;
+  const invalid=['demo:owner-1','demo-bookings:owner-1','p_'+crypto.randomUUID(),''];
+  sqlite.prepare('INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run('project-audit-member','maya','member@example.com','Member','member');
+  const member=sqlite.prepare('SELECT user_id FROM members WHERE actor_id<>? LIMIT 1').get('jack');assert.ok(member);
+  globalThis.__gatherUser={userId:member.user_id,email:'member@example.com',displayName:'Member'};
+  invalid.push(id);
+  for(const project of invalid){
+    const query='?project='+encodeURIComponent(project);
+    assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'+query))).status,404);
+    assert.equal((await workspace.POST(request('/api/workspace'+query,{method:'addTask',args:[{title:'Injected'}],revision:1}))).status,404);
+    assert.equal((await infoRead(query)).status,404);
+  }
+  assert.ok(!(await (await projectsApi.GET()).json()).projects.some(project=>project.id===id));
+  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);
+  globalThis.__gatherUser=null;assert.equal((await projectsApi.GET()).status,401);owner();
 });

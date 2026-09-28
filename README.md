@@ -11,11 +11,13 @@ Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only b
 - Gmail Web OAuth uses read-only scope, PKCE, expiring single-use state bound to the signed-in owner, server-side refresh tokens, and revocation. Save the Google client in the protected settings form, then authorize Gmail and choose a project label.
 - Sync manually imports 20 messages at a time from that label, with paging and mailbox-aware deduplication. Private inbox shows the 100 most recent imported text previews; previews may be truncated and exclude attachments. A human writes and approves a safe title/summary before it enters shared email review. Originals stay encrypted separately. Conversation mapping and received time are retained for reviewed updates.
 
-## Project setup
+## Projects and setup
 
-`/setup` saves the event name, optional date/location, guest count and planning context to the existing D1 workspace. First visits to a newly created real workspace open setup automatically. Existing projects get a Project setup link without a forced redirect or deletion of their data. Completing or editing setup preserves tasks, comments, guests, files, Gmail data and private booking records; it does not reset the plan or create sample people. The setup marker is additive workspace JSON, so no schema migration is needed.
+`/` is the Projects homepage. `/setup` creates a separate, empty project; `/setup?project=<id>` edits only that project's settings. `/project?project=<id>` opens its workspace. Creation is authenticated, server-persisted and retry-safe. Existing data stays under `main`; no tasks, guests, files or bookings are moved or cleared. New projects use an owner-authorized registry and explicit URL IDs so two tabs cannot switch each other's active project. Migration `0004` adds the registry and a booking scope defaulting to `main` for old records.
 
-Gmail and guest-list imports are optional and remain separate. Setup uses the same authenticated organizer authorization, origin verification, field validation and revision-checked writes as the rest of the app. Conflicts and failed saves preserve form values and require explicit reload before replacing a draft. An absent event date is displayed as not set. The app still supports one real project per private Site, not multiple projects or self-service team registration.
+Gmail and guest-list imports are optional. The account's Gmail connection, import label and private original messages remain account-wide; reviewed summaries explicitly target the selected project. Tasks, guests, files, private bookings, suggestions and resource caches are project-scoped. Setup uses organizer authorization, origin verification, field validation and revision-checked edits. Failed saves preserve form values. Event date and location are optional. There is a 100-new-project account limit; self-service teammate registration remains unavailable.
+
+The homepage adapts `ProjectsHome.tsx` and `projects-home.css` from the existing Gather Lovable design workspace, commit `f7669b53ebacbefa76e8bf8f85e8cd28dae997d4`. It uses Gather's existing theme and validated setup form. Lovable preview data and storage are not part of the production app.
 
 ## Pilot boundaries
 

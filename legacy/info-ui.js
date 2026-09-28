@@ -22,7 +22,7 @@
       if (root.GatherMode?.demo) {
         p.set('demo', '1');
         p.set('as', root.GatherMode.actor);
-      }
+      } else p.set('project', root.GatherMode?.projectId || 'main');
       return '/api/info?' + p;
     };
     const opts = (values, value) =>

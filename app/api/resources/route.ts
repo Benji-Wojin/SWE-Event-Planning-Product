@@ -2,6 +2,7 @@ import { administrator, body, HttpError, json, principal, safe } from '@/lib/sec
 import { loadWorkspace } from '@/lib/workspace';
 import { demoPersona, loadDemo } from '@/lib/demo';
 import { taskResources } from '@/lib/task-resources';
+import { projectScope } from '@/lib/projects';
 export const dynamic = 'force-dynamic';
 
 async function handle(request: Request, generate: boolean) {
@@ -14,10 +15,11 @@ async function handle(request: Request, generate: boolean) {
       input.refresh !== undefined && typeof input.refresh !== 'boolean')) throw new HttpError(400, 'Invalid helpful-links request.');
   const taskId = input?.taskId ?? params.get('taskId');
   if (typeof taskId !== 'string' || !taskId || taskId.length > 160) throw new HttpError(400, 'Choose a task.');
-  const { store } = demo ? await loadDemo(user) : await loadWorkspace(user);
+  const projectId = demo ? '' : await projectScope(user, request);
+  const { store } = demo ? await loadDemo(user) : await loadWorkspace(user, projectId);
   const state = store.getState(), task = state.tasks.find((item: any) => item.id === taskId);
   if (!task) throw new HttpError(404, 'That task could not be found.');
-  const scope = demo ? 'demo:' + user.userId + ':' + state.demoGeneration : 'main';
+  const scope = demo ? 'demo:' + user.userId + ':' + state.demoGeneration : projectId;
   return json(await taskResources(scope, user.userId, task, input));
 }
 export async function GET(request: Request) { return safe(() => handle(request, false)); }

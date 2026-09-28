@@ -5,6 +5,7 @@
   function endpoint(taskId){
     const query=new URLSearchParams({taskId});
     if(root.GatherMode?.demo){query.set('demo','1');query.set('as',root.GatherMode.actor);}
+    else query.set('project',root.GatherMode?.projectId || 'main');
     return '/api/resources?'+query;
   }
   async function request(taskId,input){

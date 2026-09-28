@@ -5,14 +5,14 @@ import vm from 'node:vm';
 import '../legacy/store.js';
 
 const source = readFileSync(new URL('../legacy/hosted-store.js', import.meta.url), 'utf8');
-const snapshot = (revision, suggestions = []) => ({ revision, suggestions, demo: false,
+const snapshot = (revision, suggestions = []) => ({ revision, suggestions, demo: false, projectId: 'main',
   identity: { actorId: 'jack', role: 'admin' }, state: { revision }, exportState: { revision } });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 async function hosted(initial) {
   let respond = async () => initial;
   const window = {};
-  const document = { body: { classList: { toggle() {} }, append() {} }, createElement: () => ({}) };
-  await vm.runInNewContext(source, { window, document, location: { search: '' }, URLSearchParams, structuredClone,
+  const document = { querySelectorAll: () => [], body: { classList: { toggle() {} }, append() {} }, createElement: () => ({}) };
+  await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone,
     fetch: async (_, options) => ({ ok: true, status: 200, json: async () => respond(options) }) });
   assert.ok(window.GatherStore, 'Hosted store initialized');
   return { store: window.GatherStore.createStore(), respond: fn => { respond = fn; } };

@@ -16,7 +16,7 @@ export function model(data?: string) {
     throw new HttpError(503, 'The saved project could not be loaded. Your data has not been replaced.');
   return store;
 }
-function freshWorkspace(user: Awaited<ReturnType<typeof principal>>) {
+export function freshWorkspace(user: Awaited<ReturnType<typeof principal>>) {
   return model(JSON.stringify({
     version: 3,
     event: { name: '', date: '', location: '', outdoor: false, transportNeeded: false,
@@ -27,19 +27,21 @@ function freshWorkspace(user: Awaited<ReturnType<typeof principal>>) {
 }
 export async function loadWorkspace(
   user: Awaited<ReturnType<typeof principal>>,
+  projectId = 'main',
 ) {
   let row = await env.DB.prepare('SELECT * FROM workspaces WHERE id=?')
-    .bind('main')
+    .bind(projectId)
     .first<any>();
   if (!row) {
+    if (projectId !== 'main') throw new HttpError(404, 'Project not found.');
     const seed = freshWorkspace(user);
     await env.DB.prepare(
       'INSERT OR IGNORE INTO workspaces (id,data,revision) VALUES (?,?,1)',
     )
-      .bind('main', seed.exportState())
+      .bind(projectId, seed.exportState())
       .run();
     row = await env.DB.prepare('SELECT * FROM workspaces WHERE id=?')
-      .bind('main')
+      .bind(projectId)
       .first<any>();
   }
   const state = JSON.parse(row.data);
@@ -230,8 +232,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
 export async function mutateWorkspace(
   user: Awaited<ReturnType<typeof principal>>,
   input: any,
+  projectId = 'main',
 ) {
-  const { row, store } = await loadWorkspace(user);
+  const { row, store } = await loadWorkspace(user, projectId);
   if (Object.keys(input).some(key => !['method', 'args', 'revision'].includes(key)))
     throw new HttpError(400, 'Unsupported workspace request field.');
   if (input.revision !== row.revision)
@@ -246,7 +249,7 @@ export async function mutateWorkspace(
   const write = await env.DB.prepare(
     'UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?',
   )
-    .bind(serialized, 'main', row.revision)
+    .bind(serialized, projectId, row.revision)
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

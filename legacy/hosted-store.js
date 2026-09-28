@@ -2,11 +2,13 @@
   const params = new URLSearchParams(location.search);
   const demo = params.get('demo') === '1';
   const actor = params.get('as') || 'jack';
-  const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : '/api/workspace';
-  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : '/');
-  window.GatherMode = Object.freeze({ demo, actor, privateUrl: path => demo
+  const projectId = params.get('project') ?? 'main';
+  const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
+  const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
+  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
+  window.GatherMode = Object.freeze({ demo, actor, projectId, projectUrl, privateUrl: path => demo
     ? endpoint + '&resource=private&action=' + encodeURIComponent(path)
-    : '/api/private/' + path });
+    : projectUrl('/api/private/' + path) });
   let snapshot;
   const listeners = new Set();
   let queue = Promise.resolve();
@@ -34,7 +36,7 @@
     return result;
   }
   function validateIdentity(next) {
-    if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor))
+    if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor) || (!demo && next.projectId !== projectId))
       throw new Error('The workspace identity changed. Reload to continue.');
   }
   function publish(next) {
@@ -69,7 +71,8 @@
   ];
   try {
     publish(await request());
-    if(!demo&&snapshot.setupRequired){window.top.location.replace('/setup');return;}
+    if(!demo&&snapshot.setupRequired){window.top.location.replace(projectUrl('/setup'));return;}
+    if(!demo)document.querySelectorAll('a[href="/setup"],a[href="/settings"],a[href="/mail"]').forEach(link=>link.href=projectUrl(link.getAttribute('href')));
     window.GatherIdentity = snapshot.identity;
     document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
     if (demo) {

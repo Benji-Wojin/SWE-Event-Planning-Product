@@ -20,6 +20,7 @@ import {
   tokenRequest,
 } from '@/lib/gmail';
 import { loadWorkspace, mutateWorkspace } from '@/lib/workspace';
+import { projectScope } from '@/lib/projects';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   return safe(async () => {
@@ -48,12 +49,13 @@ export async function GET(request: Request) {
       });
     }
     if (action === 'messages') {
+      const projectId = await projectScope(user, request);
       const rows = await env.DB.prepare(
         'SELECT id,payload FROM mail_messages WHERE user_id=? ORDER BY received_at DESC LIMIT 100',
       )
         .bind(user.userId)
         .all<any>();
-      const { store } = await loadWorkspace(user);
+      const { store } = await loadWorkspace(user, projectId);
       const state = store.getState(), shared = state.messages;
       const imported = await Promise.all(rows.results.map(async (row) => {
         const original = await unseal(row.payload, 'mail:' + row.id);
@@ -62,6 +64,7 @@ export async function GET(request: Request) {
         return { ...original, id: row.id, reviewed: !!linked, sharedMessageId: linked?.id || '', taskId: state.tasks.some((t: any) => t.id === taskId) ? taskId : '', threadKey: JSON.stringify([original.mailbox || '', original.threadId || row.id]) };
       }));
       return json({
+        projectName: state.event.name || 'Untitled project',
         tasks: state.tasks.map((t: any) => ({ id: t.id, title: t.title })),
         messages: imported.map((m: any) => {
           const known = [...new Set(imported.filter((other: any) => other.threadKey === m.threadKey && other.taskId).map((other: any) => other.taskId))];
@@ -341,7 +344,8 @@ export async function POST(request: Request) {
         Array.from(new Uint8Array(hash))
           .map((x) => x.toString(16).padStart(2, '0'))
           .join('');
-      const { row: workspaceRow, store } = await loadWorkspace(user);
+      const projectId = await projectScope(user, request);
+      const { row: workspaceRow, store } = await loadWorkspace(user, projectId);
       const existing = store.getState().messages.find((message: any) => message.externalId === 'review:' + row.id);
       if (existing) {
         if (existing.subject !== subject || existing.body !== summary || (existing.linkedTaskId || '') !== String(data.taskId || ''))
@@ -362,7 +366,7 @@ export async function POST(request: Request) {
           },
         ],
         revision: workspaceRow.revision,
-      });
+      }, projectId);
       return json({ saved: true, id: (result.result as any).id });
     }
     if (action === 'disconnect') {

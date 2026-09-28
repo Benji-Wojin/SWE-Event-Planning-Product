@@ -23,7 +23,7 @@ html = html.replace(
   '<div class="top-actions">',
   '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
 );
-html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project setup</a><div class="nav-label">Review</div>');
+html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project settings</a><a class="nav-item" href="/" target="_top"><span class="nav-icon" data-icon="arrow"></span>All projects</a><div class="nav-label">Review</div>');
 html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
@@ -125,7 +125,7 @@ app = app.replace(
   'Switch the demo member to this task’s owner to try their response.',
   'Only this task’s assigned account can submit its response.',
 );
-app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):""}');
+app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):window.GatherMode.projectUrl("/project")}');
 app = app.replace(
   'Team invitations are a draft in this local prototype. No invite or email will be sent.',
   'Private to your account. Invitation drafts do not send messages or grant access; team onboarding is not enabled.',
