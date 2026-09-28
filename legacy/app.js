@@ -258,6 +258,7 @@
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     ui.dialogKind=kind;
+    $('#dialogBackdrop').dataset.dialogKind=kind;
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
     $('#dialog').innerHTML=`<div class="dialog-header"><h2 id="dialogTitle">${h(title)}</h2><button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
@@ -269,6 +270,7 @@
   function closeDialog() {
     $('#dialogBackdrop').hidden=true;
     $('#dialogBackdrop').classList.remove('open');
+    delete $('#dialogBackdrop').dataset.dialogKind;
     $('#appShell').inert=false;
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
