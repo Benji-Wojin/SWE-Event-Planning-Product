@@ -23,3 +23,17 @@ The existing 800px navigation breakpoint is intentional: it matches the app's
 keyboard focus and inert-state logic. All existing task fields remain available,
 including the latest update column. No API, data model, authorization, attendee
 messaging, or email approval behavior is changed by this design integration.
+
+## Dark mode
+
+`legacy/theme.js` initializes the appearance before the workspace paints. The
+same script also runs in the React shell for Gmail/settings. It follows the
+device preference until an explicit light/dark choice is saved in the browser's
+`gather-theme` key; `GatherTheme.set('system')` restores automatic behavior.
+Storage changes synchronize other tabs and the workspace iframe. Theme changes
+do not rerender the workspace or discard form drafts. If storage is blocked,
+the switch continues to work for the current page.
+
+The legacy palette uses `--muted` for text and `--white` for raised surfaces;
+the React/shadcn palette uses `--muted` for a surface. Keep these mappings
+distinct when updating both dark palettes.

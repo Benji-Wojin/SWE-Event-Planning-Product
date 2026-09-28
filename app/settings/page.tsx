@@ -1,5 +1,6 @@
 import { requireChatGPTUser, chatGPTSignOutPath } from '@/app/chatgpt-auth';
 import { GmailSettings } from './settings-client';
+import { ThemeToggle } from '@/components/theme-toggle';
 export const dynamic = 'force-dynamic';
 export default async function Settings() {
   const user = await requireChatGPTUser('/settings');
@@ -12,13 +13,13 @@ export default async function Settings() {
         >
           gather
         </a>
-        <a
+        <div className="flex items-center gap-4"><ThemeToggle /><a
           href={chatGPTSignOutPath()}
           target="_top"
           className="text-sm underline"
         >
           Sign out
-        </a>
+        </a></div>
       </header>
       <p className="mb-2 text-sm uppercase tracking-widest text-muted-foreground">
         Organizer settings

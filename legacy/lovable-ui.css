@@ -1,6 +1,7 @@
 /* Lovable design handoff, adapted to Gather's existing interactive workspace.
    Keep this layer separate from workflow styles; see docs/lovable-ui.md. */
 :root {
+  color-scheme: light;
   --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --paper: oklch(0.978 0.003 247);
   --ink: oklch(0.22 0.018 251);
@@ -20,6 +21,65 @@
   --radius: 8px;
   --shadow: 0 12px 38px rgb(20 30 45 / .12);
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #111820;
+  --ink: #edf2f7;
+  --muted: #a7b5c5;
+  --line: #344351;
+  --warm: #25323e;
+  --white: #1a2530;
+  --green: #8bd2ae;
+  --green-deep: #a9e4c4;
+  --green-soft: #243e34;
+  --mint: #213b30;
+  --rail: #151f29;
+  --warning: #f0c36c;
+  --warning-soft: #3d3321;
+  --danger: #ffa99b;
+  --danger-soft: #422b2c;
+  --surface-soft: #25323e;
+  --cream: #1a2530;
+  --shadow: 0 12px 38px rgb(0 0 0 / .36);
+}
+.theme-toggle { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; padding: 12px; margin-top: 20px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); font-size: .875rem; cursor: pointer; }
+.theme-toggle:hover { background: var(--warm); }
+.theme-toggle-track { width: 32px; height: 20px; flex-shrink: 0; padding: 3px; border-radius: 20px; background: var(--muted); }
+.theme-toggle-track::after { content: ''; display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--white); }
+.theme-toggle[aria-pressed="true"] .theme-toggle-track { background: var(--green); }
+.theme-toggle[aria-pressed="true"] .theme-toggle-track::after { transform: translateX(12px); }
+.sidebar .profile { margin-top: 16px; }
+.sidebar .theme-toggle { margin-top: auto; }
+:root[data-theme="dark"] :is(.topbar, .dialog, .dialog-header, .briefing-card, .team-card, .memory-card, .task-table-wrap, .timeline-task, .btn-secondary, .info-filters select) { background: var(--white); }
+:root[data-theme="dark"] .btn-primary { background: var(--green); color: #12261d; border-color: var(--green); }
+:root[data-theme="dark"] .btn-primary:hover { background: var(--green-deep); border-color: var(--green-deep); }
+:root[data-theme="dark"] :is(.demo-toolbar, .notice, .source-card, .detail-note, .followup-context, .task-handoffs, .dependency-prompt, .commitment-panel, .claim-panel, .comparison > div) { background: var(--warm); color: var(--ink); border-color: var(--line); }
+:root[data-theme="dark"] :is(.demo-profile-link, .demo-profile-link a + a) { border-color: var(--line); }
+:root[data-theme="dark"] .demo-profile-link.active { background: var(--green-soft); color: var(--green-deep); }
+:root[data-theme="dark"] .insight-actions > .btn:not(.btn-primary):not(.btn-secondary) { background: var(--green-soft); color: var(--green-deep); border-color: var(--line); }
+:root[data-theme="dark"] :is(.email-copy > span, .stat-number > .muted, .task-note-preview, .empty-state, .filter-tab:not(.active)) { color: var(--muted); }
+:root[data-theme="dark"] :is(.event-switcher:hover, .btn-secondary:hover, button.timeline-task:hover) { background: var(--warm); border-color: var(--line); }
+:root[data-theme="dark"] .change-table { background: var(--white); }
+:root[data-theme="dark"] :is(.warning-note, .verification-explanation, .storage-warning, .workspace-sync-notice) { background: var(--warning-soft); color: var(--warning); border-color: var(--warning); }
+:root[data-theme="dark"] .form-error { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+:root[data-theme="dark"] :is(.reason-ready, .reason-handoff, .memory-category, .activity-icon) { background: var(--green-soft); color: var(--green-deep); }
+:root[data-theme="dark"] :is(.dependency-ready-label, .text-button:hover, button.task-title:hover, .task-name-button:hover, button.email-item:hover .email-copy strong, .briefing-sources > summary, .briefing-original > summary) { color: var(--green-deep); }
+:root[data-theme="dark"] :is(.empty-state > strong, .empty-state h3, .timeline-date strong, .team-stats strong, .activity-content strong, .notice strong, .source-card strong, .followup-context strong, .digest-section h3, .conversation-email-body, .review-task-head strong, .review-card h3) { color: var(--ink); }
+:root[data-theme="dark"] :is(.comment time, .memory-card p, .field small, .reference-mask span, .source-card p, .source-card pre, .digest-section p, .digest-section li, .comparison small, .briefing-review-heading > span, .briefing-source time, .briefing-source .inline > span, .source-privacy-note, .change-summary-heading p, .review-result > p, .unchanged-fields, .proposal-footnote, .proposal-explanation, .timeline-task > p, .save-state, .eyebrow) { color: var(--muted); }
+:root[data-theme="dark"] :is(.activity-item, .source-card, .timeline-tasks, .handoff-card blockquote, .section-footer, .briefing-sources, .dialog-header, .team-card, .memory-card) { border-color: var(--line); }
+:root[data-theme="dark"] :is(.section-footer, .review-card, .conversation-review, .message-button, .review-task) { background: var(--white); }
+:root[data-theme="dark"] :is(.workload-track, .progress-track) { background: var(--warm); }
+:root[data-theme="dark"] :is(.workload-fill, .progress-fill) { background: var(--green); }
+:root[data-theme="dark"] .check-button { background: var(--white); border-color: #718295; }
+:root[data-theme="dark"] .check-button.checked { background: var(--green); border-color: var(--green); color: #12261d; }
+:root[data-theme="dark"] .check-button:hover { box-shadow: 0 0 0 3px var(--green-soft); border-color: var(--green); }
+:root[data-theme="dark"] .search-input:focus-within { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+:root[data-theme="dark"] :is(.field input, .field textarea, .field select, .comment-form textarea, .select-input, .search-input, .info-filters select) { border-color: #526272; }
+:root[data-theme="dark"] input::placeholder { color: var(--muted); }
+:root[data-theme="dark"] :focus-visible { outline-color: var(--green); }
+:root[data-theme="dark"] input[type="checkbox"] { accent-color: var(--green); }
+:root[data-theme="dark"] .toast { background: var(--green-soft); color: var(--ink); border-color: var(--green); }
+:root[data-theme="dark"] .toast button { color: var(--green-deep); }
 body, h1, h2, h3, h4, .brand-name, .stat-number, .section-title {
   font-family: var(--font-ui);
   letter-spacing: 0;

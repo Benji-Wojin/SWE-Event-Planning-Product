@@ -1,5 +1,6 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
 import { MailInbox } from './mail-client';
+import { ThemeToggle } from '@/components/theme-toggle';
 export const dynamic = 'force-dynamic';
 export default async function Mail() {
   await requireChatGPTUser('/mail');
@@ -9,7 +10,8 @@ export default async function Mail() {
         <a href="/" className="text-3xl font-semibold text-primary">
           gather
         </a>
-        <nav className="flex gap-5 text-sm">
+        <nav className="flex flex-wrap items-center gap-5 text-sm">
+          <ThemeToggle />
           <a className="underline" href="/">
             Shared plan
           </a>

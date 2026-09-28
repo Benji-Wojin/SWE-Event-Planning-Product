@@ -3,6 +3,7 @@ mkdirSync('public/gather-assets', { recursive: true });
 let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
   .replace('href="lovable-ui.css"', 'href="/gather-assets/lovable-ui.css"')
+  .replace('src="theme.js"', 'src="/gather-assets/theme.js"')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
@@ -29,6 +30,7 @@ html = html.replace(
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
+writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
