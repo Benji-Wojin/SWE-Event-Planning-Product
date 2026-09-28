@@ -132,7 +132,7 @@
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
-        <section class="ai-panel" id="thoughtPartner"><h2>Suggestions</h2>${suggestions.slice(0,2).map(insightMarkup).join('') || '<p>No suggestions.</p>'}<button class="text-button" data-action="thought-partner">All suggestions (${suggestions.length}) ${icon('arrow')}</button></section>
+        <section class="ai-panel" id="thoughtPartner"><h2>Suggestions</h2><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p>No suggestions.</p>'}</div><button class="text-button" data-action="thought-partner">All suggestions (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
         <section class="panel email-preview"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
       <section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
@@ -277,6 +277,7 @@
     ui.dialogKind='';
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
+    if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
@@ -394,7 +395,29 @@
   }
   function thoughtDialog() {
     const suggestions=store.getSuggestions();
-    openDialog('Suggestions',`<div class="notice">Rule-based suggestions from tasks and feedback. No AI or RSVP service connected.</div><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    openDialog('Suggestions',`<details class="suggestion-details"><summary>How suggestions update</summary><p>Rule-based checks refresh as tasks, deadlines, event details, and feedback change. No AI or RSVP service is connected.</p></details><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap" id="suggestionList">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    if(store.refresh)queueMicrotask(()=>refreshInbox());
+  }
+  function refreshSuggestionSurfaces() {
+    const suggestions=store.getSuggestions();
+    $('#aiNavCount').textContent=suggestions.length;
+    $$('[data-suggestion-count]').forEach(node=>{node.textContent=suggestions.length;});
+    const active=document.activeElement,scroll=$('#dialog').scrollTop;
+    let replacedFocus=false;
+    for(const [selector,items,emptyMarkup] of [['#overviewSuggestions',suggestions.slice(0,2),'<p>No suggestions.</p>'],['#suggestionList',suggestions,empty('No suggestions.','')]]){
+      const target=$(selector);if(!target)continue;
+      const markup=items.map(insightMarkup).join('')||emptyMarkup;
+      const content=document.createElement('template');content.innerHTML=markup;
+      // Unchanged checks retain their DOM, keyboard focus and scroll position.
+      if(target.innerHTML===content.innerHTML)continue;
+      replacedFocus ||= target.contains(active);
+      target.replaceChildren(content.content);
+    }
+    if(replacedFocus&&!restoreFocus(active,ui.dialogKind==='thought'?$('#dialog'):$('#viewRoot'))){
+      const fallback=ui.dialogKind==='thought'?$('#dialog [data-action="event-context"]'):$('#thoughtPartner [data-action="thought-partner"]');
+      fallback?.focus({preventScroll:true});
+    }
+    if(ui.dialogKind==='thought')$('#dialog').scrollTop=scroll;
   }
   function pasteDialog() {
     const threads=[...new Map(store.getState().messages.map(m=>[m.threadId,[m.threadId,m.subject]])).values()];

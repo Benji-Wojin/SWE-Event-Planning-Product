@@ -157,6 +157,9 @@ button.stat-card:hover { background: var(--warm); box-shadow: none; }
 .feed-time, .insight-source { color: var(--muted); font-size: .75rem; }
 .ai-panel { padding: 20px; }
 .ai-panel > h2 { font-size: 1.125rem; line-height: 1.35; font-weight: 700; letter-spacing: 0; }
+.suggestion-details { color: var(--muted); font-size: .875rem; }
+.suggestion-details summary { cursor: pointer; }
+.suggestion-details p { margin-top: 10px; line-height: 1.6; }
 .email-preview.panel { padding: 0 20px 16px; }
 .ai-title h2, .ai-title h3 { font-size: 1.125rem; letter-spacing: 0; }
 .ai-orb { background: var(--green-soft); color: var(--green); border-radius: 6px; }

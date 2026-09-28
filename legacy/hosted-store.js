@@ -11,6 +11,7 @@
   const listeners = new Set();
   let queue = Promise.resolve();
   let mutationGeneration = 0;
+  let refreshGeneration = 0;
   async function request(body) {
     const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
@@ -32,9 +33,12 @@
     }
     return result;
   }
-  function publish(next) {
+  function validateIdentity(next) {
     if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor))
       throw new Error('The workspace identity changed. Reload to continue.');
+  }
+  function publish(next) {
+    validateIdentity(next);
     snapshot = next;
     listeners.forEach((fn) => fn(snapshot.state));
   }
@@ -91,11 +95,21 @@
       },
       refresh: async (canApply) => {
         await queue;
-        const base=snapshot.revision, generation=mutationGeneration;
+        const base=snapshot.revision, generation=mutationGeneration, refreshId=++refreshGeneration;
         const latest=await request();
-        if(latest.revision===snapshot.revision)return {changed:false};
-        if(snapshot.revision!==base||mutationGeneration!==generation||!canApply())return {pending:true};
-        publish(latest);return {changed:true};
+        validateIdentity(latest);
+        if(refreshId!==refreshGeneration)return {changed:false};
+        if(latest.revision<snapshot.revision)return {changed:false};
+        if(snapshot.revision!==base||mutationGeneration!==generation)return {pending:latest.revision>snapshot.revision};
+        const suggestionsChanged=JSON.stringify(latest.suggestions)!==JSON.stringify(snapshot.suggestions);
+        // Clock-driven checks can change without a persisted workspace edit.
+        // Updating only derived suggestions cannot overwrite an in-progress form.
+        if(latest.revision===snapshot.revision){
+          if(suggestionsChanged)snapshot={...snapshot,suggestions:latest.suggestions};
+          return {changed:false,suggestionsChanged};
+        }
+        if(!canApply())return {pending:true};
+        publish(latest);return {changed:true,suggestionsChanged};
       },
     };
     const count = {
