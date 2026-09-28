@@ -23,6 +23,7 @@ html = html.replace(
   '<div class="top-actions">',
   '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
 );
+html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project setup</a><div class="nav-label">Review</div>');
 html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',

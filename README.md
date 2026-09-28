@@ -1,6 +1,6 @@
 # Gather — owner-private hosted pilot
 
-Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only booking details. The original local prototype remains untouched in the parent directory; browser-local changes are not automatically uploaded. This hosted workspace begins with clearly labeled Field Day example data.
+Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only booking details. The original local prototype remains untouched in the parent directory; browser-local changes are not automatically uploaded. New real workspaces start empty; the Field Day sample remains in the separate demo.
 
 ## What works
 
@@ -11,9 +11,15 @@ Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only b
 - Gmail Web OAuth uses read-only scope, PKCE, expiring single-use state bound to the signed-in owner, server-side refresh tokens, and revocation. Save the Google client in the protected settings form, then authorize Gmail and choose a project label.
 - Sync manually imports 20 messages at a time from that label, with paging and mailbox-aware deduplication. Private inbox shows the 100 most recent imported text previews; previews may be truncated and exclude attachments. A human writes and approves a safe title/summary before it enters shared email review. Originals stay encrypted separately. Conversation mapping and received time are retained for reviewed updates.
 
+## Project setup
+
+`/setup` saves the event name, optional date/location, guest count and planning context to the existing D1 workspace. First visits to a newly created real workspace open setup automatically. Existing projects get a Project setup link without a forced redirect or deletion of their data. Completing or editing setup preserves tasks, comments, guests, files, Gmail data and private booking records; it does not reset the plan or create sample people. The setup marker is additive workspace JSON, so no schema migration is needed.
+
+Gmail and guest-list imports are optional and remain separate. Setup uses the same authenticated organizer authorization, origin verification, field validation and revision-checked writes as the rest of the app. Conflicts and failed saves preserve form values and require explicit reload before replacing a draft. An absent event date is displayed as not set. The app still supports one real project per private Site, not multiple projects or self-service team registration.
+
 ## Pilot boundaries
 
-- Publication is private to the owner's account. Teammate invitations and account-free guest links are not enabled. Starter teammates are examples, not real accounts. Site sharing alone does not grant app membership.
+- Publication is private to the owner's account. Teammate invitations and account-free guest links are not enabled. Teammates retained in older sample workspaces are examples, not real accounts. Site sharing alone does not grant app membership.
 - Planning and email suggestions use conservative local rules and event feedback. Task Helpful links use OpenAI Responses web search when the server-only `OPENAI_API_KEY` is configured; otherwise they show an explicit disconnected state. No autonomous email sending, live RSVP integration, Gmail push notifications, or background sync.
 
 Planning suggestions recalculate on workspace reads and edits. Visible workspaces check for changes every 20 seconds (4 seconds in the demo), when Suggestions opens, and when returning to the page, including browser Back. Clock-driven checks can update without a saved project edit. The open Suggestions panel refreshes in place; task, guest and email drafts defer shared-state updates until safe. Covered and dismissed checks stay suppressed. Nothing runs while the app is closed; reopening checks the current state and time. Suggestions do not automatically create tasks.

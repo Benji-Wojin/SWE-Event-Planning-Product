@@ -30,6 +30,7 @@ export default async function Settings() {
       <p className="mb-7 text-base text-muted-foreground">
         Signed in as {user.displayName}. Private to your account.
       </p>
+      <a href="/setup" className="mb-7 inline-block text-primary underline">Project setup</a>
       <GmailSettings />
       <a href="/" className="mt-7 inline-block text-primary underline">
         Shared plan

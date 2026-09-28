@@ -158,6 +158,8 @@ button.stat-card:hover { background: var(--warm); box-shadow: none; }
 .ai-panel { padding: 20px; }
 .ai-panel > h2 { font-size: 1.125rem; line-height: 1.35; font-weight: 700; letter-spacing: 0; }
 .suggestion-details { color: var(--muted); font-size: .875rem; }
+.project-setup-link { text-decoration: none; }
+.setup-notice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
 .suggestion-details summary { cursor: pointer; }
 .suggestion-details p { margin-top: 10px; line-height: 1.6; }
 .email-preview.panel { padding: 0 20px 16px; }

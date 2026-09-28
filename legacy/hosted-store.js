@@ -69,9 +69,11 @@
   ];
   try {
     publish(await request());
+    if(!demo&&snapshot.setupRequired){window.top.location.replace('/setup');return;}
     window.GatherIdentity = snapshot.identity;
     document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
     if (demo) {
+      document.querySelectorAll('.project-setup-link').forEach(link=>link.remove());
       document.body.classList.add('demo-mode');
       const bar = document.createElement('section');
       bar.className = 'demo-toolbar';

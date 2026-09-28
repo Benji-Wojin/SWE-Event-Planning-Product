@@ -4,7 +4,7 @@ import { HttpError, principal } from './security';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
-  return api.createStore({
+  const store = api.createStore({
     storage: {
       getItem: (key: string) => (key === api.STORAGE_KEY ? raw : null),
       setItem: (_key: string, value: string) => {
@@ -12,6 +12,18 @@ export function model(data?: string) {
       },
     },
   });
+  if (data && store.getState().persistence !== 'saved')
+    throw new HttpError(503, 'The saved project could not be loaded. Your data has not been replaced.');
+  return store;
+}
+function freshWorkspace(user: Awaited<ReturnType<typeof principal>>) {
+  return model(JSON.stringify({
+    version: 3,
+    event: { name: '', date: '', location: '', outdoor: false, transportNeeded: false,
+      guestCount: 0, dietaryOutstanding: 0, cateringDeadline: '', setupCompletedAt: '' },
+    members: [{ id: user.actorId, name: user.displayName, initials: '', role: 'Organizer', color: 'peach' }],
+    tasks: [], messages: [], activity: [], memories: [], drafts: [], dismissed: [],
+  }));
 }
 export async function loadWorkspace(
   user: Awaited<ReturnType<typeof principal>>,
@@ -20,7 +32,7 @@ export async function loadWorkspace(
     .bind('main')
     .first<any>();
   if (!row) {
-    const seed = model();
+    const seed = freshWorkspace(user);
     await env.DB.prepare(
       'INSERT OR IGNORE INTO workspaces (id,data,revision) VALUES (?,?,1)',
     )
@@ -59,6 +71,7 @@ export function snapshot(
     state,
     exportState: JSON.parse(store.exportState()),
     suggestions: store.getSuggestions(),
+    setupRequired: state.event.setupCompletedAt === '',
     revision,
     identity: {
       actorId: user.actorId,
@@ -69,6 +82,7 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  completeSetup: 1,
   setNextUp: 2,
   requestRecovery: 2,
   resolveRecovery: 2,
@@ -123,6 +137,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   let result;
   try {
     switch (method) {
+      case 'completeSetup':
+        result = store.completeSetup(a, user.actorId);
+        break;
       case 'setNextUp':
         result = store.setNextUp(a, b, user.actorId);
         break;

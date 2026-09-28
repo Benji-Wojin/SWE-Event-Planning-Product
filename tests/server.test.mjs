@@ -186,7 +186,73 @@ test('owner receives server workspace and real identity', async () => {
   const data = await response.json();
   assert.equal(data.identity.actorId, 'jack');
   assert.equal(data.state.members[0].name, 'Owner');
-  assert.equal(data.state.tasks.length, 12);
+  assert.equal(data.setupRequired, true);
+  assert.equal(data.state.tasks.length, 0);
+  assert.equal(data.state.messages.length, 0);
+  assert.equal(data.state.memories.length, 0);
+  assert.equal(data.state.members.length, 1);
+  assert.deepEqual(data.suggestions, []);
+  assert.equal(data.state.event.guestCount, 0);
+  assert.equal(data.state.event.name, '');
+});
+test('project setup validates, persists an owner-only plan and protects concurrent edits', async () => {
+  owner();
+  const initial = await (await workspace.GET()).json();
+  const invalid = [{name:'  '},{name:7},{name:'a'.repeat(161)},{date:'2026-02-30'}, {outdoor:'maybe'}, {guestCount:-1}, {guestCount:true}, {guestCount:[]}, {guestCount:''}, {guestCount:10,dietaryOutstanding:11}, {setupCompletedAt:'forged'}];
+  for (const details of invalid) {
+    const response = await workspace.POST(request('/api/workspace', {method:'completeSetup',args:[details],revision:initial.revision}));
+    assert.equal(response.status, 400);
+  }
+  assert.equal((await (await workspace.GET()).json()).revision, initial.revision);
+  const input = {method:'completeSetup',args:[{name:'  Team offsite  ',date:'',location:'Community hall',guestCount:30,outdoor:true,transportNeeded:true}],revision:initial.revision};
+  assert.equal((await workspace.POST(request('/api/workspace',input,'https://evil.example'))).status,403);
+  assert.equal((await workspace.POST(request('/api/workspace',input))).status,200);
+  assert.equal((await workspace.POST(request('/api/workspace',input))).status,409);
+  const saved = await (await workspace.GET()).json();
+  assert.equal(saved.setupRequired,false);
+  assert.equal(saved.state.event.name,'Team offsite'); assert.equal(saved.state.event.date,'');
+  assert.ok(saved.state.event.setupCompletedAt); assert.equal(saved.state.members.length,1);
+  assert.equal(saved.state.tasks.length,0); assert.equal(saved.state.messages.length,0);
+  assert.equal(saved.suggestions.find(s=>s.id==='accessibility').task.owner,'');
+  const accept = await workspace.POST(request('/api/workspace',{method:'acceptSuggestion',args:['accessibility'],revision:saved.revision}));
+  assert.equal(accept.status,200); assert.equal((await accept.json()).result.owner,'');
+  const persisted = await (await workspace.GET()).json();
+  assert.equal(persisted.state.tasks.length,1); assert.equal(persisted.state.members.length,1);
+});
+test('legacy project setup keeps existing work and feedback instead of resetting the project', async () => {
+  owner();
+  // Explicit legacy fixture for the regression suite; production never resets an existing row.
+  const fixture = globalThis.GatherStore.createStore({storage:null});
+  const before = JSON.parse(fixture.exportState());
+  sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(fixture.exportState(),'main');
+  const initial = await (await workspace.GET()).json();
+  assert.equal(initial.setupRequired,false);
+  const response = await workspace.POST(request('/api/workspace',{method:'completeSetup',args:[{name:'Existing project',date:'2026-10-20',location:'New venue'}],revision:initial.revision}));
+  assert.equal(response.status,200);
+  const saved = await (await workspace.GET()).json();
+  for(const key of ['tasks','messages','memories','drafts','dismissed']) assert.deepEqual(saved.state[key],initial.state[key]);
+  assert.equal(saved.state.tasks.length,before.tasks.length);
+  assert.equal(saved.state.activity.length,initial.state.activity.length+1);
+  assert.equal(saved.state.event.name,'Existing project');
+});
+test('setup denies outsiders and teammates; malformed saved projects are never replaced by demo data', async () => {
+  owner(); const initial=await (await workspace.GET()).json();
+  const input={method:'completeSetup',args:[{name:'No access'}],revision:initial.revision};
+  globalThis.__gatherUser=null;
+  assert.equal((await workspace.POST(request('/api/workspace',input))).status,401);
+  globalThis.__gatherUser={userId:'outsider-setup',email:'stranger@example.com',displayName:'Stranger'};
+  assert.equal((await workspace.POST(request('/api/workspace',input))).status,403);
+  owner();
+  sqlite.prepare('UPDATE members SET role=? WHERE user_id=?').run('member','owner-1');
+  try { assert.equal((await workspace.POST(request('/api/workspace',input))).status,403); }
+  finally { sqlite.prepare('UPDATE members SET role=? WHERE user_id=?').run('admin','owner-1'); }
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  const invalid=JSON.parse(original);invalid.tasks[0].owner='nonexistent';
+  const damaged=JSON.stringify(invalid);sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(damaged,'main');
+  try {
+    assert.equal((await workspace.GET()).status,503);
+    assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,damaged);
+  } finally { sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(original,'main'); }
 });
 test('CSRF and actor injection are rejected', async () => {
   owner();

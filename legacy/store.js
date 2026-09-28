@@ -110,16 +110,18 @@
       const list = (items, predicate) => Array.isArray(items) && items.every(predicate);
       const uniqueIds = (items) => new Set(items.map((item) => item.id)).size === items.length;
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
-        list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"])) && uniqueIds(value.members) && MEMBERS.every((member) => value.members.some((item) => item.id === member.id)) &&
+        list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
         list(value.tasks, (task) => strings(task, ["id", "title", "category", "note", "owner", "updatedBy", "completedBy", "completedAt", "sourceMessageId"]) && ["completionReportedBy", "completionReportSourceId", "memoryId", "suggestionId"].every((field) => task[field] === undefined || typeof task[field] === "string") && STATUSES.includes(task.status) && validDate(task.dueDate) && validOwner(task.owner) && validOwner(task.updatedBy) && validTime(task.updatedAt) && (task.completedAt === "" || validTime(task.completedAt)) && list(task.comments, (comment) => strings(comment, ["id", "actor", "text"]) && validOwner(comment.actor) && validTime(comment.at))) && uniqueIds(value.tasks) &&
         list(value.messages, (message) => strings(message, ["id", "sender", "subject", "body"]) && validTime(message.receivedAt) && strings(message.suggested, ["mode", "taskId", "title", "owner", "dueDate", "status", "note"]) && ["new", "update"].includes(message.suggested.mode) && STATUSES.includes(message.suggested.status) && validOwner(message.suggested.owner) && validDate(message.suggested.dueDate)) && uniqueIds(value.messages) &&
         list(value.activity, (item) => strings(item, ["id", "actor", "text", "taskId", "type"]) && validTime(item.at)) &&
         list(value.memories, (memory) => strings(memory, ["id", "change", "wentWell", "category"]) && validTime(memory.at)) &&
         list(value.drafts, (draft) => strings(draft, ["id", "taskId", "text"]) && validTime(draft.at)) && list(value.dismissed, (dismissed) => typeof dismissed === "string");
     }
-    function save(notify = true) {
-      for (const task of state.tasks) if (task.nextUpAt && !actionable(task)) { task.nextUpAt = ''; task.nextUpBy = ''; task.revision++; }
-      if (notify) deliverDependencyResults();
+    function save(notify = true, maintainTasks = true) {
+      if (maintainTasks) {
+        for (const task of state.tasks) if (task.nextUpAt && !actionable(task)) { task.nextUpAt = ''; task.nextUpBy = ''; task.revision++; }
+        if (notify) deliverDependencyResults();
+      }
       try {
         if (!storage) throw new Error("Storage is unavailable");
         const serialized = JSON.stringify(state);
@@ -566,12 +568,41 @@
       if (draft) draft.manuallySentAt = timestamp();
       entry(actor, `recorded a follow-up sent outside Gather for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
     }
-    function updateEvent(data, actor = 'jack') {
-      actorId(actor); const next = {...state.event};
-      for (const field of ['guestCount','dietaryOutstanding']) { const value = Number(data[field] ?? next[field]); if (!Number.isInteger(value) || value < 0 || value > 100000) throw new Error('Use a valid guest count.'); next[field] = value; }
+    function eventFields(data) {
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline'].includes(key))) throw new Error('Use valid event details.');
+      const next = {...state.event};
+      for (const field of ['name','location']) if (data[field] !== undefined) {
+        const max = field === 'name' ? 160 : 240;
+        if (typeof data[field] !== 'string' || data[field].trim().length > max) throw new Error(`Keep the event ${field} under ${max + 1} characters.`);
+        next[field] = data[field].trim();
+        if (field === 'name' && !next.name) throw new Error('Give your event a name.');
+      }
+      if (data.date !== undefined) { if (typeof data.date !== 'string' || !validDate(data.date)) throw new Error('Choose a valid event date.'); next.date = data.date; }
+      for (const field of ['guestCount','dietaryOutstanding']) {
+        const input = data[field] === undefined ? next[field] : data[field];
+        if (!['number','string'].includes(typeof input) || typeof input === 'string' && !input.trim()) throw new Error('Use a valid guest count.');
+        const value = Number(input); if (!Number.isInteger(value) || value < 0 || value > 100000) throw new Error('Use a valid guest count.'); next[field] = value;
+      }
       if (next.dietaryOutstanding > next.guestCount) throw new Error('Outstanding dietary responses cannot exceed the guest count.');
-      for (const field of ['outdoor','transportNeeded']) if (data[field] !== undefined) next[field] = data[field] === true || data[field] === 'true';
+      for (const field of ['outdoor','transportNeeded']) if (data[field] !== undefined) {
+        if (![true,false,'true','false'].includes(data[field])) throw new Error('Choose valid planning details.');
+        next[field] = data[field] === true || data[field] === 'true';
+      }
       if (data.cateringDeadline !== undefined) { if (!validDate(data.cateringDeadline)) throw new Error('Choose a valid catering deadline.'); next.cateringDeadline = data.cateringDeadline; }
+      return next;
+    }
+    function completeSetup(data, actor = 'jack') {
+      actorId(actor);
+      if (actor !== 'jack') throw new Error('Only the organizer can set up the project.');
+      const next = eventFields(data);
+      if (!next.name.trim()) throw new Error('Give your event a name.');
+      next.setupCompletedAt ||= timestamp();
+      state.event = next;
+      // Project setup edits metadata only; it must not advance task workflows.
+      entry(actor, 'saved the project setup', '', 'project-setup'); save(true, false); return copy(next);
+    }
+    function updateEvent(data, actor = 'jack') {
+      actorId(actor); const next = eventFields(data);
       state.event = next; entry(actor, 'updated the event context used by planning checks', '', 'event-context'); save(); return copy(next);
     }
     function addMemory(data, actor = "jack") {
@@ -913,7 +944,7 @@
         if (state.tasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title) || task.note.includes(`Event memory ${memory.id}:`))) return;
         candidates.push({ id: `lesson-${memory.id}`, title: "Event feedback", body: memory.change, source: `Event feedback · ${memory.scope === 'outdoor' ? 'outdoor event' : memory.scope === 'transport' ? 'transport planned' : memory.scope === 'same-venue' ? 'same venue' : 'all events'}${memory.outcome === 'helped' ? ' · previously helped' : ''}`, category: memory.category || "Guest care", reason: "team-feedback", task: { title, category: memory.category || "Guest care", owner: "", dueDate: "", note: `From event feedback: ${memory.change}${memory.context ? `\nApplies when: ${memory.context}` : ''}${memory.wentWell ? `\nKeep what worked: ${memory.wentWell}` : ""}` } });
       });
-      return candidates;
+      return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner) ? suggestion.task.owner : ''}}));
     }
     function getSuggestions() { return copy(suggestionCandidates().filter((suggestion) => !state.dismissed.includes(suggestion.id))); }
     function acceptSuggestion(suggestionId, actor = "jack") {
@@ -940,7 +971,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
