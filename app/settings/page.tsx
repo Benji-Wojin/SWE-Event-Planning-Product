@@ -5,6 +5,9 @@ export const dynamic = 'force-dynamic';
 export default async function Settings({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : undefined;
+  return <SignedInSettings projectId={projectId}/>;
+}
+async function SignedInSettings({projectId}:{projectId?:string}) {
   const query = projectId !== undefined ? '?project=' + encodeURIComponent(projectId) : '';
   const user = await requireChatGPTUser('/settings' + query);
   return (

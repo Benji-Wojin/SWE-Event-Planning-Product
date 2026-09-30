@@ -129,7 +129,7 @@ export async function principal() {
     if (!owner)
       throw new HttpError(
         403,
-        'This private workspace is currently available only to its owner.',
+        'Open an invitation from your organizer to join a project.',
       );
     await env.DB.prepare(
       'INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)',

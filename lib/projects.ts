@@ -1,21 +1,19 @@
 import { env } from 'cloudflare:workers';
 import { HttpError, principal } from './security';
 import { freshWorkspace } from './workspace';
+import { projectUser } from './project-access';
 
 type User = Awaited<ReturnType<typeof principal>>;
 // Legacy links still address main. New projects must be explicitly owned;
 // internal demo and booking workspace keys are never accepted as project IDs.
 export async function projectScope(user: User, request?: Request | string) {
-  const id = typeof request === 'string' ? request : request ? new URL(request.url).searchParams.get('project') ?? 'main' : 'main';
-  if (id === 'main') return id;
-  if (!/^p_[a-f0-9-]{36}$/.test(id)) throw new HttpError(404, 'Project not found.');
-  const project = await env.DB.prepare('SELECT id FROM projects WHERE id=? AND owner_id=?').bind(id, user.userId).first();
-  if (!project) throw new HttpError(404, 'Project not found.');
-  return id;
+  return (await projectUser(user,request)).projectId;
 }
 export async function listProjects(user: User) {
   const rows = await env.DB.prepare(`SELECT w.id,w.data FROM workspaces w LEFT JOIN projects p ON p.id=w.id
-    WHERE w.id='main' OR p.owner_id=? ORDER BY p.created_at DESC,w.id`).bind(user.userId).all<any>();
+    WHERE (w.id='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR p.owner_id=?
+    OR EXISTS (SELECT 1 FROM project_members m WHERE m.project_id=w.id AND m.user_id=? AND m.revoked_at='')
+    ORDER BY p.created_at DESC,w.id`).bind(user.userId,user.userId,user.userId).all<any>();
   return rows.results.map(row => {
     const state = JSON.parse(row.data);
     return { id: row.id, name: state.event.name || 'Untitled project', date: state.event.date || '', location: state.event.location || '',

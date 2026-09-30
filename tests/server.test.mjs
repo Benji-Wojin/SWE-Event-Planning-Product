@@ -55,7 +55,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -71,6 +71,9 @@ before(async () => {
       info: 'app/api/info/route.ts',
       infoCore: 'lib/project-info.ts',
       projects: 'app/api/projects/route.ts',
+      team: 'app/api/team/route.ts',
+      join: 'app/api/join/route.ts',
+      access: 'lib/project-access.ts',
     },
     outdir: directory,
     bundle: true,
@@ -99,8 +102,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore', 'projects'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore', 'projects', 'team', 'join', 'access'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -243,10 +246,11 @@ test('setup denies outsiders and teammates; malformed saved projects are never r
   assert.equal((await workspace.POST(request('/api/workspace',input))).status,401);
   globalThis.__gatherUser={userId:'outsider-setup',email:'stranger@example.com',displayName:'Stranger'};
   assert.equal((await workspace.POST(request('/api/workspace',input))).status,403);
-  owner();
-  sqlite.prepare('UPDATE members SET role=? WHERE user_id=?').run('member','owner-1');
+  sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run('setup-member','u_setup','setup@example.com','Setup teammate','member');
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('setup-member','main','setup-member','u_setup','fixture','now');
+  globalThis.__gatherUser={userId:'setup-member',email:'setup@example.com',displayName:'Setup teammate'};
   try { assert.equal((await workspace.POST(request('/api/workspace',input))).status,403); }
-  finally { sqlite.prepare('UPDATE members SET role=? WHERE user_id=?').run('admin','owner-1'); }
+  finally { sqlite.prepare('DELETE FROM project_members WHERE id=?').run('setup-member'); sqlite.prepare('DELETE FROM members WHERE user_id=?').run('setup-member'); owner(); }
   const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
   const invalid=JSON.parse(original);invalid.tasks[0].owner='nonexistent';
   const damaged=JSON.stringify(invalid);sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(damaged,'main');
@@ -1083,9 +1087,9 @@ test('unknown, internal and other-owner project IDs cannot read or mutate projec
   owner();const id=(await (await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Private project'}}))).json()).id;
   const invalid=['demo:owner-1','demo-bookings:owner-1','p_'+crypto.randomUUID(),''];
   sqlite.prepare('INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run('project-audit-member','maya','member@example.com','Member','member');
-  const member=sqlite.prepare('SELECT user_id FROM members WHERE actor_id<>? LIMIT 1').get('jack');assert.ok(member);
+  const member=sqlite.prepare('SELECT user_id FROM members WHERE user_id=?').get('project-audit-member');assert.ok(member);
   globalThis.__gatherUser={userId:member.user_id,email:'member@example.com',displayName:'Member'};
-  invalid.push(id);
+  invalid.push(id,'main');
   for(const project of invalid){
     const query='?project='+encodeURIComponent(project);
     assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'+query))).status,404);
@@ -1095,4 +1099,132 @@ test('unknown, internal and other-owner project IDs cannot read or mutate projec
   assert.ok(!(await (await projectsApi.GET()).json()).projects.some(project=>project.id===id));
   assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);
   globalThis.__gatherUser=null;assert.equal((await projectsApi.GET()).status,401);owner();
+});
+
+const getRequest=path=>new Request('https://gather.example'+path);
+const realRead=id=>workspace.GET(getRequest('/api/workspace?project='+id));
+const teamRead=id=>teamApi.GET(getRequest('/api/team?project='+id));
+const teamWrite=(id,input)=>teamApi.POST(request('/api/team?project='+id,input));
+const asTeammate=(email='maya-real@example.com',userId='real-maya')=>{globalThis.__gatherUser={userId,email,displayName:'Maya Real'};};
+async function newTeamProject(name='Team event') {
+  owner();const response=await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name}}));assert.equal(response.status,201);return (await response.json()).id;
+}
+async function invitePerson(project,email='maya-real@example.com') {
+  owner();const response=await teamWrite(project,{action:'invite',email,requestId:crypto.randomUUID()});assert.equal(response.status,200);
+  const invite=(await response.json()).invitations.find(item=>item.email===email.toLowerCase());
+  return {...invite,token:new URL(invite.link,'https://gather.example').searchParams.get('invite')};
+}
+async function joinPerson(project,email='maya-real@example.com',userId='real-maya') {
+  const invite=await invitePerson(project,email);asTeammate(email,userId);
+  const response=await joinApi.POST(request('/api/join',{token:invite.token}));assert.equal(response.status,200);assert.equal((await response.json()).projectId,project);return invite;
+}
+test('invitation creation is organizer-only, encrypted, email-bound, expiring and idempotent',async()=>{
+  const id=await newTeamProject(), requestId=crypto.randomUUID();
+  let response=await teamWrite(id,{action:'invite',email:'New@example.com',requestId});assert.equal(response.status,200);
+  const first=(await response.json()).invitations[0],token=new URL(first.link,'https://gather.example').searchParams.get('invite');
+  response=await teamWrite(id,{action:'invite',email:'new@example.com',requestId});assert.equal((await response.json()).invitations[0].link,first.link);
+  assert.equal((await teamWrite(id,{action:'invite',email:'different@example.com',requestId})).status,409);
+  assert.equal((await teamWrite(id,{action:'invite',email:'new@example.com',requestId:crypto.randomUUID()})).status,409);
+  assert.equal((await teamWrite(id,{action:'invite',email:'other@example.com',role:'admin',requestId:crypto.randomUUID()})).status,400);
+  assert.equal((await teamWrite(id,{action:'invite',email:'owner@example.com',requestId:crypto.randomUUID()})).status,400);
+  const saved=sqlite.prepare('SELECT * FROM project_invites WHERE id=?').get(first.id);
+  assert.ok(!JSON.stringify(saved).includes(token));assert.equal(saved.expires_at>Date.now(),true);
+  globalThis.__gatherUser=null;assert.equal((await joinApi.POST(request('/api/join',{token}))).status,401);
+  asTeammate('wrong@example.com','wrong-user');assert.equal((await joinApi.GET(getRequest(first.link.replace('/join?','/api/join?')))).status,403);
+  assert.equal((await joinApi.POST(request('/api/join',{token}))).status,403);
+  assert.equal(sqlite.prepare('SELECT * FROM members WHERE user_id=?').get('wrong-user'),undefined);
+  asTeammate('new@example.com','new-user');
+  assert.equal((await joinApi.GET(getRequest('/api/join?invite='+token))).status,200);
+  assert.equal(sqlite.prepare('SELECT accepted_by FROM project_invites WHERE id=?').get(first.id).accepted_by,'');
+  assert.equal((await joinApi.POST(request('/api/join',{token,role:'admin'}))).status,400);
+  assert.equal((await joinApi.POST(request('/api/join',{token},'https://evil.example'))).status,403);
+  sqlite.prepare('UPDATE project_invites SET expires_at=? WHERE id=?').run(Date.now()-1,first.id);
+  assert.equal((await joinApi.POST(request('/api/join',{token}))).status,410);owner();
+  const revoked=await invitePerson(id,'revoked@example.com');
+  assert.equal((await teamWrite(id,{action:'revokeInvite',id:revoked.id})).status,200);
+  asTeammate('revoked@example.com','revoked-user');assert.equal((await joinApi.POST(request('/api/join',{token:revoked.token}))).status,410);owner();
+});
+test('real accounts join only their invited project and cannot impersonate organizers or read private data',async()=>{
+  const a=await newTeamProject('Shared A'),b=await newTeamProject('Private B'),invite=await joinPerson(a);
+  assert.equal((await joinApi.POST(request('/api/join',{token:invite.token}))).status,200);
+  assert.equal(sqlite.prepare('SELECT count(*) AS n FROM project_members WHERE project_id=? AND user_id=?').get(a,'real-maya').n,1);
+  const member=sqlite.prepare('SELECT * FROM members WHERE user_id=?').get('real-maya');assert.equal(member.role,'member');assert.match(member.actor_id,/^u_/);
+  const snap=await (await workspace.GET(getRequest('/api/workspace?project='+a+'&as=jack'))).json();assert.equal(snap.identity.actorId,member.actor_id);assert.equal(snap.identity.role,'member');
+  assert.deepEqual((await (await projectsApi.GET()).json()).projects.map(p=>p.id),[a]);
+  assert.equal((await (await projectsApi.GET()).json()).canCreateProjects,false);
+  for(const id of [b,'main']) { assert.equal((await realRead(id)).status,404);assert.equal((await infoRead('?project='+id)).status,404); }
+  assert.equal((await teamRead(a)).status,403);
+  assert.equal((await teamWrite(a,{action:'invite',email:'hack@example.com',requestId:crypto.randomUUID()})).status,403);
+  assert.equal((await privateApi.GET(getRequest('/api/private/records?project='+a))).status,403);
+  assert.equal((await gmailApi.GET(getRequest('/api/gmail/messages?project='+a))).status,403);
+  assert.equal((await demoRead()).status,403);
+  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);owner();
+});
+test('invited teammates claim tasks, report and comment, but cannot change the plan or another owner’s task',async()=>{
+  const id=await newTeamProject(),invite=await joinPerson(id);owner();
+  let snap=await (await realRead(id)).json();
+  snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Collect dietary preferences'}],revision:snap.revision}))).json();
+  const task=snap.state.tasks[0];asTeammate();
+  snap=await (await realRead(id)).json();
+  let response=await workspace.POST(request('/api/workspace?project='+id,{method:'claimTask',args:[task.id],revision:snap.revision}));assert.equal(response.status,200);snap=await response.json();
+  assert.equal(snap.state.tasks[0].owner,snap.identity.actorId);
+  response=await workspace.POST(request('/api/workspace?project='+id,{method:'updateTask',args:[task.id,{title:'Forged'}],revision:snap.revision}));assert.equal(response.status,403);
+  response=await workspace.POST(request('/api/workspace?project='+id,{method:'updateTask',args:[task.id,{status:'progress',note:'Collecting replies.'}],revision:snap.revision}));assert.equal(response.status,200);snap=await response.json();
+  response=await workspace.POST(request('/api/workspace?project='+id,{method:'addComment',args:[task.id,'Need 2 more responses.'],revision:snap.revision}));assert.equal(response.status,200);snap=await response.json();
+  response=await workspace.POST(request('/api/workspace?project='+id,{method:'reportCompletion',args:[task.id,'All replies collected.'],revision:snap.revision}));assert.equal(response.status,200);
+  let info=await (await infoRead('?project='+id)).json();
+  response=await infoWrite({action:'add',guest:{name:'New guest',type:'attendee'},revision:info.revision,requestId:crypto.randomUUID()},'?project='+id);assert.equal(response.status,200);info=await response.json();assert.equal(info.guests[0].createdBy,snap.identity.actorId);
+  response=await infoApi.POST(uploadRequest(info.revision,'team.txt','Shared information','&project='+id));assert.equal(response.status,200);info=await response.json();assert.equal((await infoRead('?project='+id+'&file='+info.files[0].id)).status,200);
+  asTeammate('maya-real@example.com','different-same-email');assert.equal((await joinApi.POST(request('/api/join',{token:invite.token}))).status,410);owner();
+});
+test('removing and re-inviting access preserves history, invalidates stale writes and keeps the same task identity',async()=>{
+  const id=await newTeamProject();const invite=await joinPerson(id);let snap=await (await realRead(id)).json();const actor=snap.identity.actorId;
+  const authorization=await accessCore.projectUser(await security.principal(),id);
+  owner();snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Assigned before removal',owner:actor}],revision:snap.revision}))).json();
+  const team=await (await teamRead(id)).json(),member=team.members[0];
+  assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+  const removed=await (await realRead(id)).json();assert.equal(removed.state.tasks[0].owner,actor);assert.equal(removed.state.members.find(m=>m.id===actor).active,false);
+  assert.equal((await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'No former assignments',owner:actor}],revision:removed.revision}))).status,400);
+  asTeammate();assert.equal((await realRead(id)).status,404);assert.equal((await infoRead('?project='+id)).status,404);assert.equal((await joinApi.POST(request('/api/join',{token:invite.token}))).status,410);
+  assert.ok(!(await (await projectsApi.GET()).json()).projects.some(p=>p.id===id));
+  await joinPerson(id);assert.equal((await (await realRead(id)).json()).identity.actorId,actor);
+  await assert.rejects(accessCore.assertProjectAccess(authorization),error=>error.status===403);
+  assert.equal((await workspace.POST(request('/api/workspace?project='+id,{method:'updateTask',args:[snap.state.tasks[0].id,{status:'progress',note:'Old request'}],revision:snap.revision}))).status,409);owner();
+});
+test('membership removal at workspace commit prevents a write even with a freshly checked revision',async()=>{
+  const id=await newTeamProject();await joinPerson(id);owner();let snap=await (await realRead(id)).json();
+  snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Race claim'}],revision:snap.revision}))).json();asTeammate();
+  const original=globalThis.__gatherEnv.DB;let revoked=false;
+  globalThis.__gatherEnv.DB={...db,prepare(sql){const statement=db.prepare(sql);if(sql.startsWith('UPDATE workspaces SET data=')){const run=statement.run;statement.run=async()=>{sqlite.prepare("UPDATE project_members SET revoked_at='race',revision=revision+1 WHERE project_id=? AND user_id=?").run(id,'real-maya');revoked=true;return run();};}return statement;}};
+  try{const response=await workspace.POST(request('/api/workspace?project='+id,{method:'claimTask',args:[snap.state.tasks[0].id],revision:snap.revision}));assert.equal(response.status,409);assert.ok(revoked);}finally{globalThis.__gatherEnv.DB=original;owner();}
+  assert.equal((await (await realRead(id)).json()).state.tasks[0].owner,'');
+});
+test('membership removal during file upload cleans uncommitted bytes and denies downloads',async()=>{
+  const id=await newTeamProject();await joinPerson(id);const info=await (await infoRead('?project='+id)).json();
+  const count=uploadedObjects.size,reservations=sqlite.prepare('SELECT count(*) AS n FROM project_uploads').get().n;
+  const original=globalThis.__gatherEnv.BUCKET;
+  globalThis.__gatherEnv.BUCKET={...bucket,async put(key,bytes){await bucket.put(key,bytes);sqlite.prepare("UPDATE project_members SET revoked_at='race',revision=revision+1 WHERE project_id=? AND user_id=?").run(id,'real-maya');}};
+  try{const response=await infoApi.POST(uploadRequest(info.revision,'revoked.txt','Must not commit','&project='+id));assert.equal(response.status,403);}finally{globalThis.__gatherEnv.BUCKET=original;}
+  assert.equal(uploadedObjects.size,count);assert.equal(sqlite.prepare('SELECT count(*) AS n FROM project_uploads').get().n,reservations);
+  owner();assert.equal((await (await infoRead('?project='+id)).json()).files.length,0);
+});
+test('simultaneous invitation retries create one link without a false conflict',async()=>{
+  const id=await newTeamProject(),input={action:'invite',email:'concurrent@example.com',requestId:crypto.randomUUID()};
+  const responses=await Promise.all([teamWrite(id,input),teamWrite(id,input)]);
+  assert.deepEqual(responses.map(r=>r.status),[200,200]);
+  const [a,b]=await Promise.all(responses.map(r=>r.json()));assert.equal(a.invitations[0].link,b.invitations[0].link);
+  assert.equal(sqlite.prepare('SELECT count(*) AS n FROM project_invites WHERE project_id=?').get(id).n,1);
+});
+test('acceptance racing invitation creation cannot leave a spare usable link',async()=>{
+  const id=await newTeamProject(),invite=await invitePerson(id,'race-invite@example.com');
+  const original=globalThis.__gatherEnv.DB;let accepted=false;
+  globalThis.__gatherEnv.DB={...db,prepare(sql){const statement=db.prepare(sql);if(sql.startsWith('INSERT OR IGNORE INTO project_invites')){const run=statement.run;statement.run=async()=>{
+    if(!accepted){accepted=true;asTeammate('race-invite@example.com','race-invite-user');assert.equal((await joinApi.POST(request('/api/join',{token:invite.token}))).status,200);owner();}return run();};}return statement;}};
+  try{assert.equal((await teamWrite(id,{action:'invite',email:'race-invite@example.com',requestId:crypto.randomUUID()})).status,409);assert.ok(accepted);}finally{globalThis.__gatherEnv.DB=original;owner();}
+  assert.equal((await (await teamRead(id)).json()).invitations.length,0);
+  const member=(await (await teamRead(id)).json()).members[0];
+  // Defense in depth for pending links created before the race fix.
+  sqlite.prepare("INSERT INTO project_invites (id,project_id,email,token_hash,payload,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)").run('spare-'+id,id,'race-invite@example.com','spare-hash-'+id,'unused','owner-1','now',Date.now()+60000);
+  assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+  assert.ok(sqlite.prepare('SELECT revoked_at FROM project_invites WHERE id=?').get('spare-'+id).revoked_at);
 });

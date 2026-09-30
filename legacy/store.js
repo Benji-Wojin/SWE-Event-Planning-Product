@@ -170,7 +170,7 @@
     function getState() { return { ...copy(state), persistence }; }
     function actorId(actor) {
       assertFresh();
-      if (!state.members.some((member) => member.id === actor)) throw new Error("Choose a member of this planning team.");
+      if (!state.members.some((member) => member.id === actor && member.active !== false)) throw new Error("Choose a member of this planning team.");
       return actor;
     }
     function assertFresh() {
@@ -193,6 +193,7 @@
       if (data.owner !== undefined) result.owner = clean(data.owner, 80);
       result.owner ??= "";
       if (result.owner && !state.members.some((member) => member.id === result.owner)) throw new Error("Choose a valid task owner.");
+      if (result.owner && result.owner !== previous.owner && state.members.find(member=>member.id===result.owner)?.active === false) throw new Error('This teammate no longer has project access. Choose an active teammate.');
       if (data.status !== undefined) result.status = data.status;
       if (result.status === undefined) result.status = "todo";
       if (!STATUSES.includes(result.status)) throw new Error("Choose a valid task status.");
@@ -329,7 +330,7 @@
         patch={dueDate};
       }
       if (data.action==='reassign') {
-        if (!data.owner||data.owner===task.owner||!state.members.some(m=>m.id===data.owner)) throw new Error('Choose a different teammate.');
+        if (!data.owner||data.owner===task.owner||!state.members.some(m=>m.id===data.owner&&m.active!==false)) throw new Error('Choose a different active teammate.');
         patch={owner:data.owner};
       }
       if (data.action==='scope'&&!scope)throw new Error('Describe the smaller outcome that is still needed.');
@@ -944,7 +945,7 @@
         if (state.tasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title) || task.note.includes(`Event memory ${memory.id}:`))) return;
         candidates.push({ id: `lesson-${memory.id}`, title: "Event feedback", body: memory.change, source: `Event feedback · ${memory.scope === 'outdoor' ? 'outdoor event' : memory.scope === 'transport' ? 'transport planned' : memory.scope === 'same-venue' ? 'same venue' : 'all events'}${memory.outcome === 'helped' ? ' · previously helped' : ''}`, category: memory.category || "Guest care", reason: "team-feedback", task: { title, category: memory.category || "Guest care", owner: "", dueDate: "", note: `From event feedback: ${memory.change}${memory.context ? `\nApplies when: ${memory.context}` : ''}${memory.wentWell ? `\nKeep what worked: ${memory.wentWell}` : ""}` } });
       });
-      return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner) ? suggestion.task.owner : ''}}));
+      return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner && member.active !== false) ? suggestion.task.owner : ''}}));
     }
     function getSuggestions() { return copy(suggestionCandidates().filter((suggestion) => !state.dismissed.includes(suggestion.id))); }
     function acceptSuggestion(suggestionId, actor = "jack") {

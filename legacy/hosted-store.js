@@ -14,7 +14,20 @@
   let queue = Promise.resolve();
   let mutationGeneration = 0;
   let refreshGeneration = 0;
+  let accessLost = false;
+  function stopAccess() {
+    accessLost = true;
+    if (snapshot) { snapshot.state = { tasks:[],members:[],messages:[],activity:[],memories:[],event:{} }; snapshot.exportState = {}; snapshot.suggestions = []; }
+    window.GatherIdentity = null;
+    document.body.replaceChildren();
+    const box=document.createElement('main');box.style.cssText='max-width:640px;margin:64px auto;padding:24px';
+    box.innerHTML='<h1>Project access changed</h1><p>Return to Projects or sign in again.</p><a href="/" target="_top">Projects</a> · <a href="/account" target="_top">Account</a>';
+    document.body.append(box);
+    window.GatherAccessLost = true;
+    window.top.location.replace('/');
+  }
   async function request(body) {
+    if(accessLost)throw new Error('Project access changed. Return to Projects.');
     const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
       headers: body
@@ -29,6 +42,7 @@
       throw new Error('Gather could not complete the request. Reload or sign in again.');
     });
     if (!response.ok) {
+      if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
       const error = new Error(result.error || 'Unable to save. Reload and try again.');
       error.status = response.status;
       throw error;
@@ -36,6 +50,7 @@
     return result;
   }
   function validateIdentity(next) {
+    if (snapshot && (next.identity.actorId !== snapshot.identity.actorId || next.identity.role !== snapshot.identity.role)) { stopAccess();throw new Error('Your account changed. Return to Projects.'); }
     if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor) || (!demo && next.projectId !== projectId))
       throw new Error('The workspace identity changed. Reload to continue.');
   }
@@ -75,6 +90,7 @@
     if(!demo)document.querySelectorAll('a[href="/setup"],a[href="/settings"],a[href="/mail"]').forEach(link=>link.href=projectUrl(link.getAttribute('href')));
     window.GatherIdentity = snapshot.identity;
     document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
+    if (!demo && snapshot.identity.role !== 'admin') document.querySelector('.top-actions a[href="/demo"]')?.remove();
     if (demo) {
       document.querySelectorAll('.project-setup-link').forEach(link=>link.remove());
       document.body.classList.add('demo-mode');

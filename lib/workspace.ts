@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import '@/legacy/store.js';
 import { HttpError, principal } from './security';
+import { accessArgs, projectWriteAccess, projectUser } from './project-access';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
@@ -54,11 +55,17 @@ export async function loadWorkspace(
       .slice(0, 2)
       .join('')
       .toUpperCase();
-    owner.role = 'Organizer · signed in';
+    owner.role = user.role === 'admin' ? 'Organizer' : 'Teammate';
   }
-  for (const member of state.members)
-    if (member.id !== user.actorId && !member.role.includes('example'))
-      member.role += ' · example';
+  const roster = await env.DB.prepare(`SELECT m.actor_id,m.revoked_at,a.name FROM project_members m
+    JOIN members a ON a.user_id=m.user_id WHERE m.project_id=?`).bind(projectId).all<any>();
+  for (const row of roster.results) {
+    let member = state.members.find((m:any) => m.id === row.actor_id);
+    if (!member) { member={id:row.actor_id,color:'mint'};state.members.push(member); }
+    Object.assign(member,{name:row.actor_id===user.actorId?user.displayName:row.name,role:row.revoked_at?'Former teammate':'Teammate',active:!row.revoked_at});
+    member.initials=member.name.split(/\s+/).map((part:string)=>part[0]).slice(0,2).join('').toUpperCase();
+  }
+  for (const member of state.members) if (member.id !== 'jack' && !roster.results.some((r:any)=>r.actor_id===member.id) && !member.role.includes('example')) member.role += ' · example';
   return { row, store: model(JSON.stringify(state)) };
 }
 export function snapshot(
@@ -234,6 +241,8 @@ export async function mutateWorkspace(
   input: any,
   projectId = 'main',
 ) {
+  const authorized = await projectUser(user,projectId);
+  user = authorized;
   const { row, store } = await loadWorkspace(user, projectId);
   if (Object.keys(input).some(key => !['method', 'args', 'revision'].includes(key)))
     throw new HttpError(400, 'Unsupported workspace request field.');
@@ -247,9 +256,9 @@ export async function mutateWorkspace(
       'This pilot workspace is full. Export your plan before adding more content.',
     );
   const write = await env.DB.prepare(
-    'UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?',
+    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}`,
   )
-    .bind(serialized, projectId, row.revision)
+    .bind(serialized, projectId, row.revision,...accessArgs(authorized))
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

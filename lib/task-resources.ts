@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { HttpError } from './security';
+import { assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
 
 const TTL = 7 * 86400000;
 const COOLDOWN = 60000;
@@ -69,7 +70,8 @@ function result(row: any, fresh: boolean) {
   };
 }
 
-export async function taskResources(scope: string, userId: string, task: any, input?: Record<string, unknown>) {
+export async function taskResources(scope: string, userId: string, task: any, input?: Record<string, unknown>, authorization?: ProjectUser) {
+  await assertProjectAccess(authorization);
   const id = await hash([scope, task.id]);
   const cached = await read(id);
   const location = input?.location === undefined ? cached?.location || '' : String(input.location).trim();
@@ -77,6 +79,7 @@ export async function taskResources(scope: string, userId: string, task: any, in
     throw new HttpError(400, 'Use a city or region, up to 80 characters.');
   const source = context(task, location), fingerprint = await hash(source), now = Date.now();
   const fresh = cached?.context_hash === fingerprint && cached.expires_at > now;
+  await assertProjectAccess(authorization);
   if (!env.OPENAI_API_KEY) return { ...result(cached, false), status: 'unconfigured' };
   if (!input || (fresh && !input.refresh)) return result(cached, fresh);
   if (cached && cached.started_at + COOLDOWN > now)
@@ -86,14 +89,15 @@ export async function taskResources(scope: string, userId: string, task: any, in
   const quota = userId + ':' + new Date(now).toISOString().slice(0, 10);
   const locked = await env.DB.batch([
     env.DB.prepare(`INSERT INTO task_resources (id,context_hash,location,payload,status,lease,started_at,expires_at)
-      SELECT ?,?,?,'{}','loading',?,?,? WHERE COALESCE((SELECT count FROM resource_usage WHERE id=?),0) < ?
+      SELECT ?,?,?,'{}','loading',?,?,? WHERE COALESCE((SELECT count FROM resource_usage WHERE id=?),0) < ? AND ${authorization ? projectWriteAccess : '1'}
       ON CONFLICT(id) DO UPDATE SET context_hash=excluded.context_hash,location=excluded.location,payload='{}',status='loading',lease=excluded.lease,started_at=excluded.started_at,expires_at=excluded.expires_at
       WHERE task_resources.started_at <= ?`)
-      .bind(id, fingerprint, location, lease, now, now + COOLDOWN, quota, DAILY_LIMIT, now - COOLDOWN),
+      .bind(id, fingerprint, location, lease, now, now + COOLDOWN, quota, DAILY_LIMIT, ...(authorization ? accessArgs(authorization) : []), now - COOLDOWN),
     env.DB.prepare(`INSERT INTO resource_usage (id,count) SELECT ?,1 WHERE EXISTS (SELECT 1 FROM task_resources WHERE id=? AND lease=?)
       ON CONFLICT(id) DO UPDATE SET count=count+1`).bind(quota, id, lease),
   ]);
   if (locked[0].meta.changes !== 1) {
+    await assertProjectAccess(authorization);
     const current = await read(id);
     if (current && current.started_at + COOLDOWN > now) return result(current, current.context_hash === fingerprint && current.expires_at > now);
     throw new HttpError(429, 'Today’s helpful-link limit is reached. Try again tomorrow.');
@@ -111,13 +115,16 @@ export async function taskResources(scope: string, userId: string, task: any, in
     });
     if (!response.ok) throw new Error('Provider unavailable.');
     const links = citedLinks(await response.json());
-    await env.DB.prepare('UPDATE task_resources SET payload=?,status=?,expires_at=? WHERE id=? AND lease=?')
-      .bind(JSON.stringify({ links }), 'ready', now + TTL, id, lease).run();
+    const saved = await env.DB.prepare(`UPDATE task_resources SET payload=?,status=?,expires_at=? WHERE id=? AND lease=? AND ${authorization ? projectWriteAccess : '1'}`)
+      .bind(JSON.stringify({ links }), 'ready', now + TTL, id, lease, ...(authorization ? accessArgs(authorization) : [])).run();
+    await assertProjectAccess(authorization);
+    if (saved.meta.changes !== 1) throw new HttpError(409,'Helpful links changed. Reload the task.');
     return result({ status: 'ready', payload: JSON.stringify({ links }), location, started_at: now }, true);
-  } catch {
+  } catch (error) {
     await env.DB.prepare('UPDATE task_resources SET status=?,expires_at=? WHERE id=? AND lease=?')
       .bind('error', now + COOLDOWN, id, lease).run();
     // Provider details may contain secrets or task data. Never return them to clients.
+    if (error instanceof HttpError) throw error;
     throw new HttpError(503, 'Helpful links are unavailable right now. Your task is unchanged. Try again in a minute.');
   }
 }

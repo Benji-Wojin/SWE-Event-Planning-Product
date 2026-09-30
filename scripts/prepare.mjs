@@ -21,7 +21,7 @@ html = html
   );
 html = html.replace(
   '<div class="top-actions">',
-  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
+  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/account" target="_top">Account</a>',
 );
 html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project settings</a><a class="nav-item" href="/" target="_top"><span class="nav-icon" data-icon="arrow"></span>All projects</a><div class="nav-label">Review</div>');
 html = html.replace(
@@ -132,7 +132,7 @@ app = app.replace(
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles.</p><p>Gmail is not connected here. Only enter fictional booking details.</p><p>Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p>':'<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p><p>Bookings and Gmail originals are excluded from shared exports and AI searches. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles.</p><p>Gmail is not connected here. Only enter fictional booking details.</p><p>Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. People → Team access manages invitations; sample teammates are not real accounts.</p><p>Gmail requires setup. Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p><p>Bookings and Gmail originals are excluded from shared exports and AI searches. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')

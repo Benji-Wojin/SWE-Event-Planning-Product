@@ -28,6 +28,7 @@ type ProjectsHomeProps = {
   error?: string | null;
   accountHref?: string;
   onRetry?: () => void;
+  canCreate?: boolean;
 };
 
 export function ProjectsHome({
@@ -36,8 +37,9 @@ export function ProjectsHome({
   onOpen,
   isLoading = false,
   error = null,
-  accountHref = "/settings",
+  accountHref = "/account",
   onRetry,
+  canCreate = true,
 }: ProjectsHomeProps) {
   return (
     <div className="projects-home">
@@ -47,7 +49,7 @@ export function ProjectsHome({
         </a>
         <div className="projects-header-actions">
           <ThemeToggle />
-          <a className="projects-account-link" href="/demo">Demo</a>
+          {canCreate && <a className="projects-account-link" href="/demo">Demo</a>}
           <a className="projects-account-link" href={accountHref}>Account</a>
         </div>
       </header>
@@ -58,13 +60,13 @@ export function ProjectsHome({
               <div className="projects-title-copy">
                 <h1>Projects</h1>
               </div>
-              <Button onClick={onCreate}><Plus /> New project</Button>
+              {canCreate && <Button onClick={onCreate}><Plus /> New project</Button>}
             </div>
 
             {isLoading ? <ProjectsLoadingState /> : null}
             {!isLoading && error ? <ProjectsErrorState message={error} {...(onRetry ? { onRetry } : {})} /> : null}
             {!isLoading && !error && projects.length === 0 ? (
-              <ProjectsEmptyState onCreate={onCreate} />
+              <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} />
             ) : null}
             {!isLoading && !error && projects.length > 0 ? (
               <div className="projects-grid" aria-label="Projects">
@@ -108,12 +110,12 @@ function ProjectsErrorState({ message, onRetry }: { message: string; onRetry?: (
   );
 }
 
-function ProjectsEmptyState({ onCreate }: { onCreate: () => void }) {
+function ProjectsEmptyState({ onCreate, canCreate }: { onCreate: () => void; canCreate:boolean }) {
   return (
     <section className="projects-state">
       <h2>No projects yet</h2>
-      <p>Create a project to start planning an event.</p>
-      <Button onClick={onCreate}><Plus /> New project</Button>
+      <p>{canCreate ? 'Create a project to start planning an event.' : 'Open an invitation from your organizer to join a project.'}</p>
+      {canCreate && <Button onClick={onCreate}><Plus /> New project</Button>}
     </section>
   );
 }
