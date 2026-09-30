@@ -78,8 +78,10 @@ export function TeamClient({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (!sending) return;
     let active = true;
+    let polling = false;
     const timer = setInterval(() => {
-      if (pending.current) return;
+      if (pending.current || polling) return;
+      polling = true;
       const epoch = ++readEpoch.current;
       accountRequest<TeamView>(endpoint)
         .then((value) => {
@@ -89,6 +91,9 @@ export function TeamClient({ projectId }: { projectId: string }) {
         .catch((e) => {
           if (active && epoch === readEpoch.current && !pending.current)
             setError(e.message);
+        })
+        .finally(() => {
+          polling = false;
         });
     }, 3000);
     return () => {
