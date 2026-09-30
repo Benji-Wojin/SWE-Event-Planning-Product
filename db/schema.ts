@@ -96,6 +96,34 @@ export const oauthStates = sqliteTable('oauth_states', {
   payload: text('payload').notNull(),
   expires: integer('expires').notNull(),
 });
+export const gmailSenders = sqliteTable('gmail_senders', {
+  userId: text('user_id').primaryKey(),
+  payload: text('payload').notNull(),
+  generation: text('generation').notNull(),
+});
+export const senderOauthStates = sqliteTable('sender_oauth_states', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  payload: text('payload').notNull(),
+  expires: integer('expires').notNull(),
+});
+export const invitationDeliveries = sqliteTable('invitation_deliveries', {
+  inviteId: text('invite_id').primaryKey(),
+  status: text('status').notNull().default('unsent'),
+  lease: text('lease').notNull().default(''),
+  attempts: integer('attempts').notNull().default(0),
+  attemptedAt: integer('attempted_at').notNull().default(0),
+  sentAt: integer('sent_at').notNull().default(0),
+  sender: text('sender').notNull().default(''),
+  providerId: text('provider_id').notNull().default(''),
+  issue: text('issue').notNull().default(''),
+});
+export const invitationSendAttempts = sqliteTable('invitation_send_attempts', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  inviteId: text('invite_id').notNull(),
+  startedAt: integer('started_at').notNull(),
+}, t => [index('invitation_attempts_user_date').on(t.userId, t.startedAt)]);
 export const mailMessages = sqliteTable(
   'mail_messages',
   {

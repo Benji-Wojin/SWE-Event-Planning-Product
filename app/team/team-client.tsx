@@ -36,43 +36,89 @@ export function TeamClient({ projectId }: { projectId: string }) {
     [error, setError] = useState(''),
     [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState(''),
-    [copiedLink, setCopiedLink] = useState('');
+    [notice, setNotice] = useState('');
   const pending = useRef(false),
-    requestId = useRef('');
+    requestId = useRef(''),
+    readEpoch = useRef(0);
   const endpoint = '/api/team?project=' + encodeURIComponent(projectId);
   async function reload() {
+    const epoch = ++readEpoch.current;
     setError('');
     try {
-      setTeam(await accountRequest<TeamView>(endpoint));
+      const value = await accountRequest<TeamView>(endpoint);
+      if (epoch === readEpoch.current) setTeam(value);
     } catch (e) {
-      setTeam(null);
-      setError((e as Error).message);
+      if (epoch === readEpoch.current) {
+        setTeam(null);
+        setError((e as Error).message);
+      }
     }
   }
   useEffect(() => {
     let active = true;
+    const epoch = ++readEpoch.current;
     accountRequest<TeamView>(endpoint)
       .then((value) => {
-        if (active) setTeam(value);
+        if (active && epoch === readEpoch.current) setTeam(value);
       })
       .catch((e) => {
-        if (active) {
+        if (active && epoch === readEpoch.current) {
           setTeam(null);
           setError((e as Error).message);
         }
       });
     return () => {
       active = false;
+      ++readEpoch.current;
     };
   }, [endpoint]);
+  const sending = team?.invitations.some(
+    (invite) => invite.delivery.status === 'sending',
+  );
+  useEffect(() => {
+    if (!sending) return;
+    let active = true;
+    let polling = false;
+    const timer = setInterval(() => {
+      if (pending.current || polling) return;
+      polling = true;
+      const epoch = ++readEpoch.current;
+      accountRequest<TeamView>(endpoint)
+        .then((value) => {
+          if (active && epoch === readEpoch.current && !pending.current)
+            setTeam(value);
+        })
+        .catch((e) => {
+          if (active && epoch === readEpoch.current && !pending.current)
+            setError(e.message);
+        })
+        .finally(() => {
+          polling = false;
+        });
+    }, 3000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [sending, endpoint]);
+  useEffect(() => {
+    const result = new URLSearchParams(location.search).get('sender');
+    if (result === 'connected')
+      setNotice(
+        'Invitation sender connected. No invitations have been sent yet.',
+      );
+    if (result === 'cancelled')
+      setNotice(
+        'Google connection cancelled. Your existing sender is unchanged.',
+      );
+  }, []);
   async function change(input: Record<string, unknown>) {
     if (pending.current) return false;
     pending.current = true;
+    ++readEpoch.current;
     setBusy(true);
     setError('');
     setNotice('');
-    setCopiedLink('');
     try {
       setTeam(await accountRequest<TeamView>(endpoint, input));
       return true;
@@ -84,15 +130,31 @@ export function TeamClient({ projectId }: { projectId: string }) {
       setBusy(false);
     }
   }
-  async function copy(link: string) {
-    const full = new URL(link, location.origin).href;
+  async function senderAction(action: 'connect' | 'disconnect') {
+    if (pending.current) return;
+    pending.current = true;
+    ++readEpoch.current;
+    setBusy(true);
+    setError('');
+    setNotice('');
     try {
-      await navigator.clipboard.writeText(full);
-      setNotice('Invitation link copied.');
-      setCopiedLink('');
-    } catch {
-      setCopiedLink(full);
-      setNotice('Copy the invitation link below.');
+      const result = await accountRequest<{ url?: string }>(
+        '/api/sender?project=' + encodeURIComponent(projectId),
+        { action },
+      );
+      if (result.url) {
+        location.assign(result.url);
+        return;
+      }
+      await reload();
+      setNotice(
+        'Invitation sender disconnected from Gather. Already-sent invitations still work.',
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
   }
   return (
@@ -117,17 +179,72 @@ export function TeamClient({ projectId }: { projectId: string }) {
         </div>
       )}
       {notice && <output className="block text-sm">{notice}</output>}
-      {copiedLink && (
-        <Input
-          aria-label="Invitation link"
-          readOnly
-          value={copiedLink}
-          onFocus={(e) => e.currentTarget.select()}
-        />
-      )}
       {!team && !error && <output className="block">Loading team…</output>}
       {team && (
         <>
+          <section className="space-y-3 rounded-xl border bg-card p-5">
+            <h2 className="text-lg font-semibold">Invitation sender</h2>
+            <p className="break-all text-sm">
+              {team.sender.connected
+                ? 'Sending from ' + team.sender.email
+                : 'Connect the Gmail account you created for Gather.'}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Used for invitations across your projects. Separate from your
+              email imports.
+            </p>
+            {!team.sender.configured ? (
+              <a
+                className="inline-block text-sm underline"
+                href={'/settings?project=' + encodeURIComponent(projectId)}
+              >
+                Set up Google client
+              </a>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={busy}
+                  variant={team.sender.connected ? 'outline' : 'default'}
+                  onClick={() => void senderAction('connect')}
+                >
+                  {team.sender.connected
+                    ? 'Change or reconnect Gmail'
+                    : 'Connect invitation Gmail'}
+                </Button>
+                {team.sender.connected && (
+                  <Button
+                    disabled={busy}
+                    variant="ghost"
+                    onClick={() => {
+                      if (
+                        confirm(
+                          'Disconnect this sender from Gather? New invitations will stop until you connect it again. An invitation already being sent may still go out.',
+                        )
+                      )
+                        void senderAction('disconnect');
+                    }}
+                  >
+                    Disconnect sender
+                  </Button>
+                )}
+              </div>
+            )}
+            <details className="text-sm">
+              <summary className="cursor-pointer">One-time setup</summary>
+              <p className="mt-2 text-muted-foreground">
+                Create a separate Gmail account, then connect it here. In your
+                Google Cloud app, enable Gmail API, add this account as a test
+                user, and add the gmail.send, openid and email scopes. Your
+                existing Google client and callback URL can be reused. You
+                approve sending access; no Gmail password is stored in Gather.
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                Google testing-mode authorization may need reconnecting after
+                seven days. Disconnect removes Gather’s stored tokens; you can
+                also revoke access in your Google account.
+              </p>
+            </details>
+          </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <form
@@ -137,15 +254,16 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 requestId.current ||= crypto.randomUUID();
                 if (
                   await change({
-                    action: 'invite',
+                    action: 'sendInvite',
                     email,
                     requestId: requestId.current,
+                    senderEmail: team.sender.email,
                   })
                 ) {
                   setEmail('');
                   requestId.current = '';
                   setNotice(
-                    'Invitation created. Copy its link and share it with your teammate.',
+                    'Invitation updated. Check its sending status below.',
                   );
                 }
               }}
@@ -165,14 +283,15 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     requestId.current = '';
                   }}
                 />
-                <Button disabled={busy} type="submit">
-                  Create invitation
+                <Button disabled={busy || !team.sender.connected} type="submit">
+                  {busy ? 'Working…' : 'Send invitation'}
                 </Button>
               </div>
             </form>
             <p className="text-sm text-muted-foreground">
-              Links expire in 7 days and only work for the invited email. No
-              email is sent automatically.
+              Sends a project invitation from{' '}
+              {team.sender.email || 'your connected Gmail account'}. Links
+              expire in 7 days and only work for the invited email.
             </p>
             <details className="text-sm">
               <summary className="cursor-pointer">Private site access</summary>
@@ -231,7 +350,12 @@ export function TeamClient({ projectId }: { projectId: string }) {
             ))}
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
-            <h2 className="text-lg font-semibold">Pending invitations</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-lg font-semibold">Pending invitations</h2>
+              <Button variant="ghost" disabled={busy} onClick={reload}>
+                Refresh status
+              </Button>
+            </div>
             {!team.invitations.length && (
               <p className="text-sm text-muted-foreground">
                 No pending invitations.
@@ -244,15 +368,48 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   <p className="text-sm text-muted-foreground">
                     Expires {new Date(invite.expiresAt).toLocaleDateString()}
                   </p>
+                  <p className="mt-1 text-sm" role="status">
+                    {invite.delivery.status === 'sent'
+                      ? 'Sent via Gmail · ' +
+                        new Date(invite.delivery.sentAt).toLocaleString()
+                      : invite.delivery.status === 'sending'
+                        ? 'Sending…'
+                        : invite.delivery.status === 'unknown'
+                          ? 'Sending not confirmed'
+                          : invite.delivery.status === 'failed'
+                            ? 'Not sent'
+                            : 'Not sent yet'}
+                  </p>
+                  {invite.delivery.issue && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {invite.delivery.issue}
+                    </p>
+                  )}
+                  {invite.delivery.status === 'sent' && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      From {invite.delivery.sender}. Gmail accepted it; inbox
+                      delivery is not guaranteed.
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => copy(invite.link)}
-                  >
-                    Copy link
-                  </Button>
+                  {invite.delivery.canRetry && (
+                    <Button
+                      variant="outline"
+                      disabled={busy || !team.sender.connected}
+                      onClick={() =>
+                        void change({
+                          action: 'sendExistingInvite',
+                          id: invite.id,
+                          senderEmail: team.sender.email,
+                        })
+                      }
+                    >
+                      {invite.delivery.status === 'failed'
+                        ? 'Retry sending'
+                        : 'Send invitation'}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     disabled={busy}

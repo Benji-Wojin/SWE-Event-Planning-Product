@@ -47,8 +47,15 @@
     {
       "idx": 6,
       "version": "6",
-      "when": 1790788552388,
-      "tag": "0006_beta_reports",
+      "when": 1790789123800,
+      "tag": "0006_moaning_sugar_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790789780574,
+      "tag": "0007_beta_reports",
       "breakpoints": true
     }
   ]

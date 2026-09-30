@@ -12,8 +12,10 @@ for (const name of readdirSync('drizzle')
   .filter((n) => n.endsWith('.sql'))
   .sort())
   sqlite.exec(readFileSync('drizzle/' + name, 'utf8'));
+let batchTail = Promise.resolve();
 const db = {
   async batch(statements) {
+    const run = batchTail.then(async () => {
     sqlite.exec('BEGIN');
     try {
       const results = [];
@@ -24,6 +26,9 @@ const db = {
       sqlite.exec('ROLLBACK');
       throw e;
     }
+    });
+    batchTail = run.catch(() => {});
+    return run;
   },
   prepare(sql) {
     let args = [];
@@ -55,7 +60,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -74,6 +79,8 @@ before(async () => {
       team: 'app/api/team/route.ts',
       join: 'app/api/join/route.ts',
       access: 'lib/project-access.ts',
+      senderCore: 'lib/invitation-sender.ts',
+      sender: 'app/api/sender/route.ts',
     },
     outdir: directory,
     bundle: true,
@@ -102,8 +109,8 @@ before(async () => {
       },
     ],
   });
-  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore] = await Promise.all(
-    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore', 'projects', 'team', 'join', 'access'].map(
+  [workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi] = await Promise.all(
+    ['workspace', 'private', 'gmail', 'security', 'gmailCore', 'demo', 'resources', 'resourcesCore', 'info', 'infoCore', 'projects', 'team', 'join', 'access', 'senderCore', 'sender'].map(
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
@@ -1105,6 +1112,7 @@ const getRequest=path=>new Request('https://gather.example'+path);
 const realRead=id=>workspace.GET(getRequest('/api/workspace?project='+id));
 const teamRead=id=>teamApi.GET(getRequest('/api/team?project='+id));
 const teamWrite=(id,input)=>teamApi.POST(request('/api/team?project='+id,input));
+const senderWrite=(id,input)=>senderApi.POST(request('/api/sender?project='+id,input));
 const asTeammate=(email='maya-real@example.com',userId='real-maya')=>{globalThis.__gatherUser={userId,email,displayName:'Maya Real'};};
 async function newTeamProject(name='Team event') {
   owner();const response=await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name}}));assert.equal(response.status,201);return (await response.json()).id;
@@ -1227,4 +1235,156 @@ test('acceptance racing invitation creation cannot leave a spare usable link',as
   sqlite.prepare("INSERT INTO project_invites (id,project_id,email,token_hash,payload,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?)").run('spare-'+id,id,'race-invite@example.com','spare-hash-'+id,'unused','owner-1','now',Date.now()+60000);
   assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
   assert.ok(sqlite.prepare('SELECT revoked_at FROM project_invites WHERE id=?').get('spare-'+id).revoked_at);
+});
+
+const senderEmail='gather-sender@gmail.com', sendScope='https://www.googleapis.com/auth/gmail.send';
+async function senderFixture(extra={}) {
+  owner();
+  sqlite.prepare('INSERT OR REPLACE INTO settings (id,payload) VALUES (?,?)').run('google-oauth',await security.seal({clientId:'fixture.apps.googleusercontent.com',clientSecret:'fixture-secret'},'google-oauth'));
+  sqlite.prepare('INSERT OR REPLACE INTO gmail_senders (user_id,payload,generation) VALUES (?,?,?)').run('owner-1',await security.seal({email:senderEmail,sub:'verified-google-sub',accessToken:'sender-token',refreshToken:'sender-refresh',expiresAt:Date.now()+3600000,...extra},'gmail-sender:owner-1'),'sender-generation');
+}
+const newSend=(email='invite-send@example.com')=>({action:'sendInvite',email,requestId:crypto.randomUUID(),senderEmail});
+const retrySend=id=>({action:'sendExistingInvite',id,senderEmail});
+async function startSender(id) {
+  const response=await senderWrite(id,{action:'connect'});assert.equal(response.status,200);
+  const url=new URL((await response.json()).url);return {url,state:url.searchParams.get('state')};
+}
+const callback=state=>gmailApi.GET(getRequest('/api/gmail/callback?state='+state+'&code=code'));
+test('dedicated sender OAuth has isolated PKCE state, send-only access, verified identity and replay protection',async()=>{
+  const id=await newTeamProject();await senderFixture();
+  sqlite.prepare('INSERT OR REPLACE INTO gmail_connections (user_id,payload,generation) VALUES (?,?,?)').run('owner-1',await security.seal({email:'imports@gmail.com',labelId:'keep-label',accessToken:'import-token'},'gmail:owner-1'),'import-generation');
+  const imported=sqlite.prepare('SELECT * FROM gmail_connections WHERE user_id=?').get('owner-1');
+  const {url,state}=await startSender(id);
+  assert.deepEqual(new Set(url.searchParams.get('scope').split(' ')),new Set(['openid','email',sendScope]));
+  assert.equal(url.searchParams.get('code_challenge_method'),'S256');assert.equal(url.searchParams.get('prompt'),'consent select_account');assert.equal(url.searchParams.has('include_granted_scopes'),false);
+  assert.equal(url.searchParams.get('redirect_uri'),'https://gather.example/api/gmail/callback');
+  await gmailCore.beginOAuth('owner-1');assert.ok(sqlite.prepare('SELECT 1 FROM sender_oauth_states WHERE id=?').get(state));
+  const original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async(path,options)=>{
+    calls++;
+    if(path==='https://oauth2.googleapis.com/token') {assert.equal(options.body.get('grant_type'),'authorization_code');assert.ok(options.body.get('code_verifier'));return Response.json({access_token:'new-sender-token',refresh_token:'new-sender-refresh',expires_in:3600,scope:'openid email '+sendScope});}
+    assert.equal(path,'https://openidconnect.googleapis.com/v1/userinfo');return Response.json({email:senderEmail,email_verified:true,sub:'verified-google-sub'});
+  };
+  try {
+    const response=await callback(state);assert.equal(response.status,303);assert.equal(response.headers.get('location'),'https://gather.example/team?project='+id+'&sender=connected');
+    assert.equal((await callback(state)).status,400);assert.equal(calls,2);
+    const json=await (await teamRead(id)).json();assert.equal(json.sender.email,senderEmail);assert.ok(!JSON.stringify(json).includes('sender-token'));
+    assert.deepEqual(sqlite.prepare('SELECT * FROM gmail_connections WHERE user_id=?').get('owner-1'),imported);
+  } finally {globalThis.fetch=original;}
+});
+test('unverified sender and disconnect during callback preserve connection safety',async()=>{
+  const id=await newTeamProject();await senderFixture();const before=await senderCore.senderConnection('owner-1');
+  const original=globalThis.fetch;let mode='unverified';
+  globalThis.fetch=async path=>{
+    if(path==='https://oauth2.googleapis.com/token')return Response.json({access_token:'new-token',refresh_token:'new-refresh',expires_in:3600,scope:sendScope});
+    if(mode==='disconnect')await senderCore.disconnectSender('owner-1');
+    return Response.json({email:senderEmail,email_verified:mode!=='unverified',sub:'verified-sub'});
+  };
+  try {
+    assert.equal((await callback((await startSender(id)).state)).status,400);
+    assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,before.storedPayload);
+    mode='disconnect';assert.equal((await callback((await startSender(id)).state)).status,409);
+    assert.equal(await senderCore.senderConnection('owner-1'),null);
+    assert.equal((await gmailCore.connection('owner-1')).labelId,'keep-label');
+  } finally {globalThis.fetch=original;}
+});
+test('sender refresh and shared configuration cannot resurrect a disconnected or replaced connection',async()=>{
+  const id=await newTeamProject();await senderFixture({expiresAt:0});
+  assert.equal((await gmailApi.POST(request('/api/gmail/configure',{clientId:'replacement.apps.googleusercontent.com',clientSecret:'fixture-replacement'}))).status,409);
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>{await senderCore.disconnectSender('owner-1');return Response.json({access_token:'late-token',expires_in:3600,scope:sendScope});};
+  try {assert.equal((await teamWrite(id,newSend())).status,409);assert.equal(await senderCore.senderConnection('owner-1'),null);}finally{globalThis.fetch=original;}
+});
+test('concurrent send requests emit one email with server-owned recipient, safe MIME and a persistent receipt',async()=>{
+  const id=await newTeamProject('Dinner 🥗\r\nBcc: attacker@example.com');await senderFixture();
+  const input=newSend(),original=globalThis.fetch;let calls=0,raw='';
+  globalThis.fetch=async(path,options)=>{assert.equal(path,'https://gmail.googleapis.com/gmail/v1/users/me/messages/send');calls++;raw=Buffer.from(JSON.parse(options.body).raw,'base64url').toString('utf8');return Response.json({id:'gmail-message-1'});};
+  try {
+    const responses=await Promise.all([teamWrite(id,input),teamWrite(id,input)]);assert.deepEqual(responses.map(r=>r.status),[200,200]);assert.equal(calls,1);
+    let team=await (await teamRead(id)).json();assert.equal(team.invitations.length,1);assert.equal(team.invitations[0].delivery.status,'sent');
+    assert.equal((await teamWrite(id,input)).status,200);assert.equal((await teamWrite(id,retrySend(input.requestId))).status,200);assert.equal(calls,1);
+    const [headers,body]=raw.split('\r\n\r\n');assert.ok(headers.includes('From: Gather <'+senderEmail+'>'));assert.ok(headers.includes('To: '+input.email));assert.ok(!headers.includes('Bcc:'));assert.ok(!headers.includes('attacker@example.com'));
+    const text=Buffer.from(body,'base64').toString('utf8');assert.ok(text.includes('https://gather.example/join?invite='));assert.ok(text.includes(input.email));
+    assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM invitation_send_attempts WHERE invite_id=?').get(input.requestId).n,1);
+    assert.ok(!JSON.stringify(team).includes('sender-token'));
+  } finally {globalThis.fetch=original;}
+});
+test('uncertain sends, malformed success, provider errors and lost database receipts never auto-resend',async()=>{
+  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch;
+  for(const mode of ['timeout','malformed','server-error','lost-receipt']) {
+    const input=newSend(mode+'@example.com');let calls=0;const originalDb=globalThis.__gatherEnv.DB;
+    globalThis.fetch=async()=>{calls++;if(mode==='timeout')throw new Error('timeout');if(mode==='malformed')return Response.json({});if(mode==='server-error')return new Response('provider details',{status:503});return Response.json({id:'accepted-email'});};
+    if(mode==='lost-receipt')globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.startsWith('UPDATE invitation_deliveries SET status=?'))stmt.run=async()=>{throw new Error('write receipt lost');};return stmt;}};
+    try {
+      const response=await teamWrite(id,input);assert.equal(response.status,mode==='lost-receipt'?500:200);
+      globalThis.__gatherEnv.DB=originalDb;
+      sqlite.prepare('UPDATE invitation_deliveries SET attempted_at=? WHERE invite_id=?').run(Date.now()-61000,input.requestId);
+      const team=await (await teamRead(id)).json(),invite=team.invitations.find(i=>i.id===input.requestId);
+      assert.equal(invite.delivery.status,'unknown');assert.equal(invite.delivery.canRetry,false);
+      assert.equal((await teamWrite(id,input)).status,200);assert.equal((await teamWrite(id,retrySend(input.requestId))).status,200);assert.equal(calls,1);
+    } finally {globalThis.__gatherEnv.DB=originalDb;}
+  }
+  globalThis.fetch=original;
+});
+test('definitive rejection allows only explicit bounded retries and successful retries stay idempotent',async()=>{
+  const id=await newTeamProject();await senderFixture();const input=newSend(),original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;return calls===1?new Response('',{status:401}):Response.json({id:'retry-accepted'});};
+  try {
+    let response=await teamWrite(id,input);assert.equal(response.status,200);let invite=(await response.json()).invitations[0];assert.equal(invite.delivery.status,'failed');assert.equal(invite.delivery.canRetry,true);
+    assert.equal((await teamWrite(id,retrySend(invite.id))).status,409);assert.equal(calls,1);
+    sqlite.prepare('UPDATE invitation_deliveries SET attempted_at=? WHERE invite_id=?').run(Date.now()-61000,invite.id);
+    response=await teamWrite(id,retrySend(invite.id));assert.equal(response.status,200);assert.equal((await response.json()).invitations[0].delivery.status,'sent');assert.equal(calls,2);
+    await teamWrite(id,retrySend(invite.id));assert.equal(calls,2);
+  } finally {globalThis.fetch=original;}
+});
+test('sending denies members, spoofed fields, cross-origin, cross-project, changed sender and invalid invitations before Gmail',async()=>{
+  const id=await newTeamProject(),other=await newTeamProject();await senderFixture();const invite=await invitePerson(id,'permissions@example.com');
+  const original=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('must not dispatch');};
+  try {
+    assert.equal((await teamWrite(id,{...newSend(),from:'spoof@gmail.com'})).status,400);
+    assert.equal((await teamWrite(id,{...newSend(),senderEmail:'changed@gmail.com'})).status,409);
+    assert.equal((await teamWrite(id,newSend('a@example.com,b@example.com'))).status,400);
+    assert.equal((await teamApi.POST(request('/api/team?project='+id,newSend(),'https://evil.example'))).status,403);
+    assert.equal((await senderApi.POST(request('/api/sender?project='+id,{action:'connect'},'https://evil.example'))).status,403);
+    assert.equal((await teamWrite(other,retrySend(invite.id))).status,409);
+    await teamWrite(id,{action:'revokeInvite',id:invite.id});assert.equal((await teamWrite(id,retrySend(invite.id))).status,409);
+    const expired=await invitePerson(id,'expired-send@example.com');sqlite.prepare('UPDATE project_invites SET expires_at=? WHERE id=?').run(Date.now()-1,expired.id);assert.equal((await teamWrite(id,retrySend(expired.id))).status,409);
+    const accepted=await joinPerson(id);assert.equal((await senderWrite(id,{action:'connect'})).status,403);assert.equal((await teamWrite(id,newSend())).status,403);
+    owner();assert.equal((await teamWrite(id,retrySend(accepted.id))).status,409);
+    await teamRead(id);assert.equal(calls,0);
+  } finally {globalThis.fetch=original;owner();}
+});
+test('invitation sending rate limit is durable across projects and caps attempts',async()=>{
+  const id=await newTeamProject();await senderFixture();const invite=await invitePerson(id,'quota-send@example.com');
+  sqlite.prepare("INSERT INTO invitation_deliveries (invite_id,status,attempts) VALUES (?,'failed',3)").run(invite.id);
+  const original=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({id:'not-expected'});};
+  try {
+    assert.equal((await teamWrite(id,retrySend(invite.id))).status,409);
+    for(let n=0;n<50;n++)sqlite.prepare('INSERT INTO invitation_send_attempts (id,user_id,invite_id,started_at) VALUES (?,?,?,?)').run('quota-fixture-'+n,'owner-1','quota-fixture',Date.now());
+    assert.equal((await teamWrite(id,newSend('quota-new@example.com'))).status,409);assert.equal(calls,0);
+  } finally {globalThis.fetch=original;sqlite.prepare("DELETE FROM invitation_send_attempts WHERE invite_id='quota-fixture'").run();}
+});
+test('import and sender cannot connect the same account in either order, including during commit',async()=>{
+  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch,originalDb=globalThis.__gatherEnv.DB;
+  let profileEmail=senderEmail;
+  globalThis.fetch=async path=>{
+    if(path==='https://oauth2.googleapis.com/token')return Response.json({access_token:'fresh',refresh_token:'refresh',expires_in:3600,scope:sendScope+' https://www.googleapis.com/auth/gmail.readonly'});
+    if(path==='https://openidconnect.googleapis.com/v1/userinfo')return Response.json({email:profileEmail,email_verified:true,sub:'verified-sub'});
+    if(path==='https://gmail.googleapis.com/gmail/v1/users/me/profile')return Response.json({emailAddress:profileEmail});
+    throw new Error('unexpected provider path');
+  };
+  const importState=async()=>new URL(await gmailCore.beginOAuth('owner-1')).searchParams.get('state');
+  try {
+    assert.equal((await callback(await importState())).status,409);
+    profileEmail='imports@gmail.com';assert.equal((await callback((await startSender(id)).state)).status,409);
+    profileEmail=senderEmail;let raced=false;
+    const replacement=await security.seal({email:senderEmail,labelId:'race-import',accessToken:'racing-import'},'gmail:owner-1');
+    globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.includes('INSERT INTO gmail_senders')){const run=stmt.run;stmt.run=async()=>{raced=true;sqlite.prepare('UPDATE gmail_connections SET payload=? WHERE user_id=?').run(replacement,'owner-1');return run();};}return stmt;}};
+    const before=(await senderCore.senderConnection('owner-1')).storedPayload;
+    assert.equal((await callback((await startSender(id)).state)).status,409);assert.equal(raced,true);assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,before);
+    globalThis.__gatherEnv.DB=originalDb;profileEmail='new-import@gmail.com';raced=false;
+    const newSender=await security.seal({email:profileEmail,sub:'race-sub',accessToken:'racing-sender',refreshToken:'fixture',expiresAt:Date.now()+3600000},'gmail-sender:owner-1');
+    globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.includes('INSERT INTO gmail_connections (user_id,payload,generation) SELECT')){const run=stmt.run;stmt.run=async()=>{raced=true;sqlite.prepare('UPDATE gmail_senders SET payload=? WHERE user_id=?').run(newSender,'owner-1');return run();};}return stmt;}};
+    assert.equal((await callback(await importState())).status,409);assert.equal(raced,true);assert.equal((await gmailCore.connection('owner-1')).storedPayload,replacement);
+  } finally {globalThis.fetch=original;globalThis.__gatherEnv.DB=originalDb;}
 });

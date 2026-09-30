@@ -21,6 +21,7 @@ import {
 } from '@/lib/gmail';
 import { loadWorkspace, mutateWorkspace } from '@/lib/workspace';
 import { projectScope } from '@/lib/projects';
+import { finishSenderOAuth, senderConnection } from '@/lib/invitation-sender';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   return safe(async () => {
@@ -38,6 +39,7 @@ export async function GET(request: Request) {
         lastSync: conn?.lastSync || '',
         hasMore: !!conn?.pageToken,
         redirectUri: redirectUri(),
+        senderConnected: !!(await senderConnection(user.userId)),
       });
     }
     if (action === 'labels') {
@@ -82,6 +84,7 @@ export async function GET(request: Request) {
     }
     if (action === 'callback') {
       const state = url.searchParams.get('state');
+      if (state?.startsWith('send_')) return finishSenderOAuth(user, url);
       if (!state)
         throw new HttpError(400, 'Missing Google authorization state.');
       const saved = await env.DB.prepare(
@@ -141,6 +144,9 @@ export async function GET(request: Request) {
       const profile = await gmailWithToken(token.access_token, 'profile');
       if (typeof profile.emailAddress !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(profile.emailAddress))
         throw new HttpError(502, 'Google could not confirm the Gmail account. Start again in Gmail settings.');
+      const sender = await senderConnection(user.userId);
+      if (sender?.email.toLowerCase() === profile.emailAddress.toLowerCase())
+        throw new HttpError(409, 'The invitation sender must stay separate. Choose another Gmail account for imports.');
       const generation = crypto.randomUUID();
       const payload = await seal(
         {
@@ -156,8 +162,8 @@ export async function GET(request: Request) {
       );
       const savedConnection = await env.DB.batch([
         env.DB.prepare(
-          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
-        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload),
+          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) AND COALESCE((SELECT payload FROM gmail_senders WHERE user_id=?),\'\')=? ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
+        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload, user.userId, sender?.storedPayload || ''),
         env.DB.prepare(
           'DELETE FROM oauth_states WHERE id=? AND user_id=?',
         ).bind(state, user.userId),
@@ -193,16 +199,17 @@ export async function POST(request: Request) {
           400,
           'Enter a valid Google Web application client ID and client secret.',
         );
-      if (await connection(user.userId))
+      if (await connection(user.userId) || await senderConnection(user.userId))
         throw new HttpError(
           409,
-          'Disconnect Gmail before replacing the OAuth client.',
+          'Disconnect Gmail imports and the invitation sender before replacing the Google client.',
         );
       const payload = await seal({ clientId, clientSecret }, 'google-oauth');
       const saved = await env.DB.batch([
-        env.DB.prepare('INSERT INTO settings (id,payload) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM gmail_connections) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload')
+        env.DB.prepare('INSERT INTO settings (id,payload) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM gmail_connections) AND NOT EXISTS (SELECT 1 FROM gmail_senders) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload')
           .bind('google-oauth', payload),
         env.DB.prepare('DELETE FROM oauth_states WHERE EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?)').bind('google-oauth', payload),
+        env.DB.prepare('DELETE FROM sender_oauth_states WHERE EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?)').bind('google-oauth', payload),
       ]);
       if (saved[0].meta.changes !== 1) throw new HttpError(409, 'Gmail connected while settings were changing. Disconnect it before replacing the client.');
       return json({ saved: true });
