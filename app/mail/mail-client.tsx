@@ -8,7 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-export function MailInbox() {
+export function MailInbox({ projectId }: { projectId: string }) {
+  const projectUrl = '/project?project=' + encodeURIComponent(projectId);
+  const [projectName, setProjectName] = useState('');
   const epoch = useRef(0);
   const saving = useRef(false);
   const dirty = useRef(false);
@@ -20,10 +22,11 @@ export function MailInbox() {
     [confirmed, setConfirmed] = useState(false);
   async function refresh() {
     const ticket = ++epoch.current;
-    const value = await gmailRequest('messages');
+    const value = await gmailRequest('messages', undefined, projectId);
     if (ticket !== epoch.current || document.hidden) return;
     setMessages(value.messages);
     setTasks(value.tasks || []);
+    setProjectName(value.projectName || '');
     setNotice(
       value.messages.length
         ? ''
@@ -78,6 +81,7 @@ export function MailInbox() {
   }
   return (
     <>
+      <p className="mb-4 text-base">Add summaries to: <strong>{projectName || 'Loading project…'}</strong></p>
       <p role="status" className="mb-5 text-sm">
         {notice}
       </p>
@@ -136,7 +140,7 @@ export function MailInbox() {
               </p>
               {message.reviewed ? (
                 <p className="rounded-lg bg-secondary p-4 text-base">
-                  <a className="underline" href={'/?message=' + encodeURIComponent(message.sharedMessageId)}>Review briefing →</a>
+                  <a className="underline" href={projectUrl + '&message=' + encodeURIComponent(message.sharedMessageId)}>Review briefing →</a>
                 </p>
               ) : (
                 <form
@@ -156,11 +160,11 @@ export function MailInbox() {
                         ...data,
                         id: message.id,
                         confirmShared: confirmed,
-                      });
+                      }, projectId);
                       if (ticket !== epoch.current || document.hidden) return;
                       dirty.current = false;
                       saving.current = false;
-                      window.location.href = '/?message=' + encodeURIComponent(result.id);
+                      window.location.href = projectUrl + '&message=' + encodeURIComponent(result.id);
                     } catch (e) {
                       setNotice(
                         e instanceof Error ? e.message : 'Please retry.',

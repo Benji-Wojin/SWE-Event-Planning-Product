@@ -7,7 +7,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-geist-sans, ui-sans-serif, system-ui, sans-serif);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -49,7 +49,7 @@
 }
 
 body {
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans, ui-sans-serif), system-ui, Arial, Helvetica, sans-serif;
 }
 
 :root {
@@ -138,19 +138,25 @@ body {
   --radius: 0.8rem;
 }
 .dark {
-  --background: #11281d;
-  --foreground: #f3f7ef;
-  --primary: #9ed9ac;
-  --primary-foreground: #163a26;
-  --secondary: #254633;
-  --secondary-foreground: #f3f7ef;
-  --muted: #203b2b;
-  --muted-foreground: #b5c8b9;
-  --accent: #355e42;
-  --accent-foreground: #ffffff;
-  --border: #42634c;
-  --input: #42634c;
-  --ring: #9ed9ac;
+  color-scheme: dark;
+  --background: #111820;
+  --foreground: #edf2f7;
+  --card: #1a2530;
+  --card-foreground: #edf2f7;
+  --popover: #1a2530;
+  --popover-foreground: #edf2f7;
+  --primary: #8bd2ae;
+  --primary-foreground: #12261d;
+  --secondary: #25323e;
+  --secondary-foreground: #edf2f7;
+  --muted: #25323e;
+  --muted-foreground: #a7b5c5;
+  --accent: #243e34;
+  --accent-foreground: #a9e4c4;
+  --border: #344351;
+  --input: #526272;
+  --ring: #8bd2ae;
+  --destructive: #ffa99b;
 }
 
 @layer base {

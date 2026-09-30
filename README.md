@@ -1,61 +1,63 @@
-# SWE-Event-Planning-Product
+# Gather — private event planning pilot
 
-## Gather — event planning app
-
-Gather is an event-planning app with a shared task list, task-based email conversations, clear change approvals, and organizer-only booking details. This repository contains the current owner-private hosted pilot, including the four-person demo.
-
-- [Private Gather site](https://gather-event-coordinator.benjiwojin.chatgpt.site/)
-- [Four-person demo](https://gather-event-coordinator.benjiwojin.chatgpt.site/demo)
-
-The hosted site requires the owner's ChatGPT sign-in. The demo uses four simulated profiles (Jack, Maya, Jules, and Dev), not four independently authenticated accounts. Open a profile in its own tab to demonstrate shared task updates, ownership, comments, and organizer verification. Demo data is stored separately from the real plan.
-
-## Working with this repository
-
-Use Node.js 22.13 or newer and the included npm lockfile:
-
-```sh
-npm ci
-npm run build
-node --test tests/*.test.mjs
-```
-
-`npm run dev` starts the development server on a supported Cloudflare runtime host. The app relies on Sites-provided identity headers and D1; a successful build alone does not supply sign-in or production data locally. The API tests use a temporary SQLite database and mocked identity, without contacting Gmail.
-
-Source layout:
-
-- `app/`: server routes, Gmail settings, and the four-person demo.
-- `legacy/`: shared planning interface, task model, and grouped email review.
-- `lib/`: authorization, encryption, Gmail, workspace, and isolated demo logic.
-- `db/` and `drizzle/`: database schema and migrations.
-- `scripts/prepare.mjs`: regenerates the planning interface's public assets.
-- `tests/`: task-conversation and server/API regression tests.
-
-Only application source and blank environment examples belong in Git. Dependencies, build output, local databases, real environment values, and Gmail credentials are excluded. Configure real runtime values through Sites; do not paste them into this repository.
-
-`.openai/hosting.json` identifies the existing private Gather Site and is required by the current build configuration. It is not a credential. Pushing to GitHub does not automatically deploy that Site. Keep this target for the existing app; configure a distinct Site before using this source for a separate deployment.
-
-The original development checkout is preserved separately. This GitHub import does not copy live tasks, email contents, private bookings, or local browser data.
+Real ChatGPT sign-in, a server-backed event plan, and encrypted organizer-only booking details. The original local prototype remains untouched in the parent directory; browser-local changes are not automatically uploaded. New real workspaces start empty; the Field Day sample remains in the separate demo.
 
 ## What works
 
 - Tasks, owner acceptance, completion reports, organizer verification, comments, follow-up drafts, event context, and contextual feedback rules persist in Cloudflare D1.
-- Related emails collect in one conversation per task. Editable before/after previews show the effective change before acceptance, and accepted or set-aside messages remain in history.
-- The four-profile demo shares one server-backed sample project across tabs, enforces simulated ownership and verification rules, and can be restarted independently of the real workspace.
-- Every API checks authenticated membership server-side. The initial owner is bootstrapped from the configured allowlisted email and then bound to its stable Site user ID. Browser actor selection cannot grant permissions. Only the owner can currently join.
+- Every API checks authenticated membership server-side. The initial owner is bootstrapped from the configured allowlisted email and bound to its stable Site user ID. Teammates join individual projects using email-specific, expiring invitation links. Browser actor selection cannot grant permissions.
 - Workspace writes use a compare-and-swap revision. Other-tab conflicts require an explicit page reload; drafts are never silently rebased onto newer data.
 - Flight/hotel/transport/venue references are encrypted using AES-256-GCM with a separate secret server key. Gmail credentials and text previews use distinct authenticated encryption contexts. Private data never goes into shared exports, browser localStorage, or task notes automatically.
-- Gmail Web OAuth uses read-only scope, PKCE, expiring single-use state bound to the signed-in owner, server-side refresh tokens, and revocation. Save the Google client in the protected settings form, then authorize Gmail and choose a project label.
+- Gmail imports use read-only Web OAuth, PKCE, expiring single-use state bound to the signed-in owner, server-side refresh tokens, and revocation. Save the Google client in the protected settings form, then authorize Gmail and choose a project label. A separate dedicated Gmail connection sends project invitations with `gmail.send`, `openid` and `email` permissions; it does not read that mailbox.
 - Sync manually imports 20 messages at a time from that label, with paging and mailbox-aware deduplication. Private inbox shows the 100 most recent imported text previews; previews may be truncated and exclude attachments. A human writes and approves a safe title/summary before it enters shared email review. Originals stay encrypted separately. Conversation mapping and received time are retained for reviewed updates.
+
+## Projects and setup
+
+`/` is the Projects homepage. `/setup` creates a separate, empty project; `/setup?project=<id>` edits only that project's settings. `/project?project=<id>` opens its workspace. Creation is authenticated, server-persisted and retry-safe. Existing data stays under `main`; no tasks, guests, files or bookings are moved or cleared. New projects use an owner-authorized registry and explicit URL IDs so two tabs cannot switch each other's active project. Migration `0004` adds the registry and a booking scope defaulting to `main` for old records.
+
+Gmail and guest-list imports are optional. The account's Gmail connection, import label and private original messages remain account-wide; reviewed summaries explicitly target the selected project. Tasks, guests, files, private bookings, suggestions and resource caches are project-scoped. Setup uses organizer authorization, origin verification, field validation and revision-checked edits. Failed saves preserve form values. Event date and location are optional. There is a 100-new-project organizer limit.
+
+## Accounts and invitations
+
+`/account` shows the current platform identity and sign-out. Organizers open **People → Team access** (or Invite), connect the dedicated Gather Gmail account, enter a teammate's ChatGPT sign-in email, and choose **Send invitation**. `/join?invite=…` checks the email before displaying project details; accepting atomically creates or reuses the account and grants access to that project. Links are single-use, expire in 7 days, and can be revoked. Creation and acceptance retries do not duplicate members. Tokens are stored as hashes plus an organizer-readable encrypted copy, never in shared task state.
+
+Invitation setup reuses the existing Google Web client and `/api/gmail/callback` URI. Enable Gmail API, add the dedicated account as a testing user, and configure `gmail.send`, `openid` and `email` scopes. The owner connects the dedicated account once; invitees need no Google API setup. Google UserInfo verifies the sender address. Import and sender connections must use different accounts; separate encrypted tokens, state tables and commit guards prevent one connection from replacing the other. Migration `0006` adds sender authorization, delivery state and send-attempt records without modifying existing invitations.
+
+Only an explicit organizer action sends an invitation. Its recipient, project name and acceptance URL are server-owned. Durable send claims prevent double-click/network retries from dispatching twice. Status is **sent** only after Gmail returns a message ID; this means Gmail accepted the request, not guaranteed inbox delivery. Definitive rejection permits a manual retry after a minute; timeout, ambiguous errors, or an unrecorded receipt become **sending not confirmed**, never automatically retried. Check Gmail's Sent folder before revoking/replacing an uncertain invitation. Limits: 3 attempts per invitation and 50 attempts per rolling 24 hours across the organizer's projects. No guest-list mail or automatic task reminders are sent.
+
+The organizer must also share the private Site with invitees through Sites sharing settings. App invitations do not widen the Site audience. The existing owner-only hosting policy is deliberately unchanged. Once admitted by Sites and invited to a project, teammates see only their joined projects, can claim unassigned tasks, report their own progress/completion, comment, and contribute guest records/files. They cannot edit task metadata, manage access, connect Gmail, read private bookings/original emails, or use the owner's demo. There is no password database or separate password-reset flow; authentication uses the existing platform sign-in.
+
+Removing access preserves task/comment history and marks the teammate inactive for new assignments. Server writes recheck active membership and its generation at commit, so remove/reinvite cannot revive stale task, file or helpful-link requests. Workspace revisions advance on team changes; open clients refresh every 20 seconds or on focus, and stop displaying a project when access is denied. Previously downloaded information cannot be recalled. Limits per project: 50 active teammates, 500 historical memberships and 500 invitations total. Migration `0005` adds project memberships and invitations without changing existing projects or ciphertext.
+
+The homepage adapts `ProjectsHome.tsx` and `projects-home.css` from the existing Gather Lovable design workspace, commit `f7669b53ebacbefa76e8bf8f85e8cd28dae997d4`. It uses Gather's existing theme and validated setup form. Lovable preview data and storage are not part of the production app.
 
 ## Pilot boundaries
 
-- Publication is private to the owner's account. Teammate invitations and account-free guest links are not enabled. Starter teammates are examples, not real accounts. Site sharing alone does not grant app membership.
-- Suggestions use conservative local rules and event feedback, not a connected language model. No autonomous email sending, live RSVP integration, Gmail push notifications, or background sync.
-- Google OAuth needs an actual Google Cloud Web client: enable Gmail API, configure consent/testing users and `gmail.readonly`, and add the exact redirect URI displayed in settings. Google may require verification for wider deployment; testing grants may need reconnecting after seven days.
+- Publication keeps its existing private audience. An organizer must grant Site access and a project invitation for a real teammate. Account-free attendee links are not enabled. Teammates retained in older sample workspaces are examples, not real accounts. Site sharing alone does not grant app membership.
+- Planning and email suggestions use conservative local rules and event feedback. Task Helpful links use OpenAI Responses web search when the server-only `OPENAI_API_KEY` is configured; otherwise they show an explicit disconnected state. No autonomous email sending, live RSVP integration, Gmail push notifications, or background sync.
+
+Planning suggestions recalculate on workspace reads and edits. Visible workspaces check for changes every 20 seconds (4 seconds in the demo), when Suggestions opens, and when returning to the page, including browser Back. Clock-driven checks can update without a saved project edit. The open Suggestions panel refreshes in place; task, guest and email drafts defer shared-state updates until safe. Covered and dismissed checks stay suppressed. Nothing runs while the app is closed; reopening checks the current state and time. Suggestions do not automatically create tasks.
+- Google OAuth needs an actual Google Cloud Web client: enable Gmail API, configure consent/testing users and the relevant import/sending scopes, and add the exact redirect URI displayed in settings. Google may require verification for wider deployment; testing grants may need reconnecting after seven days.
 - No production Gmail authorization was tested because no Google OAuth credentials were supplied. Do not enter passport or payment-card data. This pilot has not had an independent security assessment.
-- Disconnect revokes future Gmail access but retains imported previews and shared summaries. Changing the Google client while connected is denied. Original retention controls and account deletion UI are future work.
+- Import disconnect revokes Google's import-account grant but retains imported previews and shared summaries. Sender disconnect removes its tokens and pending authorizations from Gather; Google grant revocation is available in the dedicated account's Google settings. Already-dispatched email cannot be recalled. Changing the Google client while either connection is active is denied. Original retention controls and account deletion UI are future work.
 - Editing `GATHER_OWNER_EMAIL` does not revoke an already-bound owner: ownership changes need deliberate membership migration. Do not rotate the encryption key without migrating existing ciphertext.
 - Private view hiding clears visible records but is not sign-out. Use Sign out to terminate account access.
+
+## Task focus and helpful links
+
+Owners can commit to up to three actionable Next up tasks, propose a date or ask for help without changing the agreed plan. Organizer decisions stay in Needs attention. Decisions record a check-in, deadline history and an owner-visible comment; fixed external dates require explicit confirmation. Ranking considers essential work and downstream deadlines, not only overdue age. Waiting parents route attention to their prerequisites. These are in-app prompts, not background email reminders.
+
+Helpful links automatically search on first task opening, then reuse results for seven days unless the task context changes. Search details allows an optional city/region and a manual refresh. Only the task name, category and optional location are sent to OpenAI (with `store:false`), not task notes, emails, comments, booking codes or participant profiles. Only cited public HTTPS links render; Gather never fetches those destination pages or makes bookings. No-location searches request general resources. Availability and suitability are not verified. Server-side leases limit a task to one lookup per minute, with a shared 25-lookups/day limit per authenticated account across the real workspace and demo. Live provider operation remains unverified until a key is provisioned and a live smoke test succeeds.
+
+## Event information
+
+Event info keeps a guest list and shared files separate from task conversations. Guests have a contact name, optional email/phone, type (attendee, speaker, volunteer or vendor), group, attendance and notes. These are contact records, not accounts or app members. No messages, invitations or RSVP requests are sent to these guest records. Expected guest counts and other planning context remain manually maintained.
+
+Authenticated project members can add/edit guests and upload files. Organizers can archive/restore guests; uploaders and organizers can archive/restore files. The four demo perspectives use the same interface and APIs with isolated sample contacts; restarting the demo isolates its old records from the new generation. Guest contacts do not grant app membership.
+
+CSV imports require a preview and confirmation. Invalid rows prevent the entire import; existing emails (including archived guests) are skipped rather than overwritten. Names alone never merge records. Limits: 40 KB / 100 rows per import, 500 guest records including archived contacts. Data uses revision checks and idempotent write receipts to avoid silent overwrite and duplicate retries.
+
+Guest records and file contents are encrypted with context-bound AES-GCM. They are not included in task exports, task AI searches, or browser localStorage. Project uploads use the private Sites-managed `BUCKET` R2 binding, with authenticated attachment-only downloads. Allowed formats: PDF, TXT, CSV, PNG, JPEG, DOCX and XLSX, up to 5 MB each. A per-authenticated-account cap of 50 MB / 200 uploads includes archived files and previous demo generations. Archive is recoverable, not permanent deletion or quota reclamation; retention/deletion administration remains future work. Files are not malware-scanned. Upload only information the project team is permitted to access.
 
 ## Build and validation
 
@@ -63,8 +65,8 @@ The original development checkout is preserved separately. This GitHub import do
 
 Generated Drizzle migrations are in `drizzle/` and are packaged with the deployment. Runtime secrets belong in Sites environment configuration, never in `.openai/hosting.json` or Git. `.env.example` lists required keys. D1 schema is defined in `db/schema.ts`.
 
-The current macOS 13.4 host cannot run the local Cloudflare runtime, which requires 13.5+. Production bundling works. Cleanup QA exercised the prepared workspace, four-profile demo, and Gmail pages against isolated sample-data route handlers, including mobile layouts and failed saves. This does not replace end-to-end testing of hosted sign-in or a real Gmail connection. The read_shared_plan and add_shared_task WebMCP tools are feature-detected; no supported browser WebMCP validation context was available, so that integration is unverified.
+The current macOS 13 host cannot run the local Cloudflare runtime, which requires 13.5+. Production bundling works. Cleanup QA exercised the prepared workspace, four-profile demo, and Gmail pages against isolated sample-data route handlers, including mobile layouts and failed saves. The invitation-sending pass has 153 passing regression tests and a clean TypeScript check. Full-repository lint still reports existing legacy/style/type violations. Sample-only browser QA covers desktop/mobile invitations, joining with a second identity, claiming tasks, participant controls, account pages, removing access, and preserved history. Sender QA uses simulated Gmail responses to check setup, sending/failure/uncertainty states, disconnect, and delayed polling across revocation; no real email was sent. This does not replace end-to-end testing of hosted sign-in with a real invitee or a real Gmail connection. The read_shared_plan and add_shared_task WebMCP tools are feature-detected; no supported browser WebMCP validation context was available, so that integration is unverified.
 
 The September 2026 cleanup pins compatible patched `image-size` and `undici` versions without changing the framework beta. `npm audit --omit=dev` reports no known advisories in the installed production dependency tree. The full audit still reports nine development-tool findings (five high and four moderate); Wrangler and the Cloudflare Vite plugin also contain bundled dependency copies that npm overrides do not replace. These tooling updates need separate compatibility validation before broader rollout. This audit result is not a security certification.
 
-References: [Google Web OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [message listing](https://developers.google.com/workspace/gmail/api/guides/list-messages).
+References: [Google Web OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [message listing](https://developers.google.com/workspace/gmail/api/guides/list-messages), [Gmail sending](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send), [Google identity verification](https://developers.google.com/identity/openid-connect/openid-connect).

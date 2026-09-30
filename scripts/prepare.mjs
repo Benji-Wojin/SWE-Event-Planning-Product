@@ -2,8 +2,12 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 mkdirSync('public/gather-assets', { recursive: true });
 let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
+  .replace('href="lovable-ui.css"', 'href="/gather-assets/lovable-ui.css"')
+  .replace('src="theme.js"', 'src="/gather-assets/theme.js"')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
+  .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
+  .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -17,15 +21,23 @@ html = html
   );
 html = html.replace(
   '<div class="top-actions">',
-  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/settings" target="_top">Gmail &amp; account</a>',
+  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/account" target="_top">Account</a>',
 );
+html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project settings</a><a class="nav-item" href="/" target="_top"><span class="nav-icon" data-icon="arrow"></span>All projects</a><div class="nav-label">Review</div>');
 html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
-html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
 writeFileSync('public/workspace.html', html);
+writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
+writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));
+writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
+writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
+writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
+for(const name of ['guests','info-ui'])writeFileSync('public/gather-assets/'+name+'.js',readFileSync('legacy/'+name+'.js','utf8'));
 let app = readFileSync('legacy/app.js', 'utf8');
 const inboxStart=app.indexOf('  function inboxView(s) {');
 const inboxEnd=app.indexOf('  function teamView(s) {',inboxStart);
@@ -36,6 +48,8 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'setNextUp', 'requestRecovery', 'resolveRecovery',
+  'setTaskPriority',
   'resolveHandoff',
   'addDependency', 'removeDependency', 'resumeTask',
   'claimTask',
@@ -112,14 +126,14 @@ app = app.replace(
   'Switch the demo member to this task’s owner to try their response.',
   'Only this task’s assigned account can submit its response.',
 );
-app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):""}');
+app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):window.GatherMode.projectUrl("/project")}');
 app = app.replace(
   'Team invitations are a draft in this local prototype. No invite or email will be sent.',
   'Private to your account. Invitation drafts do not send messages or grant access; team onboarding is not enabled.',
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>This is the same app with separate sample data. Open profiles in separate tabs to show task claiming, reporting, and organizer review.</p><p>Gmail is not connected here. Suggestions are rule-based. Only enter fictional booking details.</p>':'<p>Private to your account. Changes are saved on the server. Sample teammates are not real accounts.</p><p>Gmail requires setup. Suggestions are rule-based; no AI model is connected. Nothing is sent automatically.</p><p>Bookings and Gmail originals are excluded from shared exports. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles.</p><p>Gmail is not connected here. Only enter fictional booking details.</p><p>Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. People → Team access manages invitations; sample teammates are not real accounts.</p><p>Gmail requires setup. Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p><p>Bookings and Gmail originals are excluded from shared exports and AI searches. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')
@@ -129,7 +143,16 @@ app = app
   );
 app = app.replace(
   '  setDrawer(false);\n  navigate',
-  "  window.addEventListener('gather-tool-updated',()=>{if(ui.pendingSave||ui.reviewDirty||!$('#dialogBackdrop').hidden)showPendingUpdate();else render();});\n  const inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);\n  window.addEventListener('focus',()=>refreshInbox());\n  window.addEventListener('pagehide',()=>clearInterval(inboxRefreshTimer),{once:true});\n  setDrawer(false);\n  navigate",
+  `  window.addEventListener('gather-tool-updated',()=>{if(ui.pendingSave||ui.reviewDirty||(!$('#dialogBackdrop').hidden&&ui.dialogKind!=='thought'))showPendingUpdate();else {if(ui.view!=='details')render();refreshSuggestionSurfaces();}});
+  let inboxRefreshTimer;
+  function startInboxRefresh(){if(!inboxRefreshTimer)inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);}
+  startInboxRefresh();
+  window.addEventListener('focus',()=>refreshInbox());
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshInbox();});
+  window.addEventListener('pagehide',()=>{clearInterval(inboxRefreshTimer);inboxRefreshTimer=null;});
+  window.addEventListener('pageshow',event=>{if(event.persisted){startInboxRefresh();refreshInbox();}});
+  setDrawer(false);
+  navigate`,
 );
 writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(

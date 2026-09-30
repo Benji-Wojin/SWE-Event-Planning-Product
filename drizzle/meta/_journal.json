@@ -15,6 +15,48 @@
       "when": 1788893831070,
       "tag": "0001_fluffy_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790272787625,
+      "tag": "0002_odd_venom",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790274395339,
+      "tag": "0003_sour_shinobi_shaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790620245618,
+      "tag": "0004_spotty_phil_sheldon",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790787364717,
+      "tag": "0005_nostalgic_odin",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790789123800,
+      "tag": "0006_moaning_sugar_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790789780574,
+      "tag": "0007_beta_reports",
+      "breakpoints": true
     }
   ]
 }

@@ -2,16 +2,32 @@
   const params = new URLSearchParams(location.search);
   const demo = params.get('demo') === '1';
   const actor = params.get('as') || 'jack';
-  const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : '/api/workspace';
-  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : '/');
-  window.GatherMode = Object.freeze({ demo, actor, privateUrl: path => demo
+  const projectId = params.get('project') ?? 'main';
+  const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
+  const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
+  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
+  window.GatherMode = Object.freeze({ demo, actor, projectId, projectUrl, privateUrl: path => demo
     ? endpoint + '&resource=private&action=' + encodeURIComponent(path)
-    : '/api/private/' + path });
+    : projectUrl('/api/private/' + path) });
   let snapshot;
   const listeners = new Set();
   let queue = Promise.resolve();
   let mutationGeneration = 0;
+  let refreshGeneration = 0;
+  let accessLost = false;
+  function stopAccess() {
+    accessLost = true;
+    if (snapshot) { snapshot.state = { tasks:[],members:[],messages:[],activity:[],memories:[],event:{} }; snapshot.exportState = {}; snapshot.suggestions = []; }
+    window.GatherIdentity = null;
+    document.body.replaceChildren();
+    const box=document.createElement('main');box.style.cssText='max-width:640px;margin:64px auto;padding:24px';
+    box.innerHTML='<h1>Project access changed</h1><p>Return to Projects or sign in again.</p><a href="/" target="_top">Projects</a> · <a href="/account" target="_top">Account</a>';
+    document.body.append(box);
+    window.GatherAccessLost = true;
+    window.top.location.replace('/');
+  }
   async function request(body) {
+    if(accessLost)throw new Error('Project access changed. Return to Projects.');
     const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
       headers: body
@@ -26,19 +42,26 @@
       throw new Error('Gather could not complete the request. Reload or sign in again.');
     });
     if (!response.ok) {
+      if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
       const error = new Error(result.error || 'Unable to save. Reload and try again.');
       error.status = response.status;
       throw error;
     }
     return result;
   }
-  function publish(next) {
-    if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor))
+  function validateIdentity(next) {
+    if (snapshot && (next.identity.actorId !== snapshot.identity.actorId || next.identity.role !== snapshot.identity.role)) { stopAccess();throw new Error('Your account changed. Return to Projects.'); }
+    if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor) || (!demo && next.projectId !== projectId))
       throw new Error('The workspace identity changed. Reload to continue.');
+  }
+  function publish(next) {
+    validateIdentity(next);
     snapshot = next;
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'setNextUp', 'requestRecovery', 'resolveRecovery',
+    'setTaskPriority',
     'resolveHandoff',
     'addDependency', 'removeDependency', 'resumeTask',
     'claimTask',
@@ -63,9 +86,13 @@
   ];
   try {
     publish(await request());
+    if(!demo&&snapshot.setupRequired){window.top.location.replace(projectUrl('/setup'));return;}
+    if(!demo)document.querySelectorAll('a[href="/setup"],a[href="/settings"],a[href="/mail"]').forEach(link=>link.href=projectUrl(link.getAttribute('href')));
     window.GatherIdentity = snapshot.identity;
     document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
+    if (!demo && snapshot.identity.role !== 'admin') document.querySelector('.top-actions a[href="/demo"]')?.remove();
     if (demo) {
+      document.querySelectorAll('.project-setup-link').forEach(link=>link.remove());
       document.body.classList.add('demo-mode');
       const bar = document.createElement('section');
       bar.className = 'demo-toolbar';
@@ -89,14 +116,26 @@
       },
       refresh: async (canApply) => {
         await queue;
-        const base=snapshot.revision, generation=mutationGeneration;
+        const base=snapshot.revision, generation=mutationGeneration, refreshId=++refreshGeneration;
         const latest=await request();
-        if(latest.revision===snapshot.revision)return {changed:false};
-        if(snapshot.revision!==base||mutationGeneration!==generation||!canApply())return {pending:true};
-        publish(latest);return {changed:true};
+        validateIdentity(latest);
+        if(refreshId!==refreshGeneration)return {changed:false};
+        if(latest.revision<snapshot.revision)return {changed:false};
+        if(snapshot.revision!==base||mutationGeneration!==generation)return {pending:latest.revision>snapshot.revision};
+        const suggestionsChanged=JSON.stringify(latest.suggestions)!==JSON.stringify(snapshot.suggestions);
+        // Clock-driven checks can change without a persisted workspace edit.
+        // Updating only derived suggestions cannot overwrite an in-progress form.
+        if(latest.revision===snapshot.revision){
+          if(suggestionsChanged)snapshot={...snapshot,suggestions:latest.suggestions};
+          return {changed:false,suggestionsChanged};
+        }
+        if(!canApply())return {pending:true};
+        publish(latest);return {changed:true,suggestionsChanged};
       },
     };
     const count = {
+      setNextUp: 2, requestRecovery: 2, resolveRecovery: 2,
+      setTaskPriority: 2,
       resolveHandoff: 3,
       addDependency: 2,
       removeDependency: 2,

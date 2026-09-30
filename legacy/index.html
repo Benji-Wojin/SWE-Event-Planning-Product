@@ -8,6 +8,8 @@
   <title>Gather — Event planning</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css?v=coordination-1">
+  <link rel="stylesheet" href="lovable-ui.css">
+  <script src="theme.js"></script>
 </head>
 <body>
   <div class="app-shell" id="appShell">
@@ -15,21 +17,26 @@
     <aside class="sidebar" id="sidebar" aria-label="Main navigation">
       <a class="brand" href="#overview" data-view="overview" aria-label="Gather home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-name">gather</span></a>
       <button class="event-switcher" data-action="event-info"><span class="event-symbol">FD</span><span class="event-switcher-copy"><small>EVENT</small><strong>Field Day 2026</strong></span><span aria-hidden="true">⌄</span></button>
-      <div class="nav-label">WORKSPACE</div>
+      <div class="nav-label">Plan</div>
       <nav class="nav-list" id="mainNav">
         <button class="nav-item active" data-view="overview"><span class="nav-icon" data-icon="grid"></span>Overview</button>
         <button class="nav-item" data-view="tasks"><span class="nav-icon" data-icon="check"></span>Shared tasks<span class="nav-count" id="taskNavCount"></span></button>
         <button class="nav-item" data-view="inbox"><span class="nav-icon" data-icon="mail"></span>Email briefing<span class="nav-count" id="inboxNavCount"></span></button>
         <button class="nav-item" data-view="updates"><span class="nav-icon" data-icon="activity"></span>Team updates</button>
+      </nav>
+      <div class="nav-label">Event</div>
+      <nav class="nav-list" aria-label="Event">
         <button class="nav-item" data-view="team"><span class="nav-icon" data-icon="people"></span>People</button>
+        <button class="nav-item" data-view="info"><span class="nav-icon" data-icon="copy"></span>Event info</button>
         <button class="nav-item" data-view="timeline"><span class="nav-icon" data-icon="calendar"></span>Timeline</button>
         <button class="nav-item" data-view="details"><span class="nav-icon" data-icon="copy"></span>Private details</button>
       </nav>
-      <div class="nav-label">PLANNING</div>
-      <nav class="nav-list">
+      <div class="nav-label">Review</div>
+      <nav class="nav-list" aria-label="Review">
         <button class="nav-item" data-action="thought-partner"><span class="nav-icon" data-icon="spark"></span>Suggestions<span class="nav-count" id="aiNavCount"></span></button>
         <button class="nav-item" data-view="memory"><span class="nav-icon" data-icon="memory"></span>Event feedback</button>
       </nav>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">Dark mode<span class="theme-toggle-track" aria-hidden="true"></span></button>
       <div class="profile" id="profile"></div>
     </aside>
     <main class="main-content" id="mainContent">
@@ -53,6 +60,8 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <noscript><p>Enable JavaScript to use Gather.</p></noscript>
   <script src="store.js?v=coordination-1"></script>
+  <script src="priorities.js?v=coordination-1"></script>
+  <script src="recovery-ui.js?v=coordination-1"></script>
   <script src="app.js?v=coordination-1"></script>
 </body>
 </html>

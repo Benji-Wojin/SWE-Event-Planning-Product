@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import '../legacy/store.js';
+import '../legacy/priorities.js';
+import '../legacy/recovery-ui.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
@@ -26,7 +28,7 @@ test('reassignment clears old email acceptance and follow-up timing without eras
 
 test('reached follow-up dates appear in attention while future dates remain quiet',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const context=vm.createContext({dateKey:()=> '2026-09-22',dependencyInfo:()=>({ready:false})});
+  const context=vm.createContext({store:{getState:()=>({tasks:[]})},GatherPriorities:{analyze:(task,tasks)=>GatherPriorities.analyze(task,tasks,new Date(2026,8,22,12))}});
   vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const attention ='))+'globalThis.reason=reason;',context);
   const task={owner:'maya',status:'progress',acceptedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),dueDate:'2026-10-06'};
   assert.equal(context.reason({...task,followupAfter:'2026-09-22'}).key,'followup');
@@ -122,12 +124,14 @@ function taskDialogHtml(actor,id='dietary',identity) {
   const context=vm.createContext({
     store:create(),ui:{actor},window:identity?{GatherIdentity:identity}:{},
     openDialog:(_title,body)=>{html=body;},toast:()=>{},
+    GatherPriorities,reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),
     statusBadge:status=>status,sourceButton:()=>'',dayLabel:value=>value,
     timeLabel:value=>value,relative:value=>value,completionText:()=>'',
-    commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:()=>'',
+    commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:items=>items.map(([value,label])=>`<option value="${value}">${label}</option>`).join(''),$:()=>null,
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
+  context.recovery=GatherRecoveryUI.create(context);
   vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;

@@ -6,7 +6,7 @@
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
   const ui = { view:'overview', actor:'jack', tab:'all', owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
-  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
+  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
   const icons = {
@@ -69,7 +69,7 @@
   function confirmDiscard(...roots) {
     return !roots.some(root=>hasUnsavedFields(root))||window.confirm('Discard your unsaved changes?');
   }
-  const unsavedDialog=()=>!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
+  const unsavedDialog=()=>!!$('#dialogBackdrop')&&!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
   const unsavedReview=()=>hasUnsavedFields($('#emailReviewForm'));
   const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const dayLabel = value => !value ? 'No due date' : new Date(value+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
@@ -84,21 +84,8 @@
   const person = id => `<span class="person-chip">${avatar(id,true)}<span>${h(member(id).name.split(' ')[0])}</span></span>`;
   const statusBadge = status => `<span class="status-badge status-${h(status)}">${h(statuses[status])}</span>`;
   const due = task => `<span class="${task.status!=='done' && task.dueDate && task.dueDate<dateKey()?'due-overdue':''}">${task.dueDate===dateKey()?'Today':dayLabel(task.dueDate)}</span>`;
-  const reason = task => {
-    if(task.reportedAt && task.requiresVerification && !task.verifiedAt) return {key:'verification',label:'Verify completion',action:'The owner reports this is finished',rank:0};
-    if(task.status==='done') return null;
-    if(dependencyInfo(task).ready) return {key:'ready',label:'Ready to resume',action:'Review the results from linked tasks',rank:-1};
-    if(task.status==='blocked') return {key:'blocked',label:'Blocked',action:'Needs a decision',rank:0};
-    if(!task.owner) return {key:'unassigned',label:'No owner',action:'Assign an owner',rank:1};
-    if(task.dueDate && task.dueDate<dateKey()) return {key:'overdue',label:'Overdue',action:'Past its due date',rank:2};
-    if((task.handoffs||[]).some(item=>item.status==='pending'))return {key:'handoff',label:'Suggested follow-up',action:'Review linked work',rank:3};
-    if(task.followupAfter && task.followupAfter<=dateKey()) return {key:'followup',label:'Follow-up due',action:'Check in with the owner',rank:3};
-    if(task.followupAfter && task.followupAfter>dateKey()) return null;
-    if(!task.acceptedAt) return {key:'acceptance',label:'Acceptance pending',action:'Ask the owner to accept',rank:3};
-    if(!task.updatedAt || Date.now()-new Date(task.updatedAt).getTime()>=3*86400000) return {key:'stale',label:'No recent update',action:'Request an update',rank:3};
-    return null;
-  };
-  const attention = s => s.tasks.filter(t=>reason(t)).sort((a,b)=>reason(a).rank-reason(b).rank || (a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
+  const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks);
+  const attention = s => GatherPriorities.rank(s.tasks);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
   const completed = s => s.tasks.filter(t=>t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => task.completionReportedBy ? `${task.completionReportedBy} reported complete · recorded by ${member(task.completedBy).name}` : `Marked done by ${member(task.completedBy).name}`;
@@ -111,12 +98,13 @@
 
   function taskRow(task) {
     const done = task.status==='done';
+    const decision=ui.tab==='attention'&&isOrganizer()?GatherPriorities.decision(task,store.getState().tasks):null;
     return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}${dependencyInfo(task).ready?'<div class="dependency-ready-label">Ready to resume</div>':''}</td><td>${due(task)}</td>
       <td><div class="task-meta">${h(member(task.updatedBy).name.split(' ')[0])} · ${relative(task.updatedAt)}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
-      <td><button class="icon-button" data-action="task" data-id="${h(task.id)}" aria-label="Open ${h(task.title)}">${icon('arrow')}</button></td></tr>`;
+      <td><button class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${h(task.id)}" aria-label="${decision?'Review plan for':'Open'} ${h(task.title)}">${decision?'Review plan':icon('arrow')}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,compact=false) {
@@ -129,9 +117,10 @@
   function overview(s) {
     const needs=attention(s), done=completed(s), emails=pending(s);
     const progress=Math.round(done.length/Math.max(s.tasks.length,1)*100);
-    const days=Math.max(0,Math.ceil((new Date(s.event.date+'T00:00:00')-new Date(dateKey()+'T00:00:00'))/86400000));
+    const days=s.event.date?Math.max(0,Math.ceil((new Date(s.event.date+'T00:00:00')-new Date(dateKey()+'T00:00:00'))/86400000)):null;
     const suggestions=store.getSuggestions();
-    return pageHeading('', 'Overview', `${dayLabel(s.event.date)} · ${days} days until event`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton}`)+`
+    const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
+    return pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton}`)+setupNote+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
@@ -140,25 +129,34 @@
       </section>
       <div class="workspace-grid"><div class="stack">
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
-          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':isOrganizer()?'followup':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':isOrganizer()?'Draft follow-up':'Open task'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
+          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
-        <section class="ai-panel" id="thoughtPartner"><h2>Suggestions</h2>${suggestions.slice(0,2).map(insightMarkup).join('') || '<p>No suggestions.</p>'}<button class="text-button" data-action="thought-partner">All suggestions (${suggestions.length}) ${icon('arrow')}</button></section>
+        <section class="ai-panel" id="thoughtPartner"><h2>Suggestions</h2><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p>No suggestions.</p>'}</div><button class="text-button" data-action="thought-partner">All suggestions (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
         <section class="panel email-preview"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
       <section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
   }
 
   function filteredTasks(s) {
-    return s.tasks.filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
-  const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
+  const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
+  const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
+  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
+  function confirmFixedDate(taskId,data) {
+    const task=store.getState().tasks.find(t=>t.id===taskId);
+    if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;
+    if(!window.confirm('This task has a fixed external deadline. Has the vendor or external deadline also changed?'))return false;
+    data.confirmHardDeadline=true;return true;
+  }
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',addButton)+`
+      ${ui.tab==='mine'?recovery.nextUpPanel(s):''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div><label class="search-input">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Find a task or person…" aria-label="Search tasks"></label></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
@@ -192,11 +190,11 @@
       <label class="field full-width">Progress note<textarea name="note" rows="3" maxlength="3000">${h(p.note||'')}</textarea></label>${older?'<label class="check-field full-width"><input name="confirmConflict" type="checkbox" required> I reviewed the newer update and intend to apply this older message.</label>':''}</div><div class="form-actions"><button type="button" class="text-button" data-action="ignore-message" data-id="${h(m.id)}">Set aside · no task change</button><button class="btn btn-primary" type="submit" ${stale?'disabled':''}>Apply reviewed change ${icon('arrow')}</button></div><p class="muted">Recorded by ${h(member(ui.actor).name)}. Completion reports do not imply independent verification.</p></form>`}${conversation.length?`<div class="thread-context"><h3>Same conversation</h3>${conversation.map(item=>`<button class="text-button" data-action="source" data-id="${h(item.id)}">${h(item.subject)} · ${item.appliedTaskId?'Applied':item.ignoredAt?'Set aside':'Needs review'} ${icon('arrow')}</button>`).join('')}</div>`:''}</section>`;
   }
   function teamView(s) {
-    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invitation draft</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineView(s) {
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
-    return pageHeading('','Timeline','',addButton)+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'Unscheduled'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}<div class="timeline-day event-day"><div class="timeline-date"><strong>${dayLabel(s.event.date)}</strong></div><div class="timeline-tasks"><div class="timeline-task"><span class="eyebrow">EVENT DAY</span><strong>${h(s.event.name)}</strong><p>${h(s.event.location)} · 10:00 AM–4:00 PM</p></div></div></div></div></section>`;
+    return pageHeading('','Timeline','',addButton)+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'Unscheduled'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}<div class="timeline-day event-day"><div class="timeline-date"><strong>${s.event.date?dayLabel(s.event.date):'Date not set'}</strong></div><div class="timeline-tasks"><div class="timeline-task"><span class="eyebrow">EVENT DAY</span><strong>${h(s.event.name)}</strong><p>${h(s.event.location||'Location not set')}</p></div></div></div></div></section>`;
   }
   function updatesView(s) {
     return pageHeading('','Activity','',`<button class="btn btn-secondary" data-action="digest">${icon('copy')} Summary</button>`)+`<div class="workspace-grid"><section class="panel"><div class="panel-heading"><h2 class="section-title">Team activity</h2><span class="chip">${s.activity.length} updates</span></div><div class="activity-list">${s.activity.map(a=>activityItem(a)).join('')||empty('No activity yet.','')}</div></section><aside class="panel"><div class="panel-heading"><div><h2 class="section-title">Follow-up drafts</h2></div></div>${s.drafts.length?s.drafts.map(d=>`<article class="source-card"><span class="source-label">DRAFT · ${timeLabel(d.at)}</span><p>${h(d.text)}</p><div class="inline"><button class="text-button" data-action="copy-draft" data-id="${h(d.id)}">${icon('copy')} Copy draft</button><button class="text-button" data-action="task" data-id="${h(d.taskId)}">Open task</button></div></article>`).join(''):empty('No drafts.','Create a draft from a task. Messages are not sent automatically.')}</aside></div>`;
@@ -212,6 +210,8 @@
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const s=store.getState();
     $('.event-switcher strong').textContent=s.event.name;
+    $('.event-symbol').textContent=s.event.name.split(/\s+/).filter(Boolean).slice(0,2).map(word=>word[0]).join('').toUpperCase();
+    $$('.project-setup-link').forEach(link=>{link.hidden=!isOrganizer();});
     $('.breadcrumb > span').textContent=s.event.name;
     $('#taskNavCount').textContent=s.tasks.filter(t=>t.status!=='done').length;
     $('#inboxNavCount').textContent=pending(s).length;
@@ -221,7 +221,8 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
     const currentReview=$('#emailReviewForm');
     if(reviewDraft&&currentReview?.dataset.id===reviewDraft.id){
       for(const field of reviewDraft.fields){const input=currentReview.elements.namedItem(field.name);if(input){input.value=field.value;if(input.type==='checkbox')input.checked=field.checked;}}
@@ -260,6 +261,7 @@
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     ui.dialogKind=kind;
+    $('#dialogBackdrop').dataset.dialogKind=kind;
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
     $('#dialog').innerHTML=`<div class="dialog-header"><h2 id="dialogTitle">${h(title)}</h2><button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
@@ -271,12 +273,14 @@
   function closeDialog() {
     $('#dialogBackdrop').hidden=true;
     $('#dialogBackdrop').classList.remove('open');
+    delete $('#dialogBackdrop').dataset.dialogKind;
     $('#appShell').inert=false;
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
+    if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
@@ -327,6 +331,7 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked})));
   }
+  function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
   function taskDialog(id,submittedForm='') {
     const task=store.getState().tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
@@ -341,23 +346,36 @@
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
+      ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}">Verify completion</button>`:''}</div>`:''}
+      ${recovery.recoveryMarkup(task,organizer)}
       ${dependencyMarkup(task)}
       ${handoffMarkup(task)}
-      ${own&&task.status!=='done'?`<section class="task-report section-gap"><h3>Your update</h3><form id="responseForm" data-id="${h(id)}"><label class="field"><span class="sr-only">What happened or what is blocking you?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="What’s finished? What’s blocking you?"></textarea></label><div class="task-report-actions"><button class="btn btn-primary" type="submit" name="response" value="completed" ${awaiting?'disabled':''}>Report complete</button><button class="btn btn-secondary" type="submit" name="response" value="blocked">Report blocked</button><button class="text-button" type="submit" name="response" value="progress">Share progress</button></div></form><p class="muted">${awaiting?'Reporting a blocker or new progress replaces your pending completion report.':task.requiresVerification?'Your completion report will wait for organizer verification.':'Reporting complete marks this task done and records your name.'}</p>${!task.acceptedAt?`<button class="text-button" data-action="accept-task" data-id="${h(id)}">Accept responsibility</button>`:''}</section>`:!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
+      ${own&&task.status!=='done'?recovery.responseMarkup(task,awaiting):!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
+      ${window.GatherResourcesUI?.markup()||''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
+      ${priorityMarkup(task,organizer)}
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${statusOptions(task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
     if(sameTask){
       for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
       requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
+    syncRecoveryForms();
+    const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
+    if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
+    window.GatherResourcesUI?.mount(id,$('#dialog'));
+  }
+  function syncRecoveryForms() {
+    const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
+    if(response)recovery.syncResponse(response);
+    if(decision)recovery.syncDecision(decision);
   }
   function newTaskDialog() {
-    openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
+    openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
   }
   function followupDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
@@ -380,7 +398,29 @@
   }
   function thoughtDialog() {
     const suggestions=store.getSuggestions();
-    openDialog('Suggestions',`<div class="notice">Rule-based suggestions from tasks and feedback. No AI or RSVP service connected.</div><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    openDialog('Suggestions',`<details class="suggestion-details"><summary>How suggestions update</summary><p>Rule-based checks refresh as tasks, deadlines, event details, and feedback change. No AI or RSVP service is connected.</p></details><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap" id="suggestionList">${suggestions.map(insightMarkup).join('')||empty('No suggestions.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    if(store.refresh)queueMicrotask(()=>refreshInbox());
+  }
+  function refreshSuggestionSurfaces() {
+    const suggestions=store.getSuggestions();
+    $('#aiNavCount').textContent=suggestions.length;
+    $$('[data-suggestion-count]').forEach(node=>{node.textContent=suggestions.length;});
+    const active=document.activeElement,scroll=$('#dialog').scrollTop;
+    let replacedFocus=false;
+    for(const [selector,items,emptyMarkup] of [['#overviewSuggestions',suggestions.slice(0,2),'<p>No suggestions.</p>'],['#suggestionList',suggestions,empty('No suggestions.','')]]){
+      const target=$(selector);if(!target)continue;
+      const markup=items.map(insightMarkup).join('')||emptyMarkup;
+      const content=document.createElement('template');content.innerHTML=markup;
+      // Unchanged checks retain their DOM, keyboard focus and scroll position.
+      if(target.innerHTML===content.innerHTML)continue;
+      replacedFocus ||= target.contains(active);
+      target.replaceChildren(content.content);
+    }
+    if(replacedFocus&&!restoreFocus(active,ui.dialogKind==='thought'?$('#dialog'):$('#viewRoot'))){
+      const fallback=ui.dialogKind==='thought'?$('#dialog [data-action="event-context"]'):$('#thoughtPartner [data-action="thought-partner"]');
+      fallback?.focus({preventScroll:true});
+    }
+    if(ui.dialogKind==='thought')$('#dialog').scrollTop=scroll;
   }
   function pasteDialog() {
     const threads=[...new Map(store.getState().messages.map(m=>[m.threadId,[m.threadId,m.subject]])).values()];
@@ -448,6 +488,7 @@
     openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until Jack confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}"><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`);
   }
   function contextDialog() {
+    if(window.GatherMode&&!window.GatherMode.demo&&isOrganizer()){window.top.location.href=window.GatherMode.projectUrl('/setup');return;}
     if(!isOrganizer()){const e=store.getState().event;openDialog('Event details',`<h3>${h(e.name)}</h3><p>${h(e.location)} · ${dayLabel(e.date)}</p><p>${e.guestCount} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;}
     const e=store.getState().event;openDialog('Event details',`<form id="contextForm"><div class="form-grid"><label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">${isOrganizer()?'Update event context':'Event details'}</button></div></form>`);
   }
@@ -527,7 +568,7 @@
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
       if(action==='dismiss-insight'){store.dismissSuggestion(id);render();if(ui.dialogKind==='thought')thoughtDialog();toast('Suggestion dismissed for this plan.');}
       if(action==='event-info')contextDialog();
-      if(action==='invite'){const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Team invitations are a draft in this local prototype. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
+      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){window.top.location.href=window.GatherMode.projectUrl('/team');return;}const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Gather workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='gather-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}
@@ -545,11 +586,15 @@
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
-      if(form.id==='taskDetailForm'){store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
+      if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
+      if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
         if(ui.savingProposal)return;
+        if(data.mode==='update'&&!confirmFixedDate(data.taskId,data))return;
         ui.savingProposal=true;const button=$('button[type="submit"]',form);button.disabled=true;button.textContent='Saving…';
         try{const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
         finally{ui.savingProposal=false;}
@@ -558,7 +603,7 @@
       if(form.id==='feedbackForm'){store.addMemory({...data,rating:Number(data.rating)},ui.actor);closeDialog();render();thoughtDialog();toast('Feedback saved.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
       if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
-      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
+      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
       if(form.id==='contextForm'){store.updateEvent(data,ui.actor);closeDialog();render();thoughtDialog();toast('Event details saved.');}
       if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);closeDialog();render();toast('Feedback updated.');}
       if(form.id==='recordFollowupForm'){store.recordFollowup(form.dataset.id,data.afterDate,ui.actor);closeDialog();render();toast('Follow-up recorded.');}
@@ -581,6 +626,9 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
+    if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
+    if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
+    if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(el.id==='actorSelect'){if(window.GatherMode?.demo){window.top.location.href='/demo?as='+encodeURIComponent(el.value);return;}lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
     if(el.id==='ownerFilter'){ui.owner=el.value;renderTaskRows();}
@@ -598,7 +646,7 @@
     }
   });
   function renderTaskRows() {
-    const tasks=filteredTasks(store.getState());
+    const s=store.getState(),tasks=filteredTasks(s);
     $('#taskRows').innerHTML=tasks.map(taskRow).join('');
     $('#taskEmpty').hidden=!!tasks.length;
     $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;
@@ -627,9 +675,15 @@
   $('#mobileOverlay').addEventListener('click',()=>setDrawer(false));
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
-  window.addEventListener('beforeunload',event=>{if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();});
-  if(window.GatherMode?.demo&&!isOrganizer())ui.tab='mine';
+  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
+  let attentionDay=dateKey();
+  function refreshAttentionDate() {
+    if(window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
+    attentionDay=dateKey();render();
+  }
+  setInterval(refreshAttentionDate,60000);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
+  if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
   navigate(location.hash.slice(1)||'overview');
 })();

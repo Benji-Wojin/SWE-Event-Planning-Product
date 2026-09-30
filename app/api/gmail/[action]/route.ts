@@ -20,6 +20,8 @@ import {
   tokenRequest,
 } from '@/lib/gmail';
 import { loadWorkspace, mutateWorkspace } from '@/lib/workspace';
+import { projectScope } from '@/lib/projects';
+import { finishSenderOAuth, senderConnection } from '@/lib/invitation-sender';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   return safe(async () => {
@@ -37,6 +39,7 @@ export async function GET(request: Request) {
         lastSync: conn?.lastSync || '',
         hasMore: !!conn?.pageToken,
         redirectUri: redirectUri(),
+        senderConnected: !!(await senderConnection(user.userId)),
       });
     }
     if (action === 'labels') {
@@ -48,12 +51,13 @@ export async function GET(request: Request) {
       });
     }
     if (action === 'messages') {
+      const projectId = await projectScope(user, request);
       const rows = await env.DB.prepare(
         'SELECT id,payload FROM mail_messages WHERE user_id=? ORDER BY received_at DESC LIMIT 100',
       )
         .bind(user.userId)
         .all<any>();
-      const { store } = await loadWorkspace(user);
+      const { store } = await loadWorkspace(user, projectId);
       const state = store.getState(), shared = state.messages;
       const imported = await Promise.all(rows.results.map(async (row) => {
         const original = await unseal(row.payload, 'mail:' + row.id);
@@ -62,6 +66,7 @@ export async function GET(request: Request) {
         return { ...original, id: row.id, reviewed: !!linked, sharedMessageId: linked?.id || '', taskId: state.tasks.some((t: any) => t.id === taskId) ? taskId : '', threadKey: JSON.stringify([original.mailbox || '', original.threadId || row.id]) };
       }));
       return json({
+        projectName: state.event.name || 'Untitled project',
         tasks: state.tasks.map((t: any) => ({ id: t.id, title: t.title })),
         messages: imported.map((m: any) => {
           const known = [...new Set(imported.filter((other: any) => other.threadKey === m.threadKey && other.taskId).map((other: any) => other.taskId))];
@@ -79,6 +84,7 @@ export async function GET(request: Request) {
     }
     if (action === 'callback') {
       const state = url.searchParams.get('state');
+      if (state?.startsWith('send_')) return finishSenderOAuth(user, url);
       if (!state)
         throw new HttpError(400, 'Missing Google authorization state.');
       const saved = await env.DB.prepare(
@@ -111,6 +117,8 @@ export async function GET(request: Request) {
       const config = await configuration();
       if (!config) throw new HttpError(409, 'OAuth configuration is missing.');
       const secret = await unseal(saved.payload, 'oauth:' + state);
+      if (secret.configPayload !== config.storedPayload)
+        throw new HttpError(409, 'The Gmail client changed. Start authorization again.');
       const token = await tokenRequest({
         client_id: config.clientId,
         client_secret: config.clientSecret,
@@ -136,6 +144,9 @@ export async function GET(request: Request) {
       const profile = await gmailWithToken(token.access_token, 'profile');
       if (typeof profile.emailAddress !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(profile.emailAddress))
         throw new HttpError(502, 'Google could not confirm the Gmail account. Start again in Gmail settings.');
+      const sender = await senderConnection(user.userId);
+      if (sender?.email.toLowerCase() === profile.emailAddress.toLowerCase())
+        throw new HttpError(409, 'The invitation sender must stay separate. Choose another Gmail account for imports.');
       const generation = crypto.randomUUID();
       const payload = await seal(
         {
@@ -151,8 +162,8 @@ export async function GET(request: Request) {
       );
       const savedConnection = await env.DB.batch([
         env.DB.prepare(
-          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
-        ).bind(payload, generation, state, user.userId, Date.now()),
+          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) AND COALESCE((SELECT payload FROM gmail_senders WHERE user_id=?),\'\')=? ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
+        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload, user.userId, sender?.storedPayload || ''),
         env.DB.prepare(
           'DELETE FROM oauth_states WHERE id=? AND user_id=?',
         ).bind(state, user.userId),
@@ -188,25 +199,27 @@ export async function POST(request: Request) {
           400,
           'Enter a valid Google Web application client ID and client secret.',
         );
-      if (await connection(user.userId))
+      if (await connection(user.userId) || await senderConnection(user.userId))
         throw new HttpError(
           409,
-          'Disconnect Gmail before replacing the OAuth client.',
+          'Disconnect Gmail imports and the invitation sender before replacing the Google client.',
         );
-      await env.DB.prepare(
-        'INSERT INTO settings (id,payload) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',
-      )
-        .bind(
-          'google-oauth',
-          await seal({ clientId, clientSecret }, 'google-oauth'),
-        )
-        .run();
+      const payload = await seal({ clientId, clientSecret }, 'google-oauth');
+      const saved = await env.DB.batch([
+        env.DB.prepare('INSERT INTO settings (id,payload) SELECT ?,? WHERE NOT EXISTS (SELECT 1 FROM gmail_connections) AND NOT EXISTS (SELECT 1 FROM gmail_senders) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload')
+          .bind('google-oauth', payload),
+        env.DB.prepare('DELETE FROM oauth_states WHERE EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?)').bind('google-oauth', payload),
+        env.DB.prepare('DELETE FROM sender_oauth_states WHERE EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?)').bind('google-oauth', payload),
+      ]);
+      if (saved[0].meta.changes !== 1) throw new HttpError(409, 'Gmail connected while settings were changing. Disconnect it before replacing the client.');
       return json({ saved: true });
     }
     if (action === 'connect')
       return json({ url: await beginOAuth(user.userId) });
     if (action === 'label') {
       const labelId = String(data.labelId || '');
+      const starting = await connection(user.userId);
+      if (!starting) throw new HttpError(409, 'Connect Gmail first.');
       const labels = await gmail(user.userId, 'labels');
       if (
         !labels.labels.some((l: any) => l.id === labelId && l.type === 'user')
@@ -216,6 +229,8 @@ export async function POST(request: Request) {
           'Choose a project label from this Gmail account.',
         );
       const conn = await connection(user.userId);
+      if (!conn || conn.generation !== starting.generation || conn.email !== starting.email)
+        throw new HttpError(409, 'Your Gmail account changed. Reload its labels and try again.');
       await saveConnection(
         user.userId,
         { ...conn, labelId, pageToken: '', lastSync: '' },
@@ -336,7 +351,8 @@ export async function POST(request: Request) {
         Array.from(new Uint8Array(hash))
           .map((x) => x.toString(16).padStart(2, '0'))
           .join('');
-      const { row: workspaceRow, store } = await loadWorkspace(user);
+      const projectId = await projectScope(user, request);
+      const { row: workspaceRow, store } = await loadWorkspace(user, projectId);
       const existing = store.getState().messages.find((message: any) => message.externalId === 'review:' + row.id);
       if (existing) {
         if (existing.subject !== subject || existing.body !== summary || (existing.linkedTaskId || '') !== String(data.taskId || ''))
@@ -357,7 +373,7 @@ export async function POST(request: Request) {
           },
         ],
         revision: workspaceRow.revision,
-      });
+      }, projectId);
       return json({ saved: true, id: (result.result as any).id });
     }
     if (action === 'disconnect') {

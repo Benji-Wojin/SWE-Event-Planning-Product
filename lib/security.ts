@@ -44,10 +44,10 @@ export function guard(request: Request) {
       'Request verification failed. Reload Gather and try again.',
     );
 }
-export async function body(request: Request) {
+export async function body(request: Request, limit = 50000) {
   guard(request);
   const raw = await request.text();
-  if (raw.length > 50000) throw new HttpError(413, 'This update is too large.');
+  if (raw.length > limit) throw new HttpError(413, 'This update is too large.');
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -64,7 +64,9 @@ export function nonce(length = 32) {
     .replace(/=/g, '');
 }
 function base64(value: Uint8Array) {
-  return btoa(String.fromCharCode(...value));
+  let text='';
+  for(let i=0;i<value.length;i+=16384)text+=String.fromCharCode(...value.subarray(i,i+16384));
+  return btoa(text);
 }
 function bytes(value: string) {
   return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
@@ -105,6 +107,14 @@ export async function unseal(value: string, context: string): Promise<any> {
     ),
   );
 }
+export async function sealFile(value: ArrayBuffer, context: string) {
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode(context)},await key(),value);
+  const result=new Uint8Array(12+encrypted.byteLength);result.set(iv);result.set(new Uint8Array(encrypted),12);return result;
+}
+export async function unsealFile(value: ArrayBuffer, context: string) {
+  return crypto.subtle.decrypt({name:'AES-GCM',iv:value.slice(0,12),additionalData:new TextEncoder().encode(context)},await key(),value.slice(12));
+}
 export async function principal() {
   const user = await getChatGPTUser();
   if (!user) throw new HttpError(401, 'Sign in to Gather to continue.');
@@ -119,7 +129,7 @@ export async function principal() {
     if (!owner)
       throw new HttpError(
         403,
-        'This private workspace is currently available only to its owner.',
+        'Open an invitation from your organizer to join a project.',
       );
     await env.DB.prepare(
       'INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)',

@@ -11,8 +11,9 @@ import {
 export async function gmailRequest(
   action: string,
   body?: unknown,
+  projectId?: string,
 ): Promise<any> {
-  const response = await fetch('/api/gmail/' + action, {
+  const response = await fetch('/api/gmail/' + action + (projectId !== undefined ? '?project=' + encodeURIComponent(projectId) : ''), {
     method: body ? 'POST' : 'GET',
     headers: body
       ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
@@ -26,7 +27,7 @@ export async function gmailRequest(
   if (!response.ok) throw new Error(data.error || 'Gmail request failed.');
   return data;
 }
-export function GmailSettings() {
+export function GmailSettings({ projectId }: { projectId?: string }) {
   const pending = useRef(false);
   const [status, setStatus] = useState<any>(null),
     [labels, setLabels] = useState<any[]>([]),
@@ -80,6 +81,7 @@ export function GmailSettings() {
       {loadFailed && <Button variant="outline" disabled={busy} onClick={() => void run(async () => {
         await refresh();
       })}>Retry connection check</Button>}
+      <a className="inline-block text-sm underline" href={'/team?project=' + encodeURIComponent(projectId || 'main')}>Invitation sender settings</a>
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
@@ -104,8 +106,8 @@ export function GmailSettings() {
             </li>
             <li>
               In Google Auth Platform, set the audience to External / Testing
-              and add your Gmail account as a test user. Add the Gmail read-only
-              scope.
+              and add the Gmail accounts you will connect as test users. For imports, add gmail.readonly.
+              For invitations, add gmail.send, openid and email. Each connection requests only its own access.
             </li>
             <li>
               Create an OAuth client of type <strong>Web application</strong>.
@@ -116,12 +118,12 @@ export function GmailSettings() {
             {status?.redirectUri || 'Loading your private site address…'}
           </code>
           <p className="text-sm text-muted-foreground">
-            Read-only authorization covers mailbox reading; the project label
+            Read-only authorization covers mailbox reading; your import label
             restricts what Gather imports, not what Google technically permits.
             Testing-mode access may expire after seven days and need
             reconnecting.
           </p>
-          {!status?.connected ? (
+          {!status?.connected && !status?.senderConnected ? (
             <form
               className="space-y-4"
               onSubmit={(event) => {
@@ -183,7 +185,7 @@ export function GmailSettings() {
           <p>
             {status?.connected
               ? `Connected account: ${status.account}`
-              : 'Sign in to Google and approve read-only access. Gather never sends email or changes your mailbox.'}
+              : 'Sign in to Google and approve read-only import access. This connection cannot send email or change your mailbox. Invitation sending is connected separately in Team access.'}
           </p>
           <Button
             disabled={busy || !status?.configured}
@@ -209,10 +211,11 @@ export function GmailSettings() {
           <CardContent className="space-y-5 text-base">
             <p>
               Create a Gmail label and apply it to messages you want to import.
+              {' '}This import setting applies across all your projects.
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-2">
-                <Label htmlFor="project-label">Project label</Label>
+                <Label htmlFor="project-label">Gmail import label (account-wide)</Label>
                 <NativeSelect
                   id="project-label"
                   value={label}
@@ -285,8 +288,8 @@ export function GmailSettings() {
                   Load next 20
                 </Button>
               )}
-              <a className="rounded-lg border px-3 py-2 text-sm" href="/mail">
-                Private inbox →
+              <a className="rounded-lg border px-3 py-2 text-sm" href={projectId ? '/mail?project=' + encodeURIComponent(projectId) : '/'}>
+                {projectId ? 'Private Gmail imports' : 'Choose a project for imports'}
               </a>
             </div>
             <p className="text-sm text-muted-foreground">
