@@ -43,6 +43,13 @@
       "when": 1790787364717,
       "tag": "0005_nostalgic_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790788552388,
+      "tag": "0006_beta_reports",
+      "breakpoints": true
     }
   ]
 }

@@ -69,7 +69,8 @@
 }
 
 @media (max-width: 560px) {
-  .projects-header { padding-inline: 14px; }
+  .projects-header { padding-inline: 14px; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .projects-header-actions { justify-content: flex-start; }
   .projects-main { width: calc(100% - 28px); padding: 28px 0 48px; }
   .projects-title-row h1, .project-create-heading h1 { font-size: 25px; }
   .projects-grid { grid-template-columns: 1fr; }

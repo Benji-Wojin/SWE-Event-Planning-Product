@@ -49,6 +49,7 @@ export function ProjectsHome({
         </a>
         <div className="projects-header-actions">
           <ThemeToggle />
+          <a className="projects-account-link" href="/feedback">Feedback</a>
           {canCreate && <a className="projects-account-link" href="/demo">Demo</a>}
           <a className="projects-account-link" href={accountHref}>Account</a>
         </div>

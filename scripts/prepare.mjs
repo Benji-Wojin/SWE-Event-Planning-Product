@@ -29,6 +29,7 @@ html = html.replace(
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
 writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
 writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));

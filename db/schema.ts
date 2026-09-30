@@ -5,6 +5,12 @@ import {
   index,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
+export const betaReports = sqliteTable('beta_reports', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull(),
+  payload: text('payload').notNull(),
+  createdAt: text('created_at').notNull(),
+}, table => [index('beta_reports_user_date').on(table.userId, table.createdAt)]);
 export const workspaces = sqliteTable('workspaces', {
   id: text('id').primaryKey(),
   data: text('data').notNull(),
