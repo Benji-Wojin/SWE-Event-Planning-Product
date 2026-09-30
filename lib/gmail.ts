@@ -5,7 +5,7 @@ export async function configuration() {
   const row = await env.DB.prepare('SELECT payload FROM settings WHERE id=?')
     .bind('google-oauth')
     .first<any>();
-  return row ? await unseal(row.payload, 'google-oauth') : null;
+  return row ? { ...(await unseal(row.payload, 'google-oauth')), storedPayload: row.payload } : null;
 }
 export async function connection(userId: string) {
   const row = await env.DB.prepare(
@@ -122,7 +122,7 @@ export async function beginOAuth(userId: string) {
     .bind(
       state,
       userId,
-      await seal({ verifier }, 'oauth:' + state),
+      await seal({ verifier, configPayload: config.storedPayload }, 'oauth:' + state),
       Date.now() + 10 * 60000,
     )
     .run();

@@ -4,7 +4,7 @@ import { HttpError, principal } from './security';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
-  return api.createStore({
+  const store = api.createStore({
     storage: {
       getItem: (key: string) => (key === api.STORAGE_KEY ? raw : null),
       setItem: (_key: string, value: string) => {
@@ -12,22 +12,36 @@ export function model(data?: string) {
       },
     },
   });
+  if (data && store.getState().persistence !== 'saved')
+    throw new HttpError(503, 'The saved project could not be loaded. Your data has not been replaced.');
+  return store;
+}
+export function freshWorkspace(user: Awaited<ReturnType<typeof principal>>) {
+  return model(JSON.stringify({
+    version: 3,
+    event: { name: '', date: '', location: '', outdoor: false, transportNeeded: false,
+      guestCount: 0, dietaryOutstanding: 0, cateringDeadline: '', setupCompletedAt: '' },
+    members: [{ id: user.actorId, name: user.displayName, initials: '', role: 'Organizer', color: 'peach' }],
+    tasks: [], messages: [], activity: [], memories: [], drafts: [], dismissed: [],
+  }));
 }
 export async function loadWorkspace(
   user: Awaited<ReturnType<typeof principal>>,
+  projectId = 'main',
 ) {
   let row = await env.DB.prepare('SELECT * FROM workspaces WHERE id=?')
-    .bind('main')
+    .bind(projectId)
     .first<any>();
   if (!row) {
-    const seed = model();
+    if (projectId !== 'main') throw new HttpError(404, 'Project not found.');
+    const seed = freshWorkspace(user);
     await env.DB.prepare(
       'INSERT OR IGNORE INTO workspaces (id,data,revision) VALUES (?,?,1)',
     )
-      .bind('main', seed.exportState())
+      .bind(projectId, seed.exportState())
       .run();
     row = await env.DB.prepare('SELECT * FROM workspaces WHERE id=?')
-      .bind('main')
+      .bind(projectId)
       .first<any>();
   }
   const state = JSON.parse(row.data);
@@ -59,6 +73,7 @@ export function snapshot(
     state,
     exportState: JSON.parse(store.exportState()),
     suggestions: store.getSuggestions(),
+    setupRequired: state.event.setupCompletedAt === '',
     revision,
     identity: {
       actorId: user.actorId,
@@ -69,6 +84,11 @@ export function snapshot(
   };
 }
 const arity: Record<string, number> = {
+  completeSetup: 1,
+  setNextUp: 2,
+  requestRecovery: 2,
+  resolveRecovery: 2,
+  setTaskPriority: 2,
   resolveHandoff: 3,
   addDependency: 2,
   removeDependency: 2,
@@ -100,13 +120,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin' && !['claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
+  if (user.role !== 'admin' && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
   const [a, b, c] = input.args;
-  if (user.role !== 'admin' && ['acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
+  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
     if (method === 'resolveHandoff' && c?.action === 'create' && c.owner && c.owner !== user.actorId)
@@ -119,6 +139,21 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   let result;
   try {
     switch (method) {
+      case 'completeSetup':
+        result = store.completeSetup(a, user.actorId);
+        break;
+      case 'setNextUp':
+        result = store.setNextUp(a, b, user.actorId);
+        break;
+      case 'requestRecovery':
+        result = store.requestRecovery(a, b, user.actorId);
+        break;
+      case 'resolveRecovery':
+        result = store.resolveRecovery(a, b, user.actorId);
+        break;
+      case 'setTaskPriority':
+        result = store.setTaskPriority(a, b, user.actorId);
+        break;
       case 'resolveHandoff':
         result = store.resolveHandoff(a, b, c, user.actorId);
         break;
@@ -197,8 +232,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
 export async function mutateWorkspace(
   user: Awaited<ReturnType<typeof principal>>,
   input: any,
+  projectId = 'main',
 ) {
-  const { row, store } = await loadWorkspace(user);
+  const { row, store } = await loadWorkspace(user, projectId);
   if (Object.keys(input).some(key => !['method', 'args', 'revision'].includes(key)))
     throw new HttpError(400, 'Unsupported workspace request field.');
   if (input.revision !== row.revision)
@@ -213,7 +249,7 @@ export async function mutateWorkspace(
   const write = await env.DB.prepare(
     'UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?',
   )
-    .bind(serialized, 'main', row.revision)
+    .bind(serialized, projectId, row.revision)
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

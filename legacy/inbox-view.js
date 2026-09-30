@@ -4,7 +4,7 @@
     const selected=active?.messages.find(m=>m.id===ui.messageId)||active?.pending[0]||active?.latest;
     ui.messageId=selected?.id||'';ui.conversationKey=active?.key||'';
     return pageHeading('','Email briefing','',isOrganizer()?`<button class="btn btn-primary" data-action="paste-email">${icon('plus')} Add email</button>`:'')+`
-      <div class="briefing-tools"><span>${groups.filter(g=>g.pending.length).length} tasks need review</span><button class="text-button" data-action="refresh-inbox">Refresh</button>${isOrganizer()?`<details><summary>Sources & setup</summary><div class="inline">${window.GatherMode?.demo?'<button class="text-button" data-action="demo-email">Demo email setup</button>':'<a class="text-button" href="/mail" target="_top">Private Gmail imports</a>'}<button class="text-button" data-action="sample-reply" data-step="pending">Sample: deposit pending</button><button class="text-button" data-action="sample-reply" data-step="confirmed">Sample: booking confirmed</button></div></details>`:''}</div>
+      <div class="briefing-tools"><span>${groups.filter(g=>g.pending.length).length} tasks need review</span><button class="text-button" data-action="refresh-inbox">Refresh</button>${isOrganizer()?`<details><summary>Sources & setup</summary><div class="inline">${window.GatherMode?.demo?'<button class="text-button" data-action="demo-email">Demo email setup</button><button class="text-button" data-action="sample-reply" data-step="pending">Sample: deposit pending</button><button class="text-button" data-action="sample-reply" data-step="confirmed">Sample: booking confirmed</button>':'<a class="text-button" href="'+h(window.GatherMode?.projectUrl?.('/mail') || '/mail')+'" target="_top">Private Gmail imports</a>'}</div></details>`:''}</div>
       <div id="inboxSyncNotice" class="notice" role="status" hidden></div>
       <div class="briefing-feed section-gap">${groups.map(g=>{
         const expanded=g.key===active?.key,b=GatherInbox.briefing(g,s,expanded?selected:undefined),m=b.message;
@@ -76,14 +76,19 @@
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
   async function refreshInbox(manual=false) {
-    if(!store.refresh||ui.syncing||ui.pendingSave||document.hidden||ui.view==='details')return;
+    if(!store.refresh||ui.syncing||ui.pendingSave||document.hidden)return;
     ui.syncing=true;
     try {
-      const result=await store.refresh(()=>!ui.reviewDirty&&$('#dialogBackdrop').hidden&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
-      if(result.changed){render();if(manual)toast('Plan updated.');}
+      const result=await store.refresh(()=>!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&($('#dialogBackdrop').hidden||ui.dialogKind==='thought')&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
+      if(result.changed){
+        // Private-record screens have their own viewing/locking lifecycle.
+        if(ui.view!=='details')render();
+        if(ui.dialogKind==='thought')$('#dialogStaleNotice')?.remove();
+      }
+      if(result.changed||result.suggestionsChanged){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!result.pending;
       if(result.pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
-      else if(manual&&!result.changed)toast('You have the latest updates.');
+      else if(manual&&!result.changed&&!result.suggestionsChanged)toast('You have the latest updates.');
     } catch(error) {if(manual)toast(error.message);}
     finally {ui.syncing=false;}
   }
