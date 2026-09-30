@@ -6,6 +6,9 @@ export const dynamic = 'force-dynamic';
 export default async function Setup({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : undefined;
+  return <SignedInSetup projectId={projectId}/>;
+}
+async function SignedInSetup({projectId}:{projectId?:string}) {
   await requireChatGPTUser('/setup' + (projectId ? '?project=' + encodeURIComponent(projectId) : ''));
   return <main className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-8 sm:py-12">
     <header className="mb-10 flex flex-wrap items-center justify-between gap-4">

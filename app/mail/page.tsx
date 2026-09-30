@@ -5,6 +5,9 @@ export const dynamic = 'force-dynamic';
 export default async function Mail({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : undefined;
+  return <SignedInMail projectId={projectId}/>;
+}
+async function SignedInMail({projectId}:{projectId?:string}) {
   const query = projectId !== undefined ? '?project=' + encodeURIComponent(projectId) : '';
   await requireChatGPTUser('/mail' + query);
   return (

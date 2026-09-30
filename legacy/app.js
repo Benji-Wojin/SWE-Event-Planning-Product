@@ -69,7 +69,7 @@
   function confirmDiscard(...roots) {
     return !roots.some(root=>hasUnsavedFields(root))||window.confirm('Discard your unsaved changes?');
   }
-  const unsavedDialog=()=>!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
+  const unsavedDialog=()=>!!$('#dialogBackdrop')&&!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
   const unsavedReview=()=>hasUnsavedFields($('#emailReviewForm'));
   const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   const dayLabel = value => !value ? 'No due date' : new Date(value+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
@@ -143,7 +143,7 @@
     return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
-  const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.map(p=>[p.id,p.name])],value);
+  const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
@@ -190,7 +190,7 @@
       <label class="field full-width">Progress note<textarea name="note" rows="3" maxlength="3000">${h(p.note||'')}</textarea></label>${older?'<label class="check-field full-width"><input name="confirmConflict" type="checkbox" required> I reviewed the newer update and intend to apply this older message.</label>':''}</div><div class="form-actions"><button type="button" class="text-button" data-action="ignore-message" data-id="${h(m.id)}">Set aside · no task change</button><button class="btn btn-primary" type="submit" ${stale?'disabled':''}>Apply reviewed change ${icon('arrow')}</button></div><p class="muted">Recorded by ${h(member(ui.actor).name)}. Completion reports do not imply independent verification.</p></form>`}${conversation.length?`<div class="thread-context"><h3>Same conversation</h3>${conversation.map(item=>`<button class="text-button" data-action="source" data-id="${h(item.id)}">${h(item.subject)} · ${item.appliedTaskId?'Applied':item.ignoredAt?'Set aside':'Needs review'} ${icon('arrow')}</button>`).join('')}</div>`:''}</section>`;
   }
   function teamView(s) {
-    return pageHeading('','People','',`<button class="btn btn-secondary" data-action="invite">${icon('plus')} Invitation draft</button>`)+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineView(s) {
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -568,7 +568,7 @@
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
       if(action==='dismiss-insight'){store.dismissSuggestion(id);render();if(ui.dialogKind==='thought')thoughtDialog();toast('Suggestion dismissed for this plan.');}
       if(action==='event-info')contextDialog();
-      if(action==='invite'){const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Team invitations are a draft in this local prototype. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
+      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){window.top.location.href=window.GatherMode.projectUrl('/team');return;}const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Gather workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='gather-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}
@@ -675,15 +675,15 @@
   $('#mobileOverlay').addEventListener('click',()=>setDrawer(false));
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
-  window.addEventListener('beforeunload',event=>{if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshAttentionDate() {
-    if(document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
+    if(window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
     attentionDay=dateKey();render();
   }
   setInterval(refreshAttentionDate,60000);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
-  if(window.GatherMode?.demo&&!isOrganizer())ui.tab='mine';
+  if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
   navigate(location.hash.slice(1)||'overview');
 })();

@@ -23,6 +23,28 @@ export const members = sqliteTable('members', {
   name: text('name').notNull(),
   role: text('role').notNull(),
 });
+export const projectMembers = sqliteTable('project_members', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  userId: text('user_id').notNull(),
+  actorId: text('actor_id').notNull(),
+  inviteId: text('invite_id').notNull(),
+  joinedAt: text('joined_at').notNull(),
+  revokedAt: text('revoked_at').notNull().default(''),
+  revision: integer('revision').notNull().default(1),
+}, t => [uniqueIndex('project_member_user').on(t.projectId,t.userId),uniqueIndex('project_member_actor').on(t.projectId,t.actorId),index('project_members_user').on(t.userId,t.revokedAt)]);
+export const projectInvites = sqliteTable('project_invites', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  email: text('email').notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  payload: text('payload').notNull(),
+  createdBy: text('created_by').notNull(),
+  createdAt: text('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  acceptedBy: text('accepted_by').notNull().default(''),
+  revokedAt: text('revoked_at').notNull().default(''),
+}, t => [index('project_invites_project').on(t.projectId,t.createdAt)]);
 export const projectInfo = sqliteTable('project_info', {
   scope: text('scope').primaryKey(),
   payload: text('payload').notNull(),

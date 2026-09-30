@@ -10,7 +10,7 @@ import {
   unsealFile,
 } from './security';
 import { demoPersona, loadDemo } from './demo';
-import { projectScope } from './projects';
+import { projectUser, assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
 
 const guests = (globalThis as any).GatherGuests;
 const MAX_FILE = 5 * 1024 * 1024,
@@ -23,6 +23,7 @@ type Context = {
   admin: boolean;
   demoId: string;
   generation: string;
+  authorization?: ProjectUser;
 };
 type Info = { guests: any[]; files: any[]; receipts: any[] };
 export async function infoContext(request: Request): Promise<Context> {
@@ -42,9 +43,10 @@ export async function infoContext(request: Request): Promise<Context> {
       generation: state.demoGeneration,
     };
   }
-  const user = await principal();
+  const user = await projectUser(await principal(),request);
   return {
-    scope: await projectScope(user, request),
+    scope: user.projectId,
+    authorization: user,
     userId: user.userId,
     actor: user.actorId,
     name: user.displayName,
@@ -92,6 +94,7 @@ function initial(context: Context): Info {
   };
 }
 async function load(context: Context) {
+  await assertProjectAccess(context.authorization);
   let row = await env.DB.prepare(
     'SELECT payload,revision FROM project_info WHERE scope=?',
   )
@@ -135,6 +138,7 @@ export function infoSnapshot(context: Context, state: Info, revision: number) {
 }
 export async function readInfo(context: Context) {
   const { state, revision } = await load(context);
+  await assertProjectAccess(context.authorization);
   return infoSnapshot(context, state, revision);
 }
 function keys(value: any, allowed: string[]) {
@@ -202,7 +206,8 @@ async function save(
     );
   const result =
     await env.DB.prepare(`UPDATE project_info SET payload=?,revision=revision+1 WHERE scope=? AND revision=?
-    AND (?='' OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?))`)
+    AND (?='' OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?))
+    AND ${context.authorization ? projectWriteAccess : '1'}`)
       .bind(
         await seal(state, 'info:' + context.scope),
         context.scope,
@@ -210,6 +215,7 @@ async function save(
         context.demoId,
         context.demoId,
         context.generation,
+        ...(context.authorization ? accessArgs(context.authorization) : []),
       )
       .run();
   if (result.meta.changes !== 1)
@@ -415,7 +421,8 @@ export async function uploadInfo(
     key = 'project-files/' + id;
   const reserved =
     await env.DB.prepare(`INSERT INTO project_uploads (id,account_id,size) SELECT ?,?,? WHERE
-    COALESCE((SELECT SUM(size) FROM project_uploads WHERE account_id=?),0)+?<=? AND (SELECT COUNT(*) FROM project_uploads WHERE account_id=?)<200`)
+    COALESCE((SELECT SUM(size) FROM project_uploads WHERE account_id=?),0)+?<=? AND (SELECT COUNT(*) FROM project_uploads WHERE account_id=?)<200
+    AND ${context.authorization ? projectWriteAccess : '1'}`)
       .bind(
         id,
         context.userId,
@@ -424,6 +431,7 @@ export async function uploadInfo(
         upload.bytes.byteLength,
         MAX_STORAGE,
         context.userId,
+        ...(context.authorization ? accessArgs(context.authorization) : []),
       )
       .run();
   if (reserved.meta.changes !== 1)
@@ -457,7 +465,8 @@ export async function uploadInfo(
     let current: Awaited<ReturnType<typeof load>> | undefined;
     if (saving) {
       try {
-        current = await load(context);
+        // Internal reconciliation must still determine whether bytes committed after access was revoked.
+        current = await load({...context,authorization:undefined});
       } catch {
         console.error(
           'Upload outcome unknown; bytes and reservation retained.',
@@ -465,6 +474,13 @@ export async function uploadInfo(
         throw error;
       }
     }
+    await assertProjectAccess(context.authorization).catch(async error => {
+      if (!current?.state.files.some((file) => file.id === id)) {
+        await env.BUCKET.delete(key);
+        await env.DB.prepare('DELETE FROM project_uploads WHERE id=?').bind(id).run();
+      }
+      throw error;
+    });
     if (current?.state.files.some((file) => file.id === id))
       return infoSnapshot(context, current.state, current.revision);
     if (!saving || error instanceof HttpError) {
@@ -498,6 +514,7 @@ export async function downloadInfo(context: Context, id: string) {
     context.scope + ':' + file.id,
   );
   const fallback = file.name.replace(/[^a-zA-Z0-9._ -]/g, '_');
+  await assertProjectAccess(context.authorization);
   return new Response(data, {
     headers: {
       'Content-Type': 'application/octet-stream',

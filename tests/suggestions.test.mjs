@@ -10,12 +10,13 @@ const snapshot = (revision, suggestions = []) => ({ revision, suggestions, demo:
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 async function hosted(initial) {
   let respond = async () => initial;
-  const window = {};
-  const document = { querySelectorAll: () => [], body: { classList: { toggle() {} }, append() {} }, createElement: () => ({}) };
+  let redirected=false;
+  const window = {top:{location:{replace(){redirected=true;}}}};
+  const document = { querySelectorAll: () => [], querySelector:()=>null, body: { classList: { toggle() {} }, append() {},replaceChildren(){} }, createElement: () => ({style:{}}) };
   await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone,
-    fetch: async (_, options) => ({ ok: true, status: 200, json: async () => respond(options) }) });
+    fetch: async (_, options) => {const value=await respond(options);return {ok:!value.httpStatus,status:value.httpStatus||200,json:async()=>value};} });
   assert.ok(window.GatherStore, 'Hosted store initialized');
-  return { store: window.GatherStore.createStore(), respond: fn => { respond = fn; } };
+  return { store: window.GatherStore.createStore(), respond: fn => { respond = fn; },redirected:()=>redirected };
 }
 
 test('planning checks react to the clock without a project edit', () => {
@@ -121,4 +122,18 @@ test('restoring the page from browser history resumes a single refresh timer', (
   listeners.pageshow({ persisted: true }); assert.equal(timers.size, 1); assert.equal(refreshes, 1);
   listeners.pageshow({ persisted: true }); assert.equal(timers.size, 1);
   listeners.visibilitychange(); assert.equal(refreshes, 3);
+});
+
+test('revoked project access clears cached shared data and stops further writes',async()=>{
+  const {store,respond,redirected}=await hosted(snapshot(1));
+  respond(async()=>({httpStatus:404,error:'Project access removed.'}));
+  await assert.rejects(store.refresh(()=>false),/Project access removed/);
+  assert.equal(redirected(),true);assert.deepEqual(store.getState().tasks,[]);assert.deepEqual(store.getSuggestions(),[]);assert.equal(store.exportState(),'{}');
+  await assert.rejects(store.addComment('task','stale'),/Project access changed/);
+});
+test('a different signed-in identity cannot replace a workspace snapshot even while drafts defer refresh',async()=>{
+  const {store,respond,redirected}=await hosted(snapshot(1));
+  respond(async()=>({...snapshot(2),identity:{actorId:'u_another',role:'member'}}));
+  await assert.rejects(store.refresh(()=>false),/account changed/);
+  assert.equal(redirected(),true);assert.deepEqual(store.getState().tasks,[]);
 });
