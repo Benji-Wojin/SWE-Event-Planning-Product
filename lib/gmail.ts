@@ -51,6 +51,7 @@ export async function tokenRequest(params: Record<string, string>) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params),
+    signal: AbortSignal.timeout(15000),
   });
   const result = (await response.json()) as any;
   if (!response.ok)

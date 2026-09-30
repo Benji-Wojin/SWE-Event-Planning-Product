@@ -2,6 +2,8 @@ import { env } from 'cloudflare:workers';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { HttpError, nonce, seal, unseal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
+import { mailbox, senderStatus } from './invitation-sender';
+import { deliveryView, sendInvitation, type DeliveryView } from './invitation-delivery';
 
 type Invite = {
   id: string;
@@ -27,7 +29,8 @@ export type TeamView = {
   name: string;
   owner: { name: string; email: string };
   members: TeamMember[];
-  invitations: { id: string; email: string; expiresAt: number; link: string }[];
+  invitations: { id: string; email: string; expiresAt: number; link: string; delivery: DeliveryView }[];
+  sender: Awaited<ReturnType<typeof senderStatus>>;
 };
 export type InviteView = {
   name: string;
@@ -82,12 +85,14 @@ export async function readTeam(user: ProjectUser): Promise<TeamView> {
     name: await projectName(user.projectId),
     owner: { name: user.displayName, email: user.email },
     members: members.results,
+    sender: await senderStatus(user.userId),
     invitations: await Promise.all(
       invites.results.map(async (invite) => ({
         id: invite.id,
         email: invite.email,
         expiresAt: invite.expires_at,
         link: await invitationLink(invite),
+        delivery: await deliveryView(invite.id),
       })),
     ),
   };
@@ -97,12 +102,27 @@ export async function changeTeam(
   input: Record<string, unknown>,
 ) {
   organizer(user);
+  if (input.action === 'sendInvite') {
+    fields(input, ['action', 'email', 'requestId', 'senderEmail']);
+    const sender = await senderStatus(user.userId);
+    if (!sender.connected || input.senderEmail !== sender.email)
+      throw new HttpError(409, 'Connect the invitation sender and reload Team access before sending.');
+    await changeTeam(user, { action: 'invite', email: input.email, requestId: input.requestId });
+    await sendInvitation(user, input.requestId as string, input.senderEmail);
+    return readTeam(user);
+  }
+  if (input.action === 'sendExistingInvite') {
+    fields(input, ['action', 'id', 'senderEmail']);
+    if (typeof input.id !== 'string') throw new HttpError(400, 'Choose an invitation.');
+    await sendInvitation(user, input.id, input.senderEmail);
+    return readTeam(user);
+  }
   if (input.action === 'invite') {
     fields(input, ['action', 'email', 'requestId']);
     if (
       typeof input.email !== 'string' ||
       input.email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())
+      !mailbox(input.email.trim())
     )
       throw new HttpError(400, 'Enter a valid email address.');
     if (

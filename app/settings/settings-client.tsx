@@ -81,6 +81,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
       {loadFailed && <Button variant="outline" disabled={busy} onClick={() => void run(async () => {
         await refresh();
       })}>Retry connection check</Button>}
+      <a className="inline-block text-sm underline" href={'/team?project=' + encodeURIComponent(projectId || 'main')}>Invitation sender settings</a>
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
@@ -105,8 +106,8 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             </li>
             <li>
               In Google Auth Platform, set the audience to External / Testing
-              and add your Gmail account as a test user. Add the Gmail read-only
-              scope.
+              and add the Gmail accounts you will connect as test users. For imports, add gmail.readonly.
+              For invitations, add gmail.send, openid and email. Each connection requests only its own access.
             </li>
             <li>
               Create an OAuth client of type <strong>Web application</strong>.
@@ -122,7 +123,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             Testing-mode access may expire after seven days and need
             reconnecting.
           </p>
-          {!status?.connected ? (
+          {!status?.connected && !status?.senderConnected ? (
             <form
               className="space-y-4"
               onSubmit={(event) => {
@@ -184,7 +185,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           <p>
             {status?.connected
               ? `Connected account: ${status.account}`
-              : 'Sign in to Google and approve read-only access. Gather never sends email or changes your mailbox.'}
+              : 'Sign in to Google and approve read-only import access. This connection cannot send email or change your mailbox. Invitation sending is connected separately in Team access.'}
           </p>
           <Button
             disabled={busy || !status?.configured}
