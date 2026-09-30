@@ -38,10 +38,18 @@ Include the original report ID, accepted scope, before/after behavior, reproduct
 
 Run `node --test tests/*.test.mjs`, `npx tsc --noEmit`, and `npm run build` for this setup. Future changes should use checks appropriate to their scope. A local build uses mocked identity/database tests; hosted sign-in and multi-user operation still need an intake smoke test after deployment.
 
+## Coordinating Gather agents
+
+Before creating a fix branch, inspect active Gather tasks and the current Site source/deployment. Agree on the authoritative baseline; GitHub can lag the Site. Continue independent work in isolated checkouts, but appoint one publisher for shared Site writes. Get an acknowledged handoff before pushing Site source, applying migrations or deploying.
+
+Keep the coordinating task ID, current publisher, agreed source SHA, migration head and handoff state in the private ledger. Wait for the preceding agent's completed source and deployment outcome. Integrate that source, preserve its existing migrations, and regenerate only this feature's unapplied migration against the completed schema. Repeat affected checks and independent review.
+
+Immediately before publishing, recheck source and deployment freshness. If another agent advanced either, reconcile before proceeding. Resolve uncertain outcomes rather than blindly retrying. After publication, record the source SHA, migrations, verification and deployment result, and notify the other task. Resume their ownership only through an explicit handoff. Neither agent should modify the other's active checkout.
+
 ## Activation checklist
 
-- Gather's team-access source at `23d1618` is integrated in this branch. Confirm that source is still current before deployment.
-- The feedback migration follows the team-access migration `0005`; existing migrations stay unchanged. Reconcile against any newer schema before deployment; never overwrite applied migrations.
+- Confirm the source baseline and publisher handoff in the private ledger are current; integrate all completed concurrent Gather work before deployment.
+- Generate the feedback migration after the latest committed and applied migration. Preserve existing migrations and recheck that no newer schema has appeared before deployment.
 - The GitHub repository was behind the current app. The first two local commits synchronize the app source and completed team-access work; the feedback feature follows as a separate change. Review the combined GitHub diff before pushing.
 - Owner approves the reviewed setup revision before push. Separately authorize deployment through the existing Sites workflow.
 - After deployment, use database overview to verify `beta_reports` exists. Submit one explicitly fictional test report, confirm it persists once on retry, and read it through the same connected Sites tool the heartbeat will use. Include a maximum-length report to check tool truncation; if the reader cannot return full content, resolve that before activation.
