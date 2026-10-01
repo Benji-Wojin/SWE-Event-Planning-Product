@@ -20,7 +20,9 @@ import {
   tokenRequest,
 } from '@/lib/gmail';
 import { loadWorkspace, mutateWorkspace } from '@/lib/workspace';
-import { projectScope } from '@/lib/projects';
+import { projectScope, listProjects } from '@/lib/projects';
+import { projectOwner } from '@/lib/project-access';
+import { automaticStatus, configureAutomatic, runAutomatic } from '@/lib/gmail-automatic';
 import { finishSenderOAuth, senderConnection } from '@/lib/invitation-sender';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
@@ -40,6 +42,9 @@ export async function GET(request: Request) {
         hasMore: !!conn?.pageToken,
         redirectUri: redirectUri(),
         senderConnected: !!(await senderConnection(user.userId)),
+        automatic: await automaticStatus(user.userId),
+        projects: (await Promise.all((await listProjects(user)).map(async project =>
+          await projectOwner(project.id) === user.userId ? project : null))).filter(Boolean),
       });
     }
     if (action === 'labels') {
@@ -53,19 +58,22 @@ export async function GET(request: Request) {
     if (action === 'messages') {
       const projectId = await projectScope(user, request);
       const rows = await env.DB.prepare(
-        'SELECT id,payload FROM mail_messages WHERE user_id=? ORDER BY received_at DESC LIMIT 100',
+        "SELECT id,payload FROM mail_messages WHERE user_id=? AND (project_id=? OR project_id='') ORDER BY received_at DESC LIMIT 100",
       )
-        .bind(user.userId)
+        .bind(user.userId, projectId)
         .all<any>();
       const { store } = await loadWorkspace(user, projectId);
       const state = store.getState(), shared = state.messages;
       const imported = await Promise.all(rows.results.map(async (row) => {
         const original = await unseal(row.payload, 'mail:' + row.id);
         const linked = shared.find((m: any) => m.externalId === 'review:' + row.id);
-        const taskId = linked?.appliedTaskId || linked?.linkedTaskId || (linked?.suggested?.mode === 'update' ? linked.suggested.taskId : '');
+        const taskId = linked?.appliedTaskId || linked?.linkedTaskId || (linked?.suggested?.mode === 'update' ? linked.suggested.taskId : '') || (original.ai?.projectId === projectId ? original.ai.taskId : '');
         return { ...original, id: row.id, reviewed: !!linked, sharedMessageId: linked?.id || '', taskId: state.tasks.some((t: any) => t.id === taskId) ? taskId : '', threadKey: JSON.stringify([original.mailbox || '', original.threadId || row.id]) };
       }));
       return json({
+        automatic: await automaticStatus(user.userId),
+        projects: (await Promise.all((await listProjects(user)).map(async project =>
+          await projectOwner(project.id) === user.userId ? project : null))).filter(Boolean),
         projectName: state.event.name || 'Untitled project',
         tasks: state.tasks.map((t: any) => ({ id: t.id, title: t.title })),
         messages: imported.map((m: any) => {
@@ -216,6 +224,24 @@ export async function POST(request: Request) {
     }
     if (action === 'connect')
       return json({ url: await beginOAuth(user.userId) });
+    if (action === 'automatic') return json(await configureAutomatic(user.userId, data));
+    if (action === 'check') return json(await runAutomatic(user.userId));
+    if (action === 'move') {
+      const from = await projectScope(user, request), to = await projectScope(user, String(data.projectId || ''));
+      if (await projectOwner(from) !== user.userId || await projectOwner(to) !== user.userId)
+        throw new HttpError(403, 'Only the project owner can move private email summaries.');
+      const row = await env.DB.prepare('SELECT * FROM mail_messages WHERE id=? AND user_id=? AND project_id=?')
+        .bind(String(data.id || ''), user.userId, from).first<any>();
+      if (!row) throw new HttpError(409, 'This private email moved. Refresh the summaries.');
+      const original = await unseal(row.payload, 'mail:' + row.id);
+      if (!original.ai) throw new HttpError(400, 'Choose a destination when reviewing a manual import.');
+      const payload = await seal({ ...original, ai: { ...original.ai, projectId: to, taskId: '', relevance: 'possible', reason: 'You changed the project. Check that this draft fits before sharing.' } }, 'mail:' + row.id);
+      const result = await env.DB.prepare(`UPDATE mail_messages SET project_id=?,payload=? WHERE id=? AND user_id=? AND project_id=? AND payload=?
+        AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))`)
+        .bind(to, payload, row.id, user.userId, from, row.payload, to, user.userId, to, user.userId).run();
+      if (result.meta.changes !== 1) throw new HttpError(409, 'This email or project changed. Refresh before moving it.');
+      return json({ moved: true });
+    }
     if (action === 'label') {
       const labelId = String(data.labelId || '');
       const starting = await connection(user.userId);
@@ -319,7 +345,7 @@ export async function POST(request: Request) {
     }
     if (action === 'review') {
       const row = await env.DB.prepare(
-        'SELECT id,payload FROM mail_messages WHERE id=? AND user_id=?',
+        'SELECT id,payload,project_id FROM mail_messages WHERE id=? AND user_id=?',
       )
         .bind(String(data.id), user.userId)
         .first<any>();
@@ -352,6 +378,7 @@ export async function POST(request: Request) {
           .map((x) => x.toString(16).padStart(2, '0'))
           .join('');
       const projectId = await projectScope(user, request);
+      if (row.project_id && row.project_id !== projectId) throw new HttpError(409, 'Open the suggested project before reviewing this email.');
       const { row: workspaceRow, store } = await loadWorkspace(user, projectId);
       const existing = store.getState().messages.find((message: any) => message.externalId === 'review:' + row.id);
       if (existing) {
@@ -392,9 +419,8 @@ export async function POST(request: Request) {
             'Google could not revoke access. Try again, or revoke it in your Google account.',
           );
       }
-      await env.DB.prepare('DELETE FROM gmail_connections WHERE user_id=?')
-        .bind(user.userId)
-        .run();
+      if (conn) await env.DB.prepare('DELETE FROM gmail_connections WHERE user_id=? AND generation=?')
+        .bind(user.userId, conn.generation).run();
       await env.DB.prepare('DELETE FROM oauth_states WHERE user_id=?')
         .bind(user.userId)
         .run();

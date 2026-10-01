@@ -6,6 +6,7 @@ import { readFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -60,7 +61,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -81,6 +82,9 @@ before(async () => {
       access: 'lib/project-access.ts',
       senderCore: 'lib/invitation-sender.ts',
       sender: 'app/api/sender/route.ts',
+      automaticCore: 'lib/gmail-automatic.ts',
+      automaticApi: 'app/api/gmail/automatic-run/route.ts',
+      classifierCore: 'lib/mail-classifier.ts',
     },
     outdir: directory,
     bundle: true,
@@ -114,6 +118,7 @@ before(async () => {
       (name) => import(pathToFileURL(join(directory, name + '.js'))),
     ),
   );
+  [automaticCore, automaticApi, classifierCore] = await Promise.all(['automaticCore', 'automaticApi', 'classifierCore'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
 });
 const owner = () => {
   globalThis.__gatherUser = {
@@ -1388,4 +1393,11 @@ test('import and sender cannot connect the same account in either order, includi
     globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.includes('INSERT INTO gmail_connections (user_id,payload,generation) SELECT')){const run=stmt.run;stmt.run=async()=>{raced=true;sqlite.prepare('UPDATE gmail_senders SET payload=? WHERE user_id=?').run(newSender,'owner-1');return run();};}return stmt;}};
     assert.equal((await callback(await importState())).status,409);assert.equal(raced,true);assert.equal((await gmailCore.connection('owner-1')).storedPayload,replacement);
   } finally {globalThis.fetch=original;globalThis.__gatherEnv.DB=originalDb;}
+});
+
+test('automatic Gmail integration', async t => {
+  const checks = [];
+  gmailAutomaticTests({ test: (name, fn) => checks.push(t.test(name, fn)), assert, sqlite, db, owner, request, security,
+    gmailApi, gmailCore, automaticCore, automaticApi, classifierCore, newTeamProject });
+  await Promise.all(checks);
 });

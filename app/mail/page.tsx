@@ -29,9 +29,9 @@ async function SignedInMail({projectId}:{projectId?:string}) {
       <p className="mb-2 text-sm uppercase tracking-widest text-muted-foreground">
         Organizer only
       </p>
-      <h1 className="text-3xl font-semibold">Gmail sources</h1>
+      <h1 className="text-3xl font-semibold">Email summaries</h1>
       <p className="mb-7 mt-3 text-base text-muted-foreground">
-        Account-wide Gmail imports. Only summaries you approve are added to the selected project.
+        Private drafts for this project. Only summaries you approve enter the shared plan.
       </p>
       {projectId !== undefined ? <MailInbox projectId={projectId} /> : <a href="/" className="text-primary underline">Open a project, then choose Private Gmail imports from its email briefing.</a>}
     </main>

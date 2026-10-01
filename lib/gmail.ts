@@ -87,18 +87,19 @@ export async function gmail(userId: string, path: string) {
   return gmailWithToken(conn.accessToken, path);
 }
 
+export class GmailError extends HttpError {
+  constructor(public providerStatus: number) {
+    super(providerStatus === 429 ? 429 : 502, providerStatus === 401
+      ? 'Gmail needs to be reconnected.' : 'Gmail could not complete this request. Try again later.');
+  }
+}
 export async function gmailWithToken(accessToken: string, path: string) {
   const response = await fetch(
     'https://gmail.googleapis.com/gmail/v1/users/me/' + path,
-    { headers: { Authorization: 'Bearer ' + accessToken } },
+    { headers: { Authorization: 'Bearer ' + accessToken }, signal: AbortSignal.timeout(10000) },
   );
   if (!response.ok)
-    throw new HttpError(
-      response.status === 429 ? 429 : 502,
-      response.status === 401
-        ? 'Gmail needs to be reconnected.'
-        : 'Gmail could not complete this request. Try again later.',
-    );
+    throw new GmailError(response.status);
   return (await response.json()) as any;
 }
 export async function beginOAuth(userId: string) {
@@ -143,8 +144,12 @@ export async function beginOAuth(userId: string) {
   );
 }
 export function readPlain(payload: any): string {
+  if (payload?.filename || payload?.body?.attachmentId || payload?.headers?.some((header: any) =>
+    header.name?.toLowerCase() === 'content-disposition' && /^\s*attachment\b/i.test(header.value))) return '';
   const parts = [payload, ...(payload?.parts || [])];
   for (const part of parts) {
+    if (part.filename || part.body?.attachmentId || part.headers?.some((header: any) =>
+      header.name?.toLowerCase() === 'content-disposition' && /^\s*attachment\b/i.test(header.value))) continue;
     if (part.mimeType === 'text/plain' && part.body?.data) {
       try {
         return new TextDecoder()

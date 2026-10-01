@@ -90,6 +90,22 @@ export const gmailConnections = sqliteTable('gmail_connections', {
   payload: text('payload').notNull(),
   generation: text('generation').notNull().default('initial'),
 });
+export const gmailAutomation = sqliteTable('gmail_automation', {
+  userId: text('user_id').primaryKey(),
+  generation: text('generation').notNull(),
+  connectionGeneration: text('connection_generation').notNull(),
+  enabled: integer('enabled').notNull().default(0),
+  payload: text('payload').notNull(),
+  lease: text('lease').notNull().default(''),
+  leaseUntil: integer('lease_until').notNull().default(0),
+  nextRun: integer('next_run').notNull().default(0),
+  lastSuccess: text('last_success').notNull().default(''),
+  issue: text('issue').notNull().default(''),
+}, t => [index('gmail_automation_due').on(t.enabled, t.nextRun)]);
+export const gmailReceipts = sqliteTable('gmail_receipts', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+}, t => [index('gmail_receipts_date').on(t.createdAt)]);
 export const oauthStates = sqliteTable('oauth_states', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull(),
@@ -132,9 +148,11 @@ export const mailMessages = sqliteTable(
     providerId: text('provider_id').notNull(),
     payload: text('payload').notNull(),
     receivedAt: text('received_at').notNull(),
+    projectId: text('project_id').notNull().default(''),
   },
   (t) => [
     index('mail_user_date').on(t.userId, t.receivedAt),
+    index('mail_user_project_date').on(t.userId, t.projectId, t.receivedAt),
     uniqueIndex('mail_provider_user').on(t.userId, t.providerId),
   ],
 );

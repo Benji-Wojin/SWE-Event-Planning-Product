@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export function MailInbox({ projectId }: { projectId: string }) {
   const projectUrl = '/project?project=' + encodeURIComponent(projectId);
   const [projectName, setProjectName] = useState('');
+  const [automatic, setAutomatic] = useState<any>(null);
+  const [projects, setProjects] = useState<any[]>([]);
   const epoch = useRef(0);
   const saving = useRef(false);
   const dirty = useRef(false);
@@ -20,17 +22,21 @@ export function MailInbox({ projectId }: { projectId: string }) {
     [notice, setNotice] = useState('Loading private messages…'),
     [busy, setBusy] = useState(false),
     [confirmed, setConfirmed] = useState(false);
-  async function refresh() {
+  async function refresh(afterMove = false) {
     const ticket = ++epoch.current;
     const value = await gmailRequest('messages', undefined, projectId);
-    if (ticket !== epoch.current || document.hidden) return;
+    if (ticket !== epoch.current || document.hidden || dirty.current || (saving.current && !afterMove)) return;
     setMessages(value.messages);
+    setSelected(previous => value.messages.some((m: any) => m.id === previous) ? previous : value.messages[0]?.id || '');
+    setConfirmed(false);
+    setAutomatic(value.automatic);
+    setProjects(value.projects || []);
     setTasks(value.tasks || []);
     setProjectName(value.projectName || '');
     setNotice(
       value.messages.length
         ? ''
-        : 'No imported messages. Connect and sync Gmail in settings.',
+        : 'No project emails found yet. Enable automatic detection in Gmail settings.',
     );
   }
   useEffect(() => {
@@ -43,6 +49,8 @@ export function MailInbox({ projectId }: { projectId: string }) {
         setSelected('');
         setConfirmed(false);
         setNotice('Private messages hidden and unsaved summaries cleared. Reload to view messages.');
+      } else {
+        refresh().catch(e => setNotice(e.message));
       }
     };
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -57,8 +65,12 @@ export function MailInbox({ projectId }: { projectId: string }) {
     document.addEventListener('visibilitychange', hide);
     window.addEventListener('beforeunload', beforeUnload);
     document.addEventListener('click', leave);
+    const timer = window.setInterval(() => {
+      if (!document.hidden && !dirty.current && !saving.current) refresh().catch(e => setNotice(e.message));
+    }, 30000);
     return () => {
       epoch.current++;
+      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', hide);
       window.removeEventListener('beforeunload', beforeUnload);
       document.removeEventListener('click', leave);
@@ -81,7 +93,9 @@ export function MailInbox({ projectId }: { projectId: string }) {
   }
   return (
     <>
-      <p className="mb-4 text-base">Add summaries to: <strong>{projectName || 'Loading project…'}</strong></p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-base">Summaries for <strong>{projectName || 'Loading project…'}</strong></p>
+        <Button variant="outline" disabled={busy} onClick={() => { if (!dirty.current) refresh().catch(e => setNotice(e.message)); else setNotice('Save or discard your draft before refreshing.'); }}>Refresh</Button></div>
+      {automatic?.issue && <p role="status" className="mb-3 text-sm">{automatic.issue} <a className="underline" href={'/settings?project=' + encodeURIComponent(projectId)}>Gmail settings</a></p>}
       <p role="status" className="mb-5 text-sm">
         {notice}
       </p>
@@ -122,7 +136,7 @@ export function MailInbox({ projectId }: { projectId: string }) {
               </div>
               <div className="border-b pb-4">
                 <p className="text-sm text-muted-foreground">
-                  Private text preview ·{' '}
+                  {message.ai?.relevance === 'possible' ? 'Possible match · ' : 'Private email · '}
                   {new Date(message.receivedAt).toLocaleString()}
                 </p>
                 <h2 className="my-2 break-words text-xl font-semibold">
@@ -130,6 +144,24 @@ export function MailInbox({ projectId }: { projectId: string }) {
                 </h2>
                 <p className="break-all text-sm">{message.sender}</p>
               </div>
+              {message.ai && <section className="space-y-2 rounded-lg bg-secondary p-4"><h3 className="font-medium">{message.ai.title}</h3><p className="whitespace-pre-wrap break-words text-base">{message.ai.summary}</p>
+                <details className="text-sm"><summary className="cursor-pointer">Why this was suggested</summary><p className="mt-2">{message.ai.reason}</p></details>
+                <p className="text-sm text-muted-foreground">AI draft. Review before sharing.</p></section>}
+              {message.ai && projects.length > 1 && <details className="text-sm"><summary className="cursor-pointer">Wrong project?</summary>
+                <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={event => {
+                  event.preventDefault();
+                  if (saving.current || (dirty.current && !window.confirm('Discard your unsaved summary and move this email?'))) return;
+                  const destination = String(new FormData(event.currentTarget).get('destination') || '');
+                  saving.current = true; setBusy(true);
+                  gmailRequest('move', { id: message.id, projectId: destination }, projectId).then(async () => {
+                    dirty.current = false; setSelected(''); setConfirmed(false); await refresh(true); setNotice('Private email moved. Previously shared summaries are unchanged.');
+                  }).catch(e => setNotice(e.message)).finally(() => { saving.current = false; setBusy(false); });
+                }}>
+                  <label className="space-y-2">Move private email to<select name="destination" className="block w-full rounded-md border bg-background p-2" required disabled={busy} defaultValue="">
+                    <option value="" disabled>Choose a project</option>{projects.filter(p => p.id !== projectId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select></label><Button type="submit" variant="outline" disabled={busy}>Move</Button>
+                </form><p className="mt-2 text-muted-foreground">Only this private email moves. Saved shared summaries stay where they are.</p>
+              </details>}
               <details><summary className="cursor-pointer text-sm font-medium">View original email</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words font-sans text-base leading-relaxed">
                 {message.body}
               </pre></details>
@@ -194,6 +226,7 @@ export function MailInbox({ projectId }: { projectId: string }) {
                       maxLength={200}
                       required
                       placeholder="Confirm speaker transport"
+                      defaultValue={message.ai?.title || ''}
                     />
                   </div>
                   <div className="space-y-2">
@@ -208,6 +241,7 @@ export function MailInbox({ projectId }: { projectId: string }) {
                       maxLength={3000}
                       required
                       placeholder="Write a short summary. Do not include booking codes, private links, or personal information."
+                      defaultValue={message.ai?.summary || ''}
                     />
                   </div>
                   <div className="flex items-start gap-3">

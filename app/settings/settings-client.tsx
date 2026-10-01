@@ -75,13 +75,16 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           (!status
             ? 'Checking your connection…'
             : status.connected
-              ? 'Gmail connected. Only your selected label is imported when you sync.'
+              ? status.automatic?.enabled ? 'Gmail connected. Automatic detection enabled.' : 'Gmail connected.'
               : 'Gmail not connected.')}
       </p>
       {loadFailed && <Button variant="outline" disabled={busy} onClick={() => void run(async () => {
         await refresh();
       })}>Retry connection check</Button>}
       <a className="inline-block text-sm underline" href={'/team?project=' + encodeURIComponent(projectId || 'main')}>Invitation sender settings</a>
+      {status?.connected && <AutomaticControls key={status.account} status={status} busy={busy} projectId={projectId} run={run} refresh={refresh} setNotice={setNotice} />}
+      <details open={!status?.configured} className="space-y-4">
+        <summary className="cursor-pointer text-sm font-medium">Google connection setup</summary>
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
@@ -118,8 +121,8 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             {status?.redirectUri || 'Loading your private site address…'}
           </code>
           <p className="text-sm text-muted-foreground">
-            Read-only authorization covers mailbox reading; your import label
-            restricts what Weft imports, not what Google technically permits.
+            Read-only authorization covers mailbox reading. Automatic checks
+            require separate approval below; Google access alone does not enable them.
             Testing-mode access may expire after seven days and need
             reconnecting.
           </p>
@@ -201,7 +204,9 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           </Button>
         </CardContent>
       </Card>
+      </details>
       {status?.connected && (
+        <details className="space-y-4"><summary className="cursor-pointer text-sm font-medium">Manual label import and disconnect</summary>
         <Card>
           <CardHeader>
             <CardTitle className="text-xl">
@@ -293,7 +298,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
               </a>
             </div>
             <p className="text-sm text-muted-foreground">
-              Sync is manual in this pilot, not background monitoring. Original
+              This optional label import is manual. Original
               messages stay in an organizer-only inbox. You choose what can
               enter the shared plan.{' '}
               {status.lastSync &&
@@ -325,7 +330,65 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             </details>
           </CardContent>
         </Card>
+        </details>
       )}
     </div>
   );
+}
+
+function AutomaticControls({ status, busy, projectId, run, refresh, setNotice }: {
+  status: any; busy: boolean; projectId?: string;
+  run: (fn: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setNotice: (value: string) => void;
+}) {
+  const automatic = status.automatic;
+  const [chosen, setChosen] = useState<string[]>(automatic?.projectIds?.length ? automatic.projectIds : projectId ? [projectId] : []);
+  const [consent, setConsent] = useState(false);
+  const availableIds = status.projects.map((project: any) => project.id).sort().join('|');
+  useEffect(() => {
+    const available = new Set(availableIds.split('|'));
+    setChosen(previous => previous.filter(id => available.has(id)));
+    setConsent(false);
+  }, [availableIds]);
+  const changed = [...chosen].sort().join('|') !== [...(automatic?.projectIds || [])].sort().join('|');
+  return <Card><CardHeader><CardTitle className="text-xl">Project email detection</CardTitle></CardHeader>
+    <CardContent className="space-y-4">
+      <p className="text-sm">Weft looks for project emails and drafts private summaries. No labels required.</p>
+      <fieldset disabled={busy} className="space-y-2"><legend className="mb-2 text-sm font-medium">Projects to check</legend>
+        {status.projects.map((project: any) => <label key={project.id} className="flex items-start gap-3 text-sm">
+          <input type="checkbox" className="mt-1" checked={chosen.includes(project.id)} onChange={event => {
+            setChosen(previous => event.target.checked ? [...previous, project.id] : previous.filter(id => id !== project.id)); setConsent(false);
+          }} /><span className="break-words">{project.name}</span>
+        </label>)}
+        {!status.projects.length && <a className="text-sm underline" href="/setup">Create a project first</a>}
+      </fieldset>
+      {chosen.length > 10 && <p role="alert" className="text-sm">Select no more than ten projects.</p>}
+      {(!automatic.enabled || changed) && <label className="flex items-start gap-3 text-sm leading-relaxed">
+        <input type="checkbox" className="mt-1" disabled={busy} checked={consent} onChange={event => setConsent(event.target.checked)} />
+        <span>Allow Weft to check the last 7 days and new incoming email, including while I’m away. Email text, selected project/task names, and event dates and locations are sent to OpenAI for relevance checks. Matches stay private until I approve a summary. Attachments are not read. I can pause at any time.</span>
+      </label>}
+      <div className="flex flex-wrap gap-3">
+        {(!automatic.enabled || changed) && <Button disabled={busy || !automatic.configured || !chosen.length || chosen.length > 10 || !consent}
+          onClick={() => void run(async () => { await gmailRequest('automatic', { enabled: true, projectIds: chosen, consent }); await refresh(); setConsent(false); setNotice('Automatic detection enabled. The first check includes the last 7 days.'); })}>
+          {automatic.enabled ? 'Save projects' : 'Enable detection'}
+        </Button>}
+        {automatic.enabled && <><Button variant="outline" disabled={busy} onClick={() => void run(async () => {
+          const result = await gmailRequest('check', {}); await refresh();
+          setNotice(result.status === 'not_due' ? 'A check is already running or was recently completed.' : result.status === 'checked' || result.status === 'catching_up'
+            ? `${result.imported} project emails found. ${result.status === 'catching_up' ? 'More emails will be checked on the next run.' : 'No shared tasks changed.'}`
+            : 'The check is delayed. See the connection status below.');
+        })}>Check now</Button>
+          <Button variant="outline" disabled={busy} onClick={() => void run(async () => { await gmailRequest('automatic', { enabled: false }); await refresh(); setConsent(false); setNotice('Automatic checks paused. Existing private summaries are kept.'); })}>Pause</Button></>}
+        {projectId && <a className="self-center text-sm underline" href={'/mail?project=' + encodeURIComponent(projectId)}>Review email summaries</a>}
+      </div>
+      <p role="status" className="text-sm text-muted-foreground">{automatic.issue || (!automatic.configured ? 'Email suggestions need a server API key.'
+        : !automatic.backgroundReady ? 'Background scheduling is not active yet. Use Check now after enabling detection.'
+        : automatic.enabled ? 'Background checks are configured for every 5 minutes.' : 'Detection is paused.')}
+        {automatic.lastCheck && ` Last successful check: ${new Date(automatic.lastCheck).toLocaleString()}.`}
+        {automatic.catchingUp && ' Catching up on older emails.'}
+      </p>
+      {automatic.recovery && <p className="text-sm">Gmail’s history expired. Weft is rechecking the last 7 days; older emails from the gap may need manual import.</p>}
+      <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">Privacy and limits</summary>
+        <p className="mt-2">Up to 250 emails per day, 10 projects and the first 60 active task names per project. Clearly unrelated emails are not saved. AI can miss or misclassify messages. Summaries are drafts, not task changes. Pausing or disconnecting stops new checks but keeps imported messages and approved summaries.</p>
+      </details>
+    </CardContent></Card>;
 }
