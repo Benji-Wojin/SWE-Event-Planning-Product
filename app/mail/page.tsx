@@ -14,7 +14,7 @@ async function SignedInMail({projectId}:{projectId?:string}) {
     <main className="mx-auto max-w-6xl px-5 py-10">
       <header className="mb-7 flex flex-wrap items-center justify-between gap-4">
         <a href="/" className="text-3xl font-semibold text-primary">
-          gather
+          weft
         </a>
         <nav className="flex flex-wrap items-center gap-5 text-sm">
           <ThemeToggle />

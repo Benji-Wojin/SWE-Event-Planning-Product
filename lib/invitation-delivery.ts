@@ -93,12 +93,12 @@ export async function sendInvitation(
     '/join?invite=' + encodeURIComponent(token),
     env.GATHER_ORIGIN,
   ).href;
-  const text = `${user.displayName.slice(0, 150)} invited you to ${name} on Gather.\n\nAccept invitation:\n${link}\n\nSign in with ${invite.email}. This link expires ${new Date(invite.expires_at).toISOString().slice(0, 10)} and only works for this address.\n\nIf the private site says you do not have access, ask the organizer to add you in the site's sharing settings.\n\nIf you weren't expecting this invitation, you can ignore it.`;
+  const text = `${user.displayName.slice(0, 150)} invited you to ${name} on Weft.\n\nAccept invitation:\n${link}\n\nSign in with ${invite.email}. This link expires ${new Date(invite.expires_at).toISOString().slice(0, 10)} and only works for this address.\n\nIf the private site says you do not have access, ask the organizer to add you in the site's sharing settings.\n\nIf you weren't expecting this invitation, you can ignore it.`;
   // The subject is fixed and body is MIME-encoded. Names cannot inject headers.
   const mime = [
-    `From: Gather <${sender.email}>`,
+    `From: Weft <${sender.email}>`,
     `To: ${invite.email}`,
-    'Subject: Gather project invitation',
+    'Subject: Weft project invitation',
     `Message-ID: <gather-${id}@${new URL(env.GATHER_ORIGIN).hostname}>`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',

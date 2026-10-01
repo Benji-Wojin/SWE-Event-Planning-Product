@@ -15,7 +15,7 @@ export function AccountLayout({
           href="/"
           className="text-2xl font-semibold tracking-tight text-primary"
         >
-          gather
+          weft
         </a>
         <div className="flex items-center gap-4">
           <a href="/" className="text-sm underline">

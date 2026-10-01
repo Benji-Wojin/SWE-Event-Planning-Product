@@ -41,7 +41,7 @@ export function FeedbackForm() {
     <fieldset disabled={busy} className="space-y-5">
       <div className="grid gap-5 sm:grid-cols-2">
         <label className="block text-sm font-medium">Type<select className={control} value={draft.kind} onChange={event => edit('kind', event.target.value)}><option value="bug">Bug</option><option value="error">Error message</option><option value="request">Feature request</option></select></label>
-        <label className="block text-sm font-medium">Where in Gather?<select className={control} value={draft.area} onChange={event => edit('area', event.target.value)}>{areas.map(area => <option key={area}>{area}</option>)}</select></label>
+        <label className="block text-sm font-medium">Where in Weft?<select className={control} value={draft.area} onChange={event => edit('area', event.target.value)}>{areas.map(area => <option key={area}>{area}</option>)}</select></label>
       </div>
       <label className="block text-sm font-medium">Short summary<input required maxLength={120} className={control} value={draft.title} onChange={event => edit('title', event.target.value)} placeholder="For example: A task disappears after I save" /></label>
       <label className="block text-sm font-medium">{draft.kind === 'request' ? 'What would you like to do?' : 'What happened?'}<textarea required maxLength={1500} rows={5} className={control} value={draft.details} onChange={event => edit('details', event.target.value)} /></label>

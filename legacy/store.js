@@ -129,7 +129,7 @@
         lastSavedRaw = serialized;
         persistence = "saved";
       } catch { persistence = "unavailable"; }
-      if (notify) subscribers.forEach((subscriber) => { try { subscriber(getState()); } catch (error) { if (typeof console !== "undefined") console.error("Gather view could not refresh", error); } });
+      if (notify) subscribers.forEach((subscriber) => { try { subscriber(getState()); } catch (error) { if (typeof console !== "undefined") console.error("Weft view could not refresh", error); } });
     }
     // Additive migration: preserve the existing browser workspace and source history.
     state.event = { outdoor: true, transportNeeded: true, guestCount: 120, dietaryOutstanding: 14, cateringDeadline: day(2), ...state.event };
@@ -567,7 +567,7 @@
       task.followupAfter = afterDate;task.planReviewAfter=afterDate;task.followupSentAt=timestamp();
       const draft = state.drafts.find(item => item.taskId === taskId);
       if (draft) draft.manuallySentAt = timestamp();
-      entry(actor, `recorded a follow-up sent outside Gather for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
+      entry(actor, `recorded a follow-up sent outside Weft for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
     }
     function eventFields(data) {
       if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline'].includes(key))) throw new Error('Use valid event details.');

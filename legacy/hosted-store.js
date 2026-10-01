@@ -39,7 +39,7 @@
     });
     if (response.status === 401) window.top.location.href = signIn;
     const result = await response.json().catch(() => {
-      throw new Error('Gather could not complete the request. Reload or sign in again.');
+      throw new Error('Weft could not complete the request. Reload or sign in again.');
     });
     if (!response.ok) {
       if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();

@@ -330,7 +330,7 @@
           );
           const link = document.createElement('a');
           link.href = url;
-          link.download = 'gather-guest-template.csv';
+          link.download = 'weft-guest-template.csv';
           link.click();
           setTimeout(() => URL.revokeObjectURL(url), 1000);
         });

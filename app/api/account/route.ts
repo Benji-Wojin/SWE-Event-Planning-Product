@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   return safe(async () => {
     const identity = await getChatGPTUser();
-    if (!identity) throw new HttpError(401, 'Sign in to Gather.');
+    if (!identity) throw new HttpError(401, 'Sign in to Weft.');
     let organizer = false;
     try {
       organizer = (await principal()).role === 'admin';

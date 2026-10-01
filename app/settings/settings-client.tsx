@@ -119,7 +119,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           </code>
           <p className="text-sm text-muted-foreground">
             Read-only authorization covers mailbox reading; your import label
-            restricts what Gather imports, not what Google technically permits.
+            restricts what Weft imports, not what Google technically permits.
             Testing-mode access may expire after seven days and need
             reconnecting.
           </p>

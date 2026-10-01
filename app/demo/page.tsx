@@ -9,7 +9,7 @@ async function SignedInDemo({ actor }: { actor: string }) {
   await requireChatGPTUser('/demo?as=' + actor);
   return <iframe
     src={'/workspace.html?demo=1&as=' + actor + (actor === 'jack' ? '#overview' : '#tasks')}
-    title={'Gather demo — ' + actor}
+    title={'Weft demo — ' + actor}
     style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', border: 0 }}
   />;
 }

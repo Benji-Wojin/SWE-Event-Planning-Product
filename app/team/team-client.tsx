@@ -18,7 +18,7 @@ export async function accountRequest<T>(
     body: input ? JSON.stringify(input) : undefined,
   });
   const data: unknown = await response.json().catch(() => {
-    throw new Error('Could not reach Gather. Reload and try again.');
+    throw new Error('Could not reach Weft. Reload and try again.');
   });
   if (!response.ok)
     throw new Error(
@@ -148,7 +148,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
       }
       await reload();
       setNotice(
-        'Invitation sender disconnected from Gather. Already-sent invitations still work.',
+        'Invitation sender disconnected from Weft. Already-sent invitations still work.',
       );
     } catch (e) {
       setError((e as Error).message);
@@ -187,7 +187,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
             <p className="break-all text-sm">
               {team.sender.connected
                 ? 'Sending from ' + team.sender.email
-                : 'Connect the Gmail account you created for Gather.'}
+                : 'Connect the Gmail account you created for Weft.'}
             </p>
             <p className="text-sm text-muted-foreground">
               Used for invitations across your projects. Separate from your
@@ -218,7 +218,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     onClick={() => {
                       if (
                         confirm(
-                          'Disconnect this sender from Gather? New invitations will stop until you connect it again. An invitation already being sent may still go out.',
+                          'Disconnect this sender from Weft? New invitations will stop until you connect it again. An invitation already being sent may still go out.',
                         )
                       )
                         void senderAction('disconnect');
@@ -236,11 +236,11 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 Google Cloud app, enable Gmail API, add this account as a test
                 user, and add the gmail.send, openid and email scopes. Your
                 existing Google client and callback URL can be reused. You
-                approve sending access; no Gmail password is stored in Gather.
+                approve sending access; no Gmail password is stored in Weft.
               </p>
               <p className="mt-2 text-muted-foreground">
                 Google testing-mode authorization may need reconnecting after
-                seven days. Disconnect removes Gather’s stored tokens; you can
+                seven days. Disconnect removes Weft’s stored tokens; you can
                 also revoke access in your Google account.
               </p>
             </details>

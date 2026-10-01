@@ -96,7 +96,7 @@ export function DemoWorkspace({ actor }: { actor: string }) {
   </button>)}{!items.length && <p className="demo-empty">No tasks.</p>}</div>;
 
   return <div className="demo-app">
-    <header className="demo-topbar"><a href="/" className="demo-logo">gather<span>●</span></a><span className="demo-label"><Users size={15} /> Four-person demo</span><a href="/" className="demo-back">Back to real workspace ↗</a></header>
+    <header className="demo-topbar"><a href="/" className="demo-logo">weft<span>●</span></a><span className="demo-label"><Users size={15} /> Four-person demo</span><a href="/" className="demo-back">Back to real workspace ↗</a></header>
     <main className="demo-main">
       <section className="demo-launcher" aria-label="Four demo profiles">
         <div className="demo-section-heading"><h1>Demo profiles</h1></div>

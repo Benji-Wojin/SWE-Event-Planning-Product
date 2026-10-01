@@ -17,7 +17,7 @@ async function SignedInSettings({projectId}:{projectId?:string}) {
           href="/"
           className="text-3xl font-semibold tracking-tight text-primary"
         >
-          gather
+          weft
         </a>
         <div className="flex items-center gap-4"><ThemeToggle /><a
           href={chatGPTSignOutPath()}

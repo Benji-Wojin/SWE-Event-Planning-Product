@@ -12,7 +12,7 @@ async function SignedInSetup({projectId}:{projectId?:string}) {
   await requireChatGPTUser('/setup' + (projectId ? '?project=' + encodeURIComponent(projectId) : ''));
   return <main className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-8 sm:py-12">
     <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
-      <a href="/" className="text-2xl font-semibold tracking-tight text-primary">gather</a>
+      <a href="/" className="text-2xl font-semibold tracking-tight text-primary">weft</a>
       <ThemeToggle />
     </header>
     <h1 className="mb-7 text-3xl font-semibold">{projectId ? 'Project settings' : 'New project'}</h1>

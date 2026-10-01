@@ -1303,8 +1303,9 @@ test('concurrent send requests emit one email with server-owned recipient, safe 
     const responses=await Promise.all([teamWrite(id,input),teamWrite(id,input)]);assert.deepEqual(responses.map(r=>r.status),[200,200]);assert.equal(calls,1);
     let team=await (await teamRead(id)).json();assert.equal(team.invitations.length,1);assert.equal(team.invitations[0].delivery.status,'sent');
     assert.equal((await teamWrite(id,input)).status,200);assert.equal((await teamWrite(id,retrySend(input.requestId))).status,200);assert.equal(calls,1);
-    const [headers,body]=raw.split('\r\n\r\n');assert.ok(headers.includes('From: Gather <'+senderEmail+'>'));assert.ok(headers.includes('To: '+input.email));assert.ok(!headers.includes('Bcc:'));assert.ok(!headers.includes('attacker@example.com'));
-    const text=Buffer.from(body,'base64').toString('utf8');assert.ok(text.includes('https://gather.example/join?invite='));assert.ok(text.includes(input.email));
+    const [headers,body]=raw.split('\r\n\r\n');assert.ok(headers.includes('From: Weft <'+senderEmail+'>'));assert.ok(headers.includes('To: '+input.email));assert.ok(!headers.includes('Bcc:'));assert.ok(!headers.includes('attacker@example.com'));
+    assert.ok(headers.includes('Subject: Weft project invitation'));
+    const text=Buffer.from(body,'base64').toString('utf8');assert.ok(text.includes('https://gather.example/join?invite='));assert.ok(text.includes(input.email));assert.ok(text.includes(' on Weft.'));
     assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM invitation_send_attempts WHERE invite_id=?').get(input.requestId).n,1);
     assert.ok(!JSON.stringify(team).includes('sender-token'));
   } finally {globalThis.fetch=original;}

@@ -44,8 +44,8 @@ export function ProjectsHome({
   return (
     <div className="projects-home">
       <header className="projects-header">
-        <a className="projects-brand" href="/" aria-label="Gather projects">
-          <strong>gather</strong>
+        <a className="projects-brand" href="/" aria-label="Weft projects">
+          <strong>weft</strong>
         </a>
         <div className="projects-header-actions">
           <ThemeToggle />

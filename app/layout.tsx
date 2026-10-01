@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Gather — Event planning',
+  title: 'Weft — Event planning',
   description:
     'Event planning workspace.',
 };

@@ -24,7 +24,7 @@ export async function POST(request: Request) {
         request.headers.get('origin') !== env.GATHER_ORIGIN ||
         request.headers.get('x-gather-request') !== '1'
       )
-        throw new HttpError(403, 'Reload Gather before uploading.');
+        throw new HttpError(403, 'Reload Weft before uploading.');
       return json(await uploadInfo(context, await readUpload(request)));
     }
     return json(await mutateInfo(context, await body(request, 250000)));

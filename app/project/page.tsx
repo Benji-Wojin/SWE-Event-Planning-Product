@@ -8,6 +8,6 @@ export default async function Project({ searchParams }: { searchParams: Promise<
 }
 async function SignedInProject({query,inbox}:{query:string;inbox:boolean}) {
   await requireChatGPTUser('/project?' + query);
-  return <iframe src={'/workspace.html?' + query + (inbox ? '#inbox' : '')} title="Gather planning workspace"
+  return <iframe src={'/workspace.html?' + query + (inbox ? '#inbox' : '')} title="Weft planning workspace"
     style={{ position:'fixed',inset:0,width:'100%',height:'100%',border:0 }} />;
 }

@@ -41,7 +41,7 @@ export function guard(request: Request) {
   )
     throw new HttpError(
       403,
-      'Request verification failed. Reload Gather and try again.',
+      'Request verification failed. Reload Weft and try again.',
     );
 }
 export async function body(request: Request, limit = 50000) {
@@ -117,7 +117,7 @@ export async function unsealFile(value: ArrayBuffer, context: string) {
 }
 export async function principal() {
   const user = await getChatGPTUser();
-  if (!user) throw new HttpError(401, 'Sign in to Gather to continue.');
+  if (!user) throw new HttpError(401, 'Sign in to Weft to continue.');
   let member = await env.DB.prepare('SELECT * FROM members WHERE user_id=?')
     .bind(user.userId)
     .first<any>();

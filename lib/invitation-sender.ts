@@ -185,7 +185,7 @@ export async function finishSenderOAuth(user: User, url: URL) {
   if (imported?.email?.toLowerCase() === profile.email.toLowerCase())
     throw new HttpError(
       409,
-      'Choose your separate Gather Gmail account, not the mailbox connected for importing.',
+      'Choose your separate Weft Gmail account, not the mailbox connected for importing.',
     );
   const payload = await seal(
     {
