@@ -72,6 +72,10 @@ Helpful links automatically search on first task opening, then reuse results for
 
 ## Event information
 
+Timeline has an event schedule and a preparation-deadline view. Organizers can add activities or schedule existing tasks with local start/end dates and a location. Every activity uses the same task, owner, comments, blockers and completion flow; completed activities remain visible. Removing a schedule entry does not delete its task. Preparation deadlines and progress timestamps are not changed by scheduling.
+
+Project settings stores the event time zone explicitly; all teammates see event-local times. Multi-day and overnight activities have their own dates. Changing the event date never moves activities automatically; changing a zone with scheduled work requires acknowledgment and preserves the entered clock times. This is a timetable, not background reminders or automatic status changes. Fresh/restarted demos include three sample activities; real projects stay empty.
+
 Event info keeps a guest list and shared files separate from task conversations. Guests have a contact name, optional email/phone, type (attendee, speaker, volunteer or vendor), group, attendance and notes. These are contact records, not accounts or app members. No messages, invitations or RSVP requests are sent to these guest records. Expected guest counts and other planning context remain manually maintained.
 
 Authenticated project members can add/edit guests and upload files. Organizers can archive/restore guests; uploaders and organizers can archive/restore files. The four demo perspectives use the same interface and APIs with isolated sample contacts; restarting the demo isolates its old records from the new generation. Guest contacts do not grant app membership.

@@ -13,10 +13,17 @@ export function demoPersona(value: unknown) {
 function seedDemo() {
   const state = model().getState();
   state.event.name = 'Field Day · team demo';
+  state.event.timeZone = 'America/Los_Angeles';
   state.demoGeneration = crypto.randomUUID();
   state.tasks.find((task: any) => task.id === 'bus').requiresVerification = true;
   state.tasks.find((task: any) => task.id === 'catering').requiresVerification = true;
-  return model(JSON.stringify(state));
+  const store = model(JSON.stringify(state));
+  for (const [title,owner,start,end,location] of [
+    ['Guest check-in','maya','09:30','10:00','East entrance'],
+    ['Welcome and safety briefing','dev','10:00','10:15','Main lawn'],
+    ['Lunch service','jules','12:00','13:00','Picnic area'],
+  ]) store.addTask({title,owner,category:'Program',schedule:{start:`${state.event.date}T${start}`,end:`${state.event.date}T${end}`,location}},'jack');
+  return store;
 }
 export async function loadDemo(user: Awaited<ReturnType<typeof administrator>>) {
   const id = 'demo:' + user.userId;

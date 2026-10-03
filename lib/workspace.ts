@@ -96,6 +96,7 @@ const arity: Record<string, number> = {
   requestRecovery: 2,
   resolveRecovery: 2,
   setTaskPriority: 2,
+  setTaskSchedule: 2,
   resolveHandoff: 3,
   addDependency: 2,
   removeDependency: 2,
@@ -160,6 +161,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'setTaskPriority':
         result = store.setTaskPriority(a, b, user.actorId);
+        break;
+      case 'setTaskSchedule':
+        result = store.setTaskSchedule(a, b, user.actorId);
         break;
       case 'resolveHandoff':
         result = store.resolveHandoff(a, b, c, user.actorId);

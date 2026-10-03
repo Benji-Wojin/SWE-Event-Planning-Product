@@ -1395,6 +1395,63 @@ test('import and sender cannot connect the same account in either order, includi
   } finally {globalThis.fetch=original;globalThis.__gatherEnv.DB=originalDb;}
 });
 
+test('scheduled activities persist in their project, preserve task state and reject forged/stale edits',async()=>{
+  const project=await newTeamProject('Schedule checks'),other=await newTeamProject('Separate plan');owner();
+  const path='/api/workspace?project='+project,read=async()=>await (await realRead(project)).json();
+  let state=await read();
+  const write=(method,args,revision=state.revision)=>workspace.POST(request(path,{method,args,revision}));
+  let response=await write('completeSetup',[{timeZone:'America/Los_Angeles'}]);assert.equal(response.status,200);state=await response.json();
+  const slot={start:'2026-10-03T09:30',end:'2026-10-03T10:00',location:'East entrance'};
+  response=await write('addTask',[{title:'Check-in',owner:'jack',schedule:slot}]);assert.equal(response.status,200);state=await response.json();
+  const original=state.result,id=original.id;
+  assert.deepEqual(original.schedule,slot);assert.equal(original.dueDate,'');
+  const next={...slot,start:'2026-10-04T09:30',end:'2026-10-04T10:00'},base=state.revision;
+  response=await write('setTaskSchedule',[id,next]);assert.equal(response.status,200);state=await response.json();
+  const updated=state.state.tasks.find(t=>t.id===id);
+  assert.deepEqual({...updated,schedule:original.schedule,revision:original.revision},original);
+  assert.deepEqual((await read()).state.tasks.find(t=>t.id===id).schedule,next);
+  assert.equal(state.state.activity[0].actor,'jack');assert.equal(state.state.activity[0].type,'schedule');
+  assert.equal((await write('setTaskSchedule',[id,slot],base)).status,409);
+  for(const body of [
+    {method:'setTaskSchedule',args:[id,slot,'jack'],revision:state.revision},
+    {method:'setTaskSchedule',args:[id,slot],revision:state.revision,actor:'jack'},
+    {method:'setTaskSchedule',args:[id,{...slot,status:'done'}],revision:state.revision},
+  ])assert.equal((await workspace.POST(request(path,body))).status,400);
+  assert.equal((await workspace.POST(request(path,{method:'setTaskSchedule',args:[id,slot],revision:state.revision},'https://evil.example'))).status,403);
+  const otherState=await (await realRead(other)).json();
+  assert.equal((await workspace.POST(request('/api/workspace?project='+other,{method:'setTaskSchedule',args:[id,slot],revision:otherState.revision}))).status,400);
+  const concurrent=await Promise.all([write('setTaskSchedule',[id,slot]),write('setTaskSchedule',[id,{...slot,location:'West entrance'}])]);
+  assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
+  const winner=await concurrent.find(r=>r.status===200).json();
+  state=await read();assert.deepEqual(state.state.tasks.find(t=>t.id===id).schedule,winner.result.schedule);
+  const originalData=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get(project).data;
+  try{
+    const corrupt=JSON.parse(originalData);corrupt.tasks[0].schedule.end='invalid';const raw=JSON.stringify(corrupt);
+    sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(raw,project);
+    assert.equal((await realRead(project)).status,503);assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get(project).data,raw);
+  }finally{sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(originalData,project);}
+  await joinPerson(project);asTeammate();
+  state=await read();assert.deepEqual(state.state.tasks.find(t=>t.id===id).schedule,winner.result.schedule);
+  assert.equal((await write('setTaskSchedule',[id,slot])).status,403);
+  assert.equal((await write('addComment',[id,'I can see the activity time.'])).status,200);
+  owner();
+  assert.equal((await (await realRead(other)).json()).state.tasks.length,0);
+});
+
+test('demo personas share the same schedule and reset never changes real project data',async()=>{
+  owner();let state=await (await demoRead()).json();
+  let response=await demoWrite('jack',{method:'resetDemo',args:[true],revision:state.revision});assert.equal(response.status,200);state=await response.json();
+  const samples=state.state.tasks.filter(t=>t.schedule);assert.equal(samples.length,3);
+  const slot={start:'2026-10-05T23:30',end:'2026-10-06T01:00',location:'Station'};
+  const raw=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  assert.equal((await demoWrite('maya',{method:'setTaskSchedule',args:[samples[0].id,slot],revision:state.revision})).status,403);
+  response=await demoWrite('jack',{method:'setTaskSchedule',args:[samples[0].id,slot],revision:state.revision});assert.equal(response.status,200);state=await response.json();
+  for(const actor of ['jack','maya','jules','dev'])assert.deepEqual((await (await demoRead(actor)).json()).state.tasks.find(t=>t.id===samples[0].id).schedule,slot);
+  response=await demoWrite('jack',{method:'resetDemo',args:[true],revision:state.revision});assert.equal(response.status,200);
+  assert.equal((await response.json()).state.tasks.filter(t=>t.schedule).length,3);
+  assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,raw);
+});
+
 test('automatic Gmail integration', async t => {
   const checks = [];
   gmailAutomaticTests({ test: (name, fn) => checks.push(t.test(name, fn)), assert, sqlite, db, owner, request, security,

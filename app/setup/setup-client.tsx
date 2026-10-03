@@ -7,11 +7,11 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 
 type Details = {
-  name: string; date: string; location: string; guestCount: string;
+  name: string; date: string; location: string; timeZone: string; guestCount: string;
   dietaryOutstanding: string; cateringDeadline: string; outdoor: boolean; transportNeeded: boolean;
 };
 const values = (event: any): Details => ({
-  name: event.name, date: event.date, location: event.location,
+  name: event.name, date: event.date, location: event.location, timeZone: event.timeZone || '',
   guestCount: String(event.guestCount), dietaryOutstanding: String(event.dietaryOutstanding),
   cateringDeadline: event.cateringDeadline, outdoor: Boolean(event.outdoor), transportNeeded: Boolean(event.transportNeeded),
 });
@@ -40,7 +40,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
     pending.current = true; setBusy(true); setError('');
     try {
       if (isNew) {
-        const next = values({name:'',date:'',location:'',guestCount:0,dietaryOutstanding:0,cateringDeadline:'',outdoor:false,transportNeeded:false});
+        const next = values({name:'',date:'',location:'',timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,guestCount:0,dietaryOutstanding:0,cateringDeadline:'',outdoor:false,transportNeeded:false});
         setProject({setupRequired:true}); setForm(next); setInitial(JSON.stringify(next)); return;
       }
       const result = await workspaceRequest(projectId!);
@@ -61,10 +61,13 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form || !project || pending.current) return;
+    const changingScheduleZone = Boolean(project.state?.tasks.some((task: any) => task.schedule) && form.timeZone !== project.state.event.timeZone);
+    if (changingScheduleZone && !window.confirm('Change the event time zone? Existing activity dates and clock times will stay the same in the new zone.')) return;
     pending.current = true; setBusy(true); setError(''); setConflict(false);
     try {
       const details = { ...form,
         guestCount: Number(form.guestCount || 0), dietaryOutstanding: Number(form.dietaryOutstanding || 0),
+        ...(changingScheduleZone ? {confirmScheduleTimeZone:true} : {}),
       };
       let destination = backUrl;
       if (isNew) {
@@ -110,6 +113,13 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
             {textField('guestCount', 'Expected guests', 'number')}
           </div>
           {textField('location', 'Location (optional)', 'text', 240)}
+          <div className="space-y-2">
+            <Label htmlFor="setup-timeZone">Event time zone</Label>
+            <Input id="setup-timeZone" name="timeZone" list="event-time-zones" required maxLength={100} value={form.timeZone}
+              placeholder="America/Los_Angeles" onChange={e => update('timeZone', e.target.value)} className="h-11 text-base md:text-base" />
+            <datalist id="event-time-zones">{['UTC',...Intl.supportedValuesOf('timeZone')].map(zone=><option key={zone} value={zone} />)}</datalist>
+            <p className="text-sm text-muted-foreground">Schedule times use this zone for everyone. Changing the event date does not move scheduled activities.</p>
+          </div>
           <div className="space-y-5 border-t pt-6">
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-outdoor">Outdoor event</Label><Switch id="setup-outdoor" checked={form.outdoor} onCheckedChange={checked => update('outdoor', checked)} /></div>
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-transportNeeded">Organized transport needed</Label><Switch id="setup-transportNeeded" checked={form.transportNeeded} onCheckedChange={checked => update('transportNeeded', checked)} /></div>
@@ -128,7 +138,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
         </fieldset>
       </CardContent></Card>
     </form>
-    <p className="mt-5 text-sm text-muted-foreground">Only your account has access. Team invitations are not enabled.</p>
+    <p className="mt-5 text-sm text-muted-foreground">Manage team invitations in People.</p>
     <nav aria-label="Setup navigation" className="mt-5 flex flex-wrap gap-x-6 gap-y-3 text-sm text-primary underline">
       <a href={backUrl}>{isNew ? 'Cancel' : 'Back to project'}</a>
       <a href="/demo">Try the demo</a>

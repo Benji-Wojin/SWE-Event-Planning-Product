@@ -17,6 +17,15 @@
   const clean = (value, max = 2000) => String(value == null ? "" : value).trim().slice(0, max);
   const normalize = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const validDate = (value) => value === "" || (/^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value + "T12:00:00Z").toISOString().slice(0, 10) === value);
+  const validZone = (value) => {
+    if (typeof value !== 'string' || !value || value.length > 100 || /^[+-]/.test(value)) return false;
+    try { new Intl.DateTimeFormat('en', {timeZone:value}); return true; } catch { return false; }
+  };
+  const validLocalTime = value => typeof value === 'string' && /^[1-9]\d{3}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(value) && validDate(value.slice(0,10));
+  const validSchedule = value => value === null || !!value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every(key => ['start','end','location'].includes(key)) && validLocalTime(value.start) &&
+    typeof value.end === 'string' && (value.end === '' || validLocalTime(value.end) && value.end > value.start) &&
+    typeof value.location === 'string' && value.location.length <= 240;
 
   function createStore(options = {}) {
     const clock = typeof options.now === "function" ? options.now : () => options.now == null ? Date.now() : options.now;
@@ -110,6 +119,8 @@
       const list = (items, predicate) => Array.isArray(items) && items.every(predicate);
       const uniqueIds = (items) => new Set(items.map((item) => item.id)).size === items.length;
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
+        (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
+        list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
         list(value.tasks, (task) => strings(task, ["id", "title", "category", "note", "owner", "updatedBy", "completedBy", "completedAt", "sourceMessageId"]) && ["completionReportedBy", "completionReportSourceId", "memoryId", "suggestionId"].every((field) => task[field] === undefined || typeof task[field] === "string") && STATUSES.includes(task.status) && validDate(task.dueDate) && validOwner(task.owner) && validOwner(task.updatedBy) && validTime(task.updatedAt) && (task.completedAt === "" || validTime(task.completedAt)) && list(task.comments, (comment) => strings(comment, ["id", "actor", "text"]) && validOwner(comment.actor) && validTime(comment.at))) && uniqueIds(value.tasks) &&
         list(value.messages, (message) => strings(message, ["id", "sender", "subject", "body"]) && validTime(message.receivedAt) && strings(message.suggested, ["mode", "taskId", "title", "owner", "dueDate", "status", "note"]) && ["new", "update"].includes(message.suggested.mode) && STATUSES.includes(message.suggested.status) && validOwner(message.suggested.owner) && validDate(message.suggested.dueDate)) && uniqueIds(value.messages) &&
@@ -132,10 +143,11 @@
       if (notify) subscribers.forEach((subscriber) => { try { subscriber(getState()); } catch (error) { if (typeof console !== "undefined") console.error("Weft view could not refresh", error); } });
     }
     // Additive migration: preserve the existing browser workspace and source history.
-    state.event = { outdoor: true, transportNeeded: true, guestCount: 120, dietaryOutstanding: 14, cateringDeadline: day(2), ...state.event };
+    state.event = { outdoor: true, transportNeeded: true, guestCount: 120, dietaryOutstanding: 14, cateringDeadline: day(2), timeZone: '', ...state.event };
     const migrateDependencies = state.tasks.filter(task => !Array.isArray(task.dependencies));
     state.tasks.forEach((task) => {
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
+      task.schedule ??= null;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
       task.priority = ['auto', 'high', 'low'].includes(task.priority) ? task.priority : 'auto';
@@ -211,6 +223,7 @@
       const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
       task.priority = 'auto';
+      task.schedule = null;
       Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope:''});
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
@@ -242,11 +255,30 @@
     }
     function addTask(data, actor = "jack") {
       actorId(actor);
+      const schedule = data.schedule === undefined ? null : scheduleFields(data.schedule, actor);
       const task = createTask(data, actor);
+      task.schedule = schedule;
       entry(actor, `created ${task.title}`, task.id, "created");
       syncBlocker(task, actor);
       if(['progress','blocked'].includes(task.status)&&task.note)suggestHandoffs(task,task.note,actor,'note','');
       save();
+      return copy(task);
+    }
+    function scheduleFields(data, actor) {
+      if (actor !== 'jack') throw new Error('Only the organizer can change the schedule.');
+      if (!validSchedule(data)) throw new Error('Use a valid start time, a later end time (optional), and a location under 241 characters.');
+      if (data && !validZone(state.event.timeZone)) throw new Error('Set the event time zone in Project settings first.');
+      return data ? {start:data.start,end:data.end,location:data.location.trim()} : null;
+    }
+    function setTaskSchedule(taskId, data, actor = 'jack') {
+      actorId(actor);
+      const schedule = scheduleFields(data, actor), task = taskById(taskId);
+      if (JSON.stringify(task.schedule) === JSON.stringify(schedule)) return copy(task);
+      task.schedule = schedule;
+      task.revision += 1;
+      entry(actor, `${schedule ? 'scheduled' : 'removed from the schedule:'} ${task.title}`, task.id, 'schedule');
+      // Changing the timetable is not progress, a completion report, or a dependency result.
+      save(true, false);
       return copy(task);
     }
     function setTaskPriority(taskId, input, actor = 'jack') {
@@ -570,8 +602,17 @@
       entry(actor, `recorded a follow-up sent outside Weft for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
     }
     function eventFields(data) {
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline'].includes(key))) throw new Error('Use valid event details.');
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline','timeZone','confirmScheduleTimeZone'].includes(key))) throw new Error('Use valid event details.');
       const next = {...state.event};
+      if (data.confirmScheduleTimeZone !== undefined && typeof data.confirmScheduleTimeZone !== 'boolean') throw new Error('Confirm the time zone change.');
+      if (data.timeZone !== undefined) {
+        if (data.timeZone !== '' && !validZone(data.timeZone)) throw new Error('Choose a valid event time zone, such as America/Los_Angeles.');
+        if (data.timeZone !== next.timeZone && state.tasks.some(task=>task.schedule)) {
+          if (!data.timeZone) throw new Error('Scheduled activities need an event time zone.');
+          if (!data.confirmScheduleTimeZone) throw new Error('Confirm the time zone change. Existing schedule times will stay the same in the new zone.');
+        }
+        next.timeZone = data.timeZone;
+      }
       for (const field of ['name','location']) if (data[field] !== undefined) {
         const max = field === 'name' ? 160 : 240;
         if (typeof data[field] !== 'string' || data[field].trim().length > max) throw new Error(`Keep the event ${field} under ${max + 1} characters.`);
@@ -972,7 +1013,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

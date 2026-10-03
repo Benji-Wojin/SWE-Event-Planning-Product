@@ -30,6 +30,14 @@ test('planning checks react to the clock without a project edit', () => {
   assert.equal(store.exportState(), saved, 'Derived checks must not create a task or write state');
 });
 
+test('hosted schedule RPC strips actor arguments and preserves the snapshot on rejected save',async()=>{
+  const {store,respond}=await hosted(snapshot(1));let sent;
+  respond(async options=>{sent=JSON.parse(options.body);return {httpStatus:409,error:'Changed in another tab'};});
+  await assert.rejects(store.setTaskSchedule('dietary',{start:'2026-10-03T09:30',end:'',location:''},'forged'),/Changed/);
+  assert.equal(sent.method,'setTaskSchedule');assert.equal(sent.args.length,2);assert.equal(sent.revision,1);
+  assert.deepEqual(store.getState(),{revision:1});
+});
+
 test('new context and feedback update checks; covered and dismissed suggestions stay quiet', () => {
   const store = GatherStore.createStore({ storage: null, now: Date.parse('2026-09-28T12:00:00Z') });
   store.updateEvent({ outdoor: false });

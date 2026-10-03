@@ -8,6 +8,7 @@ let html = readFileSync('legacy/index.html', 'utf8')
 html = html
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
+  .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -35,6 +36,7 @@ writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable
 writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
+writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
 for(const name of ['guests','info-ui'])writeFileSync('public/gather-assets/'+name+'.js',readFileSync('legacy/'+name+'.js','utf8'));
@@ -50,6 +52,7 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
 const mutations = [
   'setNextUp', 'requestRecovery', 'resolveRecovery',
   'setTaskPriority',
+  'setTaskSchedule',
   'resolveHandoff',
   'addDependency', 'removeDependency', 'resumeTask',
   'claimTask',

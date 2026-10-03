@@ -62,6 +62,7 @@
   const methods = [
     'setNextUp', 'requestRecovery', 'resolveRecovery',
     'setTaskPriority',
+    'setTaskSchedule',
     'resolveHandoff',
     'addDependency', 'removeDependency', 'resumeTask',
     'claimTask',
@@ -136,6 +137,7 @@
     const count = {
       setNextUp: 2, requestRecovery: 2, resolveRecovery: 2,
       setTaskPriority: 2,
+      setTaskSchedule: 2,
       resolveHandoff: 3,
       addDependency: 2,
       removeDependency: 2,

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
 import '../legacy/recovery-ui.js';
+import '../legacy/schedule-ui.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
@@ -132,6 +133,7 @@ function taskDialogHtml(actor,id='dietary',identity) {
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
   context.recovery=GatherRecoveryUI.create(context);
+  context.schedule=GatherScheduleUI.create(context);
   vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;
@@ -209,6 +211,7 @@ test('task refresh preserves only dirty sibling fields, excluding the submitted 
   const forms=[
     {id:'commentForm',inputs:[{name:'text',tagName:'TEXTAREA',value:'Posted comment',defaultValue:''}]},
     {id:'responseForm',inputs:[{name:'note',tagName:'TEXTAREA',value:'Unsent update',defaultValue:''}]},
+    {id:'scheduleForm',inputs:[{name:'start',tagName:'INPUT',value:'2026-10-03T10:00',defaultValue:''}]},
     {id:'taskDetailForm',inputs:[
       {name:'title',tagName:'INPUT',value:'Same title',defaultValue:'Same title'},
       {name:'note',tagName:'TEXTAREA',value:'Original note',defaultValue:'Original note'},
@@ -221,8 +224,10 @@ test('task refresh preserves only dirty sibling fields, excluding the submitted 
   vm.runInContext(source.slice(source.indexOf('  function taskDrafts('),source.indexOf('  function taskDialog(')),context);
   const drafts=JSON.parse(JSON.stringify(context.taskDrafts('commentForm')));
   assert.deepEqual(drafts.map(field=>[field.form,field.name,field.value]),[
-    ['responseForm','note','Unsent update'],['taskDetailForm','owner','dev'],['taskDetailForm','additional','on'],
+    ['responseForm','note','Unsent update'],['scheduleForm','start','2026-10-03T10:00'],['taskDetailForm','owner','dev'],['taskDetailForm','additional','on'],
   ]);
-  assert.equal(drafts[2].checked,true);
+  assert.equal(drafts[3].checked,true);
+  assert.ok(!context.taskDrafts('scheduleForm').some(field=>field.form==='scheduleForm'));
+  assert.ok(context.taskDrafts('scheduleForm').some(field=>field.form==='commentForm'));
   context.ui.dialogKind='private';assert.equal(context.taskDrafts().length,0);
 });

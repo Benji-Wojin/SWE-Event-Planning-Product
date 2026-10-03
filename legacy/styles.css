@@ -594,6 +594,15 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .recovery-suggestion{font-size:14px;margin-top:12px}.recovery-suggestion summary{cursor:pointer}.recovery-suggestion .text-button{display:block;text-align:left;margin:8px 0}
 .owner-load{font-size:14px;color:var(--muted);line-height:1.5}.owner-load summary{cursor:pointer}.owner-load ul{padding-left:18px}
 .agreed-scope{padding:14px 16px;border-left:3px solid var(--green);margin-bottom:20px}
+.schedule-switch{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.schedule-panel{padding:22px}.schedule-zone{font-size:.875rem;line-height:1.5;margin:0 0 18px;overflow-wrap:anywhere}
+.schedule-day+.schedule-day{margin-top:28px}.schedule-day h2,.schedule-empty h2{font-size:1rem;margin:0 0 14px}
+.schedule-list{display:grid;gap:8px}.schedule-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(0,1fr) minmax(110px,auto);gap:16px;align-items:start;width:100%;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--white);color:var(--ink);text-align:left;cursor:pointer;font:inherit;overflow-wrap:anywhere}
+.schedule-row:hover{background:var(--paper)}.schedule-row:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.schedule-time{font-size:.875rem;font-variant-numeric:tabular-nums}.schedule-activity,.schedule-owner{display:grid;gap:8px;min-width:0}.schedule-owner{justify-items:start}.schedule-activity strong{font-size:1rem}.schedule-activity .muted{font-size:.875rem}
+.schedule-facts{padding:0 0 16px}.schedule-facts h3{font-size:1rem;margin:0 0 8px}.schedule-facts p{font-size:.875rem;margin:6px 0;overflow-wrap:anywhere}
+.task-schedule .form-actions{flex-wrap:wrap}.task-schedule .field{min-width:0}.task-schedule input{min-width:0;max-width:100%}
+@media(max-width:640px){.schedule-panel{padding:16px}.schedule-row{grid-template-columns:minmax(0,1fr);gap:10px}.schedule-owner{display:flex;flex-wrap:wrap;align-items:center}.schedule-switch .filter-tab{flex:1}.schedule-time{font-weight:600}}
 @media(max-width:540px){.task-recovery{padding:14px}.next-up-control{align-items:stretch;flex-direction:column}}
 .briefing-card-heading>div{min-width:0}.briefing-card-heading,.briefing-attribution,.notice,.followup-context,.team-card h2,.memory-card h2,.timeline-task{overflow-wrap:anywhere}
 .briefing-tools details{min-width:0;max-width:100%}.briefing-tools details[open]{width:100%}

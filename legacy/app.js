@@ -5,7 +5,7 @@
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
-  const ui = { view:'overview', actor:'jack', tab:'all', owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
+  const ui = { view:'overview', actor:'jack', tab:'all', timelineMode:'schedule', owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
   const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
@@ -146,6 +146,7 @@
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
+  const schedule = GatherScheduleUI.create({h,options,person,statusBadge});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
@@ -193,8 +194,12 @@
     return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineView(s) {
+    const scheduled=ui.timelineMode!=='deadlines';
+    const controls=isOrganizer()?(scheduled?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':addButton):'';
+    const heading=pageHeading('','Timeline','',controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
+    if(scheduled)return heading+schedule.view(s,isOrganizer());
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
-    return pageHeading('','Timeline','',addButton)+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'Unscheduled'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}<div class="timeline-day event-day"><div class="timeline-date"><strong>${s.event.date?dayLabel(s.event.date):'Date not set'}</strong></div><div class="timeline-tasks"><div class="timeline-task"><span class="eyebrow">EVENT DAY</span><strong>${h(s.event.name)}</strong><p>${h(s.event.location||'Location not set')}</p></div></div></div></div></section>`;
+    return heading+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'No deadline'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}</div></section>`;
   }
   function updatesView(s) {
     return pageHeading('','Activity','',`<button class="btn btn-secondary" data-action="digest">${icon('copy')} Summary</button>`)+`<div class="workspace-grid"><section class="panel"><div class="panel-heading"><h2 class="section-title">Team activity</h2><span class="chip">${s.activity.length} updates</span></div><div class="activity-list">${s.activity.map(a=>activityItem(a)).join('')||empty('No activity yet.','')}</div></section><aside class="panel"><div class="panel-heading"><div><h2 class="section-title">Follow-up drafts</h2></div></div>${s.drafts.length?s.drafts.map(d=>`<article class="source-card"><span class="source-label">DRAFT · ${timeLabel(d.at)}</span><p>${h(d.text)}</p><div class="inline"><button class="text-button" data-action="copy-draft" data-id="${h(d.id)}">${icon('copy')} Copy draft</button><button class="text-button" data-action="task" data-id="${h(d.taskId)}">Open task</button></div></article>`).join(''):empty('No drafts.','Create a draft from a task. Messages are not sent automatically.')}</aside></div>`;
@@ -345,6 +350,7 @@
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+      ${schedule.details(task,organizer,store.getState().event)}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
@@ -490,7 +496,10 @@
   function contextDialog() {
     if(window.GatherMode&&!window.GatherMode.demo&&isOrganizer()){window.top.location.href=window.GatherMode.projectUrl('/setup');return;}
     if(!isOrganizer()){const e=store.getState().event;openDialog('Event details',`<h3>${h(e.name)}</h3><p>${h(e.location)} · ${dayLabel(e.date)}</p><p>${e.guestCount} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;}
-    const e=store.getState().event;openDialog('Event details',`<form id="contextForm"><div class="form-grid"><label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">${isOrganizer()?'Update event context':'Event details'}</button></div></form>`);
+    const e=store.getState().event;
+    openDialog('Event details',`<form id="contextForm"><div class="form-grid">
+      <label class="field full-width">Event time zone<input name="timeZone" list="context-time-zones" required maxlength="100" placeholder="America/Los_Angeles" value="${h(e.timeZone)}"><datalist id="context-time-zones">${['UTC',...Intl.supportedValuesOf('timeZone')].map(zone=>`<option value="${h(zone)}"></option>`).join('')}</datalist></label>
+      <label class="field">Venue setting<select name="outdoor">${options([['true','Outdoors'],['false','Indoors']],String(e.outdoor))}</select></label><label class="field">Organized transport<select name="transportNeeded">${options([['true','Transport needed'],['false','No organized transport']],String(e.transportNeeded))}</select></label><label class="field">Expected guests<input type="number" name="guestCount" min="0" max="100000" required value="${e.guestCount}"></label><label class="field">Dietary responses outstanding<input type="number" name="dietaryOutstanding" min="0" max="100000" required value="${e.dietaryOutstanding}"></label><label class="field">Catering cutoff<input type="date" name="cateringDeadline" value="${h(e.cateringDeadline)}"></label></div><p class="notice">Manually entered data. No RSVP sync.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Update event context</button></div></form>`);
   }
   function memoryEditDialog(id) {
     const m=store.getState().memories.find(item=>item.id===id);if(!m)return;
@@ -506,7 +515,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','task','add-task','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','task','add-task','add-activity','schedule-task','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -515,6 +524,9 @@
     try {
       if(action==='close-dialog')closeDialog();
       if(action==='add-task')newTaskDialog();
+      if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
+      if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState()));
+      if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='task')taskDialog(id);
       if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()||(t.requiresVerification&&t.status!=='done')){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();toast(t.status==='done'?'Task reopened. Its history is preserved.':`Marked done by ${member(ui.actor).name}. Recorded in team updates.`);}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
@@ -585,7 +597,16 @@
     $('.form-error',form)?.remove();
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
-      if(form.id==='newTaskForm'){store.addTask(data,ui.actor);closeDialog();render();toast('Task added.');}
+      if(form.id==='newTaskForm'){
+        let taskData=data;
+        if(form.dataset.scheduled==='true'){const {start,end,location,...fields}=data;taskData={...fields,schedule:{start,end,location}};}
+        const task=store.addTask(taskData,ui.actor);closeDialog();render();if(form.dataset.scheduled==='true')taskDialog(task.id);toast(form.dataset.scheduled==='true'?'Activity added.':'Task added.');
+      }
+      if(form.id==='scheduleForm'||form.id==='schedulePickerForm'){
+        const taskId=form.dataset.id||data.taskId;
+        store.setTaskSchedule(taskId,event.submitter?.value==='remove'?null:{start:data.start,end:data.end,location:data.location},ui.actor);
+        render();taskDialog(taskId,form.id);toast(event.submitter?.value==='remove'?'Removed from schedule. The task is unchanged.':'Schedule saved.');
+      }
       if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
@@ -604,7 +625,14 @@
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
       if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
       if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
-      if(form.id==='contextForm'){store.updateEvent(data,ui.actor);closeDialog();render();thoughtDialog();toast('Event details saved.');}
+      if(form.id==='contextForm'){
+        const state=store.getState();
+        if(data.timeZone!==state.event.timeZone&&state.tasks.some(task=>task.schedule)){
+          if(!window.confirm('Change the event time zone? Existing activity dates and clock times will stay the same in the new zone.'))return;
+          data.confirmScheduleTimeZone=true;
+        }
+        store.updateEvent(data,ui.actor);closeDialog();render();toast('Event details saved.');
+      }
       if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);closeDialog();render();toast('Feedback updated.');}
       if(form.id==='recordFollowupForm'){store.recordFollowup(form.dataset.id,data.afterDate,ui.actor);closeDialog();render();toast('Follow-up recorded.');}
       if(form.id==='privateLoginForm'){
