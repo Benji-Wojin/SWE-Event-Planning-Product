@@ -75,7 +75,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
         const response = await fetch('/api/projects', {method:'POST', credentials:'same-origin',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},body:JSON.stringify({requestId:requestId.current,event:details})});
         const result: any = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not create the project. Your details are still here.');
-        destination = '/project?project=' + encodeURIComponent(result.id);
+        destination = '/plan?project=' + encodeURIComponent(result.id);
       } else await workspaceRequest(projectId!, { method:'completeSetup', args:[details], revision:project.revision });
       leaving.current = true;
       window.location.assign(destination);
@@ -132,7 +132,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
             </div>
           </details>
           <div className="border-t pt-5">
-            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Starts with an empty plan. Your other projects are unchanged.' : 'Changes only this project’s settings.'}</p>
+            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: draft a plan with AI or start with an empty project. Your other projects are unchanged.' : 'Changes only this project’s settings.'}</p>
             <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>
           </div>
         </fieldset>

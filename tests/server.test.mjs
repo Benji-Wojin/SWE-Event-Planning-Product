@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
+import { eventPlanTests } from './event-plan.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -61,7 +62,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore, planApi, planGeneration;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -85,6 +86,8 @@ before(async () => {
       automaticCore: 'lib/gmail-automatic.ts',
       automaticApi: 'app/api/gmail/automatic-run/route.ts',
       classifierCore: 'lib/mail-classifier.ts',
+      planApi: 'app/api/plan/route.ts',
+      planGeneration: 'lib/plan-generation.ts',
     },
     outdir: directory,
     bundle: true,
@@ -119,6 +122,7 @@ before(async () => {
     ),
   );
   [automaticCore, automaticApi, classifierCore] = await Promise.all(['automaticCore', 'automaticApi', 'classifierCore'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
+  [planApi, planGeneration] = await Promise.all(['planApi','planGeneration'].map(name=>import(pathToFileURL(join(directory,name+'.js')))));
 });
 const owner = () => {
   globalThis.__gatherUser = {
@@ -1450,6 +1454,10 @@ test('demo personas share the same schedule and reset never changes real project
   response=await demoWrite('jack',{method:'resetDemo',args:[true],revision:state.revision});assert.equal(response.status,200);
   assert.equal((await response.json()).state.tasks.filter(t=>t.schedule).length,3);
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,raw);
+});
+
+test('private starting plans',async t=>{
+  await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,realRead,workspace,demoRead,demoWrite});
 });
 
 test('automatic Gmail integration', async t => {

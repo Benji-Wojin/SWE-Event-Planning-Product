@@ -85,6 +85,21 @@ export const resourceUsage = sqliteTable('resource_usage', {
   id: text('id').primaryKey(),
   count: integer('count').notNull().default(0),
 });
+export const planDrafts = sqliteTable('plan_drafts', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  workspaceId: text('workspace_id').notNull(),
+  requestId: text('request_id').notNull().default(''),
+  requestHash: text('request_hash').notNull().default(''),
+  draftGeneration: text('draft_generation').notNull().default(''),
+  revision: integer('revision').notNull().default(1),
+  status: text('status').notNull().default('empty'),
+  issue: text('issue').notNull().default(''),
+  lease: text('lease').notNull().default(''),
+  leaseUntil: integer('lease_until').notNull().default(0),
+  startedAt: integer('started_at').notNull().default(0),
+  payload: text('payload').notNull(),
+});
 export const gmailConnections = sqliteTable('gmail_connections', {
   userId: text('user_id').primaryKey(),
   payload: text('payload').notNull(),
