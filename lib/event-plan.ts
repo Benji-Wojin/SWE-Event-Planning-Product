@@ -1,10 +1,12 @@
 import { env } from 'cloudflare:workers';
+import { PLAN_AI_CONSENT_VERSION } from './groq';
 import { administrator, HttpError, principal, seal, unseal } from './security';
 import { projectUser } from './project-access';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
 import {
   generateEventPlan,
+  planRequestBody,
   parseBrief,
   parsePlanItems,
   PlanProviderError,
@@ -117,8 +119,8 @@ const decode = (row: any) =>
     ? unseal(row.payload, 'event-plan:' + row.id)
     : Promise.resolve({ brief: emptyBrief, draft: null, receipt: null });
 const issueText: Record<string, string> = {
-  billing:
-    'AI planning has no available API quota. The app owner needs to check API billing or spending limits.',
+  rate_limit:
+    'Groq’s free-plan limit was reached. Your saved draft is unchanged. Try again later.',
   credentials: 'AI planning credentials need attention from the app owner.',
   provider:
     'AI could not finish this plan. Your saved draft is unchanged. Try again in a minute.',
@@ -135,7 +137,7 @@ async function snapshot(c: Context) {
     event: c.state.event,
     members: c.state.members.filter((m: any) => m.active !== false),
     existingTaskCount: c.state.tasks.length,
-    configured: !!env.OPENAI_API_KEY,
+    configured: !!env.GROQ_API_KEY,
     brief: data.brief,
     draft: data.draft,
     receipt: data.receipt,
@@ -224,9 +226,11 @@ async function generate(c: Context, input: any) {
       'requestId',
       'brief',
       'consent',
+      'consentVersion',
     ]) ||
     !uuid(input.requestId) ||
-    input.consent !== true
+    input.consent !== true ||
+    input.consentVersion !== PLAN_AI_CONSENT_VERSION
   )
     throw new HttpError(400, 'Confirm the event details to send to AI.');
   let brief;
@@ -253,11 +257,24 @@ async function generate(c: Context, input: any) {
       409,
       'The project or draft changed. Refresh before generating.',
     );
-  if (!env.OPENAI_API_KEY)
+  if (!env.GROQ_API_KEY)
     throw new HttpError(
       503,
       'AI planning is not configured. You can save the brief or plan manually.',
     );
+  const generationContext = {
+    ...c.source,
+    brief,
+    today: new Date().toISOString().slice(0, 10),
+  };
+  try {
+    planRequestBody(generationContext);
+  } catch {
+    throw new HttpError(
+      413,
+      'This brief and project context exceed the free-plan request budget. Shorten the brief or continue planning manually. Your saved draft is unchanged.',
+    );
+  }
   const now = Date.now(),
     lease = crypto.randomUUID(),
     quota =
@@ -305,10 +322,7 @@ async function generate(c: Context, input: any) {
     );
   }
   try {
-    const output = await generateEventPlan(
-      { ...c.source, brief, today: new Date().toISOString().slice(0, 10) },
-      env.OPENAI_API_KEY,
-    );
+    const output = await generateEventPlan(generationContext, env.GROQ_API_KEY);
     const draft = {
       ...output,
       items: output.items.map((item) => ({

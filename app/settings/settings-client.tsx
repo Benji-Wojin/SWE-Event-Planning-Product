@@ -348,7 +348,7 @@ function AutomaticControls({ status, busy, projectId, run, refresh, setNotice }:
     const available = new Set(availableIds.split('|'));
     setChosen(previous => previous.filter(id => available.has(id)));
     setConsent(false);
-  }, [availableIds]);
+  }, [availableIds, automatic?.consentRequired]);
   const changed = [...chosen].sort().join('|') !== [...(automatic?.projectIds || [])].sort().join('|');
   return <Card><CardHeader><CardTitle className="text-xl">Project email detection</CardTitle></CardHeader>
     <CardContent className="space-y-4">
@@ -364,11 +364,11 @@ function AutomaticControls({ status, busy, projectId, run, refresh, setNotice }:
       {chosen.length > 10 && <p role="alert" className="text-sm">Select no more than ten projects.</p>}
       {(!automatic.enabled || changed) && <label className="flex items-start gap-3 text-sm leading-relaxed">
         <input type="checkbox" className="mt-1" disabled={busy} checked={consent} onChange={event => setConsent(event.target.checked)} />
-        <span>Allow Weft to check the last 7 days and new incoming email, including while I’m away. Email text, selected project/task names, and event dates and locations are sent to OpenAI for relevance checks. Matches stay private until I approve a summary. Attachments are not read. I can pause at any time.</span>
+        <span>Allow Weft to send email text, selected project/task names, and event dates and locations to Groq for relevance checks, including while I’m away. New connections start with the last 7 days; existing checks resume from saved progress. Matches stay private until I approve a summary. Attachments are not read. I can pause at any time.</span>
       </label>}
       <div className="flex flex-wrap gap-3">
         {(!automatic.enabled || changed) && <Button disabled={busy || !automatic.configured || !chosen.length || chosen.length > 10 || !consent}
-          onClick={() => void run(async () => { await gmailRequest('automatic', { enabled: true, projectIds: chosen, consent }); await refresh(); setConsent(false); setNotice('Automatic detection enabled. The first check includes the last 7 days.'); })}>
+          onClick={() => void run(async () => { await gmailRequest('automatic', { enabled: true, projectIds: chosen, consent, consentVersion: 'groq-email-v1' }); await refresh(); setConsent(false); setNotice('Automatic detection enabled. Existing checks resume from saved progress; new connections start with the last 7 days.'); })}>
           {automatic.enabled ? 'Save projects' : 'Enable detection'}
         </Button>}
         {automatic.enabled && <><Button variant="outline" disabled={busy} onClick={() => void run(async () => {

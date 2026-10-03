@@ -19,9 +19,9 @@
   function render(node,data){
     const disabled=data.status==='unconfigured',busy=data.status==='loading';
     const links=Array.isArray(data.links)?data.links:[];
-    const message=disabled?'AI links aren’t connected yet.':busy?'Finding helpful links…':data.status==='cooldown'?'Please wait a minute before searching again.':data.status==='error'?'The last search couldn’t finish. Try again.':links.length?'':'No useful sources found. Try adding a city or region.';
+    const message=disabled?'New link searches are unavailable while the Groq connection is being verified.':busy?'Finding helpful links…':data.status==='cooldown'?'Please wait a minute before searching again.':data.status==='error'?'The last search couldn’t finish. Try again.':links.length?'':'No useful sources found. Try adding a city or region.';
     node.innerHTML=(links.length?'<ul class="resource-links">'+links.map(link=>'<li><a href="'+escape(link.url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">'+escape(link.title)+'</a><span class="resource-host">'+escape(link.host)+'</span><p>'+escape(link.description)+'</p></li>').join('')+'</ul>':'<p class="muted">'+message+'</p>')+
-      '<details class="resource-details"><summary>Search details</summary><p>AI searches using this task’s name, category and optional city. Emails, comments and private bookings are excluded.</p>'+
+      (disabled&&links.length?'<p class="muted">'+message+'</p>':'')+'<details class="resource-details"><summary>Search details</summary><p>Groq searches using this task’s name, category and optional city. Emails, comments and private bookings are excluded.</p>'+
       (disabled?'':'<form id="resourceForm" class="resource-form"><label class="field">City or region (optional)<input name="location" maxlength="80" autocomplete="off" value="'+escape(data.location||'')+'" placeholder="e.g. Portland, Oregon"></label><button class="btn btn-secondary btn-small" type="submit" '+(busy?'disabled':'')+'>Find links</button></form>')+
       '<p class="muted">'+(data.generatedAt?'Searched '+escape(new Date(data.generatedAt).toLocaleDateString())+'. ':'')+'Suggestions, not endorsements. Confirm availability and suitability.</p></details>';
   }

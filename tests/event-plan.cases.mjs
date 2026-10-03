@@ -17,7 +17,7 @@ export async function eventPlanTests({
   demoWrite,
 }) {
   const originalFetch = globalThis.fetch,
-    originalKey = globalThis.__gatherEnv.OPENAI_API_KEY;
+    originalKey = globalThis.__gatherEnv.GROQ_API_KEY;
   const brief = {
     kind: 'school',
     description:
@@ -75,7 +75,13 @@ export async function eventPlanTests({
     });
   const provider = (plan = output()) => {
     globalThis.fetch = async (url, options) => {
-      assert.equal(url, 'https://api.openai.com/v1/responses');
+      assert.equal(url, 'https://api.groq.com/openai/v1/responses');
+      assert.equal(
+        options.headers.Authorization,
+        'Bearer test-only-placeholder',
+      );
+      assert.equal(JSON.parse(options.body).model, 'openai/gpt-oss-20b');
+      assert.equal(JSON.parse(options.body).store, undefined);
       calls.push(JSON.parse(options.body));
       return success(plan);
     };
@@ -123,7 +129,7 @@ export async function eventPlanTests({
   }
   async function setup() {
     owner();
-    globalThis.__gatherEnv.OPENAI_API_KEY = 'test-only-placeholder';
+    globalThis.__gatherEnv.GROQ_API_KEY = 'test-only-placeholder';
     calls = [];
     provider();
     sqlite
@@ -147,6 +153,7 @@ export async function eventPlanTests({
     requestId: crypto.randomUUID(),
     brief,
     consent: true,
+    consentVersion: 'groq-plan-v1',
     ...extra,
   });
   const approval = (snap, extra = {}) => ({
@@ -250,7 +257,7 @@ export async function eventPlanTests({
           403,
         );
         const snap = await read(project);
-        delete globalThis.__gatherEnv.OPENAI_API_KEY;
+        delete globalThis.__gatherEnv.GROQ_API_KEY;
         assert.equal((await post(project, generation(snap))).status, 503);
         let response = await post(project, {
           action: 'save',
@@ -281,6 +288,44 @@ export async function eventPlanTests({
       },
     );
     await t.test(
+      'Groq consent and oversized context fail before provider calls or daily usage',
+      async () => {
+        const project = await setup(),
+          snap = await read(project);
+        for (const consentVersion of [undefined, 'openai-plan-v1']) {
+          assert.equal(
+            (await post(project, generation(snap, { consentVersion }))).status,
+            400,
+          );
+        }
+        await change(project, 'addTask', [{ title: 'Long planning context', category: 'Program' }]);
+        const stored = sqlite
+          .prepare('SELECT data FROM workspaces WHERE id=?')
+          .get(project);
+        const data = JSON.parse(stored.data);
+        data.tasks = Array.from({ length: 200 }, (_, i) => ({
+          ...data.tasks[0],
+          id: 'large-' + i,
+          title: 'Long planning context '.repeat(8),
+        }));
+        sqlite
+          .prepare('UPDATE workspaces SET data=? WHERE id=?')
+          .run(JSON.stringify(data), project);
+        const response = await post(project, generation(await read(project)));
+        assert.equal(response.status, 413);
+        assert.equal(calls.length, 0);
+        assert.equal(
+          sqlite
+            .prepare(
+              "SELECT count(*) AS n FROM resource_usage WHERE id LIKE 'plan-ai:%'",
+            )
+            .get().n,
+          0,
+        );
+        assert.equal(row(project), undefined);
+      },
+    );
+    await t.test(
       'generation sends only disclosed context, persists privately and retries without another provider call',
       async () => {
         const project = await setup();
@@ -305,7 +350,7 @@ export async function eventPlanTests({
         let snap = await response.json();
         assert.equal(snap.status, 'ready');
         assert.equal(calls.length, 1);
-        assert.equal(calls[0].store, false);
+        assert.equal(calls[0].store, undefined);
         assert.equal(calls[0].text.format.strict, true);
         assert.equal(calls[0].tools, undefined);
         const sent = JSON.parse(calls[0].input);
@@ -379,7 +424,7 @@ export async function eventPlanTests({
         assert.equal(response.status, 200);
         snap = await response.json();
         assert.equal(snap.status, 'error');
-        assert.match(snap.issue, /quota/);
+        assert.match(snap.issue, /free-plan limit/);
         assert.ok(!JSON.stringify(snap).includes('PRIVATE_PROVIDER_DETAIL'));
         assert.equal(snap.draft.items[0].title, 'Organizer edited approval');
         const before = JSON.stringify(snap.draft);
@@ -399,7 +444,7 @@ export async function eventPlanTests({
         response = await post(project, generation(snap));
         assert.equal(response.status, 200);
         snap = await response.json();
-        assert.match(snap.issue, /quota/);
+        assert.match(snap.issue, /free-plan limit/);
         assert.equal(JSON.stringify(snap.draft), before);
       },
     );
@@ -850,8 +895,8 @@ export async function eventPlanTests({
     );
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalKey === undefined) delete globalThis.__gatherEnv.OPENAI_API_KEY;
-    else globalThis.__gatherEnv.OPENAI_API_KEY = originalKey;
+    if (originalKey === undefined) delete globalThis.__gatherEnv.GROQ_API_KEY;
+    else globalThis.__gatherEnv.GROQ_API_KEY = originalKey;
     owner();
   }
 }

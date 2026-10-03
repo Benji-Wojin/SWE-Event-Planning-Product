@@ -11,10 +11,12 @@ import {
 } from './gmail';
 import {
   classifyMail,
+  mailRequestBody,
   MailProviderError,
   type MailContext,
 } from './mail-classifier';
 import { projectOwner } from './project-access';
+import { MAIL_AI_CONSENT_VERSION } from './groq';
 
 const INTERVAL = 5 * 60000,
   LEASE = 120000,
@@ -30,6 +32,7 @@ type Scan = {
 type State = {
   projectIds: string[];
   consentedAt: string;
+  consentVersion?: string;
   historyId: string;
   after: number;
   scan?: Scan;
@@ -59,8 +62,12 @@ const issues: Record<string, string> = {
   limit: 'Daily email-check limit reached. Checks resume tomorrow.',
   access: 'A selected project is no longer available. Review your selection.',
   unconfigured: 'Email suggestions need a server API key.',
-  billing:
-    'Email AI has no available API quota. The app owner needs to check API billing or spending limits.',
+  consent:
+    'Email checks are paused. Approve sending email text to Groq to resume from saved progress.',
+  rate_limit:
+    'Groq’s free-plan limit was reached. Checks will retry without skipping messages.',
+  context_limit:
+    'Email checks are paused: this email and selected project details exceed the free-plan request budget. Select fewer projects or use manual email import. Queued emails are kept.',
   credentials: 'Email AI credentials need attention from the app owner.',
 };
 
@@ -72,15 +79,23 @@ export async function automaticStatus(userId: string) {
     : null;
   const current =
     !!job && !!conn && job.connection_generation === conn.generation;
+  const consentRequired =
+    !!job && state?.consentVersion !== MAIL_AI_CONSENT_VERSION;
   return {
-    configured: !!env.OPENAI_API_KEY,
+    configured: !!env.GROQ_API_KEY,
+    consentRequired,
     backgroundReady: env.GMAIL_BACKGROUND_MODE === 'owner-private',
-    enabled: current && !!job?.enabled,
+    enabled: current && !!job?.enabled && !consentRequired,
     projectIds: state?.projectIds || [],
     lastCheck: job?.last_success || '',
     catchingUp: !!state?.scan,
     recovery: !!state?.recovery,
-    issue: job && !current ? issues.reconnect : issues[job?.issue || ''] || '',
+    issue:
+      job && !current
+        ? issues.reconnect
+        : consentRequired
+          ? issues.consent
+          : issues[job?.issue || ''] || '',
   };
 }
 
@@ -132,6 +147,7 @@ export async function configureAutomatic(userId: string, input: any) {
   if (
     input.enabled !== true ||
     input.consent !== true ||
+    input.consentVersion !== MAIL_AI_CONSENT_VERSION ||
     !Array.isArray(input.projectIds) ||
     input.projectIds.length < 1 ||
     input.projectIds.length > 10 ||
@@ -142,7 +158,7 @@ export async function configureAutomatic(userId: string, input: any) {
       400,
       'Choose up to ten projects and approve private AI email checks.',
     );
-  if (!env.OPENAI_API_KEY) throw new HttpError(503, issues.unconfigured);
+  if (!env.GROQ_API_KEY) throw new HttpError(503, issues.unconfigured);
   const conn = await connection(userId);
   if (!conn?.email) throw new HttpError(409, 'Connect Gmail first.');
   await ownedContexts(userId, input.projectIds);
@@ -155,13 +171,52 @@ export async function configureAutomatic(userId: string, input: any) {
     previous?.enabled &&
     previous.connection_generation === conn.generation &&
     old &&
+    old.consentVersion === MAIL_AI_CONSENT_VERSION &&
     [...old.projectIds].sort().join('|') ===
       [...input.projectIds].sort().join('|')
   )
     return automaticStatus(userId);
+  // Provider-only re-consent must preserve pending mail, pagination and deduplication.
+  // Match the encrypted snapshot as well as the generation to reject concurrent checkpoints.
+  if (
+    previous &&
+    old &&
+    previous.connection_generation === conn.generation &&
+    [...old.projectIds].sort().join('|') ===
+      [...input.projectIds].sort().join('|')
+  ) {
+    const resumed =
+      await env.DB.prepare(`UPDATE gmail_automation SET payload=?,enabled=1,lease='',lease_until=0,next_run=0,issue=''
+      WHERE user_id=? AND generation=? AND payload=? AND connection_generation=?
+      AND EXISTS (SELECT 1 FROM gmail_connections WHERE user_id=? AND generation=?)`)
+        .bind(
+          await seal(
+            {
+              ...old,
+              consentVersion: MAIL_AI_CONSENT_VERSION,
+              consentedAt: new Date().toISOString(),
+            },
+            contextKey(userId),
+          ),
+          userId,
+          previous.generation,
+          previous.payload,
+          conn.generation,
+          userId,
+          conn.generation,
+        )
+        .run();
+    if (resumed.meta.changes !== 1)
+      throw new HttpError(
+        409,
+        'Email checks changed. Reload before enabling checks.',
+      );
+    return automaticStatus(userId);
+  }
   const state: State = {
     projectIds: input.projectIds,
     consentedAt: new Date().toISOString(),
+    consentVersion: MAIL_AI_CONSENT_VERSION,
     historyId: '',
     after: Math.floor((Date.now() - 7 * 86400000) / 1000),
   };
@@ -279,9 +334,17 @@ export async function runAutomatic(userId: string) {
   let state: State;
   try {
     state = await unseal(job.payload, contextKey(userId));
+    if (state.consentVersion !== MAIL_AI_CONSENT_VERSION) {
+      await env.DB.prepare(
+        "UPDATE gmail_automation SET enabled=0,lease='',lease_until=0,issue='consent' WHERE user_id=? AND generation=? AND lease=?",
+      )
+        .bind(userId, job.generation, lease)
+        .run();
+      return { checked: 0, imported: 0, status: 'consent' };
+    }
     await assertActive(job, state);
     const projects = await ownedContexts(userId, state.projectIds);
-    if (!env.OPENAI_API_KEY) throw new HttpError(503, issues.unconfigured);
+    if (!env.GROQ_API_KEY) throw new HttpError(503, issues.unconfigured);
     let conn = await connection(userId);
     if (!conn || conn.generation !== job.connection_generation)
       throw new HttpError(409, 'Gmail changed.');
@@ -372,7 +435,7 @@ export async function runAutomatic(userId: string) {
       scan.nextPageToken = list.nextPageToken || '';
       await checkpoint(job, state);
     }
-    const ids = scan.pending.slice(0, 5),
+    const ids = scan.pending.slice(0, 1),
       candidates: any[] = [],
       receipts: string[] = [];
     for (const id of ids) {
@@ -455,6 +518,18 @@ export async function runAutomatic(userId: string) {
           }
         }
       }
+      const inputs = candidates.map(
+        ({ id, subject, sender, body, knownProjectId, knownTaskId }) => ({
+          id,
+          subject,
+          sender,
+          body: body.slice(0, 12000),
+          ...(knownProjectId && knownProjectId !== 'ambiguous'
+            ? { knownProjectId, knownTaskId }
+            : {}),
+        }),
+      );
+      mailRequestBody(inputs, projects); // Check size before consuming the daily allowance.
       const quota =
           'gmail-ai:' + userId + ':' + new Date().toISOString().slice(0, 10),
         guard = jobGuard(job, state);
@@ -465,20 +540,7 @@ export async function runAutomatic(userId: string) {
           .run();
       if (reserved.meta.changes !== 1) throw new HttpError(429, issues.limit);
       await assertActive(job, state);
-      suggestions = await classifyMail(
-        candidates.map(
-          ({ id, subject, sender, body, knownProjectId, knownTaskId }) => ({
-            id,
-            subject,
-            sender,
-            body: body.slice(0, 12000),
-            ...(knownProjectId && knownProjectId !== 'ambiguous'
-              ? { knownProjectId, knownTaskId }
-              : {}),
-          }),
-        ),
-        projects,
-      );
+      suggestions = await classifyMail(inputs, projects);
     }
     await assertActive(job, state);
     const statements: D1PreparedStatement[] = [],
@@ -543,7 +605,7 @@ export async function runAutomatic(userId: string) {
     const issue =
       error instanceof MailProviderError
         ? error.category
-        : !env.OPENAI_API_KEY
+        : !env.GROQ_API_KEY
           ? 'unconfigured'
           : status === 401 ||
               (error instanceof GmailError && error.providerStatus === 401) ||
@@ -560,13 +622,15 @@ export async function runAutomatic(userId: string) {
         ? Date.parse(
             new Date(now + 86400000).toISOString().slice(0, 10) + 'T00:00:00Z',
           )
-        : ['billing', 'credentials'].includes(issue)
-          ? now + 60 * 60000
-          : now + INTERVAL;
+        : error instanceof MailProviderError && issue === 'rate_limit'
+          ? now + Math.max(INTERVAL, error.retryAfter * 1000)
+          : issue === 'credentials'
+            ? now + 60 * 60000
+            : now + INTERVAL;
     await env.DB.prepare(
-      "UPDATE gmail_automation SET lease='',lease_until=0,issue=?,next_run=? WHERE user_id=? AND generation=? AND lease=?",
+      "UPDATE gmail_automation SET lease='',lease_until=0,issue=?,next_run=?,enabled=CASE WHEN ?='context_limit' THEN 0 ELSE enabled END WHERE user_id=? AND generation=? AND lease=?",
     )
-      .bind(issue, next, userId, job.generation, lease)
+      .bind(issue, next, issue, userId, job.generation, lease)
       .run();
     // Never return provider payloads, message text, tokens, or account identifiers to a runner.
     return { checked: 0, imported: 0, status: issue };

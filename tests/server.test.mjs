@@ -901,12 +901,12 @@ test('helpful links accept only completed searches and public HTTPS citations',(
 
 test('resource cache, safe payload, demo isolation and spend cap use server-owned context',async()=>{
   owner();const originalFetch=globalThis.fetch;let calls=0;
-  globalThis.__gatherEnv.OPENAI_API_KEY='fixture-only-key';
+  globalThis.__gatherEnv.GROQ_API_KEY='fixture-only-key';globalThis.__gatherEnv.GROQ_WEB_SEARCH_ENABLED='verified';
   globalThis.fetch=async(url,options)=>{
-    calls++;assert.equal(url,'https://api.openai.com/v1/responses');
+    calls++;assert.equal(url,'https://api.groq.com/openai/v1/responses');
     const payload=JSON.parse(options.body),context=JSON.parse(payload.input);
     assert.deepEqual(Object.keys(context),['task','category','cityOrRegion']);
-    assert.equal(payload.store,false);assert.equal(payload.tool_choice,'required');
+    assert.equal(payload.store,undefined);assert.equal(payload.tool_choice,'required');
     assert.ok(!options.body.includes('SECRET-NOTE'));
     return Response.json(citationFixture());
   };
@@ -929,11 +929,26 @@ test('resource cache, safe payload, demo isolation and spend cap use server-owne
     sqlite.prepare('UPDATE resource_usage SET count=? WHERE id=?').run(count,quota);
     const task={id:'safe-payload',title:'Venue permits',category:'Venue',note:'SECRET-NOTE',comments:['SECRET-NOTE'],owner:'private-person'};
     await resourcesCore.taskResources('payload-test','owner-1',task,{});assert.equal(calls,3);
-  }finally{delete globalThis.__gatherEnv.OPENAI_API_KEY;globalThis.fetch=originalFetch;}
+  }finally{delete globalThis.__gatherEnv.GROQ_API_KEY;delete globalThis.__gatherEnv.GROQ_WEB_SEARCH_ENABLED;globalThis.fetch=originalFetch;}
+});
+
+test('Groq search is gated independently of its API key and preserves safe cached links', async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.__gatherEnv.GROQ_API_KEY='fixture-only-key';
+  delete globalThis.__gatherEnv.GROQ_WEB_SEARCH_ENABLED;
+  let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('Search remains gated');};
+  try {
+    const result=await resourceWrite({taskId:'bus',refresh:true});
+    assert.equal(result.status,200);
+    const data=await result.json();
+    assert.equal(data.status,'unconfigured');
+    assert.equal(data.links.length,1);
+    assert.equal(calls,0);
+  } finally {delete globalThis.__gatherEnv.GROQ_API_KEY;globalThis.fetch=originalFetch;}
 });
 
 test('concurrent resource readers share one lookup; provider failures never expose details',async()=>{
-  const originalFetch=globalThis.fetch;globalThis.__gatherEnv.OPENAI_API_KEY='fixture-only-key';let calls=0,release,notify;
+  const originalFetch=globalThis.fetch;globalThis.__gatherEnv.GROQ_API_KEY='fixture-only-key';globalThis.__gatherEnv.GROQ_WEB_SEARCH_ENABLED='verified';let calls=0,release,notify;
   const started=new Promise(resolve=>notify=resolve);
   globalThis.fetch=async()=>{calls++;notify();await new Promise(resolve=>release=resolve);return Response.json(citationFixture());};
   const task={id:'concurrent-resource',title:'Find a venue',category:'Venue'};
@@ -945,7 +960,7 @@ test('concurrent resource readers share one lookup; provider failures never expo
     globalThis.fetch=async()=>{throw new Error('SECRET provider key and task details');};
     await assert.rejects(resourcesCore.taskResources('failure','owner-1',task,{}),error=>error.status===503&&!error.message.includes('SECRET'));
     const cached=await resourcesCore.taskResources('failure','owner-1',task);assert.equal(cached.status,'error');assert.ok(!JSON.stringify(cached).includes('SECRET'));
-  }finally{delete globalThis.__gatherEnv.OPENAI_API_KEY;globalThis.fetch=originalFetch;}
+  }finally{delete globalThis.__gatherEnv.GROQ_API_KEY;delete globalThis.__gatherEnv.GROQ_WEB_SEARCH_ENABLED;globalThis.fetch=originalFetch;}
 });
 
 const infoRead=(query='')=>infoApi.GET(new Request('https://gather.example/api/info'+query));

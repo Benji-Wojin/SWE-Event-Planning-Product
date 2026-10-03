@@ -173,6 +173,7 @@ export function PlanReview({ query }: { query: string }) {
           requestId: crypto.randomUUID(),
           brief,
           consent: true,
+          consentVersion: 'groq-plan-v1',
         };
       }
       const result = await api(query, request.current);
@@ -351,7 +352,7 @@ export function PlanReview({ query }: { query: string }) {
             </details>
             <p className="text-sm text-muted-foreground">
               Generate sends this brief, event details, task names, and relevant
-              saved feedback to OpenAI. Emails, guest lists, files, and private
+              saved feedback to Groq. Emails, guest lists, files, and private
               bookings are not included.
             </p>
             {!data.configured && (

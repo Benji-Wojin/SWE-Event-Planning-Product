@@ -19,7 +19,7 @@ export function gmailAutomaticTests({
   let project;
   async function fixture() {
     owner();
-    globalThis.__gatherEnv.OPENAI_API_KEY = 'fixture-only-key';
+    globalThis.__gatherEnv.GROQ_API_KEY = 'fixture-only-key';
     globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE = 'owner-private';
     for (const table of [
       'gmail_automation',
@@ -50,6 +50,7 @@ export function gmailAutomaticTests({
     await automaticCore.configureAutomatic('owner-1', {
       enabled: true,
       consent: true,
+      consentVersion: 'groq-email-v1',
       projectIds: [project],
     });
   }
@@ -126,10 +127,13 @@ export function gmailAutomaticTests({
     const calls = [];
     globalThis.fetch = async (url, options) => {
       calls.push(String(url));
-      if (url === 'https://api.openai.com/v1/responses') {
+      if (url === 'https://api.groq.com/openai/v1/responses') {
         const payload = JSON.parse(options.body),
           input = JSON.parse(payload.input);
-        assert.equal(payload.store, false);
+        assert.equal(payload.store, undefined);
+        assert.equal(payload.model, 'openai/gpt-oss-20b');
+        assert.deepEqual(payload.reasoning, { effort: 'low' });
+        assert.equal(options.headers.Authorization, 'Bearer fixture-only-key');
         assert.equal(payload.tools, undefined);
         assert.equal(payload.text.format.strict, true);
         assert.deepEqual(
@@ -181,14 +185,16 @@ export function gmailAutomaticTests({
       automaticCore.configureAutomatic('owner-1', {
         enabled: true,
         consent: true,
+        consentVersion: 'groq-email-v1',
         projectIds: ['missing'],
       }),
     );
-    delete globalThis.__gatherEnv.OPENAI_API_KEY;
+    delete globalThis.__gatherEnv.GROQ_API_KEY;
     await assert.rejects(
       automaticCore.configureAutomatic('owner-1', {
         enabled: true,
         consent: true,
+        consentVersion: 'groq-email-v1',
         projectIds: [project],
       }),
     );
@@ -203,6 +209,7 @@ export function gmailAutomaticTests({
           request('/api/gmail/automatic', {
             enabled: true,
             consent: true,
+            consentVersion: 'groq-email-v1',
             projectIds: [project],
           }),
         )
@@ -211,6 +218,169 @@ export function gmailAutomaticTests({
     );
     owner();
     globalThis.fetch = realFetch;
+  });
+
+  test('provider changes require fresh consent without losing queued mail or deduplication', async () => {
+    await fixture();
+    const old = await state();
+    delete old.consentVersion;
+    Object.assign(old, {
+      historyId: '100',
+      recovery: true,
+      scan: {
+        mode: 'history',
+        start: '100',
+        pageToken: 'current',
+        pending: ['self'],
+        nextPageToken: 'next',
+        end: '200',
+      },
+    });
+    const payload = await security.seal(old, 'gmail-auto:owner-1');
+    sqlite
+      .prepare('UPDATE gmail_automation SET payload=?,last_success=?')
+      .run(payload, '2030-01-01T00:00:00Z');
+    const before = sqlite.prepare('SELECT * FROM gmail_automation').get();
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error('Legacy consent must never call providers');
+    };
+    try {
+      assert.equal(
+        (await automaticCore.automaticStatus('owner-1')).enabled,
+        false,
+      );
+      assert.equal(
+        (await automaticCore.automaticStatus('owner-1')).consentRequired,
+        true,
+      );
+      assert.equal(
+        (await automaticCore.runAutomatic('owner-1')).status,
+        'consent',
+      );
+      assert.equal(calls, 0);
+      assert.deepEqual(await state(), old);
+      for (const consentVersion of [undefined, 'openai-email-v1']) {
+        await assert.rejects(
+          automaticCore.configureAutomatic('owner-1', {
+            enabled: true,
+            consent: true,
+            consentVersion,
+            projectIds: [project],
+          }),
+          (error) => error.status === 400,
+        );
+      }
+      const input = {
+        enabled: true,
+        consent: true,
+        consentVersion: 'groq-email-v1',
+        projectIds: [project],
+      };
+      await automaticCore.configureAutomatic('owner-1', input);
+      const resumed = await state(),
+        after = sqlite.prepare('SELECT * FROM gmail_automation').get();
+      assert.equal(after.generation, before.generation);
+      assert.equal(after.last_success, before.last_success);
+      assert.equal(resumed.historyId, old.historyId);
+      assert.equal(resumed.after, old.after);
+      assert.deepEqual(resumed.scan, old.scan);
+      assert.equal(resumed.recovery, true);
+      assert.equal(resumed.consentVersion, 'groq-email-v1');
+      sqlite
+        .prepare(
+          "UPDATE gmail_automation SET lease='existing-worker',lease_until=?",
+        )
+        .run(Date.now() + 60000);
+      await automaticCore.configureAutomatic('owner-1', input);
+      assert.equal(
+        sqlite.prepare('SELECT lease FROM gmail_automation').get().lease,
+        'existing-worker',
+      );
+      assert.equal(calls, 0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test('oversized email context pauses without provider calls, quota use or losing queued mail', async () => {
+    await fixture();
+    const row = sqlite
+      .prepare('SELECT data FROM workspaces WHERE id=?')
+      .get(project);
+    const workspace = JSON.parse(row.data);
+    workspace.tasks = Array.from({ length: 60 }, (_, i) => ({
+      id: 'long-' + i,
+      title: 'x'.repeat(200),
+    }));
+    sqlite
+      .prepare('UPDATE workspaces SET data=? WHERE id=?')
+      .run(JSON.stringify(workspace), project);
+    const calls = provider();
+    try {
+      assert.equal(
+        (await automaticCore.runAutomatic('owner-1')).status,
+        'context_limit',
+      );
+      assert.ok(!calls.includes('https://api.groq.com/openai/v1/responses'));
+      assert.equal(
+        sqlite.prepare('SELECT count(*) AS n FROM resource_usage').get().n,
+        0,
+      );
+      assert.equal(
+        (await automaticCore.automaticStatus('owner-1')).enabled,
+        false,
+      );
+      assert.deepEqual((await state()).scan.pending, ['self']);
+      assert.equal((await state()).historyId, '');
+      assert.equal(
+        (await automaticCore.runAutomatic('owner-1')).status,
+        'not_due',
+      );
+      const contexts = Array.from({ length: 10 }, (_, i) => ({
+        id: 'p-' + i,
+        name: 'Conference',
+        date: '',
+        location: '',
+        tasks: workspace.tasks,
+      }));
+      assert.throws(
+        () =>
+          classifierCore.mailRequestBody(
+            [{ id: 'm', subject: '', sender: '', body: 'a'.repeat(12000) }],
+            contexts,
+          ),
+        (error) => error.category === 'context_limit',
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test('an old OpenAI key is never used as a Groq fallback', async () => {
+    await fixture();
+    delete globalThis.__gatherEnv.GROQ_API_KEY;
+    globalThis.__gatherEnv.OPENAI_API_KEY = 'unused-old-fixture';
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error('No fallback allowed');
+    };
+    try {
+      assert.equal(
+        (await automaticCore.automaticStatus('owner-1')).configured,
+        false,
+      );
+      await assert.rejects(
+        classifierCore.classifyMail([], []),
+        (error) => error.status === 503,
+      );
+      assert.equal(calls, 0);
+    } finally {
+      delete globalThis.__gatherEnv.OPENAI_API_KEY;
+      globalThis.fetch = realFetch;
+    }
   });
 
   test('self-sent and archived incoming emails get private AI drafts; unrelated mail and originals never enter the shared plan', async () => {
@@ -241,9 +411,16 @@ export function gmailAutomaticTests({
         ),
     });
     try {
-      const result = await automaticCore.runAutomatic('owner-1');
-      assert.equal(result.imported, 2);
-      assert.equal(result.status, 'checked');
+      const results = [];
+      for (let i = 0; i < 5; i++) {
+        due();
+        results.push(await automaticCore.runAutomatic('owner-1'));
+      }
+      assert.equal(
+        results.reduce((sum, result) => sum + result.imported, 0),
+        2,
+      );
+      assert.equal(results.at(-1).status, 'checked');
       assert.equal((await state()).historyId, '100');
       assert.equal(privateRows().length, 2);
       assert.ok(privateRows().every((row) => !row.payload.includes('ABC987')));
@@ -364,6 +541,11 @@ export function gmailAutomaticTests({
       due();
       await automaticCore.runAutomatic('owner-1');
       assert.equal((await state()).historyId, '100');
+      due();
+      await automaticCore.runAutomatic('owner-1');
+      assert.equal((await state()).historyId, '100');
+      due();
+      await automaticCore.runAutomatic('owner-1');
       due();
       await automaticCore.runAutomatic('owner-1');
       assert.equal((await state()).historyId, '250');
@@ -501,7 +683,7 @@ export function gmailAutomaticTests({
       });
       try {
         await automaticCore.runAutomatic('owner-1');
-        assert.ok(!calls.includes('https://api.openai.com/v1/responses'));
+        assert.ok(!calls.includes('https://api.groq.com/openai/v1/responses'));
         assert.equal(privateRows().length, 0);
       } finally {
         globalThis.fetch = realFetch;
@@ -549,7 +731,7 @@ export function gmailAutomaticTests({
         (await automaticCore.runAutomatic('owner-1')).status,
         'limit',
       );
-      assert.ok(!calls.includes('https://api.openai.com/v1/responses'));
+      assert.ok(!calls.includes('https://api.groq.com/openai/v1/responses'));
       assert.equal((await state()).historyId, '');
       assert.equal(privateRows().length, 0);
     } finally {
@@ -557,26 +739,34 @@ export function gmailAutomaticTests({
     }
   });
 
-  test('OpenAI billing exhaustion is visible and distinct from the application daily quota', async () => {
+  test('Groq rate limits are visible and distinct from the application daily quota', async () => {
     await fixture();
     provider({
       classify: () =>
         Response.json(
-          { error: { code: 'insufficient_quota' } },
-          { status: 429 },
+          { error: { code: 'rate_limit_exceeded' } },
+          { status: 429, headers: { 'Retry-After': '7200' } },
         ),
     });
     try {
       assert.equal(
         (await automaticCore.runAutomatic('owner-1')).status,
-        'billing',
+        'rate_limit',
       );
       assert.match(
         (await automaticCore.automaticStatus('owner-1')).issue,
-        /billing/,
+        /free-plan limit/,
       );
       assert.equal((await state()).historyId, '');
       assert.equal(privateRows().length, 0);
+      assert.deepEqual((await state()).scan.pending, ['self']);
+      assert.ok(
+        sqlite.prepare('SELECT next_run FROM gmail_automation').get().next_run >
+          Date.now() + 7100000,
+      );
+      due();
+      provider();
+      assert.equal((await automaticCore.runAutomatic('owner-1')).imported, 1);
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -646,7 +836,7 @@ export function gmailAutomaticTests({
       );
     } finally {
       globalThis.fetch = realFetch;
-      delete globalThis.__gatherEnv.OPENAI_API_KEY;
+      delete globalThis.__gatherEnv.GROQ_API_KEY;
     }
   });
 }
