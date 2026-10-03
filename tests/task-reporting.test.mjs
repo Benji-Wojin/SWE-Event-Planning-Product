@@ -119,11 +119,11 @@ test('a blocker or fresh progress replaces a pending report; comments preserve a
   }
 });
 
-function taskDialogHtml(actor,id='dietary',identity) {
+function taskDialogHtml(actor,id='dietary',identity,store=create()) {
   const source=readFileSync('legacy/app.js','utf8');
   let html='';
   const context=vm.createContext({
-    store:create(),ui:{actor},window:identity?{GatherIdentity:identity}:{},
+    store,ui:{actor},window:identity?{GatherIdentity:identity}:{},
     openDialog:(_title,body)=>{html=body;},toast:()=>{},
     GatherPriorities,reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),
@@ -189,6 +189,31 @@ test('task dialog leads with context and reporting, with editor hidden from team
   assert.doesNotMatch(taskDialogHtml('jack','dietary',{role:'member'}),/taskDetailForm/);
   assert.match(taskDialogHtml('maya','wayfinding'), /data-action="claim"[^>]*>Claim task/);
   assert.doesNotMatch(maya, /data-action="claim"/);
+});
+
+test('task dialogs explain prerequisites and offer completion only when required work is resolved', () => {
+  const store=create();
+  let html=taskDialogHtml('maya','catering',undefined,store);
+  assert.match(html,/Finish required work/);
+  assert.match(html,/Required task/);
+  assert.doesNotMatch(html,/Report complete/);
+  assert.match(html,/Share progress/);
+  assert.match(html,/Unlink · keep task/);
+  store.reportCompletion('dietary','All responses collected.','maya');
+  html=taskDialogHtml('maya','catering',undefined,store);
+  assert.match(html,/Report complete/);
+  assert.match(html,/Ready to resume/);
+  store.updateTask('catering',{requiresVerification:true});
+  store.reportCompletion('catering','Menu approved.','maya');
+  store.updateTask('dietary',{status:'progress'});
+  html=taskDialogHtml('jack','catering',undefined,store);
+  assert.match(html,/data-action="verify-task"[^>]*disabled/);
+  assert.match(html,/Finish required work/);
+  const data=JSON.parse(store.exportState());
+  data.tasks=data.tasks.filter(task=>task.id!=='dietary');
+  const missing=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?JSON.stringify(data):null,setItem(){}}});
+  assert.match(taskDialogHtml('maya','catering',undefined,missing),/Remove unavailable link/);
+  assert.doesNotMatch(taskDialogHtml('dev','catering',undefined,missing),/Remove unavailable link/);
 });
 
 test('claiming assigns and accepts once without altering task details or stealing assigned work', () => {

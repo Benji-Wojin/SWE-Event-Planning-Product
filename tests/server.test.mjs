@@ -1456,6 +1456,58 @@ test('demo personas share the same schedule and reset never changes real project
   assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,raw);
 });
 
+test('shared completion enforces prerequisites before reports, verification and reviewed email updates',async()=>{
+  const project=await newTeamProject('Fictional school arts evening');
+  await joinPerson(project);owner();
+  let current=await (await realRead(project)).json();
+  const path='/api/workspace?project='+project;
+  const send=(method,args,revision=current.revision)=>workspace.POST(request(path,{method,args,revision}));
+  const apply=async(method,args)=>{const response=await send(method,args);assert.equal(response.status,200);current=await response.json();return current.result;};
+  const reject=async(method,args)=>{
+    const before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
+    const response=await send(method,args);assert.equal(response.status,400);assert.match((await response.json()).error,/required work/);
+    assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),before);
+  };
+  const hall=await apply('addTask',[{title:'Approve hall readiness',owner:'jack',requiresVerification:true}]);
+  const arrival=await apply('addTask',[{title:'Prepare arrival area'}]);
+  await apply('addDependency',[arrival.id,{taskId:hall.id}]);
+  const email=await apply('addMessage',[{sender:'Arrival volunteer',subject:'Arrival preparation complete',taskId:arrival.id,body:'The arrival area is complete.'}]);
+  await reject('updateTask',[arrival.id,{status:'done',note:'Ready.'}]);
+  await reject('applyMessage',[email.id,{status:'done'}]);
+  await apply('updateTask',[arrival.id,{requiresVerification:true}]);
+  await apply('refreshProposal',[email.id,arrival.id]);
+  await reject('applyMessage',[email.id,{status:'done'}]);
+  asTeammate();current=await (await realRead(project)).json();
+  await apply('claimTask',[arrival.id]);
+  await reject('reportCompletion',[arrival.id,'Arrival area ready.']);
+  await apply('addComment',[arrival.id,'Waiting for hall approval.']);
+  owner();current=await (await realRead(project)).json();
+  await apply('reportCompletion',[hall.id,'Hall inspection passed.']);
+  asTeammate();current=await (await realRead(project)).json();
+  await reject('reportCompletion',[arrival.id,'Arrival area ready.']);
+  owner();current=await (await realRead(project)).json();
+  await apply('verifyTask',[hall.id]);
+  asTeammate();current=await (await realRead(project)).json();
+  await apply('reportCompletion',[arrival.id,'Arrival area ready.']);
+  const beforeReopen=current.revision;
+  owner();await apply('updateTask',[hall.id,{status:'progress'}]);
+  assert.equal((await send('verifyTask',[arrival.id],beforeReopen)).status,409);
+  await reject('verifyTask',[arrival.id]);
+  assert.ok(current.state.tasks.find(task=>task.id===arrival.id).reportedAt);
+  await apply('reportCompletion',[hall.id,'Hall inspected again.']);
+  await apply('verifyTask',[hall.id]);
+  await apply('verifyTask',[arrival.id]);
+  asTeammate();const shared=await (await realRead(project)).json();
+  assert.equal(shared.state.tasks.find(task=>task.id===arrival.id).status,'done');
+  assert.equal(shared.state.tasks.find(task=>task.id===arrival.id).comments.filter(item=>item.kind==='dependency-result').length,2);
+  owner();
+  let demo=await (await demoRead()).json();
+  demo=await (await demoWrite('jack',{method:'resetDemo',args:[true],revision:demo.revision})).json();
+  const response=await demoWrite('maya',{method:'reportCompletion',args:['catering','Menu ready.'],revision:demo.revision});
+  assert.equal(response.status,400);assert.match((await response.json()).error,/required work/);
+  assert.equal((await (await demoRead()).json()).revision,demo.revision);
+});
+
 test('private starting plans',async t=>{
   await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,realRead,workspace,demoRead,demoWrite});
 });

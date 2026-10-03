@@ -230,6 +230,7 @@
     }
     function patchTask(task, patch, actor, confirmHardDeadline=false) {
       const next = taskFields(patch, task);
+      if (next.status === 'done' && task.status !== 'done') requireResolvedDependencies(task);
       if (task.hardDeadline && next.dueDate !== task.dueDate && !confirmHardDeadline) throw new Error('Confirm the vendor or external deadline changed before moving this fixed date.');
       const changed = ["title", "category", "note", "owner", "status", "dueDate", "requiresVerification"].filter((field) => next[field] !== task[field]);
       if (!changed.length) return [];
@@ -517,6 +518,7 @@
         if (expected !== task.revision) throw new Error('The task changed after this proposal. Refresh the comparison and review it again.');
         const newer = state.messages.some(item => item.appliedTaskId === task.id && item.receivedAt > message.receivedAt);
         if (newer && approved.confirmConflict !== true && approved.confirmConflict !== 'on') throw new Error('A newer email is already in the plan. Confirm that you intend to apply this older message.');
+        if (proposed.status === 'done' && task.status !== 'done') requireResolvedDependencies(task);
         if (task.requiresVerification && proposed.status === 'done' && task.status !== 'done') proposed.status = 'progress';
         before = copy({title:task.title,owner:task.owner,status:task.status,dueDate:task.dueDate,note:task.note,category:task.category,revision:task.revision});
         patchTask(task, proposed, actor,approved.confirmHardDeadline===true);
@@ -575,6 +577,7 @@
       if (task.owner !== actor) throw new Error('Only the assigned owner can report this commitment complete.');
       if (!clean(note)) throw new Error('Add a completion note so the organizer knows what happened.');
       if (task.verifiedAt) return copy(task);
+      requireResolvedDependencies(task);
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
@@ -587,6 +590,7 @@
       actorId(actor); if (actor !== 'jack') throw new Error('Only the organizer can verify completion in this demo.');
       const task = taskById(taskId); if (!task.reportedAt) throw new Error('There is no completion report to verify.');
       if (task.verifiedAt) return copy(task);
+      requireResolvedDependencies(task);
       const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };
       patchTask(task, { status: 'done' }, actor); Object.assign(task, report);
       task.verifiedAt = timestamp(); task.verifiedBy = actor; task.revision++;
@@ -934,12 +938,20 @@
       const task = taskById(taskId); canManageDependencies(task, actor);
       const link = task.dependencies.find(item => item.taskId === prerequisiteId);
       if (!link) throw new Error('That task is no longer linked.');
+      const title = state.tasks.find(item => item.id === prerequisiteId)?.title || 'Unavailable task';
       task.dependencies = task.dependencies.filter(item => item !== link);
       task.blockerFingerprint = normalize(task.note);
-      dependencyComment(task, `Removed link to “${taskById(prerequisiteId).title}”. The other task is unchanged.`, actor, prerequisiteId, 'dependency-removed');
+      dependencyComment(task, `Removed link to “${title}”. The other task is unchanged.`, actor, prerequisiteId, 'dependency-removed');
       save(); return copy(task);
     }
     function dependencyResolved(task) { return task && task.status === 'done' && (!task.requiresVerification || Boolean(task.verifiedAt)); }
+    function requireResolvedDependencies(task) {
+      const open = task.dependencies.filter(link => link.kind !== 'related')
+        .map(link => state.tasks.find(item => item.id === link.taskId)).filter(item => !dependencyResolved(item));
+      if (open.length) throw new Error('Finish or verify required work before completing this task: ' +
+        open.slice(0, 3).map(item => '“' + (item?.title || 'Unavailable task') + '”').join(', ') +
+        (open.length > 3 ? ` and ${open.length - 3} more` : '') + '. Review Linked work to remove an obsolete link.');
+    }
     function captureCompletion(task, actor, reporter = '') {
       task.completionResult = { text: task.note, at: timestamp(), actor, reporter, verifiedBy: task.verifiedBy || '' };
     }
