@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError } from './security';
 
 export const FEEDBACK_AREAS = ['Projects', 'Tasks', 'Email', 'Guests and files', 'Team access', 'Other'] as const;

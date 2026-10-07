@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError, type principal } from './security';
 export type User = Awaited<ReturnType<typeof principal>>;
 export type ProjectUser = User & {

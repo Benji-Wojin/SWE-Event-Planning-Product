@@ -20,7 +20,8 @@ export function gmailAutomaticTests({
   async function fixture() {
     owner();
     globalThis.__gatherEnv.GROQ_API_KEY = 'fixture-only-key';
-    globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE = 'owner-private';
+    globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE = 'vercel-cron';
+    globalThis.__gatherEnv.CRON_SECRET = 'fictional-cron-secret-32-characters-long';
     for (const table of [
       'gmail_automation',
       'gmail_receipts',
@@ -778,13 +779,34 @@ export function gmailAutomaticTests({
     const serviceRequest = (body = '{}', extra = {}) =>
       new Request('https://gather.example/api/gmail/automatic-run', {
         method: 'POST',
-        headers: { 'X-Weft-Job': 'gmail-detection', ...extra },
+        headers: {
+          'X-Weft-Job': 'gmail-detection',
+          Authorization: 'Bearer ' + globalThis.__gatherEnv.CRON_SECRET,
+          ...extra,
+        },
         body,
       });
     try {
       delete globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE;
       assert.equal((await automaticApi.POST(serviceRequest())).status, 503);
+      assert.equal((await automaticCore.automaticStatus('owner-1')).backgroundReady, false);
       globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE = 'owner-private';
+      assert.equal((await automaticApi.POST(serviceRequest())).status, 503);
+      globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE = 'vercel-cron';
+      const secret = globalThis.__gatherEnv.CRON_SECRET;
+      for (const invalidSecret of [undefined, '', 'too-short']) {
+        globalThis.__gatherEnv.CRON_SECRET = invalidSecret;
+        assert.equal((await automaticApi.POST(serviceRequest())).status, 503);
+        assert.equal((await automaticCore.automaticStatus('owner-1')).backgroundReady, false);
+      }
+      globalThis.__gatherEnv.CRON_SECRET = secret;
+      assert.equal((await automaticCore.automaticStatus('owner-1')).backgroundReady, true);
+      for (const authorization of ['', 'Bearer wrong', 'Bearer ' + secret + 'x', secret]) {
+        assert.equal(
+          (await automaticApi.POST(serviceRequest('{}', { Authorization: authorization }))).status,
+          403,
+        );
+      }
       assert.equal(
         (
           await automaticApi.POST(
@@ -806,13 +828,34 @@ export function gmailAutomaticTests({
         ).status,
         403,
       );
+      assert.equal(
+        (await automaticApi.POST(serviceRequest('{}', { 'X-Weft-Job': 'other' }))).status,
+        403,
+      );
+      assert.equal(
+        (await automaticApi.GET(new Request('https://gather.example/api/gmail/automatic-run'))).status,
+        403,
+      );
+      assert.equal(
+        (await automaticApi.GET(new Request('https://gather.example/api/gmail/automatic-run?userId=owner-1', {
+          headers: { Authorization: 'Bearer ' + secret },
+        }))).status,
+        403,
+      );
       const result = await (await automaticApi.POST(serviceRequest())).json();
       assert.equal(result.results[0].imported, 1);
       assert.ok(!JSON.stringify(result).includes(mailbox));
       assert.ok(!JSON.stringify(result).includes('ABC987'));
+      due();
+      const cron = await automaticApi.GET(new Request('https://gather.example/api/gmail/automatic-run', {
+        headers: { Authorization: 'Bearer ' + secret },
+      }));
+      assert.equal(cron.status, 200);
+      assert.ok(!JSON.stringify(await cron.json()).includes(mailbox));
     } finally {
       globalThis.fetch = realFetch;
       delete globalThis.__gatherEnv.GMAIL_BACKGROUND_MODE;
+      delete globalThis.__gatherEnv.CRON_SECRET;
     }
   });
 

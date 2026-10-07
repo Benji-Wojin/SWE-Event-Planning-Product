@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError } from './security';
 import {
   GROQ_MODEL,

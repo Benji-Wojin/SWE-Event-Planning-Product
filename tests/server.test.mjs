@@ -97,7 +97,7 @@ before(async () => {
       {
         name: 'test-environment',
         setup(b) {
-          b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({
+          b.onResolve({ filter: /^@\/lib\/runtime$/ }, () => ({
             path: 'env',
             namespace: 'test',
           }));
@@ -172,7 +172,7 @@ test('connection CAS cannot resurrect disconnected tokens or revert a changed la
 });
 test('anonymous APIs deny all private data', async () => {
   globalThis.__gatherUser = null;
-  assert.equal((await workspace.GET()).status, 401);
+  assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'))).status, 401);
   assert.equal(
     (
       await privateApi.GET(
@@ -196,12 +196,12 @@ test('signed-in outsider cannot bootstrap membership', async () => {
     email: 'other@example.com',
     displayName: 'Other',
   };
-  assert.equal((await workspace.GET()).status, 403);
+  assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'))).status, 403);
   assert.equal(sqlite.prepare('SELECT count(*) n FROM members').get().n, 0);
 });
 test('owner receives server workspace and real identity', async () => {
   owner();
-  const response = await workspace.GET();
+  const response = await workspace.GET(new Request('https://gather.example/api/workspace'));
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.identity.actorId, 'jack');
@@ -217,18 +217,18 @@ test('owner receives server workspace and real identity', async () => {
 });
 test('project setup validates, persists an owner-only plan and protects concurrent edits', async () => {
   owner();
-  const initial = await (await workspace.GET()).json();
+  const initial = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const invalid = [{name:'  '},{name:7},{name:'a'.repeat(161)},{date:'2026-02-30'}, {outdoor:'maybe'}, {guestCount:-1}, {guestCount:true}, {guestCount:[]}, {guestCount:''}, {guestCount:10,dietaryOutstanding:11}, {setupCompletedAt:'forged'}];
   for (const details of invalid) {
     const response = await workspace.POST(request('/api/workspace', {method:'completeSetup',args:[details],revision:initial.revision}));
     assert.equal(response.status, 400);
   }
-  assert.equal((await (await workspace.GET()).json()).revision, initial.revision);
+  assert.equal((await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json()).revision, initial.revision);
   const input = {method:'completeSetup',args:[{name:'  Team offsite  ',date:'',location:'Community hall',guestCount:30,outdoor:true,transportNeeded:true}],revision:initial.revision};
   assert.equal((await workspace.POST(request('/api/workspace',input,'https://evil.example'))).status,403);
   assert.equal((await workspace.POST(request('/api/workspace',input))).status,200);
   assert.equal((await workspace.POST(request('/api/workspace',input))).status,409);
-  const saved = await (await workspace.GET()).json();
+  const saved = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   assert.equal(saved.setupRequired,false);
   assert.equal(saved.state.event.name,'Team offsite'); assert.equal(saved.state.event.date,'');
   assert.ok(saved.state.event.setupCompletedAt); assert.equal(saved.state.members.length,1);
@@ -236,7 +236,7 @@ test('project setup validates, persists an owner-only plan and protects concurre
   assert.equal(saved.suggestions.find(s=>s.id==='accessibility').task.owner,'');
   const accept = await workspace.POST(request('/api/workspace',{method:'acceptSuggestion',args:['accessibility'],revision:saved.revision}));
   assert.equal(accept.status,200); assert.equal((await accept.json()).result.owner,'');
-  const persisted = await (await workspace.GET()).json();
+  const persisted = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   assert.equal(persisted.state.tasks.length,1); assert.equal(persisted.state.members.length,1);
 });
 test('legacy project setup keeps existing work and feedback instead of resetting the project', async () => {
@@ -245,18 +245,18 @@ test('legacy project setup keeps existing work and feedback instead of resetting
   const fixture = globalThis.GatherStore.createStore({storage:null});
   const before = JSON.parse(fixture.exportState());
   sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(fixture.exportState(),'main');
-  const initial = await (await workspace.GET()).json();
+  const initial = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   assert.equal(initial.setupRequired,false);
   const response = await workspace.POST(request('/api/workspace',{method:'completeSetup',args:[{name:'Existing project',date:'2026-10-20',location:'New venue'}],revision:initial.revision}));
   assert.equal(response.status,200);
-  const saved = await (await workspace.GET()).json();
+  const saved = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   for(const key of ['tasks','messages','memories','drafts','dismissed']) assert.deepEqual(saved.state[key],initial.state[key]);
   assert.equal(saved.state.tasks.length,before.tasks.length);
   assert.equal(saved.state.activity.length,initial.state.activity.length+1);
   assert.equal(saved.state.event.name,'Existing project');
 });
 test('setup denies outsiders and teammates; malformed saved projects are never replaced by demo data', async () => {
-  owner(); const initial=await (await workspace.GET()).json();
+  owner(); const initial=await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const input={method:'completeSetup',args:[{name:'No access'}],revision:initial.revision};
   globalThis.__gatherUser=null;
   assert.equal((await workspace.POST(request('/api/workspace',input))).status,401);
@@ -271,13 +271,13 @@ test('setup denies outsiders and teammates; malformed saved projects are never r
   const invalid=JSON.parse(original);invalid.tasks[0].owner='nonexistent';
   const damaged=JSON.stringify(invalid);sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(damaged,'main');
   try {
-    assert.equal((await workspace.GET()).status,503);
+    assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'))).status,503);
     assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,damaged);
   } finally { sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(original,'main'); }
 });
 test('CSRF and actor injection are rejected', async () => {
   owner();
-  let snapshot = await (await workspace.GET()).json();
+  let snapshot = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const args = {
     method: 'addTask',
     args: [{ title: 'Unsafe' }, 'maya'],
@@ -310,7 +310,7 @@ test('CSRF and actor injection are rejected', async () => {
 });
 test('writes persist, record trusted actor, and reject stale revisions', async () => {
   owner();
-  const snapshot = await (await workspace.GET()).json();
+  const snapshot = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const data = {
     method: 'addTask',
     args: [{ title: 'Real task', owner: 'jack', status: 'todo' }],
@@ -324,7 +324,7 @@ test('writes persist, record trusted actor, and reject stale revisions', async (
     (await workspace.POST(request('/api/workspace', data))).status,
     409,
   );
-  const reloaded = await (await workspace.GET()).json();
+  const reloaded = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   assert.ok(reloaded.state.tasks.some((t) => t.title === 'Real task'));
 });
 test('private records encrypt at rest and never enter shared state', async () => {
@@ -346,7 +346,7 @@ test('private records encrypt at rest and never enter shared state', async () =>
     )
   ).json();
   assert.equal(records.records[0].reference, reference);
-  const shared = await (await workspace.GET()).text();
+  const shared = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).text();
   assert.ok(!shared.includes(reference));
   assert.equal(
     (
@@ -475,7 +475,7 @@ test('Gmail review copies only explicitly approved text', async () => {
     (await gmailApi.POST(request('/api/gmail/review', data))).status,
     200,
   );
-  const raw = await (await workspace.GET()).text();
+  const raw = await (await workspace.GET(new Request('https://gather.example/api/workspace'))).text();
   assert.ok(raw.includes('Transport is confirmed.'));
   for (const field of ['ABC123', 'SECRET123', 'private@example.com'])
     assert.ok(!raw.includes(field));
@@ -500,27 +500,27 @@ test('private original is owner-scoped, no-store, and absent from shared exports
   globalThis.__gatherUser = null;
   assert.equal((await gmailApi.GET(new Request(url))).status,401);
   owner();
-  assert.ok(!(await (await workspace.GET()).text()).includes('SECRET123'));
+  assert.ok(!(await (await workspace.GET(new Request('https://gather.example/api/workspace'))).text()).includes('SECRET123'));
 });
 
 const demoRead = (actor = 'jack') => demoApi.GET(new Request('https://gather.example/api/demo?as=' + actor));
 const demoWrite = (actor, data, origin) => demoApi.POST(request('/api/demo?as=' + actor, data, origin));
 test('task priority RPC persists in real and demo workspaces, rejects teammates and conflicts, and preserves progress',async()=>{
   owner();
-  let live=await (await workspace.GET()).json();
+  let live=await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const before=live.state.tasks.find(t=>t.id==='dietary');
   const response=await workspace.POST(request('/api/workspace',{method:'setTaskPriority',args:['dietary','high'],revision:live.revision}));
   assert.equal(response.status,200);live=await response.json();
   const after=live.state.tasks.find(t=>t.id==='dietary');assert.equal(after.priority,'high');
   assert.deepEqual({...after,priority:before.priority,revision:before.revision},before);
-  assert.equal((await (await workspace.GET()).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
+  assert.equal((await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
   let demo=await (await demoRead()).json(),revision=demo.revision;
   assert.equal((await demoWrite('maya',{method:'setTaskPriority',args:['dietary','low'],revision})).status,403);
   assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','urgent'],revision})).status,400);
   const saved=await demoWrite('jack',{method:'setTaskPriority',args:['dietary','low'],revision});assert.equal(saved.status,200);demo=await saved.json();
   assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','auto'],revision})).status,409);
   for(const actor of ['jack','maya','dev','jules'])assert.equal((await (await demoRead(actor)).json()).state.tasks.find(t=>t.id==='dietary').priority,'low');
-  assert.equal((await (await workspace.GET()).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
+  assert.equal((await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json()).state.tasks.find(t=>t.id==='dietary').priority,'high');
   assert.equal((await demoWrite('jack',{method:'setTaskPriority',args:['dietary','auto'],revision:demo.revision})).status,200);
 });
 test('demo is authenticated, owner-scoped, and isolated from the real workspace', async () => {
@@ -767,7 +767,7 @@ test('demo booking storage is isolated, organizer-only and absent from exports',
 
 test('real workspace claims use authenticated actor, not a submitted persona',async()=>{
   owner();
-  const before=await(await workspace.GET()).json();
+  const before=await(await workspace.GET(new Request('https://gather.example/api/workspace'))).json();
   const data={method:'claimTask',args:['wayfinding'],revision:before.revision};
   const res=await workspace.POST(request('/api/workspace',data));
   assert.equal(res.status,200);
@@ -791,7 +791,7 @@ test('private booking edits reject stale versions and concurrent saves without l
   assert.equal((await list()).find(r=>r.id===id).provider,saved.provider);
   assert.equal((await privateApi.POST(request('/api/private/records',{...saved,version:undefined}))).status,409);
   assert.equal((await privateApi.POST(request('/api/private/records',{...saved,provider:'updated safely'}))).status,200);
-  assert.ok(!(await (await workspace.GET()).text()).includes('QA-REFERENCE'));
+  assert.ok(!(await (await workspace.GET(new Request('https://gather.example/api/workspace'))).text()).includes('QA-REFERENCE'));
 });
 
 test('Gmail review retries are idempotent but conflicting summaries cannot silently disappear',async()=>{
@@ -805,7 +805,7 @@ test('Gmail review retries are idempotent but conflicting summaries cannot silen
     assert.equal(res.status,409);
     assert.match((await res.json()).error,/already saved/);
   }
-  const shared=(await (await workspace.GET()).json()).state.messages.filter(m=>m.externalId==='review:mail-1');
+  const shared=(await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json()).state.messages.filter(m=>m.externalId==='review:mail-1');
   assert.equal(shared.length,1);assert.equal(shared[0].id,duplicate.id);
   assert.equal(shared[0].body,data.summary);
 });
@@ -992,7 +992,7 @@ test('guest preview is read-only, imports are atomic, deduplicated and idempoten
   assert.deepEqual(await (await infoWrite(input)).json(),state);
   assert.equal((await infoWrite({...input,csv:'Name\nDifferent'})).status,409);
   assert.equal((await infoWrite({...input,requestId:crypto.randomUUID()})).status,409);
-  assert.ok(!JSON.stringify(await (await workspace.GET()).json()).includes('private-guest@example.com'));
+  assert.ok(!JSON.stringify(await (await workspace.GET(new Request('https://gather.example/api/workspace'))).json()).includes('private-guest@example.com'));
   const raw=sqlite.prepare('SELECT payload FROM project_info WHERE scope=?').get('main').payload;
   assert.ok(!raw.includes('Private Guest'));assert.ok(!raw.includes('private-guest@example.com'));
 });
@@ -1028,7 +1028,7 @@ test('uploads are encrypted, authenticated attachments with idempotent retries',
 });
 test('uploads reject unsupported, empty and oversized actual bodies',async()=>{
   owner();const state=await (await infoRead()).json();
-  for(const [name,content,status] of [['x.html','<script>x</script>',400],['empty.txt','',400],['big.txt',new Uint8Array(6*1024*1024),413]]){
+  for(const [name,content,status] of [['x.html','<script>x</script>',400],['empty.txt','',400],['limit.txt',new Uint8Array(4*1024*1024+1),400],['big.txt',new Uint8Array(6*1024*1024),413]]){
     const source=uploadRequest(state.revision,name,content);
     // Materialize test transport: Node's FormData producer errors on early stream cancellation.
     const incoming=new Request(source.url,{method:'POST',headers:source.headers,body:await source.arrayBuffer()});

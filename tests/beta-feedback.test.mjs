@@ -20,7 +20,7 @@ let route;
 before(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gather-feedback-test-'));
   await build({ entryPoints: ['app/api/feedback/route.ts'], outfile: join(dir, 'route.mjs'), bundle: true, platform: 'node', format: 'esm', plugins: [{ name: 'feedback-env', setup(b) {
-    b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: 'env', namespace: 'mock' }));
+    b.onResolve({ filter: /^@\/lib\/runtime$/ }, () => ({ path: 'env', namespace: 'mock' }));
     b.onResolve({ filter: /chatgpt-auth$/ }, () => ({ path: 'auth', namespace: 'mock' }));
     b.onLoad({ filter: /.*/, namespace: 'mock' }, arg => ({ contents: arg.path === 'env' ? 'export const env = globalThis.__feedbackEnv' : 'export async function getChatGPTUser() { return globalThis.__feedbackUser }', loader: 'js' }));
   } }] });

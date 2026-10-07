@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError, nonce, seal, unseal } from './security';
 export const redirectUri = () => env.GATHER_ORIGIN + '/api/gmail/callback';
 export async function configuration() {

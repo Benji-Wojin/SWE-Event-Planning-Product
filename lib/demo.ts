@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { model, applyWorkspaceAction } from './workspace';
 import { HttpError, seal, unseal, type administrator } from './security';
 import { bookingRecord } from './bookings';

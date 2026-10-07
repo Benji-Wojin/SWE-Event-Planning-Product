@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { PLAN_AI_CONSENT_VERSION } from './groq';
 import { administrator, HttpError, principal, seal, unseal } from './security';
 import { projectUser } from './project-access';

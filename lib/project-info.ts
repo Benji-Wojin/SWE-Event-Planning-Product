@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import '@/legacy/guests.js';
 import {
   administrator,
@@ -13,7 +13,8 @@ import { demoPersona, loadDemo } from './demo';
 import { projectUser, assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
 
 const guests = (globalThis as any).GatherGuests;
-const MAX_FILE = 5 * 1024 * 1024,
+// Leave room for multipart overhead within Vercel's 4.5 MB function limit.
+const MAX_FILE = 4 * 1024 * 1024,
   MAX_STORAGE = 50 * 1024 * 1024;
 type Context = {
   scope: string;
@@ -354,7 +355,7 @@ export async function readUpload(request: Request) {
       length += value.length;
       if (length > MAX_FILE + 16384) {
         await reader.cancel();
-        throw new HttpError(413, 'Files must be 5 MB or smaller.');
+        throw new HttpError(413, 'Files must be 4 MB or smaller.');
       }
       parts.push(value);
     }
@@ -389,7 +390,7 @@ export async function readUpload(request: Request) {
     throw new HttpError(400, 'Invalid upload fields.');
   const file = form.get('file');
   if (!file || typeof file === 'string' || !file.size || file.size > MAX_FILE)
-    throw new HttpError(400, 'Choose a non-empty file up to 5 MB.');
+    throw new HttpError(400, 'Choose a non-empty file up to 4 MB.');
   const name = file.name
     .replace(/[\\/\u0000-\u001f\u007f]/g, '_')
     .slice(0, 120);
@@ -406,7 +407,8 @@ export async function uploadInfo(
   context: Context,
   upload: Awaited<ReturnType<typeof readUpload>>,
 ) {
-  if (!env.BUCKET)
+  const bucket = env.BUCKET;
+  if (!bucket)
     throw new HttpError(503, 'File uploads are not available yet.');
   const { state, revision } = await load(context),
     hash = await fingerprint({
@@ -441,7 +443,7 @@ export async function uploadInfo(
     );
   let saving = false;
   try {
-    await env.BUCKET.put(
+    await bucket.put(
       key,
       await sealFile(upload.bytes, context.scope + ':' + id),
       { httpMetadata: { contentType: 'application/octet-stream' } },
@@ -476,7 +478,7 @@ export async function uploadInfo(
     }
     await assertProjectAccess(context.authorization).catch(async error => {
       if (!current?.state.files.some((file) => file.id === id)) {
-        await env.BUCKET.delete(key);
+        await bucket.delete(key);
         await env.DB.prepare('DELETE FROM project_uploads WHERE id=?').bind(id).run();
       }
       throw error;
@@ -485,7 +487,7 @@ export async function uploadInfo(
       return infoSnapshot(context, current.state, current.revision);
     if (!saving || error instanceof HttpError) {
       try {
-        await env.BUCKET.delete(key);
+        await bucket.delete(key);
         await env.DB.prepare('DELETE FROM project_uploads WHERE id=?')
           .bind(id)
           .run();

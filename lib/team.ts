@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { HttpError, nonce, seal, unseal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';

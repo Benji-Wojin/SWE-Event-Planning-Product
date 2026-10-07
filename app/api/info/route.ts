@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { body, HttpError, json, safe } from '@/lib/security';
 import {
   infoContext,

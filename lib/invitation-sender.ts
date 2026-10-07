@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { configuration, connection, redirectUri, tokenRequest } from './gmail';
 import { HttpError, nonce, seal, unseal } from './security';
 import { projectUser, type ProjectUser, type User } from './project-access';

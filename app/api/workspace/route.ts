@@ -2,7 +2,7 @@ import { body, json, principal, safe } from '@/lib/security';
 import { loadWorkspace, mutateWorkspace, snapshot } from '@/lib/workspace';
 import { projectUser, assertProjectAccess } from '@/lib/project-access';
 export const dynamic = 'force-dynamic';
-export async function GET(request?: Request) {
+export async function GET(request: Request) {
   return safe(async () => {
     const user = await projectUser(await principal(),request);
     const projectId = user.projectId;

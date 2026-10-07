@@ -30,7 +30,7 @@ export function AccountClient() {
             </p>
           </div>
           <p className="text-sm text-muted-foreground">
-            Signed in with ChatGPT. Project access is managed by each organizer.
+            Signed in with Google. Project access is managed by each organizer.
           </p>
           {account.organizer && (
             <div>

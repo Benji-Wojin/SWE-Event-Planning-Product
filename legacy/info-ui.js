@@ -347,7 +347,7 @@
         requestId = crypto.randomUUID();
       openDialog(
         'Upload project file',
-        '<form id="projectUploadForm"><label class="field">File<input name="file" type="file" accept=".pdf,.txt,.csv,.png,.jpg,.jpeg,.docx,.xlsx" required></label><p class="muted">Up to 5 MB. PDF, text, CSV, images, Word or Excel.</p><p class="notice">Only upload information the project team may access. Files are not malware-scanned.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Upload file</button></div></form>',
+        '<form id="projectUploadForm"><label class="field">File<input name="file" type="file" accept=".pdf,.txt,.csv,.png,.jpg,.jpeg,.docx,.xlsx" required></label><p class="muted">Up to 4 MB. PDF, text, CSV, images, Word or Excel.</p><p class="notice">Only upload information the project team may access. Files are not malware-scanned.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Upload file</button></div></form>',
         '',
         false,
         'info',
@@ -356,8 +356,8 @@
       form.addEventListener('submit', (event) => {
         const file = form.elements.file.files[0];
         submit(form, event, async () => {
-          if (!file || !file.size || file.size > 5 * 1024 * 1024)
-            throw new Error('Choose a non-empty file up to 5 MB.');
+          if (!file || !file.size || file.size > 4 * 1024 * 1024)
+            throw new Error('Choose a non-empty file up to 4 MB.');
           const data = new FormData();
           data.set('file', file);
           data.set('revision', revision);

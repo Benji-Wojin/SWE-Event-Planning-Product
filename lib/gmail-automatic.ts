@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError, seal, unseal } from './security';
 import {
   connection,
@@ -84,7 +84,9 @@ export async function automaticStatus(userId: string) {
   return {
     configured: !!env.GROQ_API_KEY,
     consentRequired,
-    backgroundReady: env.GMAIL_BACKGROUND_MODE === 'owner-private',
+    backgroundReady:
+      env.GMAIL_BACKGROUND_MODE === 'vercel-cron' &&
+      (env.CRON_SECRET?.length || 0) >= 32,
     enabled: current && !!job?.enabled && !consentRequired,
     projectIds: state?.projectIds || [],
     lastCheck: job?.last_success || '',

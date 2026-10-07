@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { HttpError, unseal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
 import { mailbox, readySender } from './invitation-sender';

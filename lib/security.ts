@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 export class HttpError extends Error {
   constructor(
@@ -125,7 +125,7 @@ export async function principal() {
     const owner =
       !!env.GATHER_OWNER_EMAIL &&
       user.email.toLowerCase() === env.GATHER_OWNER_EMAIL.toLowerCase();
-    // The Sites access gate decides admission; app roles never come from a request body.
+    // Verified OAuth establishes identity; app roles never come from a request body.
     if (!owner)
       throw new HttpError(
         403,

@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:workers';
+import { env } from '@/lib/runtime';
 import { GROQ_MODEL, GROQ_RESPONSES_URL } from './groq';
 import { HttpError } from './security';
 import { assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
