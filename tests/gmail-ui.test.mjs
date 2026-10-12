@@ -69,6 +69,20 @@ test('loading and unconfigured Gmail cannot start authorization; legacy setup st
     }
   } finally { globalThis.__gmailState = previous; }
 });
+test('Google setup is visible only to the app owner with an unmanaged registration', () => {
+  const previous = globalThis.__gmailState;
+  try {
+    for (const canManageGoogle of [undefined, false, true]) {
+      for (const managed of [false, true]) {
+        const tree = render({configured:true,connected:false,managed,canManageGoogle});
+        const secret = tree.find(node => node.props?.name === 'clientSecret');
+        assert.equal(!!secret, canManageGoogle === true && !managed);
+        if (secret) assert.ok(secret.parents.includes('details'));
+        assert.equal(tree.find(node => node.type === 'button' && text(node) === 'Connect Gmail').props.disabled,false);
+      }
+    }
+  } finally { globalThis.__gmailState = previous; }
+});
 test('OAuth recovery page escapes error text and never uses external assets or executable content', async () => {
   const response = gmailCallbackError('<script>alert("fixture")</script>&', 400, '/settings?project=main');
   const html = await response.text();

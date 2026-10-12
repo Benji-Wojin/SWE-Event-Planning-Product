@@ -156,3 +156,8 @@ export async function administrator() {
     );
   return user;
 }
+// Use the global principal, never a project-scoped owner role, for app-wide settings.
+export function isAppOwner(user: Awaited<ReturnType<typeof principal>>) {
+  return user.role === 'admin' && user.actorId === 'jack' &&
+    !!env.GATHER_OWNER_EMAIL && user.email.toLowerCase() === env.GATHER_OWNER_EMAIL.toLowerCase();
+}

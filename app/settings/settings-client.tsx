@@ -104,7 +104,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
         </CardContent>
       </Card>
       {status?.connected && <AutomaticControls key={status.account} status={status} busy={busy} projectId={projectId} run={run} refresh={refresh} setNotice={setNotice} />}
-      {status && !status.managed && <details className="space-y-4">
+      {status?.canManageGoogle && !status.managed && <details className="space-y-4">
         <summary className="cursor-pointer text-sm font-medium">App owner: Google setup</summary>
       <Card>
         <CardHeader>

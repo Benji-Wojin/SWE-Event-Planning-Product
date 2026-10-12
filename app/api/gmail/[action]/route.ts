@@ -1,6 +1,7 @@
 import { env } from '@/lib/runtime';
 import {
   administrator,
+  isAppOwner,
   body,
   HttpError,
   json,
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
       return json({
         configured: !!config,
         managed: !!config?.managed,
+        canManageGoogle: isAppOwner(user),
         connected: !!conn,
         account: conn?.email || '',
         labelId: conn?.labelId || '',
@@ -217,6 +219,8 @@ export async function POST(request: Request) {
       data = await body(request),
       action = new URL(request.url).pathname.split('/').pop();
     if (action === 'configure') {
+      if (!isAppOwner(user))
+        throw new HttpError(403, 'Only the app owner can change Google connection settings.');
       if ((await configuration())?.managed)
         throw new HttpError(409, 'Google connection settings are managed by the app owner. Use Connect Gmail to connect your account.');
       const clientId = String(data.clientId || '').trim(),

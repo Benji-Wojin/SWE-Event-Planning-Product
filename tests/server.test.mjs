@@ -363,6 +363,56 @@ test('encryption is context-bound and detects tampering', async () => {
   await assert.rejects(security.unseal(encrypted, 'b'));
   await assert.rejects(security.unseal(encrypted.slice(0, -4) + 'AAAA', 'a'));
 });
+test('project organizers cannot replace app-wide Google settings or invalidate pending authorizations',async()=>{
+  owner();await security.principal();
+  const config={clientId:'app-owner.apps.googleusercontent.com',clientSecret:'app-owner-fixture-secret'};
+  const payload=await security.seal(config,'google-oauth');
+  sqlite.prepare('INSERT INTO settings (id,payload) VALUES (?,?)').run('google-oauth',payload);
+  const pending=await gmailApi.POST(request('/api/gmail/connect',{}));assert.equal(pending.status,200);
+  const state=new URL((await pending.json()).url).searchParams.get('state');
+  const pendingRow=sqlite.prepare('SELECT * FROM oauth_states WHERE id=?').get(state);
+  sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run('settings-organizer','u_settings_organizer','organizer@example.com','Organizer','admin');
+  globalThis.__gatherUser={userId:'settings-organizer',email:'organizer@example.com',displayName:'Organizer'};
+  try {
+    const replacement={clientId:'replacement.apps.googleusercontent.com',clientSecret:'replacement-fixture-secret'};
+    assert.equal((await gmailApi.POST(request('/api/gmail/configure',replacement))).status,403);
+    assert.equal((await gmailApi.POST(request('/api/gmail/configure',{...replacement,role:'admin',email:'owner@example.com'}))).status,403);
+    assert.equal(sqlite.prepare('SELECT payload FROM settings WHERE id=?').get('google-oauth').payload,payload);
+    assert.deepEqual(sqlite.prepare('SELECT * FROM oauth_states WHERE id=?').get(state),pendingRow);
+    const status=await (await gmailApi.GET(new Request('https://gather.example/api/gmail/status'))).json();
+    assert.equal(status.canManageGoogle,false);assert.equal(status.configured,true);
+    assert.ok(!JSON.stringify(status).includes(config.clientSecret));
+    const connected=await gmailApi.POST(request('/api/gmail/connect',{}));assert.equal(connected.status,200);
+    assert.equal(new URL((await connected.json()).url).searchParams.get('client_id'),config.clientId);
+    owner();
+    const ownerStatus=await (await gmailApi.GET(new Request('https://gather.example/api/gmail/status'))).json();
+    assert.equal(ownerStatus.canManageGoogle,true);
+    assert.equal((await gmailApi.POST(request('/api/gmail/configure',replacement))).status,200);
+  } finally {
+    owner();
+    sqlite.prepare("DELETE FROM settings WHERE id='google-oauth'").run();
+    sqlite.prepare("DELETE FROM oauth_states WHERE user_id IN ('owner-1','settings-organizer')").run();
+  }
+});
+test('Google configuration authority fails closed without the configured global owner identity',async()=>{
+  owner();const user=await security.principal();
+  const originalEmail=globalThis.__gatherEnv.GATHER_OWNER_EMAIL;
+  const config={clientId:'restricted.apps.googleusercontent.com',clientSecret:'restricted-fixture-secret'};
+  try {
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL='OWNER@example.com';
+    assert.equal(security.isAppOwner(user),true);
+    for(const configured of ['',undefined,'someone-else@example.com']) {
+      globalThis.__gatherEnv.GATHER_OWNER_EMAIL=configured;
+      assert.equal((await gmailApi.POST(request('/api/gmail/configure',config))).status,403);
+      assert.equal((await (await gmailApi.GET(new Request('https://gather.example/api/gmail/status'))).json()).canManageGoogle,false);
+    }
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL=originalEmail;
+    assert.equal(security.isAppOwner({...user,actorId:'u_other'}),false);
+    assert.equal(security.isAppOwner({...user,role:'member'}),false);
+    assert.equal(security.isAppOwner({...user,email:'someone-else@example.com'}),false);
+    assert.equal(sqlite.prepare("SELECT payload FROM settings WHERE id='google-oauth'").get(),undefined);
+  } finally {globalThis.__gatherEnv.GATHER_OWNER_EMAIL=originalEmail;owner();}
+});
 test('managed Gmail setup reuses server registration without exposing or copying secrets', async () => {
   owner();
   const config = { clientId: 'managed.apps.googleusercontent.com', clientSecret: 'server-only-fixture-secret' };
