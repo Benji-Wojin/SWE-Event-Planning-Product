@@ -93,7 +93,7 @@
     const request=pendingRequest(task);
     if(request?.kind==='date')return {text:task.hardDeadline?'Check the vendor or external deadline before approving a new date.':'Check linked work before agreeing to the proposed date.',targets:downstream(task,state.tasks)};
     if(request?.kind==='help') {
-      const others=state.members.filter(m=>m.id!==task.owner).sort((a,b)=>nextUp(state.tasks,a.id).length-nextUp(state.tasks,b.id).length||a.id.localeCompare(b.id));
+      const others=state.members.filter(m=>m.id!==task.owner&&m.active!==false).sort((a,b)=>nextUp(state.tasks,a.id).length-nextUp(state.tasks,b.id).length||a.id.localeCompare(b.id));
       const member=others[0];
       if(member)return {text:'Consider '+member.name.split(' ')[0]+' ('+nextUp(state.tasks,member.id).length+'/3 next tasks). Confirm their availability first.',targets:[]};
     }
