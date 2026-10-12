@@ -437,6 +437,84 @@ test('managed Gmail callback, refresh and replay protections work without manual
     sqlite.prepare("DELETE FROM gmail_connections WHERE user_id='owner-1'").run();
   }
 });
+test('Gmail authorization preserves only authorized project context through success and cancellation', async () => {
+  owner();
+  const id = 'p_00000000-0000-4000-8000-000000000001';
+  sqlite.prepare('INSERT INTO projects (id,owner_id,request_payload,created_at) VALUES (?,?,?,?)').run(id, 'owner-1', '{}', 'now');
+  Object.assign(globalThis.__gatherEnv, { GOOGLE_CLIENT_ID: 'managed.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'server-fixture-secret' });
+  const original = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async path => {
+    fetches++;
+    if (path === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'fixture-access', refresh_token: 'fixture-refresh', expires_in: 3600, scope: 'https://www.googleapis.com/auth/gmail.readonly' });
+    assert.equal(path, 'https://gmail.googleapis.com/gmail/v1/users/me/profile');
+    return Response.json({ emailAddress: 'fixture@example.com' });
+  };
+  try {
+    const start = async () => {
+      const response = await gmailApi.POST(request('/api/gmail/connect?project=' + id, {}));
+      assert.equal(response.status, 200);
+      return new URL((await response.json()).url).searchParams.get('state');
+    };
+    let state = await start();
+    const payload = sqlite.prepare('SELECT payload FROM oauth_states WHERE id=?').get(state).payload;
+    assert.equal((await security.unseal(payload, 'oauth:' + state)).projectId, id);
+    let response = await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=' + state + '&error=access_denied&project=main'));
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), 'https://gather.example/settings?project=' + id + '&gmail=cancelled');
+    assert.equal(fetches, 0);
+    state = await start();
+    response = await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=' + state + '&code=fixture&project=https://evil.example'));
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), 'https://gather.example/settings?project=' + id + '&gmail=connected');
+    const previous = await gmailCore.connection('owner-1');
+    state = await start();
+    sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run('another-owner', id);
+    assert.equal((await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=' + state + '&code=fixture'))).status, 404);
+    assert.equal(fetches, 2);
+    assert.equal((await gmailCore.connection('owner-1')).storedPayload, previous.storedPayload);
+    for (const project of [id, 'https://evil.example', 'demo', '']) {
+      assert.equal((await gmailApi.POST(request('/api/gmail/connect?project=' + encodeURIComponent(project), {}))).status, 404);
+    }
+    assert.equal(sqlite.prepare('SELECT id FROM oauth_states WHERE user_id=?').get('owner-1').id, state);
+  } finally {
+    globalThis.fetch = original;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_ID;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET;
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+    sqlite.prepare("DELETE FROM settings WHERE id='google-oauth'").run();
+    sqlite.prepare("DELETE FROM oauth_states WHERE user_id='owner-1'").run();
+    sqlite.prepare("DELETE FROM gmail_connections WHERE user_id='owner-1'").run();
+  }
+});
+test('browser OAuth failures have private recovery pages while API callers retain JSON errors', async () => {
+  owner();
+  const url = 'https://gather.example/api/gmail/callback?state=expired-fixture&code=DO-NOT-REFLECT&error_description=%3Cscript%3Ealert(1)%3C/script%3E';
+  let response = await gmailApi.GET(new Request(url, { headers: { Accept: 'text/html' } }));
+  assert.equal(response.status, 400);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
+  let html = await response.text();
+  assert.match(html, /authorization expired/);
+  assert.match(html, /href="\/settings"/);
+  assert.doesNotMatch(html, /DO-NOT-REFLECT|<script|expired-fixture|error_description/);
+  response = await gmailApi.GET(new Request(url));
+  assert.equal(response.status, 400);
+  assert.match(response.headers.get('content-type'), /application\/json/);
+  assert.match((await response.json()).error, /authorization expired/);
+  globalThis.__gatherUser = null;
+  response = await gmailApi.GET(new Request(url, { headers: { Accept: 'text/html' } }));
+  assert.equal(response.status, 401);
+  html = await response.text();
+  assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2Fsettings"/);
+  assert.doesNotMatch(html, /DO-NOT-REFLECT|expired-fixture/);
+  response = await gmailApi.GET(new Request('https://gather.example/api/gmail/status', { headers: { Accept: 'text/html' } }));
+  assert.equal(response.status, 401);
+  assert.match(response.headers.get('content-type'), /application\/json/);
+  owner();
+});
 test('saved Gmail clients retain precedence over managed credentials', async () => {
   const payload = await security.seal({ clientId: 'legacy.apps.googleusercontent.com', clientSecret: 'legacy-fixture-secret' }, 'google-oauth');
   sqlite.prepare('INSERT INTO settings (id,payload) VALUES (?,?)').run('google-oauth', payload);
@@ -1364,6 +1442,29 @@ async function startSender(id) {
   const url=new URL((await response.json()).url);return {url,state:url.searchParams.get('state')};
 }
 const callback=state=>gmailApi.GET(getRequest('/api/gmail/callback?state='+state+'&code=code'));
+test('sender browser errors return to the verified project and never suggest the import flow', async () => {
+  const id = await newTeamProject();
+  await senderFixture();
+  const { state } = await startSender(id);
+  const original = globalThis.fetch;
+  globalThis.fetch = async path => {
+    assert.equal(path, 'https://oauth2.googleapis.com/token');
+    return Response.json({ access_token: 'fixture', refresh_token: 'fixture-refresh', expires_in: 3600, scope: 'openid email' });
+  };
+  try {
+    let response = await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=' + state + '&code=fixture&project=main', { headers: { Accept: 'text/html' } }));
+    assert.equal(response.status, 400);
+    let html = await response.text();
+    assert.match(html, new RegExp('href="/team\\?project=' + id + '"'));
+    assert.match(html, /Back to Team access/);
+    assert.doesNotMatch(html, /Back to Gmail settings|href="\/settings/);
+    response = await gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=send_expired&code=fixture&project=' + id, { headers: { Accept: 'text/html' } }));
+    assert.equal(response.status, 400);
+    html = await response.text();
+    assert.match(html, /href="\/">Back to projects/);
+    assert.ok(!html.includes(id));
+  } finally { globalThis.fetch = original; }
+});
 test('dedicated sender OAuth has isolated PKCE state, send-only access, verified identity and replay protection',async()=>{
   const id=await newTeamProject();await senderFixture();
   sqlite.prepare('INSERT OR REPLACE INTO gmail_connections (user_id,payload,generation) VALUES (?,?,?)').run('owner-1',await security.seal({email:'imports@gmail.com',labelId:'keep-label',accessToken:'import-token'},'gmail:owner-1'),'import-generation');

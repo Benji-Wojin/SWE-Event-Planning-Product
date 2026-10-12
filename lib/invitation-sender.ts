@@ -96,7 +96,7 @@ export async function beginSenderOAuth(user: ProjectUser) {
     })
   );
 }
-export async function finishSenderOAuth(user: User, url: URL) {
+export async function finishSenderOAuth(user: User, url: URL, onProject?: (projectId: string) => void) {
   const state = url.searchParams.get('state') || '';
   const row = await env.DB.prepare(
     'SELECT payload FROM sender_oauth_states WHERE id=? AND user_id=? AND expires>?',
@@ -112,6 +112,7 @@ export async function finishSenderOAuth(user: User, url: URL) {
   const scoped = await projectUser(user, secret.projectId);
   if (scoped.role !== 'admin')
     throw new HttpError(403, 'Only the organizer can connect a sender.');
+  onProject?.(scoped.projectId);
   const returnTo =
     env.GATHER_ORIGIN + '/team?project=' + encodeURIComponent(scoped.projectId);
   if (url.searchParams.has('error')) {

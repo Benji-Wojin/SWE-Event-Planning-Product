@@ -24,9 +24,12 @@ import { projectScope, listProjects } from '@/lib/projects';
 import { projectOwner } from '@/lib/project-access';
 import { automaticStatus, configureAutomatic, runAutomatic } from '@/lib/gmail-automatic';
 import { finishSenderOAuth, senderConnection } from '@/lib/invitation-sender';
+import { gmailCallbackError } from '@/lib/gmail-callback-response';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
-  return safe(async () => {
+  const senderCallback = new URL(request.url).searchParams.get('state')?.startsWith('send_');
+  let recoveryPath = senderCallback ? '/' : '/settings';
+  const response = await safe(async () => {
     const user = await administrator(),
       url = new URL(request.url),
       action = url.pathname.split('/').pop();
@@ -93,7 +96,9 @@ export async function GET(request: Request) {
     }
     if (action === 'callback') {
       const state = url.searchParams.get('state');
-      if (state?.startsWith('send_')) return finishSenderOAuth(user, url);
+      if (state?.startsWith('send_')) return finishSenderOAuth(user, url, projectId => {
+        recoveryPath = '/team?project=' + encodeURIComponent(projectId);
+      });
       if (!state)
         throw new HttpError(400, 'Missing Google authorization state.');
       const saved = await env.DB.prepare(
@@ -106,6 +111,15 @@ export async function GET(request: Request) {
           400,
           'This authorization expired or was already used. Start again in Gmail settings.',
         );
+      const secret = await unseal(saved.payload, 'oauth:' + state);
+      // Only restore context saved by a verified connect request. Never use a
+      // callback query parameter as a return destination or project selector.
+      if (secret.projectId !== undefined) {
+        const projectId = await projectScope(user, secret.projectId);
+        recoveryPath += '?project=' + encodeURIComponent(projectId);
+      }
+      const returnTo = (result: string) => env.GATHER_ORIGIN + recoveryPath +
+        (recoveryPath.includes('?') ? '&' : '?') + 'gmail=' + result;
       if (url.searchParams.has('error')) {
         await env.DB.prepare(
           'DELETE FROM oauth_states WHERE id=? AND user_id=?',
@@ -113,7 +127,7 @@ export async function GET(request: Request) {
           .bind(state, user.userId)
           .run();
         return Response.redirect(
-          env.GATHER_ORIGIN + '/settings?gmail=cancelled',
+          returnTo('cancelled'),
           303,
         );
       }
@@ -125,7 +139,6 @@ export async function GET(request: Request) {
         );
       const config = await configuration();
       if (!config) throw new HttpError(409, 'OAuth configuration is missing.');
-      const secret = await unseal(saved.payload, 'oauth:' + state);
       if (secret.configPayload !== config.storedPayload)
         throw new HttpError(409, 'The Gmail client changed. Start authorization again.');
       const token = await tokenRequest({
@@ -183,12 +196,20 @@ export async function GET(request: Request) {
           'This authorization was cancelled or already completed.',
         );
       return Response.redirect(
-        env.GATHER_ORIGIN + '/settings?gmail=connected',
+        returnTo('connected'),
         303,
       );
     }
     throw new HttpError(404, 'Not found.');
   });
+  if (new URL(request.url).pathname === '/api/gmail/callback' &&
+      request.headers.get('accept')?.includes('text/html') && response.status >= 400) {
+    // API callers keep JSON/status semantics; browser navigation gets an
+    // actionable page without echoing authorization codes or provider errors.
+    const { error } = await response.json() as { error: string };
+    return gmailCallbackError(error, response.status, recoveryPath, senderCallback ? 'sender' : 'import');
+  }
+  return response;
 }
 export async function POST(request: Request) {
   return safe(async () => {
@@ -225,8 +246,11 @@ export async function POST(request: Request) {
       if (saved[0].meta.changes !== 1) throw new HttpError(409, 'Gmail connected while settings were changing. Disconnect it before replacing the client.');
       return json({ saved: true });
     }
-    if (action === 'connect')
-      return json({ url: await beginOAuth(user.userId) });
+    if (action === 'connect') {
+      const projectId = new URL(request.url).searchParams.has('project')
+        ? await projectScope(user, request) : undefined;
+      return json({ url: await beginOAuth(user.userId, projectId) });
+    }
     if (action === 'automatic') return json(await configureAutomatic(user.userId, data));
     if (action === 'check') return json(await runAutomatic(user.userId));
     if (action === 'move') {

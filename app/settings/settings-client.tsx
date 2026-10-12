@@ -96,7 +96,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           <Button
             disabled={busy || !status?.configured}
             onClick={() => void run(async () => {
-              const data = await gmailRequest('connect', {});
+              const data = await gmailRequest('connect', {}, projectId);
               window.location.assign(data.url);
             })}
           >{status?.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>

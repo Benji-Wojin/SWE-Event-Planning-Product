@@ -122,7 +122,7 @@ export async function gmailWithToken(accessToken: string, path: string) {
     throw new GmailError(response.status);
   return (await response.json()) as any;
 }
-export async function beginOAuth(userId: string) {
+export async function beginOAuth(userId: string, projectId?: string) {
   const config = await configuration(true);
   if (!config) throw new HttpError(409, 'Gmail is not set up for this app yet. Contact the app owner.');
   const state = nonce(),
@@ -144,7 +144,7 @@ export async function beginOAuth(userId: string) {
     .bind(
       state,
       userId,
-      await seal({ verifier, configPayload: config.storedPayload }, 'oauth:' + state),
+      await seal({ verifier, configPayload: config.storedPayload, projectId }, 'oauth:' + state),
       Date.now() + 10 * 60000,
     )
     .run();
