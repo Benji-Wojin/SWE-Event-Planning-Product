@@ -52,6 +52,8 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
     }
   }
   useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get('gmail');
+    if (result === 'cancelled') setNotice('Gmail connection cancelled. You can try again below.');
     refresh().catch((e) => setNotice(e.message));
   }, []);
   async function run(action: () => Promise<void>) {
@@ -82,17 +84,37 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
         await refresh();
       })}>Retry connection check</Button>}
       <a className="inline-block text-sm underline" href={'/team?project=' + encodeURIComponent(projectId || 'main')}>Invitation sender settings</a>
+      <Card>
+        <CardHeader><CardTitle className="text-xl">Gmail connection</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm">
+            {status?.connected
+              ? `Connected: ${status.account}`
+              : 'Connect your Gmail to bring project emails into Weft. This connection is read-only: it cannot send, change, or delete email.'}
+          </p>
+          {status && !status.configured && <p className="text-sm text-muted-foreground">The app owner needs to finish Google setup before you can connect.</p>}
+          <Button
+            disabled={busy || !status?.configured}
+            onClick={() => void run(async () => {
+              const data = await gmailRequest('connect', {});
+              window.location.assign(data.url);
+            })}
+          >{status?.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>
+          {!status?.connected && <p className="text-sm text-muted-foreground">You choose whether to enable automatic detection after connecting. Email stays private until you approve sharing an update.</p>}
+        </CardContent>
+      </Card>
       {status?.connected && <AutomaticControls key={status.account} status={status} busy={busy} projectId={projectId} run={run} refresh={refresh} setNotice={setNotice} />}
-      <details open={!status?.configured} className="space-y-4">
-        <summary className="cursor-pointer text-sm font-medium">Google connection setup</summary>
+      {status && !status.managed && <details className="space-y-4">
+        <summary className="cursor-pointer text-sm font-medium">App owner: Google setup</summary>
       <Card>
         <CardHeader>
-          <CardTitle className="text-xl">1. Google OAuth client</CardTitle>
+          <CardTitle className="text-xl">Google OAuth client</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5 text-base">
           <p>
-            Google requires an OAuth client for this private pilot. Create it in
-            your own Google Cloud project; never send the client secret in chat.
+            This is a one-time setup for the app owner, not each user.
+            Prefer setting GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the server.
+            Existing installations can manage their saved client below. Never send the secret in chat.
           </p>
           <ol className="list-decimal space-y-2 pl-6">
             <li>
@@ -178,39 +200,13 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           )}
         </CardContent>
       </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl">
-            2. Gmail access
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4 text-base">
-          <p>
-            {status?.connected
-              ? `Connected account: ${status.account}`
-              : 'Sign in to Google and approve read-only import access. This connection cannot send email or change your mailbox. Invitation sending is connected separately in Team access.'}
-          </p>
-          <Button
-            disabled={busy || !status?.configured}
-            size="lg"
-            onClick={() =>
-              void run(async () => {
-                const data = await gmailRequest('connect', {});
-                window.location.assign(data.url);
-              })
-            }
-          >
-            {status?.connected ? 'Reconnect Gmail' : 'Connect Gmail'}
-          </Button>
-        </CardContent>
-      </Card>
-      </details>
+      </details>}
       {status?.connected && (
         <details className="space-y-4"><summary className="cursor-pointer text-sm font-medium">Manual label import and disconnect</summary>
         <Card>
           <CardHeader>
             <CardTitle className="text-xl">
-              3. Import label
+              Import a Gmail label
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5 text-base">

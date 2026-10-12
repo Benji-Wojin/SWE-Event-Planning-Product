@@ -1,11 +1,31 @@
 import { env } from '@/lib/runtime';
 import { HttpError, nonce, seal, unseal } from './security';
 export const redirectUri = () => env.GATHER_ORIGIN + '/api/gmail/callback';
-export async function configuration() {
+export async function configuration(prepare = false): Promise<{
+  clientId: string; clientSecret: string; storedPayload: string; managed: boolean;
+} | null> {
   const row = await env.DB.prepare('SELECT payload FROM settings WHERE id=?')
     .bind('google-oauth')
     .first<any>();
-  return row ? { ...(await unseal(row.payload, 'google-oauth')), storedPayload: row.payload } : null;
+  // Keep existing installations on their saved client. New installations reuse
+  // the app-owned Google registration already used for sign-in.
+  if (row && !row.payload.startsWith('env:'))
+    return { ...(await unseal(row.payload, 'google-oauth')), storedPayload: row.payload, managed: false };
+  const clientId = env.GOOGLE_CLIENT_ID?.trim() || '';
+  const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim() || '';
+  if (!/^[a-zA-Z0-9._-]+\.apps\.googleusercontent\.com$/.test(clientId) || !clientSecret)
+    return null;
+  // Persist only a configuration fingerprint, never another copy of the secret.
+  // Existing callback transactions can still atomically reject stale config.
+  const digest = await crypto.subtle.digest('SHA-256',
+    new TextEncoder().encode(JSON.stringify([clientId, clientSecret, redirectUri()])));
+  const storedPayload = 'env:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  if (prepare) {
+    await env.DB.prepare("INSERT INTO settings (id,payload) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload WHERE settings.payload LIKE 'env:%'")
+      .bind('google-oauth', storedPayload).run();
+    return configuration();
+  }
+  return { clientId, clientSecret, storedPayload, managed: true };
 }
 export async function connection(userId: string) {
   const row = await env.DB.prepare(
@@ -103,8 +123,8 @@ export async function gmailWithToken(accessToken: string, path: string) {
   return (await response.json()) as any;
 }
 export async function beginOAuth(userId: string) {
-  const config = await configuration();
-  if (!config) throw new HttpError(409, 'Save your Google OAuth client first.');
+  const config = await configuration(true);
+  if (!config) throw new HttpError(409, 'Gmail is not set up for this app yet. Contact the app owner.');
   const state = nonce(),
     verifier = nonce(48);
   const hash = await crypto.subtle.digest(
@@ -136,7 +156,7 @@ export async function beginOAuth(userId: string) {
       response_type: 'code',
       scope: 'https://www.googleapis.com/auth/gmail.readonly',
       access_type: 'offline',
-      prompt: 'consent',
+      prompt: 'consent select_account',
       state,
       code_challenge: challenge,
       code_challenge_method: 'S256',

@@ -45,11 +45,11 @@ export async function beginSenderOAuth(user: ProjectUser) {
       403,
       'Only the organizer can connect an invitation sender.',
     );
-  const config = await configuration();
+  const config = await configuration(true);
   if (!config)
     throw new HttpError(
       409,
-      'Set up the Google client in Gmail settings first.',
+      'Gmail is not set up for this app yet. Contact the app owner.',
     );
   const state = 'send_' + nonce(),
     verifier = nonce(48);

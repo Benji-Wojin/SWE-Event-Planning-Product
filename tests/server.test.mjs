@@ -363,6 +363,96 @@ test('encryption is context-bound and detects tampering', async () => {
   await assert.rejects(security.unseal(encrypted, 'b'));
   await assert.rejects(security.unseal(encrypted.slice(0, -4) + 'AAAA', 'a'));
 });
+test('managed Gmail setup reuses server registration without exposing or copying secrets', async () => {
+  owner();
+  const config = { clientId: 'managed.apps.googleusercontent.com', clientSecret: 'server-only-fixture-secret' };
+  Object.assign(globalThis.__gatherEnv, { GOOGLE_CLIENT_ID: config.clientId, GOOGLE_CLIENT_SECRET: config.clientSecret });
+  try {
+    const status = await (await gmailApi.GET(new Request('https://gather.example/api/gmail/status'))).json();
+    assert.equal(status.configured, true);
+    assert.equal(status.managed, true);
+    assert.equal(status.connected, false);
+    assert.ok(!JSON.stringify(status).includes(config.clientSecret));
+    assert.equal(sqlite.prepare("SELECT payload FROM settings WHERE id='google-oauth'").get(), undefined);
+    assert.equal((await gmailApi.POST(request('/api/gmail/configure', config))).status, 409);
+    const url = new URL((await (await gmailApi.POST(request('/api/gmail/connect', {}))).json()).url);
+    assert.equal(url.searchParams.get('client_id'), config.clientId);
+    assert.equal(url.searchParams.get('prompt'), 'consent select_account');
+    assert.equal(url.searchParams.get('scope'), 'https://www.googleapis.com/auth/gmail.readonly');
+    assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+    const row = sqlite.prepare("SELECT payload FROM settings WHERE id='google-oauth'").get();
+    assert.match(row.payload, /^env:[a-f0-9]{64}$/);
+    assert.ok(!row.payload.includes(config.clientSecret));
+    const state = url.searchParams.get('state');
+    const saved = sqlite.prepare('SELECT payload FROM oauth_states WHERE id=?').get(state);
+    assert.equal((await security.unseal(saved.payload, 'oauth:' + state)).configPayload, row.payload);
+  } finally {
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_ID;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET;
+    sqlite.prepare("DELETE FROM settings WHERE id='google-oauth'").run();
+    sqlite.prepare("DELETE FROM oauth_states WHERE user_id='owner-1'").run();
+  }
+});
+test('managed Gmail callback, refresh and replay protections work without manual configuration', async () => {
+  owner();
+  Object.assign(globalThis.__gatherEnv, { GOOGLE_CLIENT_ID: 'managed.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'server-fixture-secret' });
+  const originalFetch = globalThis.fetch;
+  let exchanges = 0;
+  globalThis.fetch = async (path, options) => {
+    if (path === 'https://oauth2.googleapis.com/token') {
+      exchanges++;
+      assert.equal(options.body.get('client_id'), globalThis.__gatherEnv.GOOGLE_CLIENT_ID);
+      assert.equal(options.body.get('client_secret'), globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET);
+      return Response.json({ access_token: 'managed-access', refresh_token: 'managed-refresh', expires_in: 3600, scope: 'https://www.googleapis.com/auth/gmail.readonly' });
+    }
+    assert.equal(path, 'https://gmail.googleapis.com/gmail/v1/users/me/profile');
+    return Response.json({ emailAddress: 'managed@example.com' });
+  };
+  try {
+    const start = async () => new URL(await gmailCore.beginOAuth('owner-1')).searchParams.get('state');
+    const state = await start();
+    const callback = state => gmailApi.GET(new Request('https://gather.example/api/gmail/callback?state=' + state + '&code=fixture'));
+    assert.equal((await callback(state)).status, 303);
+    assert.equal((await gmailCore.connection('owner-1')).email, 'managed@example.com');
+    assert.equal((await callback(state)).status, 400);
+    assert.equal(exchanges, 1);
+    const conn = await gmailCore.connection('owner-1');
+    await gmailCore.saveConnection('owner-1', { ...conn, expiresAt: 0 });
+    await gmailCore.gmail('owner-1', 'profile');
+    assert.equal(exchanges, 2);
+    const stale = await start();
+    globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET = 'rotated-fixture-secret';
+    assert.equal((await callback(stale)).status, 409);
+    assert.equal(exchanges, 2);
+    assert.equal((await callback(await start())).status, 303);
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET;
+    assert.equal(await gmailCore.configuration(), null);
+    assert.equal((await gmailApi.POST(request('/api/gmail/connect', {}))).status, 409);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_ID;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET;
+    sqlite.prepare("DELETE FROM settings WHERE id='google-oauth'").run();
+    sqlite.prepare("DELETE FROM oauth_states WHERE user_id='owner-1'").run();
+    sqlite.prepare("DELETE FROM gmail_connections WHERE user_id='owner-1'").run();
+  }
+});
+test('saved Gmail clients retain precedence over managed credentials', async () => {
+  const payload = await security.seal({ clientId: 'legacy.apps.googleusercontent.com', clientSecret: 'legacy-fixture-secret' }, 'google-oauth');
+  sqlite.prepare('INSERT INTO settings (id,payload) VALUES (?,?)').run('google-oauth', payload);
+  Object.assign(globalThis.__gatherEnv, { GOOGLE_CLIENT_ID: 'managed.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'managed-fixture-secret' });
+  try {
+    const config = await gmailCore.configuration(true);
+    assert.equal(config.clientId, 'legacy.apps.googleusercontent.com');
+    assert.equal(config.managed, false);
+    assert.equal(config.storedPayload, payload);
+    assert.equal(sqlite.prepare("SELECT payload FROM settings WHERE id='google-oauth'").get().payload, payload);
+  } finally {
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_ID;
+    delete globalThis.__gatherEnv.GOOGLE_CLIENT_SECRET;
+    sqlite.prepare("DELETE FROM settings WHERE id='google-oauth'").run();
+  }
+});
 test('Gmail setup is explicit and secrets are not returned', async () => {
   owner();
   let status = await (

@@ -35,6 +35,7 @@ export async function GET(request: Request) {
         conn = await connection(user.userId);
       return json({
         configured: !!config,
+        managed: !!config?.managed,
         connected: !!conn,
         account: conn?.email || '',
         labelId: conn?.labelId || '',
@@ -195,6 +196,8 @@ export async function POST(request: Request) {
       data = await body(request),
       action = new URL(request.url).pathname.split('/').pop();
     if (action === 'configure') {
+      if ((await configuration())?.managed)
+        throw new HttpError(409, 'Google connection settings are managed by the app owner. Use Connect Gmail to connect your account.');
       const clientId = String(data.clientId || '').trim(),
         clientSecret = String(data.clientSecret || '').trim();
       if (

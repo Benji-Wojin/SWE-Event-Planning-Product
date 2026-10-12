@@ -8,6 +8,12 @@ let bucket: PrivateBucket | undefined;
 // Keep provider initialization behind getters. Next.js imports server modules
 // during a build, when production credentials need not be available.
 export const env = {
+  get GOOGLE_CLIENT_ID(): string | undefined {
+    return process.env.GOOGLE_CLIENT_ID;
+  },
+  get GOOGLE_CLIENT_SECRET(): string | undefined {
+    return process.env.GOOGLE_CLIENT_SECRET;
+  },
   get DB(): D1Database {
     return (database ??= createDatabaseFromEnvironment({
       TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
