@@ -602,6 +602,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .schedule-time{font-size:.875rem;font-variant-numeric:tabular-nums}.schedule-activity,.schedule-owner{display:grid;gap:8px;min-width:0}.schedule-owner{justify-items:start}.schedule-activity strong{font-size:1rem}.schedule-activity .muted{font-size:.875rem}
 .schedule-facts{padding:0 0 16px}.schedule-facts h3{font-size:1rem;margin:0 0 8px}.schedule-facts p{font-size:.875rem;margin:6px 0;overflow-wrap:anywhere}
 .task-schedule .form-actions{flex-wrap:wrap}.task-schedule .field{min-width:0}.task-schedule input{min-width:0;max-width:100%}
+.schedule-overlap-summary{padding:12px;border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:6px;font-size:.875rem;line-height:1.5;margin:0 0 18px}
+.schedule-overlap-label{font-size:.75rem;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.schedule-overlap-details{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:6px;font-size:.875rem}
+.schedule-overlap-details summary{cursor:pointer;font-weight:600}.schedule-overlap-details ul{margin:12px 0 0;padding-left:20px}.schedule-overlap-details li+li{margin-top:12px}.schedule-overlap-details li span{display:block;margin-top:4px}.schedule-overlap-details .text-button{text-align:left;overflow-wrap:anywhere}
 @media(max-width:640px){.schedule-panel{padding:16px}.schedule-row{grid-template-columns:minmax(0,1fr);gap:10px}.schedule-owner{display:flex;flex-wrap:wrap;align-items:center}.schedule-switch .filter-tab{flex:1}.schedule-time{font-weight:600}}
 @media(max-width:540px){.task-recovery{padding:14px}.next-up-control{align-items:stretch;flex-direction:column}}
 .briefing-card-heading>div{min-width:0}.briefing-card-heading,.briefing-attribution,.notice,.followup-context,.team-card h2,.memory-card h2,.timeline-task{overflow-wrap:anywhere}

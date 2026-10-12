@@ -192,6 +192,19 @@ test('task dialog leads with context and reporting, with editor hidden from team
   assert.doesNotMatch(maya, /data-action="claim"/);
 });
 
+test('real task dialogs link overlapping owner activities without exposing schedule edits to members',()=>{
+  const store=create();store.completeSetup({timeZone:'America/Los_Angeles'});
+  store.setTaskSchedule('dietary',{start:'2026-10-03T09:00',end:'2026-10-03T10:00',location:''});
+  store.setTaskSchedule('catering',{start:'2026-10-03T09:30',end:'2026-10-03T10:30',location:''});
+  const member=taskDialogHtml('maya','dietary',undefined,store);
+  assert.match(member,/Owner overlap · 1 activity/);
+  assert.match(member,/data-action="task" data-id="catering">Approve the catering menu/);
+  assert.doesNotMatch(member,/id="scheduleForm"/);
+  assert.match(taskDialogHtml('jack','dietary',undefined,store),/id="scheduleForm"/);
+  store.updateTask('catering',{owner:'jules'});
+  assert.doesNotMatch(taskDialogHtml('maya','dietary',undefined,store),/Owner overlap/);
+});
+
 test('task dialogs explain prerequisites and offer completion only when required work is resolved', () => {
   const store=create();
   let html=taskDialogHtml('maya','catering',undefined,store);

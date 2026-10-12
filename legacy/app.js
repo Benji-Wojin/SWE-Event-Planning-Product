@@ -341,7 +341,7 @@
   }
   function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
   function taskDialog(id,submittedForm='') {
-    const task=store.getState().tasks.find(t=>t.id===id);
+    const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
     const drafts=sameTask?taskDrafts(submittedForm):[];
@@ -353,7 +353,7 @@
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
-      ${schedule.details(task,organizer,store.getState().event)}
+      ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
