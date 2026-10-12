@@ -69,6 +69,8 @@ Owners can commit to up to three actionable Next up tasks, propose a date or ask
 
 When Next up is empty, ready tasks are shown directly; unavailable work and no assignments have distinct empty states. Reassignment advice considers active teammates only.
 
+Completion labels distinguish the person who reported the work from the organizer who verified it. The same attribution appears in task details, linked results and summaries; historical records are not rewritten.
+
 New Helpful links searches are disabled by default during migration; unexpired cached links remain readable. Leave `GROQ_WEB_SEARCH_ENABLED` unset until a public-data smoke test confirms free-account `browser_search` access and provider-origin citation URLs compatible with the fail-closed parser; only then set it to `verified`. Do not use model-written URLs as citations or enable paid fallback. The adapter sends only task name, category and optional city/region, never notes, emails, comments, booking codes or participant profiles. Public HTTPS links are display-only; Weft never fetches those destinations or makes bookings. Existing 7-day caching, one lookup/task/minute and 25 lookups/account/day limits remain. Groq search access, source metadata and any separate search charges are unverified.
 
 ## Event information

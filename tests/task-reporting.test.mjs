@@ -129,13 +129,13 @@ function taskDialogHtml(actor,id='dietary',identity,store=create()) {
     GatherPriorities,reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),
     statusBadge:status=>status,sourceButton:()=>'',dayLabel:value=>value,
-    timeLabel:value=>value,relative:value=>value,completionText:()=>'',
-    commitment:()=>'',member:id=>({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:items=>items.map(([value,label])=>`<option value="${value}">${label}</option>`).join(''),$:()=>null,
+    timeLabel:value=>value,relative:value=>value,
+    commitment:()=>'',member:id=>store.getState().members.find(item=>item.id===id)||({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:items=>items.map(([value,label])=>`<option value="${value}">${label}</option>`).join(''),$:()=>null,
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
   context.recovery=GatherRecoveryUI.create(context);
   context.schedule=GatherScheduleUI.create(context);
-  vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
+  vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  const completionText ='),source.indexOf('  const commitment ='))+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;
 }
@@ -171,6 +171,46 @@ test('completed tasks must be reopened before introducing verification',()=>{
   store.updateTask('venue',{...metadata(venue),status:'done',note:venue.note});
   store.updateTask('venue',{status:'todo'});
   assert.equal(store.updateTask('venue',{requiresVerification:true}).requiresVerification,true);
+});
+
+test('completion attribution distinguishes owner reports, organizer verification and manual completion',()=>{
+  const source=readFileSync('legacy/app.js','utf8'),store=create();
+  const context=vm.createContext({member:id=>store.getState().members.find(item=>item.id===id)||{name:'Former teammate'}});
+  vm.runInContext(source.slice(source.indexOf('  const completionText ='),source.indexOf('  const commitment ='))+'globalThis.describe=completionText;',context);
+  store.reportCompletion('dietary','All responses received.','maya');
+  assert.equal(context.describe(getTask(store)),'Maya Singh reported complete');
+  assert.equal(context.describe({completedBy:'jack'}),'Marked done by Jack Morgan');
+  assert.equal(context.describe({completionReportedBy:'Vendor contact',completedBy:'jack'}),'Vendor contact reported complete · recorded by Jack Morgan');
+  assert.equal(context.describe({verifiedAt:'2026-10-12',verifiedBy:'jack',reportedBy:'Original owner',owner:'dev'}),'Original owner reported complete · verified by Jack Morgan');
+  assert.equal(context.describe({verifiedAt:'2026-10-12',verifiedBy:'jack',completionReportedBy:'Vendor contact'}),'Vendor contact reported complete · verified by Jack Morgan');
+  assert.equal(context.describe({verifiedAt:'2026-10-12',verifiedBy:'jack',owner:'maya'}),'Verified by Jack Morgan','missing historical reporter is not inferred from current assignment');
+});
+
+test('verified work retains its reporter in task details and linked results without changing stored history',()=>{
+  const store=create();store.updateTask('dietary',{requiresVerification:true});
+  store.reportCompletion('dietary','All 24 responses received.','maya');store.verifyTask('dietary','jack');
+  const before=store.exportState(),expected=/Maya Singh reported complete · verified by Jack Morgan/;
+  assert.match(taskDialogHtml('jack','dietary',undefined,store),expected);
+  assert.match(taskDialogHtml('maya','dietary',undefined,store),expected);
+  assert.match(taskDialogHtml('maya','catering',undefined,store),expected);
+  assert.doesNotMatch(taskDialogHtml('jack','dietary',undefined,store),/Marked done by Jack Morgan/);
+  assert.equal(store.exportState(),before);
+  const raw=JSON.parse(before);raw.tasks.find(t=>t.id==='dietary').reportedBy='<img src=x onerror=alert(1)>';
+  const restored=GatherStore.createStore({storage:{getItem:()=>JSON.stringify(raw),setItem(){}}});
+  const html=taskDialogHtml('maya','dietary',undefined,restored);
+  assert.match(html,/&lt;img src=x onerror=alert\(1\)> reported complete/);assert.doesNotMatch(html,/<img src=x/);
+});
+
+test('pending completion hides redundant acceptance while preserving updates and restoring acceptance after withdrawal',()=>{
+  const store=create();store.updateTask('dietary',{requiresVerification:true});
+  assert.match(taskDialogHtml('maya','dietary',undefined,store),/Accept responsibility/);
+  store.reportCompletion('dietary','All responses received.','maya');
+  const before=store.exportState(),html=taskDialogHtml('maya','dietary',undefined,store);
+  assert.doesNotMatch(html,/Accept responsibility|Commit to this next|Report complete<\/option>/);
+  assert.match(html,/Share progress/);assert.match(html,/Report blocked/);assert.match(html,/pending completion report/);
+  assert.equal(store.exportState(),before);
+  store.updateTask('dietary',{status:'progress',note:'One new guest needs to respond.'},'maya');
+  assert.match(taskDialogHtml('maya','dietary',undefined,store),/Accept responsibility/);
 });
 
 test('task dialog leads with context and reporting, with editor hidden from teammates', () => {
