@@ -71,7 +71,7 @@
   }
   const unsavedDialog=()=>!!$('#dialogBackdrop')&&!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
   const unsavedReview=()=>hasUnsavedFields($('#emailReviewForm'));
-  const dateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  const dateKey = (date = new Date()) => GatherCalendar.dayKey(date,store.getTimeZone());
   const dayLabel = value => !value ? 'No due date' : new Date(value+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
   const timeLabel = value => !value ? 'No update yet' : new Date(value).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   const relative = value => {
@@ -84,8 +84,8 @@
   const person = id => `<span class="person-chip">${avatar(id,true)}<span>${h(member(id).name.split(' ')[0])}</span></span>`;
   const statusBadge = status => `<span class="status-badge status-${h(status)}">${h(statuses[status])}</span>`;
   const due = task => `<span class="${task.status!=='done' && task.dueDate && task.dueDate<dateKey()?'due-overdue':''}">${task.dueDate===dateKey()?'Today':dayLabel(task.dueDate)}</span>`;
-  const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks);
-  const attention = s => GatherPriorities.rank(s.tasks);
+  const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone);
+  const attention = s => GatherPriorities.rank(s.tasks,new Date(),false,s.event.timeZone);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
   const completed = s => s.tasks.filter(t=>t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => task.completionReportedBy ? `${task.completionReportedBy} reported complete · recorded by ${member(task.completedBy).name}` : `Marked done by ${member(task.completedBy).name}`;
@@ -98,7 +98,8 @@
 
   function taskRow(task) {
     const done = task.status==='done';
-    const decision=ui.tab==='attention'&&isOrganizer()?GatherPriorities.decision(task,store.getState().tasks):null;
+    let decision=null;
+    if(ui.tab==='attention'&&isOrganizer()) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
     return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification||dependencyInfo(task).open.length?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>

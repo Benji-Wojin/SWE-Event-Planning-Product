@@ -33,11 +33,8 @@
       if (Number.isNaN(result.getTime())) throw new Error("The workspace clock is invalid.");
       return result.toISOString();
     };
-    const day = (offset = 0) => {
-      const date = new Date(timestamp());
-      date.setUTCDate(date.getUTCDate() + offset);
-      return date.toISOString().slice(0, 10);
-    };
+    let state;
+    const day = (offset = 0) => globalThis.GatherCalendar.dayKey(timestamp(), state?.event.timeZone || 'UTC', offset);
     const ago = (days = 0, hours = 0) => new Date(new Date(timestamp()).getTime() - (days * 24 + hours) * 3600000).toISOString();
     let counter = 0;
     const id = (prefix) => `${prefix}-${new Date(timestamp()).getTime().toString(36)}-${(++counter).toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -86,7 +83,7 @@
       };
     }
 
-    let state = seed();
+    state = seed();
     try {
       const saved = storage && storage.getItem(KEY);
       if (saved) {
@@ -1024,7 +1021,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

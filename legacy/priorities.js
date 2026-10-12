@@ -3,9 +3,9 @@
   const labels = { auto: 'Automatic', high: 'High', low: 'Low' };
   const resolved = task => Boolean(task && task.status === 'done' && (!task.requiresVerification || task.verifiedAt));
   const awaiting = task => Boolean(task.reportedAt && task.requiresVerification && !task.verifiedAt);
-  const dayKey = date => date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+  const dayKey = (date,zone) => root.GatherCalendar.dayKey(date,zone);
   const dayNumber = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? Date.parse(value+'T00:00:00Z')/86400000 : NaN;
-  const daysLeft = (task,now) => dayNumber(task.dueDate)-dayNumber(dayKey(new Date(now)));
+  const daysLeft = (task,now,zone) => dayNumber(task.dueDate)-dayNumber(dayKey(now,zone));
   const pendingRequest = task => (task.recoveryRequests || []).find(r=>r.status==='pending');
   const responseTime = task => Math.max(...[task.ownerRespondedAt,task.acceptedAt,task.nextUpAt].map(value=>new Date(value||0).getTime()||0));
   const unresolved = (task,tasks) => (task.dependencies || []).filter(link=>link.kind!=='related'&&!resolved(tasks.find(t=>t.id===link.taskId)));
@@ -20,11 +20,11 @@
     }
     return result;
   }
-  function decision(task,tasks,now=new Date()) {
+  function decision(task,tasks,now=new Date(),zone='UTC') {
     if(resolved(task)||awaiting(task))return null;
     const request=pendingRequest(task);
     if(request)return {key:'request',label:request.kind==='date'?'Date proposal':'Help requested',request};
-    const today=dayNumber(dayKey(new Date(now)));
+    const today=dayNumber(dayKey(now,zone));
     if(dayNumber(task.planReviewAfter)>today)return null;
     const waiting=unresolved(task,tasks);
     if(waiting.some(link=>!tasks.some(t=>t.id===link.taskId)))return {key:'missing',label:'Review missing linked task'};
@@ -36,26 +36,26 @@
     const sent=new Date(task.followupSentAt||0).getTime();
     const check=task.planReviewAfter||task.followupAfter;
     if(sent&&dayNumber(check)<=today&&responded<sent)return {key:'unanswered',label:'No response to check-in'};
-    const missed=(task.deadlineHistory||[]).filter(item=>item.from&&item.from<item.at.slice(0,10)&&item.to>item.from).length;
-    if(daysLeft(task,now)<0&&missed>=2)return {key:'repeated',label:'Repeatedly moved deadline'};
-    if(daysLeft(task,now)<=-2&&new Date(now).getTime()-responded>=2*86400000)return {key:'stalled',label:'Overdue · needs a new plan'};
+    const missed=(task.deadlineHistory||[]).filter(item=>item.from&&item.from<dayKey(item.at,zone)&&item.to>item.from).length;
+    if(daysLeft(task,now,zone)<0&&missed>=2)return {key:'repeated',label:'Repeatedly moved deadline'};
+    if(daysLeft(task,now,zone)<=-2&&new Date(now).getTime()-responded>=2*86400000)return {key:'stalled',label:'Overdue · needs a new plan'};
     return null;
   }
-  function deadlineRisk(task,now) {
-    const days=daysLeft(task,now);
+  function deadlineRisk(task,now,zone) {
+    const days=daysLeft(task,now,zone);
     return (task.hardDeadline?(days<=3?400:days<=7?160:0):0)+(task.essential?100:0);
   }
-  function analyze(task,tasks=[],now=new Date()) {
+  function analyze(task,tasks=[],now=new Date(),zone='UTC') {
     if(resolved(task))return null;
-    const today=dayNumber(dayKey(new Date(now))),days=daysLeft(task,now),priority=Object.hasOwn(labels,task.priority)?task.priority:'auto';
+    const today=dayNumber(dayKey(now,zone)),days=daysLeft(task,now,zone),priority=Object.hasOwn(labels,task.priority)?task.priority:'auto';
     const factors=[];
     const add=(key,label,action,weight)=>factors.push({key,label,action,weight});
-    const risk=deadlineRisk(task,now);
+    const risk=deadlineRisk(task,now,zone);
     if(task.hardDeadline&&days<=7)add('deadline','Fixed deadline'+(days<0?' missed':days===0?' today':' in '+days+' days'),'Review the event risk',risk-(task.essential?100:0));
     if(task.essential)add('essential','Essential for the event','Protect essential work',100);
     const dependents=downstream(task,tasks);
     if(dependents.length) {
-      const inherited=Math.max(...dependents.map(t=>deadlineRisk(t,now)+(daysLeft(t,now)<=3?55:0)));
+      const inherited=Math.max(...dependents.map(t=>deadlineRisk(t,now,zone)+(daysLeft(t,now,zone)<=3?55:0)));
       add('dependency','Needed by '+dependents.length+' '+(dependents.length===1?'task':'tasks'),'Complete the prerequisite first',Math.min(80,dependents.length*25)+inherited);
     }
     if(days<0)add('overdue',(-days)+' '+(days===-1?'day':'days')+' overdue','Choose a next step',55+Math.min(-days,7)*5);
@@ -65,7 +65,7 @@
     const required=(task.dependencies||[]).filter(link=>link.kind!=='related'),waiting=unresolved(task,tasks);
     if(task.status==='blocked'&&required.length&&!waiting.length)add('ready','Ready to resume','Review linked results',55);
     else if(task.status==='blocked')add('blocked',waiting.length?'Waiting on linked work':'Blocked','Review the blocker',waiting.length?0:45);
-    const review=decision(task,tasks,now);
+    const review=decision(task,tasks,now,zone);
     if(review)add('decision',review.label,'Review the next step',35);
     if(!task.owner)add('unassigned','No owner','Assign an owner',25);
     if((task.handoffs||[]).some(item=>item.status==='pending'))add('handoff','Suggested follow-up','Review linked work',20);
@@ -82,11 +82,11 @@
       score:factors.reduce((sum,f)=>sum+f.weight,0)+(priority==='high'?120:priority==='low'?-100:0),
       summary:[priority!=='auto'?labels[priority]+' priority':'',...factors.slice(0,3).map(f=>f.label)].filter(Boolean).join(' · ')};
   }
-  function rank(tasks,now=new Date(),all=false) {
-    return tasks.map(task=>({task,info:analyze(task,tasks,now)})).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)))).sort((a,b)=>
+  function rank(tasks,now=new Date(),all=false,zone='UTC') {
+    return tasks.map(task=>({task,info:analyze(task,tasks,now,zone)})).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)))).sort((a,b)=>
       (b.info?.score||0)-(a.info?.score||0)||(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id))).map(item=>item.task);
   }
-  const nextUp=(tasks,actor,now=new Date())=>rank(tasks,now,true).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
+  const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
   function suggestion(task,state) {
     const waits=unresolved(task,state.tasks).map(link=>state.tasks.find(t=>t.id===link.taskId)).filter(Boolean);
     if(waits.length)return {text:'Follow up on the linked work before asking this owner to finish.',targets:waits};

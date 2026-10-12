@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
 import '../legacy/recovery-ui.js';
@@ -29,7 +30,7 @@ test('reassignment clears old email acceptance and follow-up timing without eras
 
 test('reached follow-up dates appear in attention while future dates remain quiet',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const context=vm.createContext({store:{getState:()=>({tasks:[]})},GatherPriorities:{analyze:(task,tasks)=>GatherPriorities.analyze(task,tasks,new Date(2026,8,22,12))}});
+  const context=vm.createContext({store:{getState:()=>({event:{timeZone:'UTC'},tasks:[]})},GatherPriorities:{analyze:(task,tasks)=>GatherPriorities.analyze(task,tasks,new Date(2026,8,22,12))}});
   vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const attention ='))+'globalThis.reason=reason;',context);
   const task={owner:'maya',status:'progress',acceptedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),dueDate:'2026-10-06'};
   assert.equal(context.reason({...task,followupAfter:'2026-09-22'}).key,'followup');

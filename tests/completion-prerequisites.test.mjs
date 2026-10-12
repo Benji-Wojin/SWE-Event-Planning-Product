@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 
 const get = (store, id) => store.getState().tasks.find(task => task.id === id);

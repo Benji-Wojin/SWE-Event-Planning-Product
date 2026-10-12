@@ -109,6 +109,7 @@
     }
     const store = {
       getState: () => structuredClone(snapshot.state),
+      getTimeZone: () => snapshot.state.event.timeZone || 'UTC',
       getSuggestions: () => structuredClone(snapshot.suggestions),
       exportState: () => JSON.stringify(snapshot.exportState, null, 2),
       subscribe: (fn) => {

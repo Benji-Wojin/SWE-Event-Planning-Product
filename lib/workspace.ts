@@ -1,4 +1,5 @@
 import { env } from '@/lib/runtime';
+import '@/legacy/calendar.js';
 import '@/legacy/store.js';
 import { HttpError, principal } from './security';
 import { accessArgs, projectWriteAccess, projectUser } from './project-access';

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/inbox.js';
 

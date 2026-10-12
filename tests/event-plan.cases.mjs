@@ -181,6 +181,21 @@ export async function eventPlanTests({
     return snap;
   }
   try {
+    await t.test('AI planning accepts event-local today while account quotas remain UTC', async () => {
+      const project = await setup();
+      const RealDate = globalThis.Date;
+      const instant = RealDate.parse('2030-10-02T06:00:00Z');
+      globalThis.Date = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [instant])); }
+        static now() { return instant; }
+      };
+      try {
+        const snap = await ready(project);
+        assert.equal(JSON.parse(calls[0].input).today, '2030-10-01');
+        assert.equal(snap.draft.items[0].dueDate, '2030-10-01');
+        assert.ok(sqlite.prepare("SELECT id FROM resource_usage WHERE id LIKE 'plan-ai:%:2030-10-02'").get());
+      } finally { globalThis.Date = RealDate; }
+    });
     await t.test(
       'strict provider and review validation rejects malformed dates, fields, cycles and hidden completion',
       () => {

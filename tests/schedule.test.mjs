@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/schedule-ui.js';
 

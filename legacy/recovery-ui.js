@@ -3,26 +3,26 @@
   function create({store,ui,h,options,dayLabel,member}) {
     const P=root.GatherPriorities;
     const state=()=>store.getState();
-    const dateKey=(offset=0)=>{const d=new Date();d.setDate(d.getDate()+offset);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+    const dateKey=(offset=0)=>root.GatherCalendar.dayKey(new Date(),state().event.timeZone,offset);
     const tomorrow=()=>dateKey(1);
     const taskLink=t=>'<button class="text-button" data-action="task" data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
     function ownerLoad(owner) {
       if(!owner)return '';
-      const tasks=state().tasks,next=P.nextUp(tasks,owner),others=tasks.filter(t=>t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
+      const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
       return '<div class="owner-load"><span>'+h(member(owner).name.split(' ')[0])+': '+next.length+'/3 next tasks · '+others.length+' other assignments</span>'+(next.length?'<details><summary>Current commitments</summary><ul>'+next.map(t=>'<li>'+h(t.title)+'</li>').join('')+'</ul></details>':'')+'</div>';
     }
     function nextUpPanel(s) {
-      const active=P.nextUp(s.tasks,ui.actor),suggested=P.rank(s.tasks,new Date(),true).filter(t=>t.owner===ui.actor&&!t.nextUpAt&&P.actionable(t,s.tasks)).slice(0,Math.max(0,3-active.length));
+      const active=P.nextUp(s.tasks,ui.actor,new Date(),s.event.timeZone),suggested=P.rank(s.tasks,new Date(),true,s.event.timeZone).filter(t=>t.owner===ui.actor&&!t.nextUpAt&&P.actionable(t,s.tasks)).slice(0,Math.max(0,3-active.length));
       return '<section class="panel next-up-panel section-gap"><div class="panel-heading"><h2 class="section-title">Next up <span class="muted">'+active.length+'/3</span></h2></div><div class="next-up-list">'+active.map(t=>'<article>'+taskLink(t)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length?'':'<p class="muted">Choose up to three tasks to work on next.</p>')+(suggested.length?'<details class="next-up-suggestions"><summary>Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t)+'<span class="muted">Review to commit</span></article>').join('')+'</details>':'')+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();
       if(task.owner!==ui.actor||!P.actionable(task,s.tasks))return '';
-      const active=P.nextUp(s.tasks,ui.actor);
+      const active=P.nextUp(s.tasks,ui.actor,new Date(),s.event.timeZone);
       return '<form id="nextUpForm" data-id="'+h(task.id)+'" class="next-up-control"><input type="hidden" name="enabled" value="'+(!task.nextUpAt)+'">'+(task.nextUpAt?'<span>In your next '+active.length+' tasks</span><button class="text-button" type="submit">Remove from Next up</button>':(active.length>=3?'<label class="field">Swap with<select name="replaceTaskId" required>'+options([['','Choose a current commitment'],...active.map(t=>[t.id,t.title])],'')+'</select></label>':'')+'<button class="btn btn-secondary btn-small" type="submit">'+(active.length>=3?'Swap into Next up':'Commit to this next')+'</button>')+'</form>';
     }
     function recoveryMarkup(task,organizer) {
-      const s=state(),request=P.pendingRequest(task),decision=P.decision(task,s.tasks),suggestion=P.suggestion(task,s);
+      const s=state(),request=P.pendingRequest(task),decision=P.decision(task,s.tasks,new Date(),s.event.timeZone),suggestion=P.suggestion(task,s);
       if(!request&&(!organizer||!decision))return '';
       let html='<section class="task-recovery section-gap"><h3>'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
       if(request)html+='<p>'+h(request.note)+'</p>'+(request.kind==='date'?'<div class="date-proposal"><span>Current: '+dayLabel(task.dueDate)+'</span><strong>Proposed: '+dayLabel(request.proposedDate)+'</strong></div>':'')+'<p class="muted">'+(organizer?'From '+h(member(request.createdBy).name):'Awaiting the organizer. Your current plan is unchanged.')+'</p>';
@@ -38,7 +38,7 @@
       return '<section class="task-report section-gap"><h3>'+(overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"><label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed','Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Need someone else']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label><label class="field"><span class="sr-only">What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
     }
     function priorityMarkup(task,organizer) {
-      const info=P.analyze(task,state().tasks),value=task.priority||'auto';
+      const info=P.analyze(task,state().tasks,new Date(),state().event.timeZone),value=task.priority||'auto';
       const history=(task.deadlineHistory||[]).map(item=>'<li>'+dayLabel(item.from)+' → '+dayLabel(item.to)+' · '+h(member(item.actor).name)+'</li>').join('');
       return '<details class="task-priority priority-details"><summary>Priority &amp; history · '+h(P.labels[value])+'</summary>'+(organizer?'<form id="priorityForm" data-id="'+h(task.id)+'"><label class="field">Priority<select name="priority">'+options(Object.entries(P.labels),value)+'</select></label><label class="check-field"><input type="checkbox" name="essential" '+(task.essential?'checked':'')+'> Essential for the event</label><label class="check-field"><input type="checkbox" name="hardDeadline" '+(task.hardDeadline?'checked':'')+'> Fixed vendor or external deadline</label><button class="btn btn-secondary btn-small" type="submit">Save priority</button></form>':'')+'<p>Event risk and work that unblocks others come first. Lateness increases urgency, but does not always take the top spot.</p>'+(info?'<ul>'+info.factors.map(f=>'<li>'+h(f.label)+'</li>').join('')+'</ul>':'')+(history?'<h4>Deadline history</h4><p>Original: '+dayLabel(task.originalDueDate)+'</p><ul>'+history+'</ul>':'')+'</details>';
     }

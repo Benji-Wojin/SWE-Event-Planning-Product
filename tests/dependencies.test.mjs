@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 
 const create = () => GatherStore.createStore({storage:null});

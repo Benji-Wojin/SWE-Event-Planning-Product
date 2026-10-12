@@ -265,7 +265,7 @@ async function generate(c: Context, input: any) {
   const generationContext = {
     ...c.source,
     brief,
-    today: new Date().toISOString().slice(0, 10),
+    today: (globalThis as any).GatherCalendar.dayKey(new Date(), c.state.event.timeZone),
   };
   try {
     planRequestBody(generationContext);

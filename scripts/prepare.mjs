@@ -6,6 +6,7 @@ let html = readFileSync('legacy/index.html', 'utf8')
   .replace('src="theme.js"', 'src="/gather-assets/theme.js"')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
+  .replace('calendar.js?v=coordination-1', '/gather-assets/calendar.js')
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
@@ -32,6 +33,7 @@ html = html.replace(
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
 writeFileSync('public/workspace.html', html);
+writeFileSync('public/gather-assets/calendar.js',readFileSync('legacy/calendar.js','utf8'));
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
 writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));

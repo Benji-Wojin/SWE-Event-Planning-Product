@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
 const now=new Date('2026-09-24T12:00:00Z');

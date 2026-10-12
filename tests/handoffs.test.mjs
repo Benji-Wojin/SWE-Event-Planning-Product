@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 const setup=()=>{const store=GatherStore.createStore({storage:null});const parent=store.addTask({title:'Prepare welcome desk',owner:'dev',status:'progress'});return {store,id:parent.id};};
 const task=(store,id)=>store.getState().tasks.find(t=>t.id===id);

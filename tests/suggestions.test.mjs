@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 
 const source = readFileSync(new URL('../legacy/hosted-store.js', import.meta.url), 'utf8');
@@ -28,6 +29,15 @@ test('planning checks react to the clock without a project edit', () => {
   now += 2 * 86400000;
   assert.ok(store.getSuggestions().some(s => s.id === 'dietary-cutoff'));
   assert.equal(store.exportState(), saved, 'Derived checks must not create a task or write state');
+});
+
+test('hosted time-zone accessor follows refreshed project state',async()=>{
+  const first={...snapshot(1),state:{event:{timeZone:'America/Los_Angeles'}}};
+  const {store,respond}=await hosted(first);
+  assert.equal(store.getTimeZone(),'America/Los_Angeles');
+  respond(async()=>({...snapshot(2),state:{event:{timeZone:'Asia/Tokyo'}}}));
+  await store.refresh(()=>true);
+  assert.equal(store.getTimeZone(),'Asia/Tokyo');
 });
 
 test('hosted schedule RPC strips actor arguments and preserves the snapshot on rejected save',async()=>{

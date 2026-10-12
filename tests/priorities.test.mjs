@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
 
@@ -73,7 +74,7 @@ test('priority persists, is organizer-only, and never fabricates a progress upda
 
 test('Needs attention filters and search preserve the shared dashboard ranking',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const s={tasks:[task('later',{priority:'high'}),task('late',{dueDate:'2026-09-21'}),task('today',{dueDate:'2026-09-24'})]};
+  const s={event:{timeZone:'UTC'},tasks:[task('later',{priority:'high'}),task('late',{dueDate:'2026-09-21'}),task('today',{dueDate:'2026-09-24'})]};
   const context=vm.createContext({ui:{tab:'attention',actor:'jack',owner:'',status:'',search:''},store:{getState:()=>s},GatherPriorities:{rank:tasks=>GatherPriorities.rank(tasks,now),analyze:(t,tasks)=>GatherPriorities.analyze(t,tasks,now)},member:()=>({name:'Maya'})});
   vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const pending ='))+source.slice(source.indexOf('  function filteredTasks('),source.indexOf('  const options ='))+'globalThis.attention=attention;',context);
   assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),context.attention(s).map(t=>t.id));
