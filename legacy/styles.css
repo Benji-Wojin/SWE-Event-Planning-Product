@@ -603,6 +603,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .schedule-facts{padding:0 0 16px}.schedule-facts h3{font-size:1rem;margin:0 0 8px}.schedule-facts p{font-size:.875rem;margin:6px 0;overflow-wrap:anywhere}
 .schedule-focus{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--line)}
 .schedule-focus-group{min-width:0}.schedule-focus h3{font-size:.875rem;margin:0 0 10px}.schedule-focus p{font-size:.875rem;margin:0}.schedule-focus-task{display:grid;gap:4px;text-align:left;max-width:100%;overflow-wrap:anywhere}.schedule-focus-task+.schedule-focus-task{margin-top:12px}.schedule-focus-task .muted{font-size:.75rem;font-weight:400}
+.schedule-focus-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;font-weight:400}.schedule-focus-meta .person-chip{white-space:normal}
 .schedule-phase{display:block;margin-top:6px;font-size:.75rem;font-weight:600}
 @media(max-width:640px){.schedule-focus{grid-template-columns:minmax(0,1fr);gap:16px}}
 .task-schedule .form-actions{flex-wrap:wrap}.task-schedule .field{min-width:0}.task-schedule input{min-width:0;max-width:100%}

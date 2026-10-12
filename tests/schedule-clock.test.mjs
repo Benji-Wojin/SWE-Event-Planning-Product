@@ -78,7 +78,7 @@ test('minute refresh updates only clock cues, restores activity focus, preserves
   const badge={dataset:{schedulePhase:'current'},textContent:'Next',hidden:false};
   const backdrop={hidden:true};
   const context=vm.createContext({window:{},document:{hidden:false,activeElement:{},createElement(){return {innerHTML:'',get content(){return this.innerHTML;}};}},
-    ui:{view:'timeline',timelineMode:'schedule'},store:{getState(){reads++;return {}; }},schedule:{clock(){return {markup:'new',labels:new Map([['current','Scheduled now']])};}},
+    ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,actor:'maya'},store:{getState(){reads++;return {}; }},schedule:{clock(state,now,scope){assert.deepEqual({...scope},{mine:context.ui.scheduleMine,actor:context.ui.actor});return {markup:'new',labels:new Map([['current','Scheduled now']])};}},
     $:selector=>selector==='#dialogBackdrop'?backdrop:target,$$:()=>[badge],restoreFocus(previous,scope){assert.equal(previous,context.document.activeElement);assert.equal(scope,target);restores++;}});
   vm.runInContext(fragment+'globalThis.refresh=refreshScheduleClock;',context);
   context.refresh();assert.equal(reads,1);assert.equal(replacements,1);assert.equal(badge.textContent,'Scheduled now');
