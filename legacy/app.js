@@ -709,11 +709,32 @@
   window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
   window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
+  function refreshScheduleClock() {
+    if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;
+    const target=$('[data-schedule-clock]');if(!target)return;
+    const live=schedule.clock(store.getState());
+    // The timetable stays put; follow keyboard focus to the same activity when
+    // it moves from Next to Now, or from the focus strip into the full timetable.
+    const active=target.contains(document.activeElement)?document.activeElement:null;
+    const template=document.createElement('template');template.innerHTML=live.markup;
+    if(target.innerHTML!==template.innerHTML){
+      target.replaceChildren(template.content);
+      if(active)restoreFocus(active,$('.schedule-panel'));
+    }
+    $$('[data-schedule-phase]').forEach(node=>{
+      const label=live.labels.get(node.dataset.schedulePhase)||'';
+      if(node.textContent!==label)node.textContent=label;
+      node.hidden=!label;
+    });
+  }
   function refreshAttentionDate() {
+    refreshScheduleClock();
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
     attentionDay=dateKey();render();
   }
   setInterval(refreshAttentionDate,60000);
+  window.addEventListener('focus',refreshAttentionDate);
+  window.addEventListener('pageshow',refreshAttentionDate);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
