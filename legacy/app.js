@@ -5,6 +5,7 @@
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
+  const navigation = GatherNavigation.create(window);
   const ui = { view:'overview', actor:'jack', tab:'all', timelineMode:'schedule', scheduleMine:false, owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
   const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
@@ -246,11 +247,11 @@
     if(previousFocus&&!previousFocus.isConnected)restoreFocus(previousFocus,$('#viewRoot'));
   }
   function navigate(view) {
-    if(ui.pendingSave){history.replaceState(null,'',`#${ui.view}`);return;}
-    if(!labels[view]) view='overview';
+    if(ui.pendingSave){navigation.replace(ui.view);return;}
+    if(!Object.hasOwn(labels,view)) view='overview';
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
-    history.replaceState(null,'',`#${view}`);
+    navigation.replace(view);
     setDrawer(false);
     render();
     if(view==='details')loadPrivate();
@@ -713,7 +714,16 @@
   $('#mobileMenu').addEventListener('click',()=>setDrawer(!$('#sidebar').classList.contains('open')));
   $('#mobileOverlay').addEventListener('click',()=>setDrawer(false));
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
-  window.addEventListener('hashchange',()=>{const view=location.hash.slice(1);if(view!==ui.view&&!confirmDiscard($('#dialog'),$('#emailReviewForm'))){history.replaceState(null,'',`#${ui.view}`);return;}if(!$('#dialogBackdrop').hidden)closeDialog();navigate(view);});
+  const routeChanged=view=>{
+    if(ui.pendingSave){navigation.replace(ui.view);return;}
+    if(view===ui.view)return;
+    if(!confirmDiscard($('#dialog'),$('#emailReviewForm'))){navigation.replace(ui.view);return;}
+    if(!$('#dialogBackdrop').hidden)closeDialog();
+    navigate(view);
+  };
+  let unsubscribeNavigation=navigation.subscribe(routeChanged);
+  window.addEventListener('pagehide',()=>{unsubscribeNavigation();});
+  window.addEventListener('pageshow',event=>{if(event.persisted){unsubscribeNavigation=navigation.subscribe(routeChanged);routeChanged(navigation.initial());}});
   window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshScheduleClock() {
@@ -745,6 +755,6 @@
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
-  navigate(location.hash.slice(1)||'overview');
+  navigate(navigation.initial());
   window.dispatchEvent(new Event('gather-workspace-ready'));
 })();

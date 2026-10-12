@@ -45,7 +45,7 @@ test('prepared hosted HTML shows loading instead of demo identity or interactive
   assert.doesNotMatch(html, /Field Day 2026|event-symbol">FD/);
   assert.match(readFileSync('legacy/styles.css', 'utf8'), /\[hidden\]\{display:none!important\}/);
   const app = readFileSync('public/gather-assets/app.js', 'utf8');
-  assert.ok(app.indexOf("navigate(location.hash.slice(1)||'overview');") < app.indexOf("new Event('gather-workspace-ready')"));
+  assert.ok(app.indexOf('navigate(navigation.initial());') < app.indexOf("new Event('gather-workspace-ready')"));
 });
 
 test('slow snapshot and app download keep shell hidden until initial render completes', async () => {
