@@ -32,6 +32,10 @@ html = html.replace(
 );
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
+// The hosted shell has no project identity until the authenticated snapshot loads.
+html = html.replaceAll('Field Day 2026', 'Project')
+  .replace('<span class="event-symbol">FD</span>', '<span class="event-symbol" aria-hidden="true">…</span>')
+  .replace('<div class="app-shell" id="appShell">', '<main id="workspaceBoot" style="max-width:640px;margin:64px auto;padding:24px" aria-busy="true"><p role="status">Loading project…</p><a href="/" target="_top">All projects</a></main><div class="app-shell" id="appShell" hidden>');
 writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/calendar.js',readFileSync('legacy/calendar.js','utf8'));
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));

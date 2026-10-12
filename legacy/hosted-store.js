@@ -6,6 +6,41 @@
   const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
   const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
   const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
+  let boot = document.getElementById('workspaceBoot');
+  const shell = document.getElementById('appShell');
+  // An already-open document may load the newer script during a release.
+  if (!boot) {
+    boot = document.createElement('main');boot.id = 'workspaceBoot';
+    boot.style.cssText = 'max-width:640px;margin:64px auto;padding:24px';
+    boot.setAttribute('aria-busy', 'true');
+    const status = document.createElement('p');status.setAttribute('role', 'status');status.textContent = 'Loading project…';
+    boot.append(status);
+    document.body.insertBefore(boot, shell);
+  }
+  shell.hidden = true;
+  let workspaceReady = false;
+  function loadFailure(message) {
+    if (accessLost) return;
+    shell.hidden = true;
+    boot.hidden = false;
+    boot.setAttribute('aria-busy', 'false');
+    const heading = document.createElement('h1');
+    heading.textContent = 'Your plan could not be loaded';
+    const detail = document.createElement('p');
+    detail.setAttribute('role', 'alert');
+    detail.textContent = message;
+    const retry = document.createElement('button');
+    retry.className = 'btn btn-primary';retry.textContent = 'Try again';retry.type = 'button';
+    retry.addEventListener('click', () => location.reload());
+    const back = document.createElement('a');
+    back.href = '/';back.target = '_top';back.textContent = 'All projects';
+    const login = document.createElement('a');
+    login.href = signIn;login.target = '_top';login.textContent = 'Sign in again';
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:16px;align-items:center';
+    actions.append(retry, back, login);
+    boot.replaceChildren(heading, detail, actions);
+  }
   window.GatherMode = Object.freeze({ demo, actor, projectId, projectUrl, privateUrl: path => demo
     ? endpoint + '&resource=private&action=' + encodeURIComponent(path)
     : projectUrl('/api/private/' + path) });
@@ -180,12 +215,18 @@
         }),
     );
     window.GatherStore = { createStore: () => store };
+    window.addEventListener('gather-workspace-ready', () => {
+      if (accessLost) return;
+      workspaceReady = true;
+      boot.hidden = true;
+      boot.setAttribute('aria-busy', 'false');
+      shell.hidden = false;
+    }, { once: true });
     const script = document.createElement('script');
     script.src = '/gather-assets/app.js';
-    script.onerror = () => {
-      const root = document.getElementById('viewRoot');
-      root.innerHTML = '<h1>The workspace could not be opened</h1><p>Check your connection, then reload this page.</p><button class="btn btn-secondary" type="button">Reload</button>';
-      root.querySelector('button').addEventListener('click', () => location.reload());
+    script.onerror = () => loadFailure('Check your connection, then try again.');
+    script.onload = () => {
+      if (!workspaceReady) loadFailure('The workspace could not be opened. Please try again.');
     };
     document.body.append(script);
     if (!demo && document.modelContext?.registerTool) {
@@ -264,18 +305,6 @@
     }
     // Refresh only while idle; edited proposals are never silently rebased.
   } catch (error) {
-    const root = document.getElementById('viewRoot');
-    const heading = document.createElement('h1');
-    heading.textContent = 'Your plan could not be loaded';
-    const p = document.createElement('p');
-    p.textContent = error.message;
-    const retry = document.createElement('button');
-    retry.className = 'btn btn-primary';retry.textContent = 'Try again';retry.type = 'button';
-    retry.addEventListener('click', () => location.reload());
-    const a = document.createElement('a');
-    a.href = signIn;
-    a.target = '_top';
-    a.textContent = 'Sign in again';
-    root.replaceChildren(heading, p, retry, a);
+    loadFailure(error.message);
   }
 })();

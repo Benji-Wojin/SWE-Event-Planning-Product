@@ -17,6 +17,8 @@ The Vercel migration is not a completed hosted rollout: credentials, isolated st
 
 `/` is the Projects homepage. `/setup` creates a separate, empty project and then opens the optional `/plan?project=<id>` review step; `/setup?project=<id>` edits only that project's settings. `/project?project=<id>` opens its workspace. Creation is authenticated, server-persisted and retry-safe, independent of AI availability. Existing data stays under `main`; no tasks, guests, files or bookings are moved or cleared. New projects use an owner-authorized registry and explicit URL IDs so two tabs cannot switch each other's active project. Migration `0004` adds the registry and a booking scope defaulting to `main` for old records.
 
+The hosted workspace shows a neutral loading screen until its authenticated project has rendered. It does not briefly show the sample event or inactive task controls. Failed data or app loading provides retry and navigation without exposing an uninitialized workspace.
+
 Gmail and guest-list imports are optional. The Gmail connection and optional manual label remain account-wide. Automatic matches are privately associated with one selected project; legacy manual imports remain available across the owner's projects. Reviewed summaries explicitly target a project. Tasks, guests, files, private bookings, suggestions and resource caches are project-scoped. Setup uses organizer authorization, origin verification, field validation and revision-checked edits. Failed saves preserve form values. Event date and location are optional. There is a 100-new-project organizer limit.
 
 ## Accounts and invitations

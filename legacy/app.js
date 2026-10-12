@@ -746,4 +746,5 @@
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   setDrawer(false);
   navigate(location.hash.slice(1)||'overview');
+  window.dispatchEvent(new Event('gather-workspace-ready'));
 })();
