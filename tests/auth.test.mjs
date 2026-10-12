@@ -127,6 +127,7 @@ test('OAuth redirects ignore supplied base URLs and use only configured origin',
   const redirect = auth.getAuthOptions().callbacks.redirect;
   assert.equal(await redirect({ url: 'https://evil.example', baseUrl: 'https://evil.example' }), 'https://weft.example/');
   assert.equal(await redirect({ url: '/project?project=test', baseUrl: 'https://evil.example' }), 'https://weft.example/project?project=test');
+  assert.equal(await redirect({ url: '/project?project=test#timeline', baseUrl: 'https://evil.example' }), 'https://weft.example/project?project=test#timeline');
   assert.equal(auth.safeAuthRedirect('https://weft.example/api/auth/signout'), 'https://weft.example/');
 });
 

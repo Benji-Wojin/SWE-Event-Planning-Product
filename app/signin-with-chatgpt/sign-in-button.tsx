@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
+import { workspaceSignInReturn } from '@/lib/workspace-return';
 
 export function SignInButton({ returnTo }: { returnTo: string }) {
   const [busy, setBusy] = useState(false);
@@ -11,7 +12,7 @@ export function SignInButton({ returnTo }: { returnTo: string }) {
     setError(false);
     try {
       // NextAuth obtains the CSRF token and submits the provider sign-in POST.
-      await signIn('google', { callbackUrl: returnTo });
+      await signIn('google', { callbackUrl: workspaceSignInReturn(returnTo, window.location.hash) });
     } catch {
       setBusy(false);
       setError(true);
