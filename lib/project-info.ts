@@ -255,12 +255,16 @@ export async function mutateInfo(context: Context, input: any) {
   const { state, revision } = await load(context);
   if (input.action === 'preview') {
     checkRevision(input.revision, revision);
+    await assertProjectAccess(context.authorization);
     return { ...preview(input.csv, state), revision };
   }
   const id = requestId(input.requestId),
     hash = await fingerprint(input);
-  if (retried(state, id, context.actor, hash))
+  if (retried(state, id, context.actor, hash)) {
+    // Replays skip the write-time access guard, but still return private data.
+    await assertProjectAccess(context.authorization);
     return infoSnapshot(context, state, revision);
+  }
   checkRevision(input.revision, revision);
   const at = new Date().toISOString(),
     audit = {
@@ -416,8 +420,10 @@ export async function uploadInfo(
       size: upload.bytes.byteLength,
       hash: await digest(upload.bytes),
     });
-  if (retried(state, upload.requestId, context.actor, hash))
+  if (retried(state, upload.requestId, context.actor, hash)) {
+    await assertProjectAccess(context.authorization);
     return infoSnapshot(context, state, revision);
+  }
   checkRevision(upload.revision, revision);
   const id = crypto.randomUUID(),
     key = 'project-files/' + id;

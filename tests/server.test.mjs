@@ -1560,6 +1560,52 @@ test('membership removal during file upload cleans uncommitted bytes and denies 
   assert.equal(uploadedObjects.size,count);assert.equal(sqlite.prepare('SELECT count(*) AS n FROM project_uploads').get().n,reservations);
   owner();assert.equal((await (await infoRead('?project='+id)).json()).files.length,0);
 });
+for (const operation of ['guest retry', 'upload retry', 'CSV preview']) {
+  test(`event info ${operation} denies access revoked while loading saved information`, async () => {
+    const id = await newTeamProject();
+    await joinPerson(id);
+    const query = '?project=' + id;
+    let state = await (await infoRead(query)).json();
+    const input = {action:'add', guest:{name:'Fictional private guest'}, revision:state.revision, requestId:crypto.randomUUID()};
+    state = await (await infoWrite(input, query)).json();
+    const uploadRevision = state.revision, uploadId = crypto.randomUUID();
+    if (operation === 'upload retry') {
+      const response = await infoApi.POST(uploadRequest(uploadRevision, 'fixture.txt', 'Fictional file', '&project='+id, uploadId));
+      assert.equal(response.status, 200);
+      state = await response.json();
+    }
+    const beforeObjects = uploadedObjects.size;
+    const beforeReservations = sqlite.prepare('SELECT count(*) AS n FROM project_uploads').get().n;
+    const original = globalThis.__gatherEnv.DB;
+    let revoked = false;
+    globalThis.__gatherEnv.DB = {...db, prepare(sql) {
+      const statement = db.prepare(sql);
+      if (sql === 'SELECT payload,revision FROM project_info WHERE scope=?') {
+        const first = statement.first;
+        statement.first = async () => {
+          const row = await first();
+          sqlite.prepare("UPDATE project_members SET revoked_at='race',revision=revision+1 WHERE project_id=? AND user_id=?").run(id, 'real-maya');
+          revoked = true;
+          return row;
+        };
+      }
+      return statement;
+    }};
+    try {
+      const response = operation === 'upload retry'
+        ? await infoApi.POST(uploadRequest(uploadRevision, 'fixture.txt', 'Fictional file', '&project='+id, uploadId))
+        : await infoWrite(operation === 'CSV preview' ? {action:'preview', csv:'Name\nFictional import', revision:state.revision} : input, query);
+      assert.ok(revoked);
+      assert.equal(response.status, 403);
+      assert.ok(!JSON.stringify(await response.json()).includes('Fictional private guest'));
+      assert.equal(uploadedObjects.size, beforeObjects);
+      assert.equal(sqlite.prepare('SELECT count(*) AS n FROM project_uploads').get().n, beforeReservations);
+    } finally {
+      globalThis.__gatherEnv.DB = original;
+      owner();
+    }
+  });
+}
 test('simultaneous invitation retries create one link without a false conflict',async()=>{
   const id=await newTeamProject(),input={action:'invite',email:'concurrent@example.com',requestId:crypto.randomUUID()};
   const responses=await Promise.all([teamWrite(id,input),teamWrite(id,input)]);
