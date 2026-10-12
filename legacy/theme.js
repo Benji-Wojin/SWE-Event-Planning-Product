@@ -1,7 +1,6 @@
 (function () {
   'use strict';
   const key = 'gather-theme';
-  const root = document.documentElement;
   const system = window.matchMedia('(prefers-color-scheme: dark)');
   const valid = value => value === 'dark' || value === 'light' ? value : 'system';
   let preference = 'system';
@@ -13,6 +12,8 @@
     });
   }
   function apply() {
+    // Hydration recovery can replace <html>; never retain a detached root.
+    const root = document.documentElement;
     const theme = current();
     root.dataset.theme = theme;
     root.classList.toggle('dark', theme === 'dark');
@@ -29,7 +30,7 @@
     } catch (_) { /* Applying a theme must not depend on storage access. */ }
     apply();
   }
-  window.GatherTheme = Object.freeze({ current, set, toggle: () => set(current() === 'dark' ? 'light' : 'dark') });
+  window.GatherTheme = Object.freeze({ current, set, refresh: apply, toggle: () => set(current() === 'dark' ? 'light' : 'dark') });
   apply();
   document.addEventListener('DOMContentLoaded', updateButtons, { once: true });
   document.addEventListener('click', event => {

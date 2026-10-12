@@ -3,12 +3,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
-declare global {
-  interface Window {
-    GatherTheme?: { current(): 'dark' | 'light'; set(value: string): void; toggle(): void };
-  }
-}
-
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
   useEffect(() => {
