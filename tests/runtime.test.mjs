@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 
 let env, createPrivateBucket;
 const keys = [
-  'TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'BLOB_READ_WRITE_TOKEN',
+  'TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'BLOB_READ_WRITE_TOKEN', 'BLOB_STORE_ID',
   'GATHER_ORIGIN', 'GATHER_OWNER_EMAIL', 'GATHER_ENCRYPTION_KEY',
   'GROQ_API_KEY', 'GROQ_WEB_SEARCH_ENABLED', 'GMAIL_BACKGROUND_MODE', 'CRON_SECRET',
 ];
@@ -171,4 +171,29 @@ test('private storage errors do not retry as public or return incomplete bytes',
   } finally {
     globalThis.__weftBlobSdk.get = originalGet;
   }
+});
+
+test('connected storage delegates short-lived OIDC resolution to the SDK for each private operation', async () => {
+  const bucket = createPrivateBucket({storeId:' store_fictional123 '});
+  await bucket.put(fileKey, new Uint8Array([4, 2]));
+  assert.deepEqual(calls.at(-1).options, {storeId:'store_fictional123',access:'private',addRandomSuffix:false,allowOverwrite:false,contentType:'application/octet-stream'});
+  assert.deepEqual(new Uint8Array(await (await bucket.get(fileKey)).arrayBuffer()),new Uint8Array([4,2]));
+  assert.deepEqual(calls.at(-1).options,{storeId:'store_fictional123',access:'private'});
+  await bucket.delete(fileKey);
+  assert.deepEqual(calls.at(-1).options,{storeId:'store_fictional123'});
+  assert.throws(()=>createPrivateBucket({storeId:'   '}),/not configured/);
+});
+
+test('runtime uses connected store IDs without a static token and preserves explicit legacy credentials', async () => {
+  delete process.env.BLOB_READ_WRITE_TOKEN;
+  process.env.BLOB_STORE_ID='store_first123';
+  const connected=env.BUCKET;assert.ok(connected);assert.equal(env.BUCKET,connected);
+  await connected.get(fileKey);assert.equal(calls.at(-1).options.storeId,'store_first123');
+  process.env.BLOB_STORE_ID='store_second456';
+  assert.notEqual(env.BUCKET,connected);
+  await env.BUCKET.get(fileKey);assert.equal(calls.at(-1).options.storeId,'store_second456');
+  process.env.BLOB_READ_WRITE_TOKEN='fictional-explicit-token';
+  await env.BUCKET.get(fileKey);assert.deepEqual(calls.at(-1).options,{token:'fictional-explicit-token',access:'private'});
+  delete process.env.BLOB_READ_WRITE_TOKEN;delete process.env.BLOB_STORE_ID;
+  assert.equal(env.BUCKET,undefined,'Removing configuration disables storage even if an adapter was cached');
 });

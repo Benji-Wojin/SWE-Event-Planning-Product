@@ -19,15 +19,21 @@ function pathname(key: string) {
   return key;
 }
 
-export function createPrivateBucket(token: string): PrivateBucket {
-  if (!token) throw new Error('Private file storage is not configured.');
+export function createPrivateBucket(credentials: string | { storeId: string }): PrivateBucket {
+  const auth = typeof credentials === 'string'
+    ? { token: credentials }
+    : { storeId: credentials.storeId.trim() };
+  if (!('token' in auth ? auth.token : auth.storeId))
+    throw new Error('Private file storage is not configured.');
+  // Store-ID mode lets the SDK resolve a fresh Vercel OIDC token per request.
+  // Never cache a short-lived token or fall back to public storage.
   return {
     async put(key, bytes, options) {
       // Copy views into a Buffer so sliced encrypted payloads preserve their
       // byte range and work with both ArrayBuffer and SharedArrayBuffer views.
       const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
       await put(pathname(key), Buffer.from(data), {
-        token,
+        ...auth,
         access: 'private',
         addRandomSuffix: false,
         allowOverwrite: false,
@@ -36,7 +42,7 @@ export function createPrivateBucket(token: string): PrivateBucket {
       });
     },
     async get(key) {
-      const result = await get(pathname(key), { token, access: 'private' });
+      const result = await get(pathname(key), { ...auth, access: 'private' });
       if (!result) return null;
       // No conditional read was requested: a 304 is not a usable object.
       if (result.statusCode !== 200)
@@ -44,7 +50,7 @@ export function createPrivateBucket(token: string): PrivateBucket {
       return { arrayBuffer: () => new Response(result.stream).arrayBuffer() };
     },
     async delete(key) {
-      await del(pathname(key), { token });
+      await del(pathname(key), auth);
     },
   };
 }

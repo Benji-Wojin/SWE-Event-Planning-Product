@@ -4,6 +4,7 @@ import { createPrivateBucket, type PrivateBucket } from './platform/blob';
 
 let database: D1Database | undefined;
 let bucket: PrivateBucket | undefined;
+let bucketConfiguration = '';
 
 // Keep provider initialization behind getters. Next.js imports server modules
 // during a build, when production credentials need not be available.
@@ -21,8 +22,16 @@ export const env = {
     }));
   },
   get BUCKET(): PrivateBucket | undefined {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) return undefined;
-    return (bucket ??= createPrivateBucket(process.env.BLOB_READ_WRITE_TOKEN));
+    const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+    const storeId = process.env.BLOB_STORE_ID?.trim();
+    if (!token && !storeId) return undefined;
+    // Preserve explicitly configured legacy credentials when both are present.
+    const configuration = token ? 'token:' + token : 'store:' + storeId;
+    if (!bucket || bucketConfiguration !== configuration) {
+      bucket = createPrivateBucket(token || { storeId: storeId! });
+      bucketConfiguration = configuration;
+    }
+    return bucket;
   },
   get GATHER_ORIGIN(): string {
     return process.env.GATHER_ORIGIN || '';

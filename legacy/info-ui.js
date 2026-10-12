@@ -159,7 +159,7 @@
         focus && active.tagName === 'INPUT'
           ? [active.selectionStart, active.selectionEnd]
           : null;
-      host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
+      host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived && state.uploadsAvailable === true ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
         ['guests', 'Guest list'],
         ['files', 'Files'],
       ]
@@ -169,7 +169,7 @@
         )
         .join(
           '',
-        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'guests' ? `<div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select></div>` : ''}<div data-info-list>${list()}</div></section>`;
+        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select></div>` : ''}<div data-info-list>${list()}</div></section>`;
       if (focus) {
         const next = [...host.querySelectorAll('button,input,select')].find(
           (element) => element.getAttribute(focus.name) === focus.value,
@@ -186,7 +186,7 @@
         const next = await request();
         if (ticket !== loadTicket || host !== target || !target?.isConnected)
           return;
-        if (!state || next.revision !== state.revision || !quiet) {
+        if (!state || next.revision !== state.revision || next.uploadsAvailable !== state.uploadsAvailable || !quiet) {
           state = next;
           render();
         }
@@ -343,6 +343,10 @@
       );
     }
     function uploadDialog() {
+      if (state?.uploadsAvailable !== true) {
+        toast('File uploads are unavailable.');
+        return;
+      }
       const revision = state.revision,
         requestId = crypto.randomUUID();
       openDialog(
