@@ -1360,6 +1360,28 @@ test('real accounts join only their invited project and cannot impersonate organ
   assert.equal((await demoRead()).status,403);
   assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);owner();
 });
+test('an organizer invited as a teammate cannot access another project’s private bookings',async()=>{
+  const id=await newTeamProject('Private booking boundary');
+  const created=await privateApi.POST(request('/api/private/records?project='+id,{title:'Owner booking',type:'Flight',reference:'FICTIONAL-PRIVATE'}));
+  assert.equal(created.status,200);
+  const saved=await created.json();
+  sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run('other-organizer','u_other_organizer','other-organizer@example.com','Other organizer','admin');
+  try {
+    await joinPerson(id,'other-organizer@example.com','other-organizer');
+    assert.equal((await security.principal()).role,'admin');
+    assert.equal((await (await realRead(id)).json()).identity.role,'member');
+    for(const action of ['config','session','records'])
+      assert.equal((await privateApi.GET(getRequest('/api/private/'+action+'?project='+id))).status,403,action);
+    for(const record of [{title:'Forbidden new booking',type:'Flight'}, {id:saved.id,version:saved.version,title:'Forbidden edit',type:'Flight'}])
+      assert.equal((await privateApi.POST(request('/api/private/records?project='+id,record))).status,403);
+    assert.equal((await privateApi.POST(request('/api/private/lock?project='+id,{}))).status,403);
+    owner();
+    const records=await (await privateApi.GET(getRequest('/api/private/records?project='+id))).json();
+    assert.equal(records.records.length,1);
+    assert.equal(records.records[0].reference,'FICTIONAL-PRIVATE');
+    assert.equal(records.records[0].title,'Owner booking');
+  } finally { owner(); }
+});
 test('invited teammates claim tasks, report and comment, but cannot change the plan or another owner’s task',async()=>{
   const id=await newTeamProject(),invite=await joinPerson(id);owner();
   let snap=await (await realRead(id)).json();

@@ -1,6 +1,6 @@
 import { env } from '@/lib/runtime';
 import { bookingRecord, bookingVersion } from '@/lib/bookings';
-import { projectScope } from '@/lib/projects';
+import { projectUser } from '@/lib/project-access';
 import { loadWorkspace } from '@/lib/workspace';
 import {
   administrator,
@@ -12,9 +12,15 @@ import {
   unseal,
 } from '@/lib/security';
 export const dynamic = 'force-dynamic';
+async function privateProject(request: Request) {
+  const user = await projectUser(await administrator(), request);
+  if (user.role !== 'admin')
+    throw new HttpError(403, 'Only this project’s organizer can access private bookings.');
+  return user;
+}
 export async function GET(request: Request) {
   return safe(async () => {
-    const scope = await projectScope(await administrator(), request);
+    const { projectId: scope } = await privateProject(request);
     const action = new URL(request.url).pathname.split('/').pop();
     if (action === 'config')
       return json({ configured: !!env.GATHER_ENCRYPTION_KEY });
@@ -36,8 +42,8 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   return safe(async () => {
-    const user = await administrator();
-    const scope = await projectScope(user, request);
+    const user = await privateProject(request);
+    const scope = user.projectId;
     const data = await body(request);
     const action = new URL(request.url).pathname.split('/').pop();
     if (action === 'lock') return json({ hidden: true });
