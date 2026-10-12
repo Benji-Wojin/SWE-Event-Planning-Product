@@ -311,14 +311,17 @@ export async function acceptInvitation(input: Record<string, unknown>) {
       user.displayName,
       ...args,
     ),
+    // The legacy global owner can be a teammate elsewhere; never reuse the reserved owner actor.
+    // On rejoin the conflict update deliberately preserves the existing project-local actor.
     env.DB.prepare(`INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at)
-      SELECT ?,?,?,actor_id,?,? FROM members WHERE user_id=? AND ${valid}
+      SELECT ?,?,?,CASE WHEN actor_id='jack' THEN ? ELSE actor_id END,?,? FROM members WHERE user_id=? AND ${valid}
       AND (SELECT COUNT(*) FROM project_members WHERE project_id=? AND revoked_at='')<50
       AND ((SELECT COUNT(*) FROM project_members WHERE project_id=?)<500 OR EXISTS (SELECT 1 FROM project_members WHERE project_id=? AND user_id=?))
       ON CONFLICT(project_id,user_id) DO UPDATE SET revoked_at='',revision=project_members.revision+1,invite_id=excluded.invite_id,joined_at=excluded.joined_at`).bind(
       crypto.randomUUID(),
       invite.project_id,
       user.userId,
+      'u_' + crypto.randomUUID(),
       invite.id,
       at,
       user.userId,

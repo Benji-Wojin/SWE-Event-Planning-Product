@@ -1255,6 +1255,40 @@ test('new projects are empty, persistent and idempotent without changing the ori
   assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'   '}}))).status,400);
   assert.equal((await projectsApi.POST(request('/api/projects',input,'https://evil.example'))).status,403);
 });
+test('a distinct organizer gets a project-local owner identity without changing global identity or other projects',async()=>{
+  owner();
+  await workspace.GET(new Request('https://gather.example/api/workspace'));
+  const original=sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data;
+  const user={userId:'distinct-organizer',email:'distinct@example.com',displayName:'Distinct Organizer'};
+  sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run(user.userId,'u_distinct',user.email,user.displayName,'admin');
+  globalThis.__gatherUser=user;
+  try {
+    const input={requestId:crypto.randomUUID(),event:{name:'Distinct organizer event',guestCount:40}};
+    const created=await projectsApi.POST(request('/api/projects',input));
+    assert.equal(created.status,201);
+    const {id}=await created.json();
+    assert.equal((await (await projectsApi.POST(request('/api/projects',input))).json()).id,id);
+    const path='/api/workspace?project='+id;
+    let snapshot=await (await workspace.GET(new Request('https://gather.example'+path))).json();
+    assert.equal(snapshot.identity.actorId,'jack');
+    assert.equal(snapshot.identity.role,'admin');
+    assert.equal(snapshot.state.members.length,1);
+    assert.equal(snapshot.state.members[0].id,'jack');
+    assert.equal(snapshot.state.members[0].name,user.displayName);
+    assert.equal(snapshot.state.members[0].role,'Organizer');
+    const changed=await workspace.POST(request(path,{method:'addTask',args:[{title:'Owner task',owner:'jack'}],revision:snapshot.revision}));
+    assert.equal(changed.status,200);
+    snapshot=await (await workspace.GET(new Request('https://gather.example'+path))).json();
+    assert.equal(snapshot.state.tasks[0].owner,'jack');
+    assert.equal(snapshot.state.tasks[0].updatedBy,'jack');
+    assert.deepEqual((await (await projectsApi.GET()).json()).projects.map(project=>project.id),[id]);
+    assert.equal((await workspace.GET(new Request('https://gather.example/api/workspace'))).status,404);
+    assert.equal(sqlite.prepare('SELECT actor_id FROM members WHERE user_id=?').get(user.userId).actor_id,'u_distinct');
+    assert.equal(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get('main').data,original);
+    owner();
+    assert.equal((await workspace.GET(new Request('https://gather.example'+path))).status,404);
+  } finally { owner(); }
+});
 test('tasks, guests, files, bookings and reviewed email stay in their selected project',async()=>{
   owner();
   const create=async name=>(await (await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name}}))).json()).id;
@@ -1380,6 +1414,52 @@ test('an organizer invited as a teammate cannot access another project’s priva
     assert.equal(records.records.length,1);
     assert.equal(records.records[0].reference,'FICTIONAL-PRIVATE');
     assert.equal(records.records[0].title,'Owner booking');
+  } finally { owner(); }
+});
+test('a global owner invited elsewhere has a separate teammate identity that survives rejoining',async()=>{
+  owner();
+  await workspace.GET(getRequest('/api/workspace'));
+  const organizer={userId:'cross-organizer',email:'cross-organizer@example.com',displayName:'Cross Organizer'};
+  sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)').run(organizer.userId,'u_cross_organizer',organizer.email,organizer.displayName,'admin');
+  try {
+    globalThis.__gatherUser=organizer;
+    const created=await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Cross-organizer project'}}));
+    assert.equal(created.status,201);const {id}=await created.json();
+    const write=input=>workspace.POST(request('/api/workspace?project='+id,input));
+    let snap=await (await realRead(id)).json();
+    snap=await (await write({method:'addTask',args:[{title:'Organizer only',owner:'jack'}],revision:snap.revision})).json();
+    const organizerTask=snap.state.tasks[0].id;
+    const invite=async()=>{
+      const response=await teamWrite(id,{action:'invite',email:'owner@example.com',requestId:crypto.randomUUID()});
+      assert.equal(response.status,200);
+      return new URL((await response.json()).invitations.find(i=>i.email==='owner@example.com').link,'https://gather.example').searchParams.get('invite');
+    };
+    const token=await invite();owner();
+    assert.equal((await joinApi.POST(request('/api/join',{token}))).status,200);
+    snap=await (await realRead(id)).json();
+    assert.equal((await write({method:'reportCompletion',args:[organizerTask,'Not mine'],revision:snap.revision})).status,403);
+    const actor=snap.identity.actorId;
+    assert.notEqual(actor,'jack');assert.equal(snap.identity.role,'member');
+    assert.equal(snap.state.members.find(m=>m.id==='jack').name,organizer.displayName);
+    assert.equal(snap.state.members.find(m=>m.id==='jack').role,'Organizer');
+    assert.equal(snap.state.members.length,2);
+    assert.equal(sqlite.prepare('SELECT actor_id FROM members WHERE user_id=?').get('owner-1').actor_id,'jack');
+    assert.equal((await (await realRead('main')).json()).identity.role,'admin');
+    globalThis.__gatherUser=organizer;
+    snap=await (await write({method:'addTask',args:[{title:'Teammate task',owner:actor}],revision:snap.revision})).json();
+    const teammateTask=snap.state.tasks.find(t=>t.owner===actor).id;
+    owner();
+    assert.equal((await write({method:'updateTask',args:[teammateTask,{status:'progress',note:'Working'}],revision:snap.revision})).status,200);
+    globalThis.__gatherUser=organizer;
+    const member=(await (await teamRead(id)).json()).members[0];
+    assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+    const nextToken=await invite();owner();
+    assert.equal((await realRead(id)).status,404);
+    assert.equal((await joinApi.POST(request('/api/join',{token:nextToken}))).status,200);
+    snap=await (await realRead(id)).json();
+    assert.equal(snap.identity.actorId,actor);
+    assert.equal(snap.state.tasks.find(t=>t.id===teammateTask).owner,actor);
+    assert.equal((await write({method:'reportCompletion',args:[organizerTask,'Still not mine'],revision:snap.revision})).status,403);
   } finally { owner(); }
 });
 test('invited teammates claim tasks, report and comment, but cannot change the plan or another owner’s task',async()=>{

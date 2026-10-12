@@ -25,8 +25,10 @@ export async function createProject(user: User, input: any) {
   if (Object.keys(input).some(key => !['requestId', 'event'].includes(key)) ||
     typeof input.requestId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(input.requestId))
     throw new HttpError(400, 'Reload the form and try again.');
-  const store = freshWorkspace(user);
-  try { store.completeSetup(input.event, user.actorId); }
+  // Match projectUser: owners use a project-local actor, not their global member ID.
+  const owner = { ...user, actorId: 'jack' };
+  const store = freshWorkspace(owner);
+  try { store.completeSetup(input.event, owner.actorId); }
   catch (error) { throw new HttpError(400, (error as Error).message); }
   const event = { ...store.getState().event, setupCompletedAt: '' };
   const payload = JSON.stringify(event), id = 'p_' + input.requestId;
