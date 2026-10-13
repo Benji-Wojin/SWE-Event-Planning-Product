@@ -409,6 +409,14 @@ export function PlanReview({ query }: { query: string }) {
               owners, and activities below are proposals.
             </p>
           </div>
+          {data.draft.scheduleWarnings?.length > 0 && (
+            <details className="rounded-lg border p-4 text-sm">
+              <summary className="cursor-pointer font-medium">Dates to review ({data.draft.scheduleWarnings.length})</summary>
+              <ul className="mt-2 list-disc space-y-2 pl-5">
+                {data.draft.scheduleWarnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+              </ul>
+            </details>
+          )}
           {JSON.stringify(data.draft.brief) !== JSON.stringify(brief) && (
             <details className="rounded-lg border p-4 text-sm">
               <summary className="cursor-pointer font-medium">

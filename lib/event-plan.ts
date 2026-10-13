@@ -1,6 +1,6 @@
 import { env } from '@/lib/runtime';
 import { PLAN_AI_CONSENT_VERSION } from './groq';
-import { administrator, HttpError, principal, seal, unseal } from './security';
+import { administrator, HttpError, isAppOwner, principal, seal, unseal } from './security';
 import { projectUser } from './project-access';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
@@ -46,9 +46,8 @@ type Context = Awaited<ReturnType<typeof loadContext>>;
 async function loadContext(request: Request) {
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
-  const user = demo
-    ? await administrator()
-    : await projectUser(await principal(), request);
+  const identity = demo ? await administrator() : await principal();
+  const user = demo ? identity : await projectUser(identity, request);
   if (
     user.role !== 'admin' ||
     (demo && demoPersona(params.get('as')) !== 'jack')
@@ -92,6 +91,7 @@ async function loadContext(request: Request) {
   };
   return {
     user,
+    dailyLimit: isAppOwner(identity) ? 25 : 5,
     projectId,
     demo,
     row,
@@ -286,7 +286,7 @@ async function generate(c: Context, input: any) {
     payload = await seal({ ...oldData, brief }, 'event-plan:' + c.id);
   const reserved = await env.DB.batch([
     env.DB.prepare(`INSERT INTO plan_drafts (id,owner_id,workspace_id,request_id,request_hash,payload,status,lease,lease_until,started_at)
-      SELECT ?,?,?,?,?,?,'generating',?,?,? WHERE COALESCE((SELECT count FROM resource_usage WHERE id=?),0)<5 AND ${c.ownerSql}
+      SELECT ?,?,?,?,?,?,'generating',?,?,? WHERE COALESCE((SELECT count FROM resource_usage WHERE id=?),0)<? AND ${c.ownerSql}
       ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,request_hash=excluded.request_hash,payload=excluded.payload,status='generating',issue='',lease=excluded.lease,lease_until=excluded.lease_until,started_at=excluded.started_at,revision=revision+1
       WHERE plan_drafts.revision=? AND plan_drafts.lease_until<=? AND plan_drafts.started_at<=?`).bind(
       c.id,
@@ -299,6 +299,7 @@ async function generate(c: Context, input: any) {
       now + 60000,
       now,
       quota,
+      c.dailyLimit,
       ...c.ownerArgs,
       input.revision,
       now,
@@ -318,7 +319,7 @@ async function generate(c: Context, input: any) {
       return snapshot(c);
     throw new HttpError(
       429,
-      'Wait a minute between plans. The limit is five AI drafts per account each day.',
+      `Wait a minute between plans. Your limit is ${c.dailyLimit} AI drafts per day across all projects.`,
     );
   }
   try {

@@ -45,6 +45,7 @@ export type PlanOutput = {
   items: PlanItem[];
   questions: string[];
   assumptions: string[];
+  scheduleWarnings?: string[];
 };
 export class PlanProviderError extends Error {
   constructor(
@@ -303,16 +304,14 @@ export async function generateEventPlan(
     const plan = parsePlanOutput(value);
     stage = 'schedule_validation';
     const lastDay = context.brief.endDate || context.event.date;
-    if (
-      plan.items.some((item) => {
-        if (
+    const scheduleWarnings: string[] = [];
+    plan.items = plan.items.map((item) => {
+        const pastDeadline = !!(
           item.dueDate &&
           context.event.date >= context.today &&
           item.dueDate < context.today
-        )
-          return true;
-        if (!item.start) return false;
-        return (
+        );
+        const unsupportedTime = !!item.start && !!(
           !context.event.date ||
           !context.event.timeZone ||
           !context.brief.startTime ||
@@ -327,9 +326,18 @@ export async function generateEventPlan(
                 (item.end.slice(0, 10) !== item.start.slice(0, 10) ||
                   item.end.slice(11) > context.brief.endTime))))
         );
-      })
-    )
-      throw new Error('Unsupported schedule assumptions');
+        if (pastDeadline)
+          scheduleWarnings.push(`${item.title}: the proposed deadline was in the past and was left blank.`);
+        if (unsupportedTime)
+          scheduleWarnings.push(`${item.title}: the proposed time was outside the supplied event schedule or event hours were missing. It was left unscheduled.`);
+        return {
+          ...item,
+          dueDate: pastDeadline ? '' : item.dueDate,
+          start: unsupportedTime ? '' : item.start,
+          end: unsupportedTime ? '' : item.end,
+        };
+    });
+    if (scheduleWarnings.length) plan.scheduleWarnings = scheduleWarnings;
     return plan;
   } catch (error) {
     // Only fixed diagnostic labels: never log prompts, model output, keys or raw errors.

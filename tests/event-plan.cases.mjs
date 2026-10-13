@@ -494,7 +494,7 @@ export async function eventPlanTests({
       } finally { console.warn = warn; }
     });
     await t.test(
-      'generated activity dates and daily hours are validated independently of provider output',
+      'unsupported generated schedules are left blank with review warnings without losing useful tasks',
       async () => {
         const context = {
           event: { date: '2030-10-04', timeZone: 'America/Los_Angeles' },
@@ -511,17 +511,31 @@ export async function eventPlanTests({
           const plan = output();
           Object.assign(plan.items[1], patch);
           provider(plan);
-          await assert.rejects(
-            planGeneration.generateEventPlan(context, 'test-only-placeholder'),
-          );
+          const result = await planGeneration.generateEventPlan(context, 'test-only-placeholder');
+          assert.equal(result.items.length, plan.items.length);
+          assert.equal(result.items[1].start, '');
+          assert.equal(result.items[1].end, '');
+          assert.equal(result.items[1].dueDate, '');
+          assert.equal(result.items[1].title, plan.items[1].title);
+          assert.deepEqual(result.items[1].dependsOn, plan.items[1].dependsOn);
+          assert.equal(result.scheduleWarnings.length, 1);
+          assert.match(result.scheduleWarnings[0], /left blank|left unscheduled/);
         }
         provider();
-        await assert.rejects(
-          planGeneration.generateEventPlan(
-            { ...context, event: { date: '', timeZone: '' } },
-            'test-only-placeholder',
-          ),
-        );
+        for (const missing of [
+          {...context,event:{date:'',timeZone:''}},
+          {...context,brief:{...brief,startTime:''}},
+          {...context,event:{date:'2030-10-04',timeZone:''}},
+        ]) {
+          const result = await planGeneration.generateEventPlan(missing, 'test-only-placeholder');
+          assert.equal(result.items[1].start, '');
+          assert.equal(result.items[1].end, '');
+          assert.equal(result.items[0].dueDate, '2030-10-01');
+          assert.equal(result.scheduleWarnings.length, 1);
+        }
+        const valid = await planGeneration.generateEventPlan(context, 'test-only-placeholder');
+        assert.equal(valid.scheduleWarnings, undefined);
+        assert.equal(valid.items[1].start, '2030-10-04T09:00');
         const overnight = output();
         Object.assign(overnight.items[1], {
           start: '2030-10-04T23:00',
@@ -539,6 +553,24 @@ export async function eventPlanTests({
         );
       },
     );
+    await t.test('schedule recovery stays private, survives save/reload, and only adds unscheduled work after approval', async () => {
+      const project = await setup();
+      const response = await post(project, generation(await read(project), {brief:{...brief,startTime:'',endTime:''}}));
+      assert.equal(response.status, 200);
+      let snap = await response.json();
+      assert.equal(snap.status, 'ready');
+      assert.equal(snap.draft.items[1].start, '');
+      assert.equal(snap.draft.items[1].end, '');
+      assert.equal(snap.draft.scheduleWarnings.length, 1);
+      assert.equal((await (await realRead(project)).json()).state.tasks.length, 0);
+      assert.equal((await post(project, save(snap))).status, 200);
+      snap = await read(project);
+      assert.equal(snap.draft.scheduleWarnings.length, 1);
+      assert.equal((await post(project, approval(snap))).status, 200);
+      const state = (await (await realRead(project)).json()).state;
+      assert.equal(state.tasks.length, 3);
+      assert.equal(state.tasks.some(task => !!task.schedule?.start), false);
+    });
     await t.test(
       'approval is atomic, preserves existing work, links dependencies and retries lost responses once',
       async () => {
@@ -708,7 +740,7 @@ export async function eventPlanTests({
       },
     );
     await t.test(
-      'concurrent generation is one provider request and five drafts/day is account-wide',
+      'concurrent generation is one provider request and owner testing cap of 25 is account-wide',
       async () => {
         const project = await setup();
         const input = generation(await read(project));
@@ -718,14 +750,14 @@ export async function eventPlanTests({
         ]);
         for (const response of responses) assert.equal(response.status, 200);
         assert.equal(calls.length, 1);
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 24; i++) {
           cool(project);
           assert.equal(
             (await post(project, generation(await read(project)))).status,
             200,
           );
         }
-        assert.equal(calls.length, 5);
+        assert.equal(calls.length, 25);
         cool(project);
         assert.equal(
           (await post(project, generation(await read(project)))).status,
@@ -738,9 +770,24 @@ export async function eventPlanTests({
             .status,
           429,
         );
-        assert.equal(calls.length, 5);
+        assert.equal(calls.length, 25);
       },
     );
+    await t.test('project organizers do not inherit the configured app owner testing allowance', async () => {
+      const project = await setup(), configuredOwner = globalThis.__gatherEnv.GATHER_OWNER_EMAIL;
+      globalThis.__gatherEnv.GATHER_OWNER_EMAIL = 'different-owner@example.com';
+      try {
+        for (let i = 0; i < 5; i++) {
+          cool(project);
+          assert.equal((await post(project, generation(await read(project)))).status, 200);
+        }
+        cool(project);
+        const response = await post(project, generation(await read(project)));
+        assert.equal(response.status, 429);
+        assert.match((await response.json()).error, /limit is 5/);
+        assert.equal(calls.length, 5);
+      } finally { globalThis.__gatherEnv.GATHER_OWNER_EMAIL = configuredOwner; }
+    });
     await t.test(
       'expired lease edits survive late successful and failed provider responses',
       async () => {

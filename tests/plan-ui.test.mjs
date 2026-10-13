@@ -430,6 +430,18 @@ test('terminal polling errors clear private content and stop; transient errors p
     }
   }
 });
+test('schedule recovery warnings appear in collapsed review details', async () => {
+  const initial = fixture();
+  initial.draft.scheduleWarnings = ['Arrival: proposed timing was left unscheduled.'];
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    const details = nodes(app.tree).find(node => node.type === 'details' && text(node).includes('Dates to review (1)'));
+    assert.ok(details);
+    assert.ok(!details.props.open);
+    assert.match(text(details), /left unscheduled/);
+  } finally { app.dispose(); }
+});
 test('draft reload asks before discarding local edits, and unattended reads never call generate', async () => {
   const app = harness();
   try {
