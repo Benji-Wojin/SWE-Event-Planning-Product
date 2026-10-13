@@ -3,6 +3,7 @@
 /* oxlint-disable next/no-html-link-for-pages */
 import { useEffect, useState } from 'react';
 import { accountRequest } from '../team/team-client';
+import { PrivacyLinks } from '@/components/privacy-links';
 export function AccountClient() {
   const [account, setAccount] = useState<{
       name: string;
@@ -46,6 +47,7 @@ export function AccountClient() {
           Sign out
         </a>
       </div>
+      <PrivacyLinks />
     </section>
   );
 }

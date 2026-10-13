@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PrivacyLinks } from '@/components/privacy-links';
 import {
   NativeSelect,
   NativeSelectOption,
@@ -101,6 +102,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             })}
           >{status?.connected ? 'Reconnect Gmail' : 'Connect Gmail'}</Button>
           {!status?.connected && <p className="text-sm text-muted-foreground">You choose whether to enable automatic detection after connecting. Email stays private until you approve sharing an update.</p>}
+          <PrivacyLinks />
         </CardContent>
       </Card>
       {status?.connected && <AutomaticControls key={status.account} status={status} busy={busy} projectId={projectId} run={run} refresh={refresh} setNotice={setNotice} />}

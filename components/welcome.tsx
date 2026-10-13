@@ -1,4 +1,5 @@
 import { ThemeToggle } from './theme-toggle';
+import { PrivacyLinks } from './privacy-links';
 export function Welcome() {
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col px-6 py-8 sm:px-10">
@@ -32,6 +33,7 @@ export function Welcome() {
           stay private until you invite someone.
         </p>
       </section>
+      <footer className="border-t pt-6"><PrivacyLinks /></footer>
     </main>
   );
 }

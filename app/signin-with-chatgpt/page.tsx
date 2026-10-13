@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getAuthenticatedUser, isAuthConfigured, safeAuthRedirect, safeRelativeReturnPath } from '@/auth';
 import { SignInButton } from './sign-in-button';
+import { PrivacyLinks } from '@/components/privacy-links';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,7 @@ export default async function SignInPage({ searchParams }: {
         <SignInButton returnTo={returnTo} />
         <p className="mt-5 text-sm">New to Weft? <a className="underline" href={'/signup?return_to=' + encodeURIComponent(returnTo)}>Create an account</a></p>
       </> : <p className="text-sm text-muted-foreground">The app owner needs to finish Google sign-in setup for this site. Your existing project data has not been moved or changed.</p>}
+      <div className="mt-6"><PrivacyLinks /></div>
     </section>
   </main>;
 }

@@ -4,6 +4,7 @@ import {
   safeRelativeReturnPath,
 } from '@/auth';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { PrivacyLinks } from '@/components/privacy-links';
 import { SignInButton } from '../signin-with-chatgpt/sign-in-button';
 import { CreateAccountButton } from './signup-client';
 
@@ -74,6 +75,7 @@ export default async function SignUpPage({
           </p>
         )}
       </section>
+      <PrivacyLinks />
     </main>
   );
 }
