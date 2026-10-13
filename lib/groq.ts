@@ -1,5 +1,6 @@
 // Server-only Groq integration. No alternative provider or paid fallback.
 export const GROQ_RESPONSES_URL = 'https://api.groq.com/openai/v1/responses';
+export const GROQ_CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export const GROQ_MODEL = 'openai/gpt-oss-20b';
 export const MAIL_AI_CONSENT_VERSION = 'groq-email-v1';
 export const PLAN_AI_CONSENT_VERSION = 'groq-plan-v1';
@@ -7,13 +8,15 @@ export const PLAN_AI_CONSENT_VERSION = 'groq-plan-v1';
 // Conservative payload-size admission guard, not an exact tokenizer or guarantee
 // of remaining organizational TPM. Groq still enforces its current account limits.
 // Include instructions/schema and reserve room for reasoning + visible output.
-export function fitsGroqRequest(body: {
-  max_output_tokens: number;
-  [key: string]: unknown;
-}) {
+export function fitsGroqRequest(body: Record<string, unknown> & (
+  { max_output_tokens: number } | { max_completion_tokens: number }
+)) {
+  const outputTokens = 'max_completion_tokens' in body
+    ? Number(body.max_completion_tokens) : Number(body.max_output_tokens);
   return (
+    Number.isFinite(outputTokens) && outputTokens > 0 &&
     new TextEncoder().encode(JSON.stringify(body)).length <=
-    (7000 - body.max_output_tokens) * 3
+    (7000 - outputTokens) * 3
   );
 }
 

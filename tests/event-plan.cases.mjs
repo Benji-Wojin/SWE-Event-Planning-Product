@@ -65,17 +65,16 @@ export async function eventPlanTests({
   let calls = [];
   const success = (plan) =>
     Response.json({
-      status: 'completed',
-      output: [
+      choices: [
         {
-          type: 'message',
-          content: [{ type: 'output_text', text: JSON.stringify(plan) }],
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: JSON.stringify(plan) },
         },
       ],
     });
   const provider = (plan = output()) => {
     globalThis.fetch = async (url, options) => {
-      assert.equal(url, 'https://api.groq.com/openai/v1/responses');
+      assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
       assert.equal(
         options.headers.Authorization,
         'Bearer test-only-placeholder',
@@ -191,7 +190,7 @@ export async function eventPlanTests({
       };
       try {
         const snap = await ready(project);
-        assert.equal(JSON.parse(calls[0].input).today, '2030-10-01');
+        assert.equal(JSON.parse(calls[0].messages[1].content).today, '2030-10-01');
         assert.equal(snap.draft.items[0].dueDate, '2030-10-01');
         assert.ok(sqlite.prepare("SELECT id FROM resource_usage WHERE id LIKE 'plan-ai:%:2030-10-02'").get());
       } finally { globalThis.Date = RealDate; }
@@ -199,7 +198,7 @@ export async function eventPlanTests({
     await t.test(
       'strict provider and review validation rejects malformed dates, fields, cycles and hidden completion',
       () => {
-        const variants = planGeneration.planRequestBody({}).text.format.schema.properties.items.items.anyOf;
+        const variants = planGeneration.planRequestBody({}).response_format.json_schema.schema.properties.items.items.anyOf;
         assert.equal(variants.length, 2);
         const preparation = variants.find(v => v.properties.kind.enum[0] === 'preparation');
         const activity = variants.find(v => v.properties.kind.enum[0] === 'activity');
@@ -381,9 +380,13 @@ export async function eventPlanTests({
         assert.equal(snap.status, 'ready');
         assert.equal(calls.length, 1);
         assert.equal(calls[0].store, undefined);
-        assert.equal(calls[0].text.format.strict, true);
+        assert.equal(calls[0].response_format.json_schema.strict, true);
+        assert.equal(calls[0].max_completion_tokens, 4000);
+        assert.equal(calls[0].reasoning_effort, 'low');
+        assert.equal(calls[0].messages[0].role, 'system');
+        assert.equal(calls[0].messages[1].role, 'user');
         assert.equal(calls[0].tools, undefined);
-        const sent = JSON.parse(calls[0].input);
+        const sent = JSON.parse(calls[0].messages[1].content);
         assert.deepEqual(Object.keys(sent).sort(), [
           'brief',
           'event',
@@ -478,11 +481,27 @@ export async function eventPlanTests({
         assert.equal(JSON.stringify(snap.draft), before);
       },
     );
+    await t.test('chat completions reject truncated, refused, ambiguous and tool responses', async () => {
+      const message = { role: 'assistant', content: JSON.stringify(output()) };
+      for (const choices of [
+        [],
+        [{ finish_reason: 'length', message }],
+        [{ finish_reason: 'stop', message: { ...message, refusal: 'Cannot comply' } }],
+        [{ finish_reason: 'stop', message: { ...message, tool_calls: [{}] } }],
+        [{ finish_reason: 'stop', message: { ...message, content: null } }],
+        [{ finish_reason: 'stop', message: { ...message, role: 'user' } }],
+        [{ finish_reason: 'stop', message }, { finish_reason: 'stop', message }],
+      ]) {
+        globalThis.fetch = async () => Response.json({ choices });
+        await assert.rejects(planGeneration.generateEventPlan({}, 'test-only-placeholder'));
+      }
+      assert.throws(() => planGeneration.planRequestBody({ oversized: 'x'.repeat(10000) }), /context_limit/);
+    });
     await t.test('generation diagnostics contain fixed labels, never provider content or credentials', async () => {
       const warn = console.warn, logs = [];
       console.warn = (...args) => logs.push(args);
       try {
-        globalThis.fetch = async () => Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'PRIVATE_MODEL_OUTPUT'}]}]});
+        globalThis.fetch = async () => Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'PRIVATE_MODEL_OUTPUT'}}]});
         await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
         assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'output_json',reason:'invalid_response'}]);
         globalThis.fetch = async () => { throw new Error('PRIVATE_TRANSPORT_DETAIL'); };
