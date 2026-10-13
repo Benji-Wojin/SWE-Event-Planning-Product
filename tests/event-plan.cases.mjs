@@ -206,6 +206,8 @@ export async function eventPlanTests({
         for (const variant of variants) {
           assert.equal(variant.additionalProperties, false);
           assert.deepEqual([...variant.required].sort(), Object.keys(variant.properties).sort());
+          assert.deepEqual(Object.entries(variant.properties).filter(([,field]) => field.enum?.some(value => value !== '')).map(([name]) => name), ['kind']);
+          for (const category of planGeneration.planCategories) assert.ok(variant.properties.category.description.includes(category));
         }
         assert.deepEqual(preparation.properties.start.enum, ['']);
         assert.deepEqual(preparation.properties.end.enum, ['']);
@@ -237,6 +239,7 @@ export async function eventPlanTests({
           { dependsOn: ['missing'] },
           { dependsOn: ['approval'] },
           { id: '../' },
+          { category: 'Unknown category' },
         ])
           assert.throws(() =>
             planGeneration.parsePlanOutput({

@@ -212,7 +212,9 @@ const itemSchema = (kind: 'preparation' | 'activity') => ({
     id: { type: 'string', description: 'Unique ID, 1–40 ASCII letters, digits, underscores or hyphens only.' },
     kind: { type: 'string', enum: [kind] },
     title: { type: 'string', description: 'Nonempty action title, at most 180 characters.' },
-    category: { type: 'string', enum: [...planCategories] },
+    // Groq's union discriminator rejects a second enum property shared by both
+    // variants. Keep kind as the sole discriminator; enforce categories below.
+    category: { type: 'string', description: 'Use exactly one category: ' + planCategories.join(', ') + '.' },
     note: { type: 'string', description: 'Concrete outcome, at most 2000 characters.' },
     dueDate: kind === 'preparation' ? dateSchema : emptySchema,
     start: kind === 'activity' ? localTimeSchema : emptySchema,
