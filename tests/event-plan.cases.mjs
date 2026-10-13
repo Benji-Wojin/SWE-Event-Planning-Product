@@ -463,6 +463,21 @@ export async function eventPlanTests({
         assert.equal(JSON.stringify(snap.draft), before);
       },
     );
+    await t.test('generation diagnostics contain fixed labels, never provider content or credentials', async () => {
+      const warn = console.warn, logs = [];
+      console.warn = (...args) => logs.push(args);
+      try {
+        globalThis.fetch = async () => Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'PRIVATE_MODEL_OUTPUT'}]}]});
+        await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'output_json',reason:'invalid_response'}]);
+        globalThis.fetch = async () => { throw new Error('PRIVATE_TRANSPORT_DETAIL'); };
+        await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'request',reason:'invalid_response'}]);
+        provider({...output(),items:[{...baseItem,start:'PRIVATE_INVALID_VALUE'}]});
+        await assert.rejects(planGeneration.generateEventPlan({}, 'test-only-placeholder'));
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'plan_validation',reason:'item_fields'}]);
+      } finally { console.warn = warn; }
+    });
     await t.test(
       'generated activity dates and daily hours are validated independently of provider output',
       async () => {

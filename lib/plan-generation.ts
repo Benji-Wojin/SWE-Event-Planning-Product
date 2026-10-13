@@ -250,6 +250,7 @@ export async function generateEventPlan(
   context: any,
   apiKey: string,
 ): Promise<PlanOutput> {
+  let stage = 'request';
   try {
     const response = await fetch(GROQ_RESPONSES_URL, {
       method: 'POST',
@@ -263,7 +264,9 @@ export async function generateEventPlan(
     if (!response.ok) {
       throw new PlanProviderError(groqFailure(response));
     }
+    stage = 'response_json';
     const data: any = await response.json();
+    stage = 'response_status';
     const content =
       data.output?.flatMap((item: any) =>
         item.type === 'message' && Array.isArray(item.content)
@@ -275,14 +278,16 @@ export async function generateEventPlan(
       content.some((part: any) => part.type === 'refusal')
     )
       throw new Error('Incomplete plan');
-    const plan = parsePlanOutput(
-      JSON.parse(
+    stage = 'output_json';
+    const value = JSON.parse(
         content
           .filter((part: any) => part.type === 'output_text')
           .map((part: any) => part.text)
           .join(''),
-      ),
-    );
+      );
+    stage = 'plan_validation';
+    const plan = parsePlanOutput(value);
+    stage = 'schedule_validation';
     const lastDay = context.brief.endDate || context.event.date;
     if (
       plan.items.some((item) => {
@@ -313,6 +318,23 @@ export async function generateEventPlan(
       throw new Error('Unsupported schedule assumptions');
     return plan;
   } catch (error) {
+    // Only fixed diagnostic labels: never log prompts, model output, keys or raw errors.
+    const validationReasons: Record<string, string> = {
+      'Invalid plan.': 'plan_shape',
+      'Invalid plan notes.': 'notes_shape',
+      'Use between 1 and 24 plan items.': 'item_count',
+      'Check each task, date, time, and dependency.': 'item_fields',
+      'Each dependency must point to another item in this draft.': 'dependency_reference',
+      'Tasks cannot depend on each other in a circle.': 'dependency_cycle',
+    };
+    console.warn('weft_plan_generation_failed', {
+      stage,
+      reason: error instanceof PlanProviderError
+        ? error.issue
+        : stage === 'plan_validation' && error instanceof Error
+          ? validationReasons[error.message] || 'invalid_plan'
+          : 'invalid_response',
+    });
     if (error instanceof PlanProviderError) throw error;
     throw new PlanProviderError('provider');
   }
