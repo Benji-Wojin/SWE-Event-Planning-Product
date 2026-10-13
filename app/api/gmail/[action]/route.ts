@@ -1,6 +1,6 @@
 import { env } from '@/lib/runtime';
 import {
-  administrator,
+  organizerAccount,
   isAppOwner,
   body,
   HttpError,
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const senderCallback = new URL(request.url).searchParams.get('state')?.startsWith('send_');
   let recoveryPath = senderCallback ? '/' : '/settings';
   const response = await safe(async () => {
-    const user = await administrator(),
+    const user = await organizerAccount(),
       url = new URL(request.url),
       action = url.pathname.split('/').pop();
     if (action === 'status') {
@@ -215,7 +215,7 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   return safe(async () => {
-    const user = await administrator(),
+    const user = await organizerAccount(),
       data = await body(request),
       action = new URL(request.url).pathname.split('/').pop();
     if (action === 'configure') {

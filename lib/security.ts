@@ -129,7 +129,7 @@ export async function principal() {
     if (!owner)
       throw new HttpError(
         403,
-        'Open an invitation from your organizer to join a project.',
+        'Create your Weft account at /signup, or open a project invitation.',
       );
     await env.DB.prepare(
       'INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)',
@@ -154,6 +154,29 @@ export async function administrator() {
       403,
       'Only the organizer can access private details or email connections.',
     );
+  return user;
+}
+// Registration grants an account, never access to another person's project or
+// app-wide administration. Only the verified session supplies identity.
+export async function registerAccount() {
+  const user = await getChatGPTUser();
+  if (!user) throw new HttpError(401, 'Sign in to create your Weft account.');
+  const owner = !!env.GATHER_OWNER_EMAIL &&
+    user.email.toLowerCase() === env.GATHER_OWNER_EMAIL.toLowerCase();
+  await env.DB.prepare(
+    'INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)',
+  ).bind(user.userId, owner ? 'jack' : 'u_' + crypto.randomUUID(),
+    user.email.toLowerCase(), user.displayName, owner ? 'admin' : 'member').run();
+  return principal();
+}
+
+// Account integrations belong to the current user, but require that they
+// organize at least one project. This does not upgrade their global role.
+export async function organizerAccount() {
+  const user = await principal();
+  if (user.role !== 'admin' && !(await env.DB.prepare(
+    'SELECT 1 FROM projects WHERE owner_id=? LIMIT 1',
+  ).bind(user.userId).first())) throw new HttpError(403, 'Create a project before connecting organizer integrations.');
   return user;
 }
 // Use the global principal, never a project-scoped owner role, for app-wide settings.

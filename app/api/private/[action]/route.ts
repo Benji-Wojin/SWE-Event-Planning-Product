@@ -3,7 +3,7 @@ import { bookingRecord, bookingVersion } from '@/lib/bookings';
 import { projectUser } from '@/lib/project-access';
 import { loadWorkspace } from '@/lib/workspace';
 import {
-  administrator,
+  principal,
   body,
   HttpError,
   json,
@@ -13,7 +13,7 @@ import {
 } from '@/lib/security';
 export const dynamic = 'force-dynamic';
 async function privateProject(request: Request) {
-  const user = await projectUser(await administrator(), request);
+  const user = await projectUser(await principal(), request);
   if (user.role !== 'admin')
     throw new HttpError(403, 'Only this project’s organizer can access private bookings.');
   return user;

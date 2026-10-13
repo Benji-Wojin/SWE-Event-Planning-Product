@@ -106,7 +106,7 @@ async function ownedContexts(
   ids: string[],
 ): Promise<MailContext[]> {
   const member = await env.DB.prepare(
-    "SELECT 1 FROM members WHERE user_id=? AND role='admin'",
+    'SELECT 1 FROM members WHERE user_id=?',
   )
     .bind(userId)
     .first();
@@ -244,7 +244,7 @@ export async function configureAutomatic(userId: string, input: any) {
 function jobGuard(job: Job, state: State) {
   const sql = `EXISTS (SELECT 1 FROM gmail_automation a JOIN gmail_connections c ON c.user_id=a.user_id
     JOIN members m ON m.user_id=a.user_id WHERE a.user_id=? AND a.generation=? AND a.lease=? AND a.lease_until>?
-    AND a.enabled=1 AND c.generation=a.connection_generation AND m.role='admin')`;
+    AND a.enabled=1 AND c.generation=a.connection_generation)`;
   const parts = state.projectIds.map(
     () => `((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin'))
     OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))`,

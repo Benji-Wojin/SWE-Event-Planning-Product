@@ -1,5 +1,5 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
-import { HttpError, json, principal, safe } from '@/lib/security';
+import { HttpError, json, organizerAccount, safe } from '@/lib/security';
 export const dynamic = 'force-dynamic';
 export async function GET() {
   return safe(async () => {
@@ -7,7 +7,7 @@ export async function GET() {
     if (!identity) throw new HttpError(401, 'Sign in to Weft.');
     let organizer = false;
     try {
-      organizer = (await principal()).role === 'admin';
+      await organizerAccount(); organizer = true;
     } catch (error) {
       if (!(error instanceof HttpError) || error.status !== 403) throw error;
     }

@@ -17,9 +17,10 @@ export default async function SignInPage({ searchParams }: {
       <p className="mb-6 text-xl font-semibold">Weft</p>
       <h1 className="mb-3 text-2xl font-semibold">{configured ? 'Sign in' : 'Sign-in setup pending'}</h1>
       {configured ? <>
-        <p className="mb-6 text-sm text-muted-foreground">Use the Google account your project invitation was sent to.</p>
+        <p className="mb-6 text-sm text-muted-foreground">Sign in to your projects and invitations.</p>
         {params.error && <p role="alert" className="mb-4 text-sm text-destructive">Sign-in didn’t finish. Use a verified Google account and try again.</p>}
         <SignInButton returnTo={returnTo} />
+        <p className="mt-5 text-sm">New to Weft? <a className="underline" href={'/signup?return_to=' + encodeURIComponent(returnTo)}>Create an account</a></p>
       </> : <p className="text-sm text-muted-foreground">The app owner needs to finish Google sign-in setup for this site. Your existing project data has not been moved or changed.</p>}
     </section>
   </main>;

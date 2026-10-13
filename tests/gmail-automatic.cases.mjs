@@ -221,6 +221,46 @@ export function gmailAutomaticTests({
     globalThis.fetch = realFetch;
   });
 
+  test('ordinary account owners can enable and commit automatic checks only for owned projects', async () => {
+    await fixture();
+    sqlite.prepare("UPDATE members SET role='member' WHERE user_id='owner-1'").run();
+    try {
+      const configured = await gmailApi.POST(request('/api/gmail/automatic', {
+        enabled: true,
+        consent: true,
+        consentVersion: 'groq-email-v1',
+        projectIds: [project],
+      }));
+      assert.equal(configured.status, 200);
+      await assert.rejects(automaticCore.configureAutomatic('owner-1', {
+        enabled: true,
+        consent: true,
+        consentVersion: 'groq-email-v1',
+        projectIds: ['main'],
+      }), (error) => error.status === 403);
+      provider();
+      const results = [];
+      for (let i = 0; i < 3; i++) {
+        due();
+        results.push(await automaticCore.runAutomatic('owner-1'));
+      }
+      assert.equal(results.reduce((sum, result) => sum + result.imported, 0), 1);
+      assert.equal(privateRows().length, 1);
+      assert.equal((await state()).historyId, '200');
+      // Removing ownership must still stop an already-enrolled background job.
+      sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run('other-owner', project);
+      due();
+      const stopped = await automaticCore.runAutomatic('owner-1');
+      assert.notEqual(stopped.status, 'checked');
+      assert.equal(privateRows().length, 1);
+    } finally {
+      sqlite.prepare("UPDATE members SET role='admin' WHERE user_id='owner-1'").run();
+      sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run('owner-1', project);
+      globalThis.fetch = realFetch;
+      owner();
+    }
+  });
+
   test('provider changes require fresh consent without losing queued mail or deduplication', async () => {
     await fixture();
     const old = await state();

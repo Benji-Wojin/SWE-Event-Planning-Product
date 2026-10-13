@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
 import { eventPlanTests } from './event-plan.cases.mjs';
+import { selfserviceTests } from './selfservice.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -62,7 +63,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore, planApi, planGeneration;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore, planApi, planGeneration, signupApi, invitationsApi;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -88,6 +89,8 @@ before(async () => {
       classifierCore: 'lib/mail-classifier.ts',
       planApi: 'app/api/plan/route.ts',
       planGeneration: 'lib/plan-generation.ts',
+      signupApi: 'app/api/signup/route.ts',
+      invitationsApi: 'app/api/invitations/route.ts',
     },
     outdir: directory,
     bundle: true,
@@ -123,6 +126,7 @@ before(async () => {
   );
   [automaticCore, automaticApi, classifierCore] = await Promise.all(['automaticCore', 'automaticApi', 'classifierCore'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
   [planApi, planGeneration] = await Promise.all(['planApi','planGeneration'].map(name=>import(pathToFileURL(join(directory,name+'.js')))));
+  [signupApi, invitationsApi] = await Promise.all(['signupApi','invitationsApi'].map(name=>import(pathToFileURL(join(directory,name+'.js')))));
 });
 const owner = () => {
   globalThis.__gatherUser = {
@@ -1380,7 +1384,7 @@ test('unknown, internal and other-owner project IDs cannot read or mutate projec
     assert.equal((await infoRead(query)).status,404);
   }
   assert.ok(!(await (await projectsApi.GET()).json()).projects.some(project=>project.id===id));
-  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);
+  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'My own private event'}}))).status,201);
   globalThis.__gatherUser=null;assert.equal((await projectsApi.GET()).status,401);owner();
 });
 
@@ -1435,14 +1439,14 @@ test('real accounts join only their invited project and cannot impersonate organ
   const member=sqlite.prepare('SELECT * FROM members WHERE user_id=?').get('real-maya');assert.equal(member.role,'member');assert.match(member.actor_id,/^u_/);
   const snap=await (await workspace.GET(getRequest('/api/workspace?project='+a+'&as=jack'))).json();assert.equal(snap.identity.actorId,member.actor_id);assert.equal(snap.identity.role,'member');
   assert.deepEqual((await (await projectsApi.GET()).json()).projects.map(p=>p.id),[a]);
-  assert.equal((await (await projectsApi.GET()).json()).canCreateProjects,false);
+  assert.equal((await (await projectsApi.GET()).json()).canCreateProjects,true);
   for(const id of [b,'main']) { assert.equal((await realRead(id)).status,404);assert.equal((await infoRead('?project='+id)).status,404); }
   assert.equal((await teamRead(a)).status,403);
   assert.equal((await teamWrite(a,{action:'invite',email:'hack@example.com',requestId:crypto.randomUUID()})).status,403);
   assert.equal((await privateApi.GET(getRequest('/api/private/records?project='+a))).status,403);
   assert.equal((await gmailApi.GET(getRequest('/api/gmail/messages?project='+a))).status,403);
   assert.equal((await demoRead()).status,403);
-  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'Unauthorized'}}))).status,403);owner();
+  assert.equal((await projectsApi.POST(request('/api/projects',{requestId:crypto.randomUUID(),event:{name:'My own private event'}}))).status,201);owner();
 });
 test('an organizer invited as a teammate cannot access another project’s private bookings',async()=>{
   const id=await newTeamProject('Private booking boundary');
@@ -1921,4 +1925,8 @@ test('automatic Gmail integration', async t => {
   gmailAutomaticTests({ test: (name, fn) => checks.push(t.test(name, fn)), assert, sqlite, db, owner, request, security,
     gmailApi, gmailCore, automaticCore, automaticApi, classifierCore, newTeamProject });
   await Promise.all(checks);
+});
+
+test('self-service accounts and internal invitations', async t=>{
+  await selfserviceTests({t,assert,sqlite,db,request,security,signupApi,invitationsApi,projectsApi,teamApi,workspace,privateApi,gmailApi,senderApi,owner});
 });

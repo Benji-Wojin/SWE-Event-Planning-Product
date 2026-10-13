@@ -1,4 +1,4 @@
-import { administrator, body, HttpError, json, safe } from '@/lib/security';
+import { principal, body, HttpError, json, safe } from '@/lib/security';
 import { projectUser } from '@/lib/project-access';
 import {
   beginSenderOAuth,
@@ -8,7 +8,7 @@ import {
 export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   return safe(async () => {
-    const user = await projectUser(await administrator(), request),
+    const user = await projectUser(await principal(), request),
       input = await body(request);
     if (user.role !== 'admin')
       throw new HttpError(403, 'Only the organizer can manage the sender.');

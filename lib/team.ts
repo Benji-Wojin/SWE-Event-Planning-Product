@@ -1,6 +1,6 @@
 import { env } from '@/lib/runtime';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
-import { HttpError, nonce, seal, unseal } from './security';
+import { HttpError, nonce, seal, unseal, type principal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
 import { mailbox, senderStatus } from './invitation-sender';
 import { deliveryView, sendInvitation, type DeliveryView } from './invitation-delivery';
@@ -38,6 +38,26 @@ export type InviteView = {
   joined: boolean;
   projectId: string;
 };
+export type PendingInvitation = { id: string; name: string; organizer: string; expiresAt: number };
+
+export async function pendingInvitations(user: Awaited<ReturnType<typeof principal>>): Promise<PendingInvitation[]> {
+  // No tokens, guest information or team roster are disclosed before acceptance.
+  const rows = await env.DB.prepare(`SELECT i.id,i.project_id,i.expires_at,w.data,m.name AS organizer
+    FROM project_invites i JOIN workspaces w ON w.id=i.project_id
+    JOIN members m ON m.user_id=i.created_by
+    WHERE i.email=? AND i.accepted_by='' AND i.revoked_at='' AND i.expires_at>?
+    AND ((i.project_id='main' AND m.actor_id='jack' AND m.role='admin')
+      OR EXISTS (SELECT 1 FROM projects p WHERE p.id=i.project_id AND p.owner_id=i.created_by))
+    ORDER BY i.created_at DESC LIMIT 100`).bind(emailOf(user.email),Date.now()).all<any>();
+  return rows.results.map(row => ({ id: row.id, name: String(JSON.parse(row.data).event.name || 'Untitled project'),
+    organizer: row.organizer, expiresAt: row.expires_at }));
+}
+
+export async function declineInvitation(user: Awaited<ReturnType<typeof principal>>, id: unknown) {
+  if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new HttpError(400, 'Choose an invitation.');
+  await env.DB.prepare("UPDATE project_invites SET revoked_at=? WHERE id=? AND email=? AND accepted_by='' AND revoked_at=''")
+    .bind(new Date().toISOString(),id,emailOf(user.email)).run();
+}
 
 const emailOf = (value: string) => value.trim().toLowerCase();
 const tokenHash = async (value: string) =>
@@ -162,6 +182,8 @@ export async function changeTeam(
       await env.DB.prepare(`INSERT OR IGNORE INTO project_invites (id,project_id,email,token_hash,payload,created_by,created_at,expires_at)
       SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM project_invites WHERE project_id=?)<500
       AND (SELECT COUNT(*) FROM project_invites WHERE project_id=? AND accepted_by='' AND revoked_at='' AND expires_at>?)<50
+      AND (SELECT COUNT(*) FROM project_invites WHERE created_by=? AND created_at>?)<50
+      AND (SELECT COUNT(*) FROM project_invites WHERE email=? AND accepted_by='' AND revoked_at='' AND expires_at>?)<100
       AND NOT EXISTS (SELECT 1 FROM project_invites WHERE project_id=? AND email=? AND accepted_by='' AND revoked_at='' AND expires_at>?)
       AND NOT EXISTS (SELECT 1 FROM project_members p JOIN members m ON m.user_id=p.user_id WHERE p.project_id=? AND lower(m.email)=? AND p.revoked_at='')`)
         .bind(
@@ -175,6 +197,10 @@ export async function changeTeam(
           now + 7 * 86400000,
           user.projectId,
           user.projectId,
+          now,
+          user.userId,
+          new Date(now - 86400000).toISOString(),
+          email,
           now,
           user.projectId,
           email,
@@ -197,7 +223,7 @@ export async function changeTeam(
       )
         throw new HttpError(
           409,
-          'An invitation is already pending, the person has joined, or the project invitation limit was reached. Reload the list.',
+          'An invitation is already pending, the person has joined, or an invitation limit was reached (50 per organizer per day). Reload the list.',
         );
     }
   } else if (input.action === 'revokeInvite') {
@@ -244,15 +270,17 @@ export async function changeTeam(
   return readTeam(user);
 }
 
-async function invitation(token: unknown) {
+async function invitation(token: unknown, invitationId?: unknown) {
   const user = await getChatGPTUser();
   if (!user) throw new HttpError(401, 'Sign in to accept this invitation.');
-  if (typeof token !== 'string' || !/^[\w-]{43}$/.test(token))
+  const byId = invitationId !== undefined;
+  if (byId ? (token !== undefined || typeof invitationId !== 'string' || !/^[a-f0-9-]{36}$/.test(invitationId))
+    : (typeof token !== 'string' || !/^[\w-]{43}$/.test(token)))
     throw new HttpError(404, 'Invitation not found.');
   const invite = await env.DB.prepare(
-    'SELECT * FROM project_invites WHERE token_hash=?',
+    byId ? 'SELECT * FROM project_invites WHERE id=? AND email=?' : 'SELECT * FROM project_invites WHERE token_hash=?',
   )
-    .bind(await tokenHash(token))
+    .bind(...(byId ? [invitationId, emailOf(user.email)] : [await tokenHash(token as string)]))
     .first<Invite>();
   if (
     !invite ||
@@ -293,8 +321,8 @@ export async function previewInvitation(token: unknown): Promise<InviteView> {
   };
 }
 export async function acceptInvitation(input: Record<string, unknown>) {
-  fields(input, ['token']);
-  const { user, invite } = await invitation(input.token);
+  fields(input, ['token', 'invitationId']);
+  const { user, invite } = await invitation(input.token, input.invitationId);
   if (invite.accepted_by) return { projectId: invite.project_id };
   // Each statement checks the same single-use invitation inside one D1 transaction.
   const valid =

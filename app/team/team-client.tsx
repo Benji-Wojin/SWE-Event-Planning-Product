@@ -182,12 +182,12 @@ export function TeamClient({ projectId }: { projectId: string }) {
       {!team && !error && <output className="block">Loading team…</output>}
       {team && (
         <>
-          <section className="space-y-3 rounded-xl border bg-card p-5">
-            <h2 className="text-lg font-semibold">Invitation sender</h2>
+          <details className="space-y-3 rounded-xl border bg-card p-5">
+            <summary className="cursor-pointer font-medium">Optional email delivery</summary>
             <p className="break-all text-sm">
               {team.sender.connected
                 ? 'Sending from ' + team.sender.email
-                : 'Connect the Gmail account you created for Weft.'}
+                : 'In-app invitations work without Gmail. Connect a separate sender only if you also want to send invitation emails.'}
             </p>
             <p className="text-sm text-muted-foreground">
               Used for invitations across your projects. Separate from your
@@ -198,7 +198,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 className="inline-block text-sm underline"
                 href={'/settings?project=' + encodeURIComponent(projectId)}
               >
-                Set up Google client
+                Email delivery is not configured
               </a>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -218,7 +218,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     onClick={() => {
                       if (
                         confirm(
-                          'Disconnect this sender from Weft? New invitations will stop until you connect it again. An invitation already being sent may still go out.',
+                          'Disconnect this email sender? In-app invitations will still work. An email already being sent may still go out.',
                         )
                       )
                         void senderAction('disconnect');
@@ -244,7 +244,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 also revoke access in your Google account.
               </p>
             </details>
-          </section>
+          </details>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <form
@@ -254,16 +254,15 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 requestId.current ||= crypto.randomUUID();
                 if (
                   await change({
-                    action: 'sendInvite',
+                    action: 'invite',
                     email,
                     requestId: requestId.current,
-                    senderEmail: team.sender.email,
                   })
                 ) {
                   setEmail('');
                   requestId.current = '';
                   setNotice(
-                    'Invitation updated. Check its sending status below.',
+                    'Invitation created. They can accept it from their Projects page when signed in with that email.',
                   );
                 }
               }}
@@ -283,24 +282,15 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     requestId.current = '';
                   }}
                 />
-                <Button disabled={busy || !team.sender.connected} type="submit">
-                  {busy ? 'Working…' : 'Send invitation'}
+                <Button disabled={busy} type="submit">
+                  {busy ? 'Working…' : 'Invite teammate'}
                 </Button>
               </div>
             </form>
             <p className="text-sm text-muted-foreground">
-              Sends a project invitation from{' '}
-              {team.sender.email || 'your connected Gmail account'}. Links
-              expire in 7 days and only work for the invited email.
+              Appears on their Projects page. They can sign up with this email
+              if they do not have an account yet. Expires in 7 days. No email is sent automatically.
             </p>
-            <details className="text-sm">
-              <summary className="cursor-pointer">Private site access</summary>
-              <p className="mt-2 text-muted-foreground">
-                Also share access to this private site with your teammate in the
-                site’s sharing settings. The project invitation does not change
-                who can open the site.
-              </p>
-            </details>
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">People</h2>
@@ -378,7 +368,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                           ? 'Sending not confirmed'
                           : invite.delivery.status === 'failed'
                             ? 'Not sent'
-                            : 'Not sent yet'}
+                            : 'Available in Weft'}
                   </p>
                   {invite.delivery.issue && (
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -393,7 +383,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {invite.delivery.canRetry && (
+                  {invite.delivery.canRetry && team.sender.connected && (
                     <Button
                       variant="outline"
                       disabled={busy || !team.sender.connected}
@@ -407,7 +397,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     >
                       {invite.delivery.status === 'failed'
                         ? 'Retry sending'
-                        : 'Send invitation'}
+                        : 'Also send email'}
                     </Button>
                   )}
                   <Button

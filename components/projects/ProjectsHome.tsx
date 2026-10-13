@@ -7,6 +7,7 @@ import {
   Plus,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Invitations } from './Invitations';
 
 import { Button } from "@/components/ui/button";
 
@@ -29,6 +30,7 @@ type ProjectsHomeProps = {
   accountHref?: string;
   onRetry?: () => void;
   canCreate?: boolean;
+  canUseDemo?: boolean;
 };
 
 export function ProjectsHome({
@@ -40,6 +42,7 @@ export function ProjectsHome({
   accountHref = "/account",
   onRetry,
   canCreate = true,
+  canUseDemo = false,
 }: ProjectsHomeProps) {
   return (
     <div className="projects-home">
@@ -50,7 +53,7 @@ export function ProjectsHome({
         <div className="projects-header-actions">
           <ThemeToggle />
           <a className="projects-account-link" href="/feedback">Feedback</a>
-          {canCreate && <a className="projects-account-link" href="/demo">Demo</a>}
+          {canUseDemo && <a className="projects-account-link" href="/demo">Demo</a>}
           <a className="projects-account-link" href={accountHref}>Account</a>
         </div>
       </header>
@@ -65,6 +68,7 @@ export function ProjectsHome({
             </div>
 
             {isLoading ? <ProjectsLoadingState /> : null}
+            {!isLoading && !error && <Invitations />}
             {!isLoading && error ? <ProjectsErrorState message={error} {...(onRetry ? { onRetry } : {})} /> : null}
             {!isLoading && !error && projects.length === 0 ? (
               <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} />
