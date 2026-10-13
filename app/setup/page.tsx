@@ -1,6 +1,8 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { ProjectSetup } from './setup-client';
+import { HttpError, principal } from '@/lib/security';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 export default async function Setup({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
@@ -9,7 +11,15 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
   return <SignedInSetup projectId={projectId}/>;
 }
 async function SignedInSetup({projectId}:{projectId?:string}) {
-  await requireChatGPTUser('/setup' + (projectId ? '?project=' + encodeURIComponent(projectId) : ''));
+  const returnTo = '/setup' + (projectId ? '?project=' + encodeURIComponent(projectId) : '');
+  await requireChatGPTUser(returnTo);
+  try {
+    await principal();
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 403)
+      redirect('/signup?return_to=' + encodeURIComponent(returnTo));
+    throw error;
+  }
   return <main className="mx-auto w-full max-w-3xl px-5 py-8 sm:px-8 sm:py-12">
     <header className="mb-10 flex flex-wrap items-center justify-between gap-4">
       <a href="/" className="text-2xl font-semibold tracking-tight text-primary">weft</a>
