@@ -195,6 +195,32 @@ export function parsePlanOutput(value: any): PlanOutput {
   };
 }
 const stringSchema = { type: 'string' };
+const dateSchema = {
+  type: 'string',
+  description: 'YYYY-MM-DD, or an empty string when unknown.',
+};
+const localTimeSchema = {
+  type: 'string',
+  description: 'Event-local YYYY-MM-DDTHH:mm, or an empty string when the time is unknown. Never use a date alone, seconds, Z, or an offset.',
+};
+const emptySchema = { type: 'string', enum: [''] };
+const itemSchema = (kind: 'preparation' | 'activity') => ({
+  type: 'object',
+  additionalProperties: false,
+  required: itemKeys,
+  properties: {
+    id: { type: 'string', description: 'Unique ID, 1–40 ASCII letters, digits, underscores or hyphens only.' },
+    kind: { type: 'string', enum: [kind] },
+    title: { type: 'string', description: 'Nonempty action title, at most 180 characters.' },
+    category: { type: 'string', enum: [...planCategories] },
+    note: { type: 'string', description: 'Concrete outcome, at most 2000 characters.' },
+    dueDate: kind === 'preparation' ? dateSchema : emptySchema,
+    start: kind === 'activity' ? localTimeSchema : emptySchema,
+    end: kind === 'activity' ? localTimeSchema : emptySchema,
+    location: { type: 'string', description: 'Supplied location only, at most 240 characters; otherwise empty.' },
+    dependsOn: { type: 'array', items: stringSchema, maxItems: 8 },
+  },
+});
 const schema = {
   type: 'object',
   additionalProperties: false,
@@ -204,21 +230,7 @@ const schema = {
       type: 'array',
       minItems: 1,
       maxItems: 24,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: itemKeys,
-        properties: {
-          ...Object.fromEntries(
-            itemKeys
-              .filter((key) => !['kind', 'category', 'dependsOn'].includes(key))
-              .map((key) => [key, stringSchema]),
-          ),
-          kind: { type: 'string', enum: ['preparation', 'activity'] },
-          category: { type: 'string', enum: [...planCategories] },
-          dependsOn: { type: 'array', items: stringSchema, maxItems: 8 },
-        },
-      },
+      items: { anyOf: [itemSchema('preparation'), itemSchema('activity')] },
     },
     questions: { type: 'array', items: stringSchema, maxItems: 6 },
     assumptions: { type: 'array', items: stringSchema, maxItems: 6 },
@@ -280,11 +292,11 @@ export async function generateEventPlan(
       throw new Error('Incomplete plan');
     stage = 'output_json';
     const value = JSON.parse(
-        content
-          .filter((part: any) => part.type === 'output_text')
-          .map((part: any) => part.text)
-          .join(''),
-      );
+      content
+        .filter((part: any) => part.type === 'output_text')
+        .map((part: any) => part.text)
+        .join(''),
+    );
     stage = 'plan_validation';
     const plan = parsePlanOutput(value);
     stage = 'schedule_validation';

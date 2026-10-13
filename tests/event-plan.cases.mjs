@@ -199,6 +199,18 @@ export async function eventPlanTests({
     await t.test(
       'strict provider and review validation rejects malformed dates, fields, cycles and hidden completion',
       () => {
+        const variants = planGeneration.planRequestBody({}).text.format.schema.properties.items.items.anyOf;
+        assert.equal(variants.length, 2);
+        const preparation = variants.find(v => v.properties.kind.enum[0] === 'preparation');
+        const activity = variants.find(v => v.properties.kind.enum[0] === 'activity');
+        for (const variant of variants) {
+          assert.equal(variant.additionalProperties, false);
+          assert.deepEqual([...variant.required].sort(), Object.keys(variant.properties).sort());
+        }
+        assert.deepEqual(preparation.properties.start.enum, ['']);
+        assert.deepEqual(preparation.properties.end.enum, ['']);
+        assert.deepEqual(activity.properties.dueDate.enum, ['']);
+        assert.match(activity.properties.start.description, /YYYY-MM-DDTHH:mm/);
         for (const kind of planGeneration.eventKinds)
           assert.equal(
             planGeneration.parseBrief({ ...brief, kind }, '2030-10-04').kind,
