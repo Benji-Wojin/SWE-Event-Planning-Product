@@ -36,6 +36,7 @@ type State = {
   historyId: string;
   after: number;
   scan?: Scan;
+  bootstrap?: Scan;
   recovery?: boolean;
 };
 type Job = {
@@ -90,7 +91,7 @@ export async function automaticStatus(userId: string) {
     enabled: current && !!job?.enabled && !consentRequired,
     projectIds: state?.projectIds || [],
     lastCheck: job?.last_success || '',
-    catchingUp: !!state?.scan,
+    catchingUp: !!state?.scan || !!state?.bootstrap,
     recovery: !!state?.recovery,
     issue:
       job && !current
@@ -390,54 +391,75 @@ export async function runAutomatic(userId: string) {
           };
       await checkpoint(job, state);
     }
-    const scan = state.scan;
-    if (!scan.pending) {
-      const params = new URLSearchParams({ maxResults: '10' });
-      if (scan.pageToken) params.set('pageToken', scan.pageToken);
-      let list: any;
-      if (scan.mode === 'bootstrap') {
-        params.set('q', 'after:' + state.after + ' -in:spam -in:trash');
-        list = await get('messages?' + params);
-        scan.pending = (list.messages || []).map((m: any) => m.id);
-        scan.end = scan.start;
-      } else {
-        params.set('startHistoryId', scan.start);
-        params.set('historyTypes', 'messageAdded');
-        try {
-          list = await get('history?' + params);
-        } catch (error) {
-          if (!(error instanceof GmailError) || error.providerStatus !== 404)
-            throw error;
-          state.historyId = '';
-          state.scan = undefined;
-          state.after = Math.floor((Date.now() - 7 * 86400000) / 1000);
-          state.recovery = true;
-          await checkpoint(job, state);
-          await env.DB.prepare(
-            "UPDATE gmail_automation SET lease='',lease_until=0 WHERE user_id=? AND lease=?",
-          )
-            .bind(userId, lease)
-            .run();
-          return { checked: 0, imported: 0, status: 'recovering' };
-        }
-        scan.pending = (list.history || []).flatMap((entry: any) =>
-          (entry.messagesAdded || []).map((m: any) => m.message?.id),
-        );
-        scan.end = historyId(list.historyId);
-      }
-      if (
-        !scan.pending ||
-        scan.pending.length > 500 ||
-        scan.pending.some(
-          (id) => typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(id),
-        )
-      )
-        throw new HttpError(502, 'Gmail returned an invalid page.');
-      scan.pending = [...new Set(scan.pending)];
-      scan.nextPageToken = list.nextPageToken || '';
+    // Keep the initial seven-day backlog separate from incoming history.
+    // Every invocation checks new arrivals before resuming older messages.
+    if (state.scan.mode === 'bootstrap') {
+      state.bootstrap = state.scan;
+      state.historyId ||= state.scan.start;
+      state.scan = { mode: 'history', start: state.historyId, pageToken: '' };
       await checkpoint(job, state);
     }
-    const ids = scan.pending.slice(0, 1),
+    let scan = state.scan;
+    // At most two pages: incoming history, then one backlog page if idle.
+    for (let lane = 0; lane < 2; lane++) {
+      if (!scan.pending) {
+        const params = new URLSearchParams({ maxResults: '10' });
+        if (scan.pageToken) params.set('pageToken', scan.pageToken);
+        let list: any;
+        if (scan.mode === 'bootstrap') {
+          params.set('q', 'after:' + state.after + ' -in:spam -in:trash');
+          list = await get('messages?' + params);
+          scan.pending = (list.messages || []).map((m: any) => m.id);
+          scan.end = scan.start;
+        } else {
+          params.set('startHistoryId', scan.start);
+          params.set('historyTypes', 'messageAdded');
+          try {
+            list = await get('history?' + params);
+          } catch (error) {
+            if (!(error instanceof GmailError) || error.providerStatus !== 404)
+              throw error;
+            state.historyId = '';
+            state.scan = undefined;
+            delete state.bootstrap;
+            state.after = Math.floor((Date.now() - 7 * 86400000) / 1000);
+            state.recovery = true;
+            await checkpoint(job, state);
+            await env.DB.prepare(
+              "UPDATE gmail_automation SET lease='',lease_until=0 WHERE user_id=? AND lease=?",
+            )
+              .bind(userId, lease)
+              .run();
+            return { checked: 0, imported: 0, status: 'recovering' };
+          }
+          scan.pending = (list.history || []).flatMap((entry: any) =>
+            (entry.messagesAdded || []).map((m: any) => m.message?.id),
+          );
+          scan.end = historyId(list.historyId);
+        }
+        if (
+          !scan.pending ||
+          scan.pending.length > 500 ||
+          scan.pending.some(
+            (id) => typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(id),
+          )
+        )
+          throw new HttpError(502, 'Gmail returned an invalid page.');
+        scan.pending = [...new Set(scan.pending)];
+        scan.nextPageToken = list.nextPageToken || '';
+        await checkpoint(job, state);
+      }
+      if (scan.mode === 'history' && !scan.pending?.length && !scan.nextPageToken && state.bootstrap) {
+        state.historyId = historyId(scan.end);
+        scan = state.bootstrap;
+        state.scan = scan;
+        delete state.bootstrap;
+        await checkpoint(job, state);
+      } else {
+        break;
+      }
+    }
+    const ids = scan.pending!.slice(0, 1),
       candidates: any[] = [],
       receipts: string[] = [];
     for (const id of ids) {
@@ -574,14 +596,15 @@ export async function runAutomatic(userId: string) {
       );
     const inserted = statements.length ? await env.DB.batch(statements) : [];
     await assertActive(job, state);
-    scan.pending = scan.pending.slice(ids.length);
+    scan.pending = scan.pending!.slice(ids.length);
     if (!scan.pending.length) {
       if (scan.nextPageToken) {
         scan.pageToken = scan.nextPageToken;
         delete scan.pending;
         delete scan.nextPageToken;
       } else {
-        state.historyId = historyId(scan.end);
+        // Bootstrap's start cursor may now be older than the live cursor.
+        if (scan.mode === 'history') state.historyId = historyId(scan.end);
         delete state.scan;
       }
     }
@@ -600,7 +623,7 @@ export async function runAutomatic(userId: string) {
       imported: inserted
         .slice(0, suggestions.filter((s) => s.relevance !== 'unrelated').length)
         .reduce((sum, row) => sum + row.meta.changes, 0),
-      status: state.scan ? 'catching_up' : 'checked',
+      status: state.scan || state.bootstrap ? 'catching_up' : 'checked',
     };
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 503;

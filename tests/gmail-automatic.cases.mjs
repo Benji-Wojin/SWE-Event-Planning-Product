@@ -374,7 +374,7 @@ export function gmailAutomaticTests({
         false,
       );
       assert.deepEqual((await state()).scan.pending, ['self']);
-      assert.equal((await state()).historyId, '');
+      assert.equal((await state()).historyId, '200');
       assert.equal(
         (await automaticCore.runAutomatic('owner-1')).status,
         'not_due',
@@ -462,7 +462,7 @@ export function gmailAutomaticTests({
         2,
       );
       assert.equal(results.at(-1).status, 'checked');
-      assert.equal((await state()).historyId, '100');
+      assert.equal((await state()).historyId, '200');
       assert.equal(privateRows().length, 2);
       assert.ok(privateRows().every((row) => !row.payload.includes('ABC987')));
       assert.equal(
@@ -528,7 +528,7 @@ export function gmailAutomaticTests({
     }
   });
 
-  test('bootstrap pagination, arrival during bootstrap and history pagination keep the final cursor until all candidates finish', async () => {
+  test('incoming history takes priority over bootstrap and both paginated queues retain their checkpoints', async () => {
     await fixture();
     let page = 0;
     provider({
@@ -542,6 +542,7 @@ export function gmailAutomaticTests({
             });
       },
       history: (url) => {
+        if (url.searchParams.get('startHistoryId') === '250') return Response.json({ historyId: '250' });
         assert.equal(url.searchParams.get('startHistoryId'), '100');
         return url.searchParams.get('pageToken') === 'history2'
           ? Response.json({
@@ -574,22 +575,70 @@ export function gmailAutomaticTests({
         (await automaticCore.runAutomatic('owner-1')).status,
         'catching_up',
       );
-      assert.equal((await state()).historyId, '');
+      assert.equal((await state()).historyId, '100');
+      assert.equal(page, 0); // Incoming mail precedes the historical backlog.
       due();
       await automaticCore.runAutomatic('owner-1');
       assert.equal((await state()).historyId, '100');
-      assert.equal(page, 2);
+      assert.equal(page, 0);
       due();
       await automaticCore.runAutomatic('owner-1');
       assert.equal((await state()).historyId, '100');
       due();
       await automaticCore.runAutomatic('owner-1');
-      assert.equal((await state()).historyId, '100');
+      assert.equal((await state()).historyId, '250');
       due();
       await automaticCore.runAutomatic('owner-1');
       due();
       await automaticCore.runAutomatic('owner-1');
       assert.equal((await state()).historyId, '250');
+      assert.equal(privateRows().length, 4);
+      assert.equal(page, 2);
+      assert.equal((await state()).scan, undefined);
+      assert.equal((await state()).bootstrap, undefined);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test('a new arrival interrupts an existing bootstrap without losing or repeating older mail', async () => {
+    await fixture();
+    let arrived = false;
+    const processed = [];
+    provider({
+      ids: ['older1', 'older2', 'older3'],
+      history: (url) => {
+        const start = url.searchParams.get('startHistoryId');
+        return Response.json({
+          historyId: arrived ? '300' : '200',
+          history: arrived && start !== '300'
+            ? [{ messagesAdded: [{ message: { id: 'newarrival' } }] }]
+            : [],
+        });
+      },
+      classify: (input) => {
+        processed.push(...input.messages.map((m) => m.id));
+        return aiResponse(input.messages.map((m) => suggestion(m.id)));
+      },
+    });
+    try {
+      await automaticCore.runAutomatic('owner-1');
+      assert.deepEqual(processed, ['older1']);
+      assert.deepEqual((await state()).scan.pending, ['older2', 'older3']);
+      arrived = true;
+      due();
+      await automaticCore.runAutomatic('owner-1');
+      assert.deepEqual(processed, ['older1', 'newarrival']);
+      assert.deepEqual((await state()).bootstrap.pending, ['older2', 'older3']);
+      assert.equal((await state()).historyId, '300');
+      for (let i = 0; i < 2; i++) {
+        due();
+        await automaticCore.runAutomatic('owner-1');
+      }
+      assert.deepEqual(processed, ['older1', 'newarrival', 'older2', 'older3']);
+      assert.equal((await state()).historyId, '300');
+      assert.equal((await state()).scan, undefined);
+      assert.equal((await state()).bootstrap, undefined);
       assert.equal(privateRows().length, 4);
     } finally {
       globalThis.fetch = realFetch;
@@ -618,7 +667,7 @@ export function gmailAutomaticTests({
       }
       due();
       assert.equal((await automaticCore.runAutomatic('owner-1')).imported, 1);
-      assert.equal((await state()).historyId, '100');
+      assert.equal((await state()).historyId, '200');
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -695,7 +744,7 @@ export function gmailAutomaticTests({
         (await automaticCore.runAutomatic('owner-1')).status,
         'provider',
       );
-      assert.equal((await state()).historyId, '100');
+      assert.equal((await state()).historyId, '200');
       assert.ok(
         sqlite.prepare('SELECT next_run FROM gmail_automation').get().next_run <
           Date.now() + 6 * 60000,
@@ -773,7 +822,7 @@ export function gmailAutomaticTests({
         'limit',
       );
       assert.ok(!calls.includes('https://api.groq.com/openai/v1/responses'));
-      assert.equal((await state()).historyId, '');
+      assert.equal((await state()).historyId, '200');
       assert.equal(privateRows().length, 0);
     } finally {
       globalThis.fetch = realFetch;
@@ -798,7 +847,7 @@ export function gmailAutomaticTests({
         (await automaticCore.automaticStatus('owner-1')).issue,
         /free-plan limit/,
       );
-      assert.equal((await state()).historyId, '');
+      assert.equal((await state()).historyId, '200');
       assert.equal(privateRows().length, 0);
       assert.deepEqual((await state()).scan.pending, ['self']);
       assert.ok(

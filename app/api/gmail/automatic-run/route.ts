@@ -4,6 +4,9 @@ import { HttpError, json, safe } from '@/lib/security';
 import { runDueMailboxes } from '@/lib/gmail-automatic';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+// Stop before the two-minute mailbox lease expires. Unfinished work resumes
+// from the saved checkpoint on a later run.
+export const maxDuration = 110;
 
 function authorize(request: Request) {
   const secret = env.CRON_SECRET;
@@ -28,8 +31,8 @@ function authorize(request: Request) {
     throw new HttpError(403, 'Use the authenticated background runner.');
 }
 
-// Vercel sends CRON_SECRET as a bearer token on scheduled GET requests. No
-// schedule is installed by default, and this route cannot enroll a mailbox.
+// Vercel sends CRON_SECRET as a bearer token on scheduled GET requests.
+// The schedule cannot enroll a mailbox; each owner must explicitly opt in.
 export async function GET(request: Request) {
   return safe(async () => {
     authorize(request);
