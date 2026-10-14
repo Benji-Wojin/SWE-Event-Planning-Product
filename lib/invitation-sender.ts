@@ -1,4 +1,7 @@
 import { env } from '@/lib/runtime';
+import { GMAIL_ENABLED } from './release-policy';
+import { requireGmailEnabled } from './gmail-policy';
+import { invitationEmailConfiguration } from './invitation-email';
 import { configuration, redirectUri, tokenRequest } from './gmail';
 import { HttpError, nonce, seal, unseal } from './security';
 import { projectUser, type ProjectUser, type User } from './project-access';
@@ -29,6 +32,10 @@ export async function senderConnection(userId: string) {
   return { ...data, generation: row.generation, storedPayload: row.payload };
 }
 export async function senderStatus(userId: string) {
+  if (!GMAIL_ENABLED) {
+    const sender = invitationEmailConfiguration();
+    return { configured: !!sender, connected: !!sender, email: sender?.email || '' };
+  }
   const [config, sender] = await Promise.all([
     configuration(),
     senderConnection(userId),
@@ -40,6 +47,7 @@ export async function senderStatus(userId: string) {
   };
 }
 export async function beginSenderOAuth(user: ProjectUser) {
+  requireGmailEnabled();
   if (user.role !== 'admin')
     throw new HttpError(
       403,
@@ -97,6 +105,7 @@ export async function beginSenderOAuth(user: ProjectUser) {
   );
 }
 export async function finishSenderOAuth(user: User, url: URL, onProject?: (projectId: string) => void) {
+  requireGmailEnabled();
   const state = url.searchParams.get('state') || '';
   const row = await env.DB.prepare(
     'SELECT payload FROM sender_oauth_states WHERE id=? AND user_id=? AND expires>?',
@@ -226,6 +235,7 @@ export async function disconnectSender(userId: string) {
   ]);
 }
 export async function readySender(userId: string) {
+  requireGmailEnabled();
   let sender = await senderConnection(userId);
   if (!sender)
     throw new HttpError(409, 'Connect the invitation Gmail account first.');

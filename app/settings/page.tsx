@@ -1,5 +1,5 @@
 import { requireChatGPTUser, chatGPTSignOutPath } from '@/app/chatgpt-auth';
-import { GmailSettings } from './settings-client';
+import { EmailAccessDisabled } from './email-access-disabled';
 import { ThemeToggle } from '@/components/theme-toggle';
 export const dynamic = 'force-dynamic';
 export default async function Settings({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
@@ -31,13 +31,13 @@ async function SignedInSettings({projectId}:{projectId?:string}) {
         Organizer settings
       </p>
       <h1 className="mb-3 text-3xl font-semibold">
-        Gmail settings
+        Account settings
       </h1>
       <p className="mb-7 text-base text-muted-foreground">
         Signed in as {user.displayName}. Private to your account.
       </p>
       {projectId !== undefined && <a href={'/setup' + query} className="mb-7 inline-block text-primary underline">Project settings</a>}
-      <GmailSettings projectId={projectId} />
+      <EmailAccessDisabled projectId={projectId} />
       <a href={projectId !== undefined ? '/project' + query : '/'} className="mt-7 inline-block text-primary underline">
         {projectId !== undefined ? 'Back to project' : 'Projects'}
       </a>

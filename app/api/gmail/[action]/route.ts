@@ -1,4 +1,6 @@
 import { env } from '@/lib/runtime';
+import { requireGmailEnabled } from '@/lib/gmail-policy';
+import { GMAIL_ENABLED } from '@/lib/release-policy';
 import {
   organizerAccount,
   isAppOwner,
@@ -31,6 +33,7 @@ export async function GET(request: Request) {
   const senderCallback = new URL(request.url).searchParams.get('state')?.startsWith('send_');
   let recoveryPath = senderCallback ? '/' : '/settings';
   const response = await safe(async () => {
+    requireGmailEnabled();
     const user = await organizerAccount(),
       url = new URL(request.url),
       action = url.pathname.split('/').pop();
@@ -212,6 +215,8 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   return safe(async () => {
+    // Keep local token removal possible without permitting reads or OAuth.
+    if (new URL(request.url).pathname !== '/api/gmail/disconnect') requireGmailEnabled();
     const user = await organizerAccount(),
       data = await body(request),
       action = new URL(request.url).pathname.split('/').pop();
@@ -439,6 +444,10 @@ export async function POST(request: Request) {
         env.DB.prepare('DELETE FROM oauth_states WHERE user_id=?').bind(user.userId),
         env.DB.prepare("UPDATE gmail_automation SET enabled=0,generation=?,lease='',lease_until=0 WHERE user_id=?")
           .bind(crypto.randomUUID(), user.userId),
+        ...(!GMAIL_ENABLED ? [
+          env.DB.prepare('DELETE FROM gmail_senders WHERE user_id=?').bind(user.userId),
+          env.DB.prepare('DELETE FROM sender_oauth_states WHERE user_id=?').bind(user.userId),
+        ] : []),
       ]);
       return json({ disconnected: true });
     }

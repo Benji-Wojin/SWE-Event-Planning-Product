@@ -126,7 +126,7 @@ export async function changeTeam(
     fields(input, ['action', 'email', 'requestId', 'senderEmail']);
     const sender = await senderStatus(user.userId);
     if (!sender.connected || input.senderEmail !== sender.email)
-      throw new HttpError(409, 'Connect the invitation sender and reload Team access before sending.');
+      throw new HttpError(409, 'Invitation email is unavailable or the sender changed. Reload Team access; in-app invitations still work.');
     await changeTeam(user, { action: 'invite', email: input.email, requestId: input.requestId });
     await sendInvitation(user, input.requestId as string, input.senderEmail);
     return readTeam(user);

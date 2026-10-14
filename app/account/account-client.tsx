@@ -36,7 +36,7 @@ export function AccountClient() {
           {account.organizer && (
             <div>
               <a className="underline" href="/settings">
-                Gmail settings
+                Account settings
               </a>
             </div>
           )}

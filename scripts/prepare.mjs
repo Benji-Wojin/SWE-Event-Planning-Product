@@ -119,15 +119,11 @@ app = app
   );
 app = app.replace(
   'Local email review · no mailbox is connected. Do not paste private confirmation emails here.',
-  'Gmail originals stay private to the organizer. Set up your connection in Gmail &amp; account. Pasted messages are shared: do not paste private confirmation emails here.',
-);
-app = app.replace(
-  '<div class="intake-demo">',
-  '<div class="section-gap"><a class="btn btn-secondary" href="/mail" target="_top">Open private Gmail inbox →</a></div><div class="intake-demo">',
+  'No mailbox is connected. Pasted messages are shared: do not paste private confirmation emails here.',
 );
 app = app.replace(
   'The original message is attached to the task.',
-  'The reviewed update is attached to the task. Gmail originals remain organizer-only.',
+  'The reviewed update is attached to the task.',
 );
 app = app.replace(
   'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.',
@@ -144,7 +140,7 @@ app = app.replace(
 );
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles.</p><p>Gmail is not connected here. Only enter fictional booking details.</p><p>Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. People → Team access manages invitations; sample teammates are not real accounts.</p><p>Gmail requires setup. Planning suggestions use rules. When AI links are connected, opening a task searches using its name, category and optional city. No emails are sent.</p><p>Bookings and Gmail originals are excluded from shared exports and AI searches. This pilot has not had an independent security review.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles. Only enter fictional booking details. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. Team access manages invitations.</p><p>This release does not read Gmail. Planning suggestions use rules; optional AI searches use the task name, category and city.</p><p>Private details are excluded from shared exports and AI searches.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')

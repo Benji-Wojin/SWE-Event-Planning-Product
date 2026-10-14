@@ -1,5 +1,5 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
-import { MailInbox } from './mail-client';
+import { EmailAccessDisabled } from '../settings/email-access-disabled';
 import { ThemeToggle } from '@/components/theme-toggle';
 export const dynamic = 'force-dynamic';
 export default async function Mail({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
@@ -22,18 +22,15 @@ async function SignedInMail({projectId}:{projectId?:string}) {
             {projectId !== undefined ? 'Back to project' : 'Projects'}
           </a>
           <a className="underline" href={'/settings' + query}>
-            Gmail settings
+            Account settings
           </a>
         </nav>
       </header>
       <p className="mb-2 text-sm uppercase tracking-widest text-muted-foreground">
         Organizer only
       </p>
-      <h1 className="text-3xl font-semibold">Email summaries</h1>
-      <p className="mb-7 mt-3 text-base text-muted-foreground">
-        Private drafts for this project. Only summaries you approve enter the shared plan.
-      </p>
-      {projectId !== undefined ? <MailInbox projectId={projectId} /> : <a href="/" className="text-primary underline">Open a project, then choose Private Gmail imports from its email briefing.</a>}
+      <h1 className="mb-7 text-3xl font-semibold">Email integration</h1>
+      <EmailAccessDisabled projectId={projectId} />
     </main>
   );
 }

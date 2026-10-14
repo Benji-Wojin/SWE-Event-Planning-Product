@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { TeamView } from '@/lib/team';
+import { GMAIL_ENABLED } from '@/lib/release-policy';
 export async function accountRequest<T>(
   path: string,
   input?: unknown,
@@ -182,7 +183,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
       {!team && !error && <output className="block">Loading team…</output>}
       {team && (
         <>
-          <details className="space-y-3 rounded-xl border bg-card p-5">
+          {GMAIL_ENABLED ? <details className="space-y-3 rounded-xl border bg-card p-5">
             <summary className="cursor-pointer font-medium">Optional email delivery</summary>
             <p className="break-all text-sm">
               {team.sender.connected
@@ -242,7 +243,10 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 removing Weft in your Google account can revoke both connections.
               </p>
             </details>
-          </details>
+          </details> : <section className="space-y-2 rounded-xl border bg-card p-5">
+            <h2 className="font-medium">Invitation emails</h2>
+            <p className="text-sm text-muted-foreground">{team.sender.connected ? 'Send invitations from ' + team.sender.email + '. No Gmail connection needed.' : 'Email delivery is unavailable. In-app invitations still work.'}</p>
+          </section>}
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <form
@@ -358,7 +362,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   </p>
                   <p className="mt-1 text-sm" role="status">
                     {invite.delivery.status === 'sent'
-                      ? 'Sent via Gmail · ' +
+                      ? 'Email accepted · ' +
                         new Date(invite.delivery.sentAt).toLocaleString()
                       : invite.delivery.status === 'sending'
                         ? 'Sending…'
@@ -375,7 +379,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   )}
                   {invite.delivery.status === 'sent' && (
                     <p className="mt-1 text-sm text-muted-foreground">
-                      From {invite.delivery.sender}. Gmail accepted it; inbox
+                      From {invite.delivery.sender}. The email service accepted it; inbox
                       delivery is not guaranteed.
                     </p>
                   )}
