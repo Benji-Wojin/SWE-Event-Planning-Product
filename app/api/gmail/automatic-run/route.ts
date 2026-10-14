@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { env } from '@/lib/runtime';
 import { HttpError, json, safe } from '@/lib/security';
 import { runDueMailboxes } from '@/lib/gmail-automatic';
+import { requireGmailEnabled } from '@/lib/gmail-policy';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 // Stop before the two-minute mailbox lease expires. Unfinished work resumes
@@ -9,6 +10,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 110;
 
 function authorize(request: Request) {
+  requireGmailEnabled();
   const secret = env.CRON_SECRET;
   if (
     env.GMAIL_BACKGROUND_MODE !== 'vercel-cron' ||

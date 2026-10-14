@@ -100,6 +100,10 @@ before(async () => {
       {
         name: 'test-environment',
         setup(b) {
+          // Retain the full Gmail regression suite for future branch merges.
+          // launch-policy.test.mjs separately tests the REAL disabled policy.
+          b.onResolve({ filter: /(?:^|\/)gmail-policy$/ }, () => ({ path: 'gmail-policy', namespace: 'test' }));
+          b.onResolve({ filter: /(?:^|\/)release-policy$/ }, () => ({ path: 'release-policy', namespace: 'test' }));
           b.onResolve({ filter: /^@\/lib\/runtime$/ }, () => ({
             path: 'env',
             namespace: 'test',
@@ -110,6 +114,8 @@ before(async () => {
           }));
           b.onLoad({ filter: /.*/, namespace: 'test' }, (a) => ({
             contents:
+              a.path === 'gmail-policy' ? 'export function requireGmailEnabled() {}' :
+              a.path === 'release-policy' ? 'export const GMAIL_ENABLED = true;' :
               a.path === 'env'
                 ? 'export const env=globalThis.__gatherEnv;'
                 : 'export async function getChatGPTUser(){return globalThis.__gatherUser;}',

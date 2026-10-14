@@ -9,6 +9,12 @@ let bucketConfiguration = '';
 // Keep provider initialization behind getters. Next.js imports server modules
 // during a build, when production credentials need not be available.
 export const env = {
+  get RESEND_API_KEY(): string | undefined {
+    return process.env.RESEND_API_KEY;
+  },
+  get RESEND_EMAIL_DOMAIN(): string | undefined {
+    return process.env.RESEND_EMAIL_DOMAIN;
+  },
   get GOOGLE_CLIENT_ID(): string | undefined {
     return process.env.GOOGLE_CLIENT_ID;
   },

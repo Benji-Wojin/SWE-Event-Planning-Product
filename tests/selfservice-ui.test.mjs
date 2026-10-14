@@ -73,7 +73,7 @@ function render(component, props, values = []) {
   return { tree: nodes(component(props)), state };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-test('in-app invite is available with no Gmail sender and optional email setup stays collapsed', async () => {
+test('in-app invite is available without email delivery and no Gmail setup is offered', async () => {
   const previous = globalThis.fetch,
     calls = [];
   const team = {
@@ -96,11 +96,8 @@ test('in-app invite is available with no Gmail sender and optional email setup s
       (n) => n.type === 'button' && text(n) === 'Invite teammate',
     );
     assert.equal(submit.props.disabled, false);
-    const details = tree.find(
-      (n) =>
-        n.type === 'details' && text(n).includes('Optional email delivery'),
-    );
-    assert.equal(details.props.open, undefined);
+    assert.doesNotMatch(tree.map(text).join(''), /Connect invitation Gmail|Optional email delivery/);
+    assert.match(tree.map(text).join(''), /In-app invitations still work/);
     assert.doesNotMatch(tree.map(text).join(''), /Private site access/);
     globalThis.fetch = async (url, options) => {
       calls.push({ url, options });

@@ -1,5 +1,6 @@
 import { principal, body, HttpError, json, safe } from '@/lib/security';
 import { projectUser } from '@/lib/project-access';
+import { requireGmailEnabled } from '@/lib/gmail-policy';
 import {
   beginSenderOAuth,
   disconnectSender,
@@ -8,8 +9,9 @@ import {
 export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   return safe(async () => {
-    const user = await projectUser(await principal(), request),
-      input = await body(request);
+    const input = await body(request);
+    if (input.action !== 'disconnect') requireGmailEnabled();
+    const user = await projectUser(await principal(), request);
     if (user.role !== 'admin')
       throw new HttpError(403, 'Only the organizer can manage the sender.');
     if (Object.keys(input).some((key) => key !== 'action'))

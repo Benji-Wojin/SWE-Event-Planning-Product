@@ -2,6 +2,8 @@ import { env } from '@/lib/runtime';
 import { HttpError, unseal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
 import { mailbox, readySender } from './invitation-sender';
+import { GMAIL_ENABLED } from './release-policy';
+import { readyInvitationEmail } from './invitation-email';
 
 type DeliveryRow = {
   status: string;
@@ -34,7 +36,7 @@ export async function deliveryView(inviteId: string): Promise<DeliveryView> {
     sender: row?.sender || '',
     issue:
       status === 'unknown'
-        ? 'Sending could not be confirmed. Check the sender’s Sent folder before revoking or replacing this invitation.'
+        ? 'Sending could not be confirmed. Contact support to check delivery before replacing this invitation. The in-app invitation still works.'
         : row?.issue || '',
     retryAt: row ? row.attempted_at + 60000 : 0,
     canRetry:
@@ -75,7 +77,7 @@ export async function sendInvitation(
     );
   const previous = await deliveryView(id);
   if (['sent', 'sending', 'unknown'].includes(previous.status)) return;
-  const sender = await readySender(user.userId);
+  const sender = GMAIL_ENABLED ? await readySender(user.userId) : readyInvitationEmail();
   if (sender.email !== expectedSender)
     throw new HttpError(
       409,
@@ -93,7 +95,7 @@ export async function sendInvitation(
     '/join?invite=' + encodeURIComponent(token),
     env.GATHER_ORIGIN,
   ).href;
-  const text = `${user.displayName.slice(0, 150)} invited you to ${name} on Weft.\n\nAccept invitation:\n${link}\n\nSign in with ${invite.email}. This link expires ${new Date(invite.expires_at).toISOString().slice(0, 10)} and only works for this address.\n\nIf the private site says you do not have access, ask the organizer to add you in the site's sharing settings.\n\nIf you weren't expecting this invitation, you can ignore it.`;
+  const text = `${user.displayName.slice(0, 150)} invited you to ${name} on Weft.\n\nAccept invitation:\n${link}\n\nSign in with ${invite.email}. This link expires ${new Date(invite.expires_at).toISOString().slice(0, 10)} and only works for this address.\n\nIf you weren't expecting this invitation, you can ignore it.`;
   // The subject is fixed and body is MIME-encoded. Names cannot inject headers.
   const mime = [
     `From: Weft <${sender.email}>`,
@@ -122,8 +124,9 @@ export async function sendInvitation(
     env.DB.prepare(`UPDATE invitation_deliveries SET status='sending',lease=?,attempts=attempts+1,attempted_at=?,sender=?,issue=''
       WHERE invite_id=? AND status IN ('unsent','failed') AND attempts<3 AND attempted_at<?
       AND EXISTS (SELECT 1 FROM project_invites WHERE id=? AND project_id=? AND created_by=? AND revoked_at='' AND accepted_by='' AND expires_at>?)
-      AND EXISTS (SELECT 1 FROM gmail_senders WHERE user_id=? AND generation=?)
-      AND (SELECT COUNT(*) FROM invitation_send_attempts WHERE user_id=? AND started_at>?)<50`).bind(
+      ${GMAIL_ENABLED ? 'AND EXISTS (SELECT 1 FROM gmail_senders WHERE user_id=? AND generation=?)' : ''}
+      AND (SELECT COUNT(*) FROM invitation_send_attempts WHERE user_id=? AND started_at>?)<50
+      ${GMAIL_ENABLED ? '' : 'AND (SELECT COUNT(*) FROM invitation_send_attempts WHERE started_at>?)<90 AND (SELECT COUNT(*) FROM invitation_send_attempts WHERE started_at>?)<2900'}`).bind(
       lease,
       now,
       sender.email,
@@ -133,10 +136,10 @@ export async function sendInvitation(
       user.projectId,
       user.userId,
       now,
-      user.userId,
-      sender.generation,
+      ...(GMAIL_ENABLED ? [user.userId, sender.generation] : []),
       user.userId,
       now - 86400000,
+      ...(GMAIL_ENABLED ? [] : [now - 86400000, now - 30 * 86400000]),
     ),
     env.DB.prepare(`INSERT INTO invitation_send_attempts (id,user_id,invite_id,started_at)
       SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM invitation_deliveries WHERE invite_id=? AND lease=? AND status='sending')`).bind(
@@ -153,7 +156,7 @@ export async function sendInvitation(
     if (['sent', 'sending', 'unknown'].includes(current.status)) return;
     throw new HttpError(
       409,
-      'Could not send. Reload Team access; wait at least a minute between attempts. Limits: 3 attempts per invitation and 50 in 24 hours.',
+      'Could not send. Wait at least a minute between attempts. Sending limits may have been reached; the in-app invitation still works.',
     );
   }
   let status = 'unknown',
@@ -161,14 +164,18 @@ export async function sendInvitation(
     issue = '';
   try {
     const response = await fetch(
-      'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+      GMAIL_ENABLED ? 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send' : 'https://api.resend.com/emails',
       {
         method: 'POST',
         headers: {
           Authorization: 'Bearer ' + sender.accessToken,
           'Content-Type': 'application/json',
+          ...(!GMAIL_ENABLED ? { 'Idempotency-Key': 'weft-invite/' + id + '/' + lease } : {}),
         },
-        body: JSON.stringify({ raw }),
+        body: JSON.stringify(GMAIL_ENABLED ? { raw } : {
+          from: `Weft <${sender.email}>`, to: [invite.email],
+          reply_to: 'gathertemporary@gmail.com', subject: 'Weft project invitation', text,
+        }),
         signal: AbortSignal.timeout(20000),
       },
     );
@@ -184,11 +191,17 @@ export async function sendInvitation(
     } else if (
       response.status >= 400 &&
       response.status < 500 &&
-      response.status !== 408
+      response.status !== 408 && response.status !== 409
     ) {
       status = 'failed';
       issue =
-        response.status === 401
+        !GMAIL_ENABLED
+          ? response.status === 429
+            ? 'Email sending is temporarily limited. Try later; the in-app invitation still works.'
+            : response.status === 401 || response.status === 403
+              ? 'Invitation email is unavailable. Contact support; the in-app invitation still works.'
+              : 'The email service rejected this invitation. Check the recipient address before retrying.'
+          : response.status === 401
           ? 'Reconnect the invitation Gmail account, then retry.'
           : response.status === 429
             ? 'Gmail limited sending. Wait and retry later.'
@@ -215,6 +228,6 @@ export async function sendInvitation(
   if (saved.meta.changes !== 1)
     throw new HttpError(
       409,
-      'Sending could not be confirmed. Reload Team access and check Gmail before trying again.',
+      'Sending could not be confirmed. Reload Team access and contact support before trying again.',
     );
 }

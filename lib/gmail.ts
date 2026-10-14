@@ -1,4 +1,5 @@
 import { env } from '@/lib/runtime';
+import { requireGmailEnabled } from './gmail-policy';
 import { HttpError, nonce, seal, unseal } from './security';
 export const redirectUri = () => env.GATHER_ORIGIN + '/api/gmail/callback';
 export async function configuration(prepare = false): Promise<{
@@ -67,6 +68,7 @@ export async function saveConnection(
     );
 }
 export async function tokenRequest(params: Record<string, string>) {
+  requireGmailEnabled();
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -84,6 +86,7 @@ export async function tokenRequest(params: Record<string, string>) {
   return result;
 }
 export async function gmail(userId: string, path: string) {
+  requireGmailEnabled();
   let conn = await connection(userId);
   if (!conn) throw new HttpError(409, 'Connect Gmail first.');
   if (conn.expiresAt < Date.now() + 60000) {
@@ -117,6 +120,7 @@ export class GmailError extends HttpError {
   }
 }
 export async function gmailWithToken(accessToken: string, path: string) {
+  requireGmailEnabled();
   const response = await fetch(
     'https://gmail.googleapis.com/gmail/v1/users/me/' + path,
     { headers: { Authorization: 'Bearer ' + accessToken }, signal: AbortSignal.timeout(10000) },
@@ -126,6 +130,7 @@ export async function gmailWithToken(accessToken: string, path: string) {
   return (await response.json()) as any;
 }
 export async function beginOAuth(userId: string, projectId?: string) {
+  requireGmailEnabled();
   const config = await configuration(true);
   if (!config) throw new HttpError(409, 'Gmail is not set up for this app yet. Contact the app owner.');
   const state = nonce(),

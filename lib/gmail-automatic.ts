@@ -1,4 +1,5 @@
 import { env } from '@/lib/runtime';
+import { requireGmailEnabled } from './gmail-policy';
 import { HttpError, seal, unseal } from './security';
 import {
   connection,
@@ -139,6 +140,7 @@ async function ownedContexts(
 }
 
 export async function configureAutomatic(userId: string, input: any) {
+  requireGmailEnabled();
   if (input.enabled === false) {
     await env.DB.prepare(
       "UPDATE gmail_automation SET enabled=0,generation=?,lease='',lease_until=0 WHERE user_id=?",
@@ -321,6 +323,7 @@ function incoming(message: any, mailbox: string) {
 }
 
 export async function runAutomatic(userId: string) {
+  requireGmailEnabled();
   const lease = crypto.randomUUID(),
     now = Date.now();
   const claimed =
@@ -665,6 +668,7 @@ export async function runAutomatic(userId: string) {
 }
 
 export async function runDueMailboxes() {
+  requireGmailEnabled();
   const due =
     await env.DB.prepare(`SELECT a.user_id FROM gmail_automation a JOIN gmail_connections c ON c.user_id=a.user_id
     WHERE a.enabled=1 AND a.connection_generation=c.generation AND a.next_run<=? AND a.lease_until<=?

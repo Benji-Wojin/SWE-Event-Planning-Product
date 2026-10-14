@@ -41,7 +41,7 @@
     actions.append(retry, back, login);
     boot.replaceChildren(heading, detail, actions);
   }
-  window.GatherMode = Object.freeze({ demo, actor, projectId, projectUrl, privateUrl: path => demo
+  window.GatherMode = Object.freeze({ demo, actor, projectId, projectUrl, gmailEnabled: false, privateUrl: path => demo
     ? endpoint + '&resource=private&action=' + encodeURIComponent(path)
     : projectUrl('/api/private/' + path) });
   let snapshot;
