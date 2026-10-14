@@ -180,6 +180,69 @@ export async function eventPlanTests({
     return snap;
   }
   try {
+    await t.test('saving a new brief does not consume quota or prevent the first generation', async () => {
+      const project = await setup();
+      const saved = await post(project, save(await read(project), { brief }));
+      assert.equal(saved.status, 200);
+      assert.equal(sqlite.prepare("SELECT count(*) AS n FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().n, 0);
+      const response = await post(project, generation(await saved.json()));
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).status, 'ready');
+      assert.equal(calls.length, 1);
+    });
+    await t.test('cooldown is not reported as exhausted daily quota and rejected retries cost nothing', async () => {
+      const project = await setup();
+      const snap = await ready(project);
+      const input = generation(snap);
+      const response = await post(project, input);
+      assert.equal(response.status, 429);
+      const message = (await response.json()).error;
+      assert.match(message, /Wait \d+ seconds/);
+      assert.doesNotMatch(message, /daily|limit|credits/);
+      assert.equal(calls.length, 1);
+      assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count, 1);
+      cool(project);
+      assert.equal((await post(project, input)).status, 200);
+      assert.equal(calls.length, 2);
+    });
+    await t.test('a save racing generation is a recoverable conflict, not a quota error', async () => {
+      const project = await setup();
+      const saved = await post(project, save(await read(project), { brief }));
+      const snap = await saved.json();
+      const original = db.batch;
+      db.batch = async statements => {
+        sqlite.prepare('UPDATE plan_drafts SET revision=revision+1 WHERE workspace_id=?').run(project);
+        return original.call(db, statements);
+      };
+      try {
+        const response = await post(project, generation(snap));
+        assert.equal(response.status, 409);
+        assert.match((await response.json()).error, /Reload/);
+        assert.equal(calls.length, 0);
+        assert.equal(sqlite.prepare("SELECT count(*) AS n FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().n, 0);
+      } finally { db.batch = original; }
+      assert.equal((await ready(project)).status, 'ready');
+    });
+    await t.test('another in-flight generation reports progress without charging a rejected request', async () => {
+      const project = await setup();
+      let release, entered;
+      const started = new Promise(resolve => { entered = resolve; });
+      globalThis.fetch = () => {
+        calls.push('pending');
+        entered();
+        return new Promise(resolve => { release = resolve; });
+      };
+      const pending = post(project, generation(await read(project)));
+      await started;
+      try {
+        const response = await post(project, generation(await read(project)));
+        assert.equal(response.status, 409);
+        assert.match((await response.json()).error, /already generating/);
+        assert.equal(calls.length, 1);
+        assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count, 1);
+      } finally { release(success(output())); }
+      assert.equal((await pending).status, 200);
+    });
     await t.test('AI planning accepts event-local today while account quotas remain UTC', async () => {
       const project = await setup();
       const RealDate = globalThis.Date;
@@ -803,7 +866,10 @@ export async function eventPlanTests({
         cool(project);
         const response = await post(project, generation(await read(project)));
         assert.equal(response.status, 429);
-        assert.match((await response.json()).error, /limit is 5/);
+        const message = (await response.json()).error;
+        assert.match(message, /daily limit is 5/);
+        assert.match(message, /including failed attempts/);
+        assert.match(message, /midnight UTC/);
         assert.equal(calls.length, 5);
       } finally { globalThis.__gatherEnv.GATHER_OWNER_EMAIL = configuredOwner; }
     });

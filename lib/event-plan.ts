@@ -317,10 +317,38 @@ async function generate(c: Context, input: any) {
       current.request_hash === fingerprint
     )
       return snapshot(c);
-    throw new HttpError(
-      429,
-      `Wait a minute between plans. Your limit is ${c.dailyLimit} AI drafts per day across all projects.`,
-    );
+    // A failed reservation can be a race or cooldown, not just an exhausted allowance.
+    // Only report a daily limit after checking the account's actual counter.
+    const usage = await env.DB.prepare('SELECT count FROM resource_usage WHERE id=?')
+      .bind(quota)
+      .first<{ count: number }>();
+    let reason: string, status: number, message: string;
+    const checkedAt = Date.now();
+    if ((usage?.count || 0) >= c.dailyLimit) {
+      reason = 'daily_limit';
+      status = 429;
+      message = `Your daily limit is ${c.dailyLimit} AI generation attempts across all projects, including failed attempts. It resets at midnight UTC. You can still save your brief and plan manually.`;
+    } else if (current?.lease_until > checkedAt) {
+      reason = 'in_progress';
+      status = 409;
+      message = 'A plan is already generating. Reload the saved draft to check its progress.';
+    } else if ((current?.revision || 0) !== input.revision) {
+      reason = 'draft_changed';
+      status = 409;
+      message = 'The draft changed while this request was starting. Reload the saved draft before generating again.';
+    } else if (current?.started_at + 60000 > checkedAt) {
+      reason = 'cooldown';
+      status = 429;
+      const seconds = Math.ceil((current.started_at + 60000 - checkedAt) / 1000);
+      message = `Wait ${seconds} seconds before generating another plan. This request did not use an attempt.`;
+    } else {
+      reason = 'reservation_changed';
+      status = 409;
+      message = 'The draft changed while this request was starting. Reload the saved draft and try again.';
+    }
+    // Fixed labels only: never log project content, identities, or credentials.
+    console.warn('weft_plan_reservation_rejected', { reason });
+    throw new HttpError(status, message);
   }
   try {
     const output = await generateEventPlan(generationContext, env.GROQ_API_KEY);
