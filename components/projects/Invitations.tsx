@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest } from '@/app/team/team-client';
+import { accountRequest } from '@/lib/account-request';
 import { Button } from '@/components/ui/button';
 import type { PendingInvitation } from '@/lib/team';
 export function Invitations() {

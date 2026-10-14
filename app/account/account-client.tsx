@@ -2,7 +2,7 @@
 /* Full navigations keep platform sign-in/out outside client routing. */
 /* oxlint-disable next/no-html-link-for-pages */
 import { useEffect, useState } from 'react';
-import { accountRequest } from '../team/team-client';
+import { accountRequest } from '@/lib/account-request';
 import { PrivacyLinks } from '@/components/privacy-links';
 export function AccountClient() {
   const [account, setAccount] = useState<{

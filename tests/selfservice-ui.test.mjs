@@ -96,7 +96,10 @@ test('in-app invite is available without email delivery and no Gmail setup is of
       (n) => n.type === 'button' && text(n) === 'Invite in Weft',
     );
     assert.equal(submit.props.disabled, false);
-    assert.doesNotMatch(tree.map(text).join(''), /Connect invitation Gmail|Optional email delivery/);
+    assert.doesNotMatch(
+      tree.map(text).join(''),
+      /Connect invitation Gmail|Optional email delivery/,
+    );
     assert.match(tree.map(text).join(''), /In-app invitations still work/);
     assert.doesNotMatch(tree.map(text).join(''), /Private site access/);
     globalThis.fetch = async (url, options) => {
@@ -248,6 +251,72 @@ test('invitation accept uses its ID once and navigates only after server confirm
     assert.deepEqual(destinations, []);
     assert.equal(failed.state[1], 'Invitation expired.');
     assert.equal(failed.state[0].length, 1);
+  } finally {
+    Object.assign(globalThis, previous);
+    delete globalThis.__selfserviceState;
+  }
+});
+
+test('signup recovers from a stalled request without retrying or navigating', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const previous = { fetch: globalThis.fetch, window: globalThis.window };
+  const calls = [],
+    destinations = [];
+  try {
+    globalThis.window = {
+      location: { assign: (url) => destinations.push(url) },
+    };
+    globalThis.fetch = (url, options) => {
+      calls.push({ url, options });
+      return new Promise(() => {});
+    };
+    const { tree, state } = render(CreateAccountButton, { returnTo: '/' });
+    tree.find((n) => n.type === 'button').props.onClick();
+    assert.equal(state[0], true);
+    t.mock.timers.tick(30_001);
+    await settle();
+    assert.equal(state[0], false, 'the signup button must stop spinning');
+    assert.match(state[1], /may have completed.*[Rr]eload/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.signal.aborted, true);
+    assert.deepEqual(destinations, []);
+  } finally {
+    Object.assign(globalThis, previous);
+    delete globalThis.__selfserviceState;
+  }
+});
+
+test('accepting an invite recovers when the response body stalls', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const previous = { fetch: globalThis.fetch, window: globalThis.window };
+  const destinations = [];
+  let calls = 0;
+  try {
+    globalThis.window = {
+      location: { assign: (url) => destinations.push(url) },
+    };
+    globalThis.fetch = async () => {
+      calls++;
+      return { ok: true, json: () => new Promise(() => {}) };
+    };
+    const invite = {
+      id: 'fixture-invite',
+      name: 'QA event',
+      organizer: 'Organizer',
+      expiresAt: Date.now() + 86400000,
+    };
+    const { tree, state } = render(Invitations, {}, [[invite], '', false, '']);
+    tree
+      .find((n) => n.type === 'button' && text(n) === 'Join project')
+      .props.onClick();
+    await settle();
+    t.mock.timers.tick(30_001);
+    await settle();
+    assert.equal(state[3], '', 'the invitation action must stop spinning');
+    assert.match(state[1], /may have completed.*[Rr]eload/);
+    assert.equal(calls, 1);
+    assert.deepEqual(destinations, []);
+    assert.equal(state[0].length, 1);
   } finally {
     Object.assign(globalThis, previous);
     delete globalThis.__selfserviceState;

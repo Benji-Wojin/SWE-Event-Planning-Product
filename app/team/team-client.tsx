@@ -5,33 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { TeamView } from '@/lib/team';
 import { GMAIL_ENABLED } from '@/lib/release-policy';
-export async function accountRequest<T>(
-  path: string,
-  input?: unknown,
-): Promise<T> {
-  const response = await fetch(path, {
-    method: input ? 'POST' : 'GET',
-    credentials: 'same-origin',
-    cache: 'no-store',
-    headers: input
-      ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
-      : {},
-    body: input ? JSON.stringify(input) : undefined,
-  });
-  const data: unknown = await response.json().catch(() => {
-    throw new Error('Could not reach Weft. Reload and try again.');
-  });
-  if (!response.ok)
-    throw new Error(
-      data &&
-        typeof data === 'object' &&
-        'error' in data &&
-        typeof data.error === 'string'
-        ? data.error
-        : 'Please try again.',
-    );
-  return data as T;
-}
+import { accountRequest } from '@/lib/account-request';
 export function TeamClient({ projectId }: { projectId: string }) {
   const [team, setTeam] = useState<TeamView | null>(null),
     [error, setError] = useState(''),

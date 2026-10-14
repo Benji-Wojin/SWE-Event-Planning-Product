@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { accountRequest } from '../team/team-client';
+import { accountRequest } from '@/lib/account-request';
 import type { InviteView } from '@/lib/team';
 export function JoinClient({ token }: { token: string }) {
   const [invite, setInvite] = useState<InviteView | null>(null),
