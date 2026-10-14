@@ -150,7 +150,7 @@ app = app
   );
 app = app.replace(
   '  setDrawer(false);\n  navigate',
-  `  window.addEventListener('gather-tool-updated',()=>{if(ui.pendingSave||ui.reviewDirty||(!$('#dialogBackdrop').hidden&&ui.dialogKind!=='thought'))showPendingUpdate();else {if(ui.view!=='details')render();refreshSuggestionSurfaces();}});
+  `  window.addEventListener('gather-tool-updated',()=>{if(canRefreshWorkspace())renderWorkspaceUpdate();else showPendingUpdate();});
   let inboxRefreshTimer;
   function startInboxRefresh(){if(!inboxRefreshTimer)inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);}
   startInboxRefresh();

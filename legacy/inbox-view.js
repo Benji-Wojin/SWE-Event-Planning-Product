@@ -75,17 +75,30 @@
     const warning=$('.stale-proposal',form);if(warning)warning.hidden=values.mode!=='update';
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
+  function canRefreshWorkspace() {
+    const dialogSafe=$('#dialogBackdrop').hidden||ui.dialogKind==='thought'||
+      (ui.dialogKind==='task'&&!hasUnsavedFields($('#dialog')));
+    return !document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&!ui.savingProposal&&dialogSafe&&
+      !document.activeElement?.matches('input,textarea,select');
+  }
+  function renderWorkspaceUpdate() {
+    // Private-record screens have their own viewing/locking lifecycle.
+    if(ui.view!=='details')render();
+    if(!$('#dialogBackdrop').hidden&&ui.dialogKind==='task'){
+      if(store.getState().tasks.some(task=>task.id===ui.detailId))taskDialog(ui.detailId);
+      else {closeDialog();toast('That task is no longer available.');}
+    }
+    if(ui.dialogKind==='thought')$('#dialogStaleNotice')?.remove();
+    refreshSuggestionSurfaces();
+  }
   async function refreshInbox(manual=false) {
     if(!store.refresh||ui.syncing||ui.pendingSave||document.hidden)return;
     ui.syncing=true;
     try {
-      const result=await store.refresh(()=>!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&($('#dialogBackdrop').hidden||ui.dialogKind==='thought')&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
-      if(result.changed){
-        // Private-record screens have their own viewing/locking lifecycle.
-        if(ui.view!=='details')render();
-        if(ui.dialogKind==='thought')$('#dialogStaleNotice')?.remove();
-      }
-      if(result.changed||result.suggestionsChanged){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
+      const result=await store.refresh(canRefreshWorkspace);
+      if(result.changed)renderWorkspaceUpdate();
+      else if(result.suggestionsChanged)refreshSuggestionSurfaces();
+      if(manual&&(result.changed||result.suggestionsChanged))toast('Plan updated.');
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!result.pending;
       if(result.pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
       else if(manual&&!result.changed&&!result.suggestionsChanged)toast('You have the latest updates.');

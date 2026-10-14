@@ -270,7 +270,7 @@
     if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';focusable($('#sidebar'))[0]?.focus();}
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
-  function openDialog(title,body,footer='',wide=false,kind='') {
+  function openDialog(title,body,footer='',wide=false,kind='',focus='input') {
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     ui.dialogKind=kind;
@@ -281,7 +281,7 @@
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
     document.body.style.overflow='hidden';
-    requestAnimationFrame(()=>{const controls=focusable($('#dialog'));(controls.find(el=>el.matches('input,select,textarea'))||controls[0]||$('#dialog')).focus();});
+    if(focus!=='none')requestAnimationFrame(()=>{const controls=focusable($('#dialog'));(focus==='dialog'?$('#dialog'):controls.find(el=>el.matches('input,select,textarea'))||controls[0]||$('#dialog')).focus();});
   }
   function closeDialog() {
     $('#dialogBackdrop').hidden=true;
@@ -351,6 +351,9 @@
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
+    const resourceContext=JSON.stringify([id,task.title,task.category]);
+    const keptResources=sameTask&&ui.resourceContext===resourceContext?$('.task-resources',$('#dialog')):null;
+    ui.resourceContext=resourceContext;
     const drafts=sameTask?taskDrafts(submittedForm):[];
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
     const previousFocus=sameTask?document.activeElement:null;
@@ -373,17 +376,22 @@
       ${window.GatherResourcesUI?.markup()||''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
       ${priorityMarkup(task,organizer)}
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task',sameTask?'none':'dialog');
+    // Keep loaded links, their disclosure/focus and in-flight search when only
+    // progress changes. A different task title/category needs a fresh lookup.
+    if(keptResources)$('.task-resources',$('#dialog'))?.replaceWith(keptResources);
     if(sameTask){
       for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
-      requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
+      requestAnimationFrame(()=>{if(!restoreFocus(previousFocus,$('#dialog')))$('#dialog').focus({preventScroll:true});$('#dialog').scrollTop=scroll;});
     }
     syncRecoveryForms();
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
-    if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
-    window.GatherResourcesUI?.mount(id,$('#dialog'));
+    if(!keptResources){
+      if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
+      window.GatherResourcesUI?.mount(id,$('#dialog'));
+    }
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
