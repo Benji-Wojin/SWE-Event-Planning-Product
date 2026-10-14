@@ -22,7 +22,10 @@ test('privacy page renders without authentication, a database, or remote data', 
   const tree = nodes(PrivacyPage());
   assert.equal(tree.filter(n => n.type === 'h1').length, 1);
   assert.match(metadata.title, /Privacy policy/);
-  assert.ok(tree.some(n => n.type === 'a' && n.props.href === 'mailto:gathertemporary@gmail.com'));
+  const contacts = tree.filter(n => n.type === 'a' && n.props.href?.startsWith('mailto:'));
+  assert.ok(contacts.length >= 3);
+  assert.ok(contacts.every(n => n.props.href.split('?')[0] === 'mailto:support@weftplan.com'));
+  assert.ok(contacts.some(n => n.props.href === 'mailto:support@weftplan.com?subject=Weft%20privacy%20request'));
   assert.ok(tree.some(n => n.type === 'a' && n.props.href === 'https://myaccount.google.com/connections'));
   const source = await readFile('app/privacy/page.tsx', 'utf8');
   assert.doesNotMatch(source, /getAuthenticatedUser|requireProject|fetch\(|from ['"]@\/auth/);
@@ -32,6 +35,9 @@ test('privacy page renders without authentication, a database, or remote data', 
 });
 
 test('privacy and support links are reachable from public and connected-account entry points', async () => {
+  const links = await readFile('components/privacy-links.tsx', 'utf8');
+  assert.match(links, /href="mailto:support@weftplan\.com"/);
+  assert.doesNotMatch(links, /gathertemporary@gmail\.com/);
   for (const file of ['components/welcome.tsx', 'app/signup/page.tsx', 'app/signin-with-chatgpt/page.tsx', 'app/settings/settings-client.tsx', 'app/account/account-client.tsx']) {
     assert.match(await readFile(file, 'utf8'), /<PrivacyLinks\s*\/>/, file);
   }
