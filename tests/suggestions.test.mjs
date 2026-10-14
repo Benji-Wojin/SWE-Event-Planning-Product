@@ -14,7 +14,7 @@ async function hosted(initial) {
   let redirected=false;
   const window = {top:{location:{replace(){redirected=true;}}},addEventListener(){}};
   const document = { getElementById:()=>({}), querySelectorAll: () => [], querySelector:()=>null, body: { classList: { toggle() {} }, append() {},replaceChildren(){} }, createElement: () => ({style:{}}) };
-  await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone,
+  await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone, AbortController, setTimeout, clearTimeout,
     fetch: async (_, options) => {const value=await respond(options);return {ok:!value.httpStatus,status:value.httpStatus||200,json:async()=>value};} });
   assert.ok(window.GatherStore, 'Hosted store initialized');
   return { store: window.GatherStore.createStore(), respond: fn => { respond = fn; },redirected:()=>redirected };

@@ -28,7 +28,8 @@ function start(response, { oldDocument = false } = {}) {
   const window = { top: { location: { replace(value) { redirect = value; } } }, addEventListener(type, fn) { listeners[type] = fn; } };
   const run = vm.runInNewContext(source, { window, document,
     location: { search: '?project=new-project', origin: 'https://weft.example', reload() { reloads++; } },
-    URL, URLSearchParams, structuredClone, fetch: () => response,
+    URL, URLSearchParams, structuredClone, AbortController, setTimeout, clearTimeout,
+    fetch: (...args) => typeof response === 'function' ? response(...args) : response,
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
     reloads: () => reloads, redirect: () => redirect };
@@ -46,6 +47,77 @@ test('prepared hosted HTML shows loading instead of demo identity or interactive
   assert.match(readFileSync('legacy/styles.css', 'utf8'), /\[hidden\]\{display:none!important\}/);
   const app = readFileSync('public/gather-assets/app.js', 'utf8');
   assert.ok(app.indexOf('navigate(navigation.initial());') < app.indexOf("new Event('gather-workspace-ready')"));
+});
+
+test('a stalled workspace load exposes retry without revealing sample data', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal;
+  const h = start((_, options) => {
+    signal = options.signal;
+    return new Promise(() => {});
+  });
+  t.mock.timers.tick(30_001);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.boot.attributes['aria-busy'], 'false');
+  assert.equal(h.shell.hidden, true);
+  assert.match(text(h.boot), /too long/);
+  assert.equal(signal.aborted, true);
+  h.boot.children[2].children[0].listeners.click();
+  assert.equal(h.reloads(), 1);
+});
+
+test('a stalled task save rejects without discarding the snapshot or blocking a later refresh', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const write = deferred();
+  let posts = 0, signal, result;
+  let latest = state;
+  const h = start((_, options) => {
+    if (options.method === 'POST') { posts++; signal = options.signal; return write.promise; }
+    return Promise.resolve(success(latest));
+  });
+  await h.run;
+  const store = h.window.GatherStore.createStore();
+  store.addComment('fixture', 'The room is ready.').then(
+    () => { result = 'saved'; }, error => { result = error.message; },
+  );
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(30_001);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(result || '', /may have completed.*Reload/);
+  assert.equal(signal.aborted, true);
+  assert.equal(posts, 1);
+  assert.deepEqual(store.getState(), state.state);
+  latest = { ...state, revision: 3, state: { event: { name: 'Current plan' } } };
+  await store.refresh(() => true);
+  write.resolve(success({ ...state, revision: 2, state: { event: { name: 'Old response' } } }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(store.getState(), latest.state, 'late save response must not overwrite the refreshed plan');
+  assert.notEqual(result, 'saved');
+  assert.equal(posts, 1, 'no automatic resend');
+});
+
+test('a timed-out response body cannot redirect or clear the plan when it eventually arrives', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const body = deferred();
+  let reads = 0, result, signal;
+  const h = start((_, options) => {
+    signal = options.signal;
+    return Promise.resolve(++reads === 1 ? success(state)
+      : { ok: false, status: 401, json: () => body.promise });
+  });
+  await h.run;
+  const store = h.window.GatherStore.createStore();
+  store.refresh(() => true).catch(error => { result = error.message; });
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(30_001);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(result || '', /too long/);
+  assert.equal(signal.aborted, true);
+  body.resolve({ error: 'Old authentication response' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.window.top.location.href, undefined);
+  assert.equal(h.redirect(), undefined);
+  assert.deepEqual(store.getState(), state.state);
 });
 
 test('slow snapshot and app download keep shell hidden until initial render completes', async () => {

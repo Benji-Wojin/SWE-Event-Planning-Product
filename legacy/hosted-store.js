@@ -63,19 +63,44 @@
   }
   async function request(body) {
     if(accessLost)throw new Error('Project access changed. Return to Projects.');
-    const response = await fetch(endpoint, {
-      method: body ? 'POST' : 'GET',
-      headers: body
-        ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
-        : {},
-      body: body ? JSON.stringify(body) : undefined,
-      credentials: 'same-origin',
-      cache: 'no-store',
+    const controller = new AbortController();
+    const recovery = body
+      ? 'The action may have completed. Reload to check before trying again. Your unsaved text is unchanged.'
+      : 'Check your connection and try again.';
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error('Weft took too long to respond. ' + recovery));
+        controller.abort();
+      }, 30000);
     });
+    const transport = async () => {
+      try {
+        const response = await fetch(endpoint, {
+          method: body ? 'POST' : 'GET',
+          headers: body
+            ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
+            : {},
+          body: body ? JSON.stringify(body) : undefined,
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        return { response, result: await response.json() };
+      } catch {
+        throw new Error('Weft could not complete the request. ' + recovery);
+      }
+    };
+    let received;
+    try {
+      // Bound both headers and body. A late response must never publish state,
+      // redirect, or release an uncertain save as a successful action.
+      received = await Promise.race([transport(), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+    const { response, result } = received;
     if (response.status === 401) window.top.location.href = signIn;
-    const result = await response.json().catch(() => {
-      throw new Error('Weft could not complete the request. Reload or sign in again.');
-    });
     if (!response.ok) {
       if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
       const error = new Error(result.error || 'Unable to save. Reload and try again.');
