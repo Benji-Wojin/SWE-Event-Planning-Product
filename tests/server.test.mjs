@@ -1782,29 +1782,97 @@ test('invitation sending rate limit is durable across projects and caps attempts
     assert.equal((await teamWrite(id,newSend('quota-new@example.com'))).status,409);assert.equal(calls,0);
   } finally {globalThis.fetch=original;sqlite.prepare("DELETE FROM invitation_send_attempts WHERE invite_id='quota-fixture'").run();}
 });
-test('import and sender cannot connect the same account in either order, including during commit',async()=>{
-  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch,originalDb=globalThis.__gatherEnv.DB;
-  let profileEmail=senderEmail;
-  globalThis.fetch=async path=>{
-    if(path==='https://oauth2.googleapis.com/token')return Response.json({access_token:'fresh',refresh_token:'refresh',expires_in:3600,scope:sendScope+' https://www.googleapis.com/auth/gmail.readonly'});
-    if(path==='https://openidconnect.googleapis.com/v1/userinfo')return Response.json({email:profileEmail,email_verified:true,sub:'verified-sub'});
-    if(path==='https://gmail.googleapis.com/gmail/v1/users/me/profile')return Response.json({emailAddress:profileEmail});
+test('same Gmail connects in either order with distinct consent, credentials and feature gates',async()=>{
+  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch;
+  const readScope='https://www.googleapis.com/auth/gmail.readonly';let flow='';
+  globalThis.fetch=async(path,options)=>{
+    if(path==='https://oauth2.googleapis.com/token') {
+      assert.ok(options.body.get('code_verifier'));
+      // Google may return a combined grant; the application still isolates features.
+      return Response.json({access_token:flow+'-token',refresh_token:flow+'-refresh',expires_in:3600,scope:sendScope+' '+readScope});
+    }
+    if(path==='https://openidconnect.googleapis.com/v1/userinfo')return Response.json({email:senderEmail,email_verified:true,sub:'verified-sub'});
+    if(path==='https://gmail.googleapis.com/gmail/v1/users/me/profile') {
+      assert.equal(options.headers.Authorization,'Bearer import-token');return Response.json({emailAddress:senderEmail});
+    }
+    if(path==='https://gmail.googleapis.com/gmail/v1/users/me/messages/send') {
+      assert.equal(options.headers.Authorization,'Bearer sender-token');return Response.json({id:'same-account-send'});
+    }
     throw new Error('unexpected provider path');
   };
-  const importState=async()=>new URL(await gmailCore.beginOAuth('owner-1')).searchParams.get('state');
   try {
-    assert.equal((await callback(await importState())).status,409);
-    profileEmail='imports@gmail.com';assert.equal((await callback((await startSender(id)).state)).status,409);
-    profileEmail=senderEmail;let raced=false;
-    const replacement=await security.seal({email:senderEmail,labelId:'race-import',accessToken:'racing-import'},'gmail:owner-1');
-    globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.includes('INSERT INTO gmail_senders')){const run=stmt.run;stmt.run=async()=>{raced=true;sqlite.prepare('UPDATE gmail_connections SET payload=? WHERE user_id=?').run(replacement,'owner-1');return run();};}return stmt;}};
-    const before=(await senderCore.senderConnection('owner-1')).storedPayload;
-    assert.equal((await callback((await startSender(id)).state)).status,409);assert.equal(raced,true);assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,before);
-    globalThis.__gatherEnv.DB=originalDb;profileEmail='new-import@gmail.com';raced=false;
-    const newSender=await security.seal({email:profileEmail,sub:'race-sub',accessToken:'racing-sender',refreshToken:'fixture',expiresAt:Date.now()+3600000},'gmail-sender:owner-1');
-    globalThis.__gatherEnv.DB={...db,prepare(sql){const stmt=db.prepare(sql);if(sql.includes('INSERT INTO gmail_connections (user_id,payload,generation) SELECT')){const run=stmt.run;stmt.run=async()=>{raced=true;sqlite.prepare('UPDATE gmail_senders SET payload=? WHERE user_id=?').run(newSender,'owner-1');return run();};}return stmt;}};
-    assert.equal((await callback(await importState())).status,409);assert.equal(raced,true);assert.equal((await gmailCore.connection('owner-1')).storedPayload,replacement);
-  } finally {globalThis.fetch=original;globalThis.__gatherEnv.DB=originalDb;}
+    for(const order of [['import','sender'],['sender','import']]) {
+      sqlite.prepare('DELETE FROM gmail_connections WHERE user_id=?').run('owner-1');
+      sqlite.prepare('DELETE FROM gmail_senders WHERE user_id=?').run('owner-1');
+      for(const [index,purpose] of order.entries()) {
+        flow=purpose;
+        const otherTable=purpose==='import'?'gmail_senders':'gmail_connections';
+        const before=sqlite.prepare('SELECT * FROM '+otherTable+' WHERE user_id=?').get('owner-1');
+        const url=purpose==='import'?new URL(await gmailCore.beginOAuth('owner-1')):(await startSender(id)).url;
+        assert.deepEqual(new Set(url.searchParams.get('scope').split(' ')),new Set(purpose==='import'?[readScope]:['openid','email',sendScope]));
+        assert.notEqual(url.searchParams.get('include_granted_scopes'),'true');
+        assert.equal(url.searchParams.get('code_challenge_method'),'S256');
+        const state=url.searchParams.get('state');
+        assert.equal((await callback(state)).status,303);assert.equal((await callback(state)).status,400);
+        assert.deepEqual(sqlite.prepare('SELECT * FROM '+otherTable+' WHERE user_id=?').get('owner-1'),before);
+        if(index===0) {
+          if(purpose==='import')assert.equal((await teamWrite(id,newSend(crypto.randomUUID()+'@example.com'))).status,409);
+          else await assert.rejects(gmailCore.gmail('owner-1','profile'),/Connect Gmail first/);
+        }
+      }
+      const imported=await gmailCore.connection('owner-1'),sender=await senderCore.senderConnection('owner-1');
+      assert.equal(imported.email,sender.email);assert.equal(imported.accessToken,'import-token');assert.equal(sender.accessToken,'sender-token');
+      assert.equal(imported.refreshToken,'import-refresh');assert.equal(sender.refreshToken,'sender-refresh');
+      await assert.rejects(security.unseal(imported.storedPayload,'gmail-sender:owner-1'));
+      assert.equal((await gmailCore.gmail('owner-1','profile')).emailAddress,senderEmail);
+      assert.equal((await teamWrite(id,newSend(crypto.randomUUID()+'@example.com'))).status,200);
+    }
+  } finally {globalThis.fetch=original;}
+});
+
+test('same-account disconnects remove only their own connection and pending consent without provider revocation',async()=>{
+  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch;
+  const importStart=async()=>new URL(await gmailCore.beginOAuth('owner-1')).searchParams.get('state');
+  const imported=await gmailCore.connection('owner-1');assert.equal(imported.email,senderEmail);
+  const sender=await senderCore.senderConnection('owner-1');
+  let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('disconnect must not call Google');};
+  try {
+    const importState=await importStart(),senderState=(await startSender(id)).state;
+    assert.equal((await gmailApi.POST(request('/api/gmail/disconnect',{}))).status,200);
+    assert.equal(await gmailCore.connection('owner-1'),null);
+    assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,sender.storedPayload);
+    assert.equal((await callback(importState)).status,400);
+    assert.ok(sqlite.prepare('SELECT 1 FROM sender_oauth_states WHERE id=?').get(senderState));
+    sqlite.prepare('INSERT INTO gmail_connections (user_id,payload,generation) VALUES (?,?,?)').run('owner-1',imported.storedPayload,imported.generation);
+    const newImportState=await importStart();
+    await senderCore.disconnectSender('owner-1');
+    assert.equal(await senderCore.senderConnection('owner-1'),null);
+    assert.equal((await gmailCore.connection('owner-1')).storedPayload,imported.storedPayload);
+    assert.equal((await callback(senderState)).status,400);
+    assert.ok(sqlite.prepare('SELECT 1 FROM oauth_states WHERE id=?').get(newImportState));
+    assert.equal(calls,0);
+  } finally {globalThis.fetch=original;}
+});
+
+test('missing required scopes cannot replace either same-account connection, including import refresh',async()=>{
+  const id=await newTeamProject();await senderFixture();const original=globalThis.fetch;
+  const imported=await gmailCore.connection('owner-1'),sender=await senderCore.senderConnection('owner-1');
+  let scope=sendScope,calls=0;
+  globalThis.fetch=async path=>{calls++;assert.equal(path,'https://oauth2.googleapis.com/token');return Response.json({access_token:'wrong-scope',refresh_token:'wrong-refresh',expires_in:3600,scope});};
+  try {
+    const state=new URL(await gmailCore.beginOAuth('owner-1')).searchParams.get('state');
+    assert.equal((await callback(state)).status,400);
+    scope='https://www.googleapis.com/auth/gmail.readonly';
+    assert.equal((await callback((await startSender(id)).state)).status,400);
+    assert.equal((await gmailCore.connection('owner-1')).storedPayload,imported.storedPayload);
+    assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,sender.storedPayload);
+    await gmailCore.saveConnection('owner-1',{...imported,expiresAt:0});
+    const expired=(await gmailCore.connection('owner-1')).storedPayload;scope=sendScope;
+    await assert.rejects(gmailCore.gmail('owner-1','profile'),/approve read access/);
+    assert.equal((await gmailCore.connection('owner-1')).storedPayload,expired);
+    assert.equal((await senderCore.senderConnection('owner-1')).storedPayload,sender.storedPayload);
+    assert.equal(calls,3);
+  } finally {globalThis.fetch=original;}
 });
 
 test('scheduled activities persist in their project, preserve task state and reject forged/stale edits',async()=>{

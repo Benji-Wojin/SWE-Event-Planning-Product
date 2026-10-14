@@ -91,7 +91,7 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
           <p className="text-sm">
             {status?.connected
               ? `Connected: ${status.account}`
-              : 'Connect your Gmail to bring project emails into Weft. This connection is read-only: it cannot send, change, or delete email.'}
+              : 'Connect your Gmail to bring project emails into Weft. Imports request read-only access and never send, change, or delete email.'}
           </p>
           {status && !status.configured && <p className="text-sm text-muted-foreground">The app owner needs to finish Google setup before you can connect.</p>}
           <Button
@@ -304,11 +304,15 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
             </p>
             <details className="border-t pt-4">
               <summary className="cursor-pointer text-sm">
-                Disconnect Gmail
+                Disconnect imports
               </summary>
               <p className="my-3 text-sm">
-                Revokes Google access for this OAuth application. Already
-                imported private emails and approved task updates remain stored.
+                Stops imports and automatic checks and removes their stored tokens.
+                Your invitation sender stays connected. Already imported private
+                emails and approved task updates remain stored. To revoke all
+                Google permissions, remove Weft in your{' '}
+                <a className="underline" href="https://myaccount.google.com/connections">Google account connections</a>;
+                this can also revoke invitation sending.
               </p>
               <Button
                 variant="destructive"
@@ -318,12 +322,12 @@ export function GmailSettings({ projectId }: { projectId?: string }) {
                     await gmailRequest('disconnect', {});
                     await refresh();
                     setNotice(
-                      'Gmail access revoked. Existing imported records were kept.',
+                      'Imports disconnected. Invitation sending is unchanged. Existing imported records were kept.',
                     );
                   })
                 }
               >
-                Revoke access &amp; disconnect
+                Disconnect imports
               </Button>
             </details>
           </CardContent>

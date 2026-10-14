@@ -168,9 +168,6 @@ export async function GET(request: Request) {
       const profile = await gmailWithToken(token.access_token, 'profile');
       if (typeof profile.emailAddress !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(profile.emailAddress))
         throw new HttpError(502, 'Google could not confirm the Gmail account. Start again in Gmail settings.');
-      const sender = await senderConnection(user.userId);
-      if (sender?.email.toLowerCase() === profile.emailAddress.toLowerCase())
-        throw new HttpError(409, 'The invitation sender must stay separate. Choose another Gmail account for imports.');
       const generation = crypto.randomUUID();
       const payload = await seal(
         {
@@ -186,8 +183,8 @@ export async function GET(request: Request) {
       );
       const savedConnection = await env.DB.batch([
         env.DB.prepare(
-          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) AND COALESCE((SELECT payload FROM gmail_senders WHERE user_id=?),\'\')=? ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
-        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload, user.userId, sender?.storedPayload || ''),
+          'INSERT INTO gmail_connections (user_id,payload,generation) SELECT user_id,?,? FROM oauth_states WHERE id=? AND user_id=? AND expires>? AND EXISTS (SELECT 1 FROM settings WHERE id=? AND payload=?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation',
+        ).bind(payload, generation, state, user.userId, Date.now(), 'google-oauth', config.storedPayload),
         env.DB.prepare(
           'DELETE FROM oauth_states WHERE id=? AND user_id=?',
         ).bind(state, user.userId),
@@ -435,26 +432,14 @@ export async function POST(request: Request) {
       return json({ saved: true, id: (result.result as any).id });
     }
     if (action === 'disconnect') {
-      const conn = await connection(user.userId);
-      if (conn) {
-        const response = await fetch('https://oauth2.googleapis.com/revoke', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            token: conn.refreshToken || conn.accessToken,
-          }),
-        });
-        if (!response.ok && response.status !== 400)
-          throw new HttpError(
-            502,
-            'Google could not revoke access. Try again, or revoke it in your Google account.',
-          );
-      }
-      if (conn) await env.DB.prepare('DELETE FROM gmail_connections WHERE user_id=? AND generation=?')
-        .bind(user.userId, conn.generation).run();
-      await env.DB.prepare('DELETE FROM oauth_states WHERE user_id=?')
-        .bind(user.userId)
-        .run();
+      // Google revocation affects the whole app grant, including invitations.
+      // Disconnect only imports here, atomically invalidating delayed callbacks.
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM gmail_connections WHERE user_id=?').bind(user.userId),
+        env.DB.prepare('DELETE FROM oauth_states WHERE user_id=?').bind(user.userId),
+        env.DB.prepare("UPDATE gmail_automation SET enabled=0,generation=?,lease='',lease_until=0 WHERE user_id=?")
+          .bind(crypto.randomUUID(), user.userId),
+      ]);
       return json({ disconnected: true });
     }
     throw new HttpError(404, 'Not found.');

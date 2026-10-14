@@ -1,0 +1,12 @@
+# Keep private local evidence, credentials, and generated caches out of uploads.
+work/
+outputs/
+.env*
+!.env.example
+AGENTS.md
+*.tsbuildinfo
+.next/
+.wrangler/
+.vinext/
+.git/
+node_modules/

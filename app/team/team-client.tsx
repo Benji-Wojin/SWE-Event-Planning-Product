@@ -187,11 +187,11 @@ export function TeamClient({ projectId }: { projectId: string }) {
             <p className="break-all text-sm">
               {team.sender.connected
                 ? 'Sending from ' + team.sender.email
-                : 'In-app invitations work without Gmail. Connect a separate sender only if you also want to send invitation emails.'}
+                : 'In-app invitations work without Gmail. Connect Gmail here to also send invitation emails.'}
             </p>
             <p className="text-sm text-muted-foreground">
-              Used for invitations across your projects. Separate from your
-              email imports.
+              You can use the same Gmail as your imports. Sending requires its
+              own approval and connection; importing never enables sending.
             </p>
             {!team.sender.configured ? (
               <a
@@ -230,18 +230,16 @@ export function TeamClient({ projectId }: { projectId: string }) {
               </div>
             )}
             <details className="text-sm">
-              <summary className="cursor-pointer">One-time setup</summary>
+              <summary className="cursor-pointer">Permissions and disconnecting</summary>
               <p className="mt-2 text-muted-foreground">
-                Create a separate Gmail account, then connect it here. In your
-                Google Cloud app, enable Gmail API, add this account as a test
-                user, and add the gmail.send, openid and email scopes. Your
-                existing Google client and callback URL can be reused. You
-                approve sending access; no Gmail password is stored in Weft.
+                Choose a Gmail account and approve sending access. No Google
+                Cloud setup or Gmail password is needed. Weft stores the sender
+                connection separately and uses it only for invitations you request.
               </p>
               <p className="mt-2 text-muted-foreground">
-                Google testing-mode authorization may need reconnecting after
-                seven days. Disconnect removes Weft’s stored tokens; you can
-                also revoke access in your Google account.
+                Disconnect sender removes its stored tokens without disconnecting
+                imports. Google may group permissions for the same account;
+                removing Weft in your Google account can revoke both connections.
               </p>
             </details>
           </details>

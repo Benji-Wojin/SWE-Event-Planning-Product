@@ -948,27 +948,39 @@ export function gmailAutomaticTests({
     }
   });
 
-  test('delayed disconnect cannot delete a replacement Gmail connection', async () => {
+  test('disconnect removes imports locally, cancels automatic checks and keeps private records', async () => {
     await fixture();
-    globalThis.fetch = async (url) => {
-      assert.equal(url, 'https://oauth2.googleapis.com/revoke');
-      sqlite
-        .prepare('UPDATE gmail_connections SET generation=? WHERE user_id=?')
-        .run('replacement-generation', 'owner-1');
-      return new Response('', { status: 200 });
-    };
+    provider();
+    assert.equal((await automaticCore.runAutomatic('owner-1')).imported,1);
+    const before=privateRows();assert.equal(before.length,1);
+    const generation=sqlite.prepare('SELECT generation FROM gmail_automation WHERE user_id=?').get('owner-1').generation;
+    let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('disconnect must not revoke the shared Google grant');};
     try {
       assert.equal(
         (await gmailApi.POST(request('/api/gmail/disconnect', {}))).status,
         200,
       );
-      assert.equal(
-        (await gmailCore.connection('owner-1')).generation,
-        'replacement-generation',
-      );
+      assert.equal(await gmailCore.connection('owner-1'),null);
+      const job=sqlite.prepare('SELECT * FROM gmail_automation WHERE user_id=?').get('owner-1');
+      assert.equal(job.enabled,0);assert.equal(job.lease,'');assert.notEqual(job.generation,generation);
+      assert.deepEqual(privateRows(),before);
+      await automaticCore.runAutomatic('owner-1');assert.equal(calls,0);
     } finally {
       globalThis.fetch = realFetch;
       delete globalThis.__gatherEnv.GROQ_API_KEY;
     }
+  });
+
+  test('automatic imports reject a refreshed send-only grant without storing it or calling AI',async()=>{
+    await fixture();
+    await gmailCore.saveConnection('owner-1',{...await gmailCore.connection('owner-1'),expiresAt:0});
+    const before=(await gmailCore.connection('owner-1')).storedPayload;
+    let calls=0;globalThis.fetch=async url=>{calls++;assert.equal(url,'https://oauth2.googleapis.com/token');return Response.json({access_token:'send-only',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.send'});};
+    try {
+      const result=await automaticCore.runAutomatic('owner-1');
+      assert.equal(result.status,'reconnect');assert.equal(calls,1);
+      assert.equal((await gmailCore.connection('owner-1')).storedPayload,before);
+      assert.equal(privateRows().length,0);
+    }finally{globalThis.fetch=realFetch;delete globalThis.__gatherEnv.GROQ_API_KEY;}
   });
 }

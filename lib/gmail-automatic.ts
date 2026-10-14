@@ -368,6 +368,8 @@ export async function runAutomatic(userId: string) {
         token.expires_in <= 0
       )
         throw new HttpError(502, 'Gmail token refresh failed.');
+      if (token.scope && !String(token.scope).split(' ').includes('https://www.googleapis.com/auth/gmail.readonly'))
+        throw new HttpError(401, 'Reconnect Gmail imports to approve read access.');
       conn = {
         ...conn,
         accessToken: token.access_token,

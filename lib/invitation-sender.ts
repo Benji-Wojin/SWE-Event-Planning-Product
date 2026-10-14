@@ -1,5 +1,5 @@
 import { env } from '@/lib/runtime';
-import { configuration, connection, redirectUri, tokenRequest } from './gmail';
+import { configuration, redirectUri, tokenRequest } from './gmail';
 import { HttpError, nonce, seal, unseal } from './security';
 import { projectUser, type ProjectUser, type User } from './project-access';
 
@@ -182,12 +182,6 @@ export async function finishSenderOAuth(user: User, url: URL, onProject?: (proje
       400,
       'Google could not verify this email address. Connect a verified Gmail account.',
     );
-  const imported = await connection(user.userId);
-  if (imported?.email?.toLowerCase() === profile.email.toLowerCase())
-    throw new HttpError(
-      409,
-      'Choose your separate Weft Gmail account, not the mailbox connected for importing.',
-    );
   const payload = await seal(
     {
       accessToken: token.access_token,
@@ -203,7 +197,6 @@ export async function finishSenderOAuth(user: User, url: URL, onProject?: (proje
     env.DB.prepare(`INSERT INTO gmail_senders (user_id,payload,generation)
       SELECT user_id,?,? FROM sender_oauth_states WHERE id=? AND user_id=? AND expires>?
       AND EXISTS (SELECT 1 FROM settings WHERE id='google-oauth' AND payload=?)
-      AND COALESCE((SELECT payload FROM gmail_connections WHERE user_id=?),'')=?
       ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload,generation=excluded.generation`).bind(
       payload,
       nonce(),
@@ -211,8 +204,6 @@ export async function finishSenderOAuth(user: User, url: URL, onProject?: (proje
       user.userId,
       Date.now(),
       config.storedPayload,
-      user.userId,
-      imported?.storedPayload || '',
     ),
     env.DB.prepare(
       'DELETE FROM sender_oauth_states WHERE id=? AND user_id=?',

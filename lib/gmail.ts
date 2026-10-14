@@ -96,6 +96,9 @@ export async function gmail(userId: string, path: string) {
       refresh_token: conn.refreshToken,
       grant_type: 'refresh_token',
     });
+    if (!token.access_token || !Number.isFinite(token.expires_in) || token.expires_in <= 0 ||
+        (token.scope && !String(token.scope).split(' ').includes('https://www.googleapis.com/auth/gmail.readonly')))
+      throw new HttpError(409, 'Reconnect Gmail imports to approve read access.');
     conn = {
       ...conn,
       accessToken: token.access_token,
