@@ -1,6 +1,6 @@
 'use client';
 import { useRef, useState } from 'react';
-import { accountRequest } from '../team/team-client';
+import { accountRequest } from '@/lib/account-request';
 import { Button } from '@/components/ui/button';
 export function CreateAccountButton({ returnTo }: { returnTo: string }) {
   const pending = useRef(false);
