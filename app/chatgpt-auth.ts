@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getAuthenticatedUser, safeRelativeReturnPath, type WeftUser } from '@/auth';
+import { hasBetaAccess } from '@/lib/beta-access';
 
 // Compatibility exports for the existing app. Identity now comes from Google OAuth,
 // never from the Sites-only oai-authenticated-* headers on a public Vercel request.
@@ -15,7 +16,10 @@ export async function requireChatGPTUser(
   returnTo: string,
 ): Promise<ChatGPTUser> {
   const user = await getChatGPTUser();
-  if (user) return user;
+  if (user) {
+    if (!await hasBetaAccess(user)) redirect('/beta');
+    return user;
+  }
 
   redirect(chatGPTSignInPath(returnTo));
 }

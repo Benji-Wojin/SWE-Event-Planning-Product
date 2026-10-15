@@ -16,8 +16,14 @@ before(async () => {
     },
     outdir: directory, bundle: true, platform: 'node', format: 'esm',
     plugins: [{ name: 'auth-test-runtime', setup(b) {
+      b.onResolve({ filter: /^@\/lib\/runtime$/ }, () => ({ path: 'runtime', namespace: 'mock' }));
       b.onResolve({ filter: /^(next-auth(?:\/providers\/google)?|next\/navigation|next\/headers)$/ }, args => ({ path: args.path, namespace: 'mock' }));
       b.onLoad({ filter: /.*/, namespace: 'mock' }, args => ({ loader: 'js', contents: {
+        'runtime': `export const env = {
+          get WEFT_PRIVATE_BETA() { return globalThis.__betaMode; },
+          GATHER_OWNER_EMAIL: 'owner@example.com', WEFT_BETA_EMAILS: 'allowed@example.com',
+          DB: { prepare: () => ({ bind: () => ({ first: async () => globalThis.__betaExisting ? {found:1} : null }) }) }
+        };`,
         'next-auth': `export async function getServerSession() {
           globalThis.__authSessionCalls++;
           if (globalThis.__authSessionError) throw new Error('sensitive failure');
@@ -47,6 +53,16 @@ beforeEach(() => {
   globalThis.__authSessionError = false;
   globalThis.__authHandlerCalls = 0;
   globalThis.__authHandlerError = false;
+  globalThis.__betaMode = 'false';
+  globalThis.__betaExisting = false;
+});
+
+test('protected page redirects a verified but unapproved beta account without a sign-in loop', async () => {
+  globalThis.__betaMode = 'true';
+  globalThis.__authSession = { weftUser: user() };
+  await assert.rejects(compatibility.requireChatGPTUser('/project'), error => error.path === '/beta');
+  globalThis.__betaExisting = true;
+  assert.deepEqual(await compatibility.requireChatGPTUser('/project'), user());
 });
 
 const profile = () => ({ sub: '12345', email: 'PERSON@example.com', email_verified: true, name: 'Example Person' });

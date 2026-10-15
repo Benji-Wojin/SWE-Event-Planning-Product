@@ -9,6 +9,8 @@ let bucketConfiguration = '';
 // Keep provider initialization behind getters. Next.js imports server modules
 // during a build, when production credentials need not be available.
 export const env = {
+  get WEFT_PRIVATE_BETA(): string | undefined { return process.env.WEFT_PRIVATE_BETA; },
+  get WEFT_BETA_EMAILS(): string | undefined { return process.env.WEFT_BETA_EMAILS; },
   get RESEND_API_KEY(): string | undefined {
     return process.env.RESEND_API_KEY;
   },

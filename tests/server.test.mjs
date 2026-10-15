@@ -1990,6 +1990,41 @@ test('shared completion enforces prerequisites before reports, verification and 
   assert.equal((await (await demoRead()).json()).revision,demo.revision);
 });
 
+test('private beta preserves existing accounts and blocks unapproved registration and invitation access', async () => {
+  const originalUser = globalThis.__gatherUser;
+  const previousMode = globalThis.__gatherEnv.WEFT_PRIVATE_BETA;
+  const previousList = globalThis.__gatherEnv.WEFT_BETA_EMAILS;
+  globalThis.__gatherEnv.WEFT_PRIVATE_BETA = 'true';
+  globalThis.__gatherEnv.WEFT_BETA_EMAILS = ' APPROVED@example.com, other@example.com ';
+  try {
+    owner();
+    assert.equal((await security.principal()).email, 'owner@example.com');
+    const identity = { userId:'beta-test-user',email:'outsider@example.com',displayName:'Fictional tester' };
+    globalThis.__gatherUser = identity;
+    assert.equal((await signupApi.POST(request('/api/signup', {}))).status, 403);
+    await assert.rejects(security.principal(), error => error.status === 403 && /private beta/.test(error.message));
+    assert.equal((await joinApi.GET(new Request('https://gather.example/api/join?invite='+'a'.repeat(43)))).status, 403);
+    assert.equal((await joinApi.POST(request('/api/join', {token:'a'.repeat(43)}))).status, 403);
+    assert.equal(sqlite.prepare('SELECT * FROM members WHERE user_id=?').get(identity.userId), undefined);
+    for (const email of ['notapproved@example.com','approved@example.com.attacker.test']) {
+      globalThis.__gatherUser = {...identity,email};
+      assert.equal((await signupApi.POST(request('/api/signup', {}))).status, 403);
+    }
+    globalThis.__gatherUser = {...identity,email:'approved@example.com'};
+    assert.equal((await signupApi.POST(request('/api/signup', {}))).status, 200);
+    assert.equal((await security.principal()).role, 'member');
+    globalThis.__gatherEnv.WEFT_BETA_EMAILS = '';
+    assert.equal((await security.principal()).email, 'approved@example.com');
+    globalThis.__gatherUser = {...identity,userId:'beta-test-new',email:'new@example.com'};
+    globalThis.__gatherEnv.WEFT_PRIVATE_BETA = 'false';
+    assert.equal((await signupApi.POST(request('/api/signup', {}))).status, 200);
+  } finally {
+    globalThis.__gatherUser = originalUser;
+    globalThis.__gatherEnv.WEFT_PRIVATE_BETA = previousMode;
+    globalThis.__gatherEnv.WEFT_BETA_EMAILS = previousList;
+  }
+});
+
 test('private starting plans',async t=>{
   await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,realRead,workspace,demoRead,demoWrite});
 });

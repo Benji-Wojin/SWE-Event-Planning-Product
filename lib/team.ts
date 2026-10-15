@@ -1,5 +1,6 @@
 import { env } from '@/lib/runtime';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { requireBetaAccess } from './security';
 import { HttpError, nonce, seal, unseal, type principal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
 import { mailbox, senderStatus } from './invitation-sender';
@@ -273,6 +274,7 @@ export async function changeTeam(
 async function invitation(token: unknown, invitationId?: unknown) {
   const user = await getChatGPTUser();
   if (!user) throw new HttpError(401, 'Sign in to accept this invitation.');
+  await requireBetaAccess(user);
   const byId = invitationId !== undefined;
   if (byId ? (token !== undefined || typeof invitationId !== 'string' || !/^[a-f0-9-]{36}$/.test(invitationId))
     : (typeof token !== 'string' || !/^[\w-]{43}$/.test(token)))

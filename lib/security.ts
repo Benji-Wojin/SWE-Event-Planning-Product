@@ -1,5 +1,10 @@
 import { env } from '@/lib/runtime';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { hasBetaAccess } from './beta-access';
+export async function requireBetaAccess(user: { userId: string; email: string }) {
+  if (!await hasBetaAccess(user))
+    throw new HttpError(403, 'Weft is in private beta. Contact support@weftplan.com to request access.');
+}
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -118,6 +123,7 @@ export async function unsealFile(value: ArrayBuffer, context: string) {
 export async function principal() {
   const user = await getChatGPTUser();
   if (!user) throw new HttpError(401, 'Sign in to Weft to continue.');
+  await requireBetaAccess(user);
   let member = await env.DB.prepare('SELECT * FROM members WHERE user_id=?')
     .bind(user.userId)
     .first<any>();
@@ -161,6 +167,7 @@ export async function administrator() {
 export async function registerAccount() {
   const user = await getChatGPTUser();
   if (!user) throw new HttpError(401, 'Sign in to create your Weft account.');
+  await requireBetaAccess(user);
   const owner = !!env.GATHER_OWNER_EMAIL &&
     user.email.toLowerCase() === env.GATHER_OWNER_EMAIL.toLowerCase();
   await env.DB.prepare(
