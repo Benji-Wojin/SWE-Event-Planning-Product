@@ -2025,6 +2025,107 @@ test('private beta preserves existing accounts and blocks unapproved registratio
   }
 });
 
+test('owner invitations admit new beta users through links and in-app signup without broadening project access', async () => {
+  const previousMode = globalThis.__gatherEnv.WEFT_PRIVATE_BETA;
+  const previousList = globalThis.__gatherEnv.WEFT_BETA_EMAILS;
+  globalThis.__gatherEnv.WEFT_PRIVATE_BETA = 'true';
+  globalThis.__gatherEnv.WEFT_BETA_EMAILS = '';
+  try {
+    const project = await newTeamProject('Fictional beta invitations');
+    const invite = await invitePerson(project, 'beta-link@example.com');
+    asTeammate('beta-link@example.com.attacker.test', 'beta-wrong-user');
+    assert.equal((await joinApi.GET(getRequest('/api/join?invite=' + invite.token))).status, 403);
+    assert.equal((await joinApi.POST(request('/api/join', {token:invite.token}))).status, 403);
+    asTeammate('BETA-LINK@EXAMPLE.COM', 'beta-link-user');
+    assert.equal((await joinApi.GET(getRequest('/api/join?invite=' + invite.token))).status, 200);
+    assert.equal(sqlite.prepare('SELECT 1 FROM members WHERE user_id=?').get('beta-link-user'), undefined);
+    assert.equal((await joinApi.POST(request('/api/join', {token:invite.token}))).status, 200);
+    assert.equal((await security.principal()).role, 'member');
+    assert.equal((await realRead(project)).status, 200);
+    assert.equal((await realRead('main')).status, 404);
+    assert.equal((await privateApi.GET(getRequest('/api/private/records?project=' + project))).status, 403);
+    // Admission persists after account creation; it does not grant invitation powers.
+    assert.equal((await teamWrite(project, {action:'invite',email:'chain@example.com',requestId:crypto.randomUUID()})).status, 403);
+    const second = await invitePerson(project, 'beta-internal@example.com');
+    asTeammate('beta-internal@example.com', 'beta-internal-user');
+    assert.equal((await signupApi.POST(request('/api/signup', {}))).status, 200);
+    assert.equal((await realRead(project)).status, 404);
+    const pending = await (await invitationsApi.GET()).json();
+    assert.ok(pending.invitations.some(item => item.id === second.id));
+    assert.equal((await invitationsApi.POST(request('/api/invitations', {action:'accept',id:second.id}))).status, 200);
+    assert.equal((await realRead(project)).status, 200);
+    assert.equal((await security.principal()).role, 'member');
+    owner();
+    await realRead('main');
+    const legacy = await invitePerson('main', 'beta-legacy@example.com');
+    asTeammate('beta-legacy@example.com', 'beta-legacy-user');
+    assert.equal((await joinApi.POST(request('/api/join', {token:legacy.token}))).status, 200);
+    assert.equal((await realRead('main')).status, 200);
+    assert.equal((await realRead(project)).status, 404);
+    sqlite.prepare('UPDATE project_invites SET revoked_at=? WHERE id=?').run(new Date().toISOString(),legacy.id);
+    assert.equal((await security.principal()).role, 'member');
+  } finally {
+    globalThis.__gatherEnv.WEFT_PRIVATE_BETA = previousMode;
+    globalThis.__gatherEnv.WEFT_BETA_EMAILS = previousList;
+    owner();
+  }
+});
+
+test('beta admission rejects stale invitations and invitations from other project organizers', async () => {
+  const previousMode = globalThis.__gatherEnv.WEFT_PRIVATE_BETA;
+  const previousList = globalThis.__gatherEnv.WEFT_BETA_EMAILS;
+  const previousOwner = globalThis.__gatherEnv.GATHER_OWNER_EMAIL;
+  globalThis.__gatherEnv.WEFT_PRIVATE_BETA = 'true';
+  globalThis.__gatherEnv.WEFT_BETA_EMAILS = '';
+  try {
+    const project = await newTeamProject('Fictional beta validity checks');
+    const invite = await invitePerson(project, 'beta-pending@example.com');
+    const recipient = {userId:'beta-pending-user',email:'beta-pending@example.com',displayName:'Fictional tester'};
+    const allowed = () => security.requireBetaAccess(recipient);
+    const denied = () => assert.rejects(allowed(), error => error.status === 403);
+    await allowed();
+    for (const [column, value, reset] of [
+      ['expires_at', Date.now() - 1, Date.now() + 86400000],
+      ['revoked_at', new Date().toISOString(), ''],
+      ['accepted_by', 'another-user', ''],
+    ]) {
+      sqlite.prepare(`UPDATE project_invites SET ${column}=? WHERE id=?`).run(value, invite.id);
+      await denied();
+      sqlite.prepare(`UPDATE project_invites SET ${column}=? WHERE id=?`).run(reset, invite.id);
+    }
+    for (const email of ['', 'owner@example.com.attacker.test']) {
+      globalThis.__gatherEnv.GATHER_OWNER_EMAIL = email;
+      await denied();
+    }
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL = previousOwner;
+    // A self-service organizer's project-local admin role is not the app owner.
+    sqlite.prepare('INSERT INTO members(user_id,actor_id,email,name,role) VALUES(?,?,?,?,?)')
+      .run('beta-other-owner','u_beta_other','beta-other-owner@example.com','Fictional organizer','member');
+    sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run('beta-other-owner',project);
+    await denied(); // An invitation whose creator no longer owns the project is invalid.
+    sqlite.prepare('UPDATE project_invites SET created_by=? WHERE id=?').run('beta-other-owner',invite.id);
+    await denied();
+    // Matching owner email alone cannot substitute for the global owner identity.
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL = 'beta-other-owner@example.com';
+    await denied();
+    globalThis.__gatherUser = recipient;
+    assert.equal((await signupApi.POST(request('/api/signup', {}))).status,403);
+    assert.equal((await joinApi.POST(request('/api/join', {token:invite.token}))).status,403);
+    assert.equal(sqlite.prepare('SELECT 1 FROM members WHERE user_id=?').get(recipient.userId),undefined);
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL = previousOwner;
+    sqlite.prepare('UPDATE project_invites SET created_by=? WHERE id=?').run('owner-1',invite.id);
+    sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run('owner-1',project);
+    await allowed();
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+    await denied();
+  } finally {
+    globalThis.__gatherEnv.WEFT_PRIVATE_BETA = previousMode;
+    globalThis.__gatherEnv.WEFT_BETA_EMAILS = previousList;
+    globalThis.__gatherEnv.GATHER_OWNER_EMAIL = previousOwner;
+    owner();
+  }
+});
+
 test('private starting plans',async t=>{
   await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,realRead,workspace,demoRead,demoWrite});
 });

@@ -22,7 +22,8 @@ before(async () => {
         'runtime': `export const env = {
           get WEFT_PRIVATE_BETA() { return globalThis.__betaMode; },
           GATHER_OWNER_EMAIL: 'owner@example.com', WEFT_BETA_EMAILS: 'allowed@example.com',
-          DB: { prepare: () => ({ bind: () => ({ first: async () => globalThis.__betaExisting ? {found:1} : null }) }) }
+          DB: { prepare: sql => ({ bind: () => ({ first: async () =>
+            (sql.includes('project_invites') ? globalThis.__betaInvite : globalThis.__betaExisting) ? {found:1} : null }) }) }
         };`,
         'next-auth': `export async function getServerSession() {
           globalThis.__authSessionCalls++;
@@ -55,6 +56,7 @@ beforeEach(() => {
   globalThis.__authHandlerError = false;
   globalThis.__betaMode = 'false';
   globalThis.__betaExisting = false;
+  globalThis.__betaInvite = false;
 });
 
 test('protected page redirects a verified but unapproved beta account without a sign-in loop', async () => {
@@ -63,6 +65,15 @@ test('protected page redirects a verified but unapproved beta account without a 
   await assert.rejects(compatibility.requireChatGPTUser('/project'), error => error.path === '/beta');
   globalThis.__betaExisting = true;
   assert.deepEqual(await compatibility.requireChatGPTUser('/project'), user());
+});
+
+test('protected invitation page admits an owner-invited beta identity before account creation', async () => {
+  globalThis.__betaMode = 'true';
+  globalThis.__authSession = { weftUser: user() };
+  globalThis.__betaInvite = true;
+  assert.deepEqual(await compatibility.requireChatGPTUser('/join?invite=fictional'), user());
+  globalThis.__betaInvite = false;
+  await assert.rejects(compatibility.requireChatGPTUser('/join?invite=fictional'), error => error.path === '/beta');
 });
 
 const profile = () => ({ sub: '12345', email: 'PERSON@example.com', email_verified: true, name: 'Example Person' });
