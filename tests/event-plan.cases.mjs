@@ -261,20 +261,16 @@ export async function eventPlanTests({
     await t.test(
       'strict provider and review validation rejects malformed dates, fields, cycles and hidden completion',
       () => {
-        const variants = planGeneration.planRequestBody({}).response_format.json_schema.schema.properties.items.items.anyOf;
-        assert.equal(variants.length, 2);
-        const preparation = variants.find(v => v.properties.kind.enum[0] === 'preparation');
-        const activity = variants.find(v => v.properties.kind.enum[0] === 'activity');
-        for (const variant of variants) {
-          assert.equal(variant.additionalProperties, false);
-          assert.deepEqual([...variant.required].sort(), Object.keys(variant.properties).sort());
-          assert.deepEqual(Object.entries(variant.properties).filter(([,field]) => field.enum?.some(value => value !== '')).map(([name]) => name), ['kind']);
-          for (const category of planGeneration.planCategories) assert.ok(variant.properties.category.description.includes(category));
-        }
-        assert.deepEqual(preparation.properties.start.enum, ['']);
-        assert.deepEqual(preparation.properties.end.enum, ['']);
-        assert.deepEqual(activity.properties.dueDate.enum, ['']);
-        assert.match(activity.properties.start.description, /YYYY-MM-DDTHH:mm/);
+        const item = planGeneration.planRequestBody({}).response_format.json_schema.schema.properties.items.items;
+        assert.equal(item.anyOf, undefined);
+        assert.equal(item.additionalProperties, false);
+        assert.deepEqual([...item.required].sort(), Object.keys(item.properties).sort());
+        assert.deepEqual(item.properties.kind.enum, ['preparation','activity']);
+        assert.deepEqual(item.properties.category.enum, planGeneration.planCategories);
+        assert.match(item.properties.start.description, /YYYY-MM-DDTHH:mm/);
+        assert.match(item.properties.start.description, /empty for preparation/);
+        assert.match(item.properties.end.description, /empty for preparation/);
+        assert.match(item.properties.dueDate.description, /empty for activities/);
         for (const kind of planGeneration.eventKinds)
           assert.equal(
             planGeneration.parseBrief({ ...brief, kind }, '2030-10-04').kind,
@@ -560,6 +556,84 @@ export async function eventPlanTests({
       }
       assert.throws(() => planGeneration.planRequestBody({ oversized: 'x'.repeat(10000) }), /context_limit/);
     });
+    await t.test('provider missing-notes rejection recovers one validated draft and persists it without retrying', async () => {
+      const project = await setup();
+      const generated = output();
+      delete generated.assumptions;
+      let attempts = 0;
+      globalThis.fetch = async () => {
+        attempts++;
+        return Response.json({error:{code:'json_validate_failed',failed_generation:JSON.stringify(generated)}},{status:400});
+      };
+      const response = await post(project, generation(await read(project)));
+      const snap = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(snap.status, 'ready');
+      assert.equal(attempts, 1);
+      assert.deepEqual(snap.draft.assumptions, []);
+      assert.deepEqual(snap.draft.questions, generated.questions);
+      assert.equal(snap.draft.items.length, generated.items.length);
+      assert.deepEqual((await read(project)).draft, snap.draft);
+      assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count, 1);
+    });
+    await t.test('optional notes recovery never accepts malformed tasks, provider errors or partial output', async () => {
+      const context = {event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-09-01'};
+      const missing = () => { const plan = output(); delete plan.questions; delete plan.assumptions; return plan; };
+      for (const value of [
+        {...missing(), assumptions:null},
+        {...missing(), completed:true},
+        {...missing(), items:[]},
+        {...missing(), items:[{...baseItem,dueDate:'2030-02-30'}]},
+        {...missing(), items:[{...baseItem,dependsOn:['unknown']}]},
+        {...missing(), items:[{...baseItem,completed:true}]},
+        {...missing(), items:[{...baseItem,title:undefined}]},
+        {...missing(), items:[{...baseItem,dependsOn:undefined}]},
+        output(),
+      ]) {
+        globalThis.fetch = async () => Response.json({error:{code:'json_validate_failed',failed_generation:JSON.stringify(value)}},{status:400});
+        await assert.rejects(planGeneration.generateEventPlan(context, 'test-only-placeholder'));
+      }
+      for (const [status, code, content] of [
+        [401,'json_validate_failed',JSON.stringify(missing())],
+        [429,'json_validate_failed',JSON.stringify(missing())],
+        [500,'json_validate_failed',JSON.stringify(missing())],
+        [400,'invalid_request_error',JSON.stringify(missing())],
+        [400,'json_validate_failed','{"items": ['],
+        [400,'json_validate_failed','x'.repeat(96001)],
+      ]) {
+        globalThis.fetch = async () => Response.json({error:{code,failed_generation:content}},{status});
+        await assert.rejects(planGeneration.generateEventPlan(context, 'test-only-placeholder'));
+      }
+      for (const absent of ['questions','assumptions','both']) {
+        const plan = output();
+        if (absent !== 'questions') delete plan.assumptions;
+        if (absent !== 'assumptions') delete plan.questions;
+        provider(plan);
+        const result = await planGeneration.generateEventPlan(context, 'test-only-placeholder');
+        assert.ok(Array.isArray(result.questions) && Array.isArray(result.assumptions));
+        assert.equal(result.items.length, 3);
+      }
+    });
+    await t.test('missing optional date/location fields stay blank without inventing tasks or discarding invalid values', async () => {
+      const context = {event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-09-01'};
+      for (const status of [200,400]) {
+        const plan = output();
+        for (const item of plan.items) for (const key of ['dueDate','start','end','location']) delete item[key];
+        globalThis.fetch = async () => status === 200 ? success(plan) : Response.json({error:{code:'json_validate_failed',failed_generation:JSON.stringify(plan)}},{status});
+        const result = await planGeneration.generateEventPlan(context,'test-only-placeholder');
+        assert.equal(result.items.length, plan.items.length);
+        for (const [i,item] of result.items.entries()) {
+          for (const key of ['dueDate','start','end','location']) assert.equal(item[key],'');
+          assert.deepEqual(item.dependsOn,plan.items[i].dependsOn);
+          assert.equal(item.title,plan.items[i].title);
+        }
+      }
+      for (const bad of [null,42,{},'not-a-date']) {
+        const plan = output(); delete plan.assumptions; plan.items[0].dueDate=bad;
+        globalThis.fetch = async () => Response.json({error:{code:'json_validate_failed',failed_generation:JSON.stringify(plan)}},{status:400});
+        await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));
+      }
+    });
     await t.test('generation diagnostics contain fixed labels, never provider content or credentials', async () => {
       const warn = console.warn, logs = [];
       console.warn = (...args) => logs.push(args);
@@ -573,6 +647,12 @@ export async function eventPlanTests({
         provider({...output(),items:[{...baseItem,start:'PRIVATE_INVALID_VALUE'}]});
         await assert.rejects(planGeneration.generateEventPlan({}, 'test-only-placeholder'));
         assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'plan_validation',reason:'item_fields'}]);
+        globalThis.fetch = async () => Response.json({error:{code:'json_validate_failed',message:'PRIVATE_ERROR',failed_generation:'PRIVATE_MODEL_OUTPUT'}},{status:400});
+        await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'output_json',httpStatus:400,providerCode:'json_validate_failed',reason:'invalid_response'}]);
+        globalThis.fetch = async () => Response.json({error:{code:'PRIVATE_CODE',message:'PRIVATE_ERROR'}},{status:503});
+        await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'request',httpStatus:503,reason:'provider'}]);
       } finally { console.warn = warn; }
     });
     await t.test(
@@ -1070,6 +1150,39 @@ export async function eventPlanTests({
         );
       },
     );
+    // Explicit opt-in only: fixture identity + in-memory SQLite, never live user
+    // data. The key is supplied out-of-band and is never written or logged here.
+    if (process.env.WEFT_LIVE_PLAN_TEST === '1') {
+      await t.test('LIVE Groq fictional draft is validated, saved, reloaded and applied in isolated SQLite', async () => {
+        assert.ok(process.env.GROQ_API_KEY, 'Live smoke requires an explicitly supplied Groq key');
+        const project = await setup();
+        await change(project, 'completeSetup', [{date:'2027-02-01',timeZone:'Asia/Tokyo',location:'Japan',guestCount:6}]);
+        globalThis.__gatherEnv.GROQ_API_KEY = process.env.GROQ_API_KEY;
+        let requests = 0;
+        globalThis.fetch = async (url, options) => {
+          assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
+          assert.equal(++requests, 1, 'No automatic retry or alternate destination');
+          return originalFetch(url, options);
+        };
+        const response = await post(project, generation(await read(project), {
+          brief:{kind:'trip',description:'Fictional QA trip for six people: one week in Tokyo for shopping, sightseeing and meals, followed by one week skiing in Rusutsu. Include preparation and transfers. Nothing is booked.',endDate:'2027-02-14',startTime:'',endTime:''},
+        }));
+        assert.equal(response.status, 200);
+        const snap = await response.json();
+        assert.equal(snap.status, 'ready', snap.issue);
+        assert.ok(snap.draft.items.length >= 1);
+        assert.deepEqual((await read(project)).draft, snap.draft);
+        if (process.env.WEFT_LIVE_PLAN_CAPTURE === '1') {
+          const { writeFile } = await import('node:fs/promises');
+          await writeFile('work/live-plan-preview.json', JSON.stringify(snap), {mode:0o600});
+        }
+        const result = await post(project, approval(snap));
+        assert.equal(result.status, 200);
+        const state = (await (await realRead(project)).json()).state;
+        assert.equal(state.tasks.length, snap.draft.items.length);
+        console.info('LIVE fictional draft verified:', {items:snap.draft.items.length,requests,saved:true,reloaded:true,applied:true});
+      });
+    }
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete globalThis.__gatherEnv.GROQ_API_KEY;
