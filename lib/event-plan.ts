@@ -1,9 +1,17 @@
 import { env } from '@/lib/runtime';
 import { PLAN_AI_CONSENT_VERSION } from './groq';
-import { administrator, HttpError, isAppOwner, principal, seal, unseal } from './security';
+import {
+  administrator,
+  HttpError,
+  isAppOwner,
+  principal,
+  seal,
+  unseal,
+} from './security';
 import { projectUser } from './project-access';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
+import { planSelection } from './plan-selection';
 import {
   generateEventPlan,
   planRequestBody,
@@ -43,6 +51,12 @@ async function hash(value: unknown) {
     .join('');
 }
 type Context = Awaited<ReturnType<typeof loadContext>>;
+const existingPlanTasks = (c: Context) =>
+  c.state.tasks.map((task: any) => ({
+    id: task.id,
+    title: task.title,
+    start: task.schedule?.start || '',
+  }));
 async function loadContext(request: Request) {
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
@@ -137,6 +151,7 @@ async function snapshot(c: Context) {
     event: c.state.event,
     members: c.state.members.filter((m: any) => m.active !== false),
     existingTaskCount: c.state.tasks.length,
+    existingTasks: existingPlanTasks(c),
     configured: !!env.GROQ_API_KEY,
     brief: data.brief,
     draft: data.draft,
@@ -265,7 +280,10 @@ async function generate(c: Context, input: any) {
   const generationContext = {
     ...c.source,
     brief,
-    today: (globalThis as any).GatherCalendar.dayKey(new Date(), c.state.event.timeZone),
+    today: (globalThis as any).GatherCalendar.dayKey(
+      new Date(),
+      c.state.event.timeZone,
+    ),
   };
   try {
     planRequestBody(generationContext);
@@ -319,7 +337,9 @@ async function generate(c: Context, input: any) {
       return snapshot(c);
     // A failed reservation can be a race or cooldown, not just an exhausted allowance.
     // Only report a daily limit after checking the account's actual counter.
-    const usage = await env.DB.prepare('SELECT count FROM resource_usage WHERE id=?')
+    const usage = await env.DB.prepare(
+      'SELECT count FROM resource_usage WHERE id=?',
+    )
       .bind(quota)
       .first<{ count: number }>();
     let reason: string, status: number, message: string;
@@ -331,20 +351,25 @@ async function generate(c: Context, input: any) {
     } else if (current?.lease_until > checkedAt) {
       reason = 'in_progress';
       status = 409;
-      message = 'A plan is already generating. Reload the saved draft to check its progress.';
+      message =
+        'A plan is already generating. Reload the saved draft to check its progress.';
     } else if ((current?.revision || 0) !== input.revision) {
       reason = 'draft_changed';
       status = 409;
-      message = 'The draft changed while this request was starting. Reload the saved draft before generating again.';
+      message =
+        'The draft changed while this request was starting. Reload the saved draft before generating again.';
     } else if (current?.started_at + 60000 > checkedAt) {
       reason = 'cooldown';
       status = 429;
-      const seconds = Math.ceil((current.started_at + 60000 - checkedAt) / 1000);
+      const seconds = Math.ceil(
+        (current.started_at + 60000 - checkedAt) / 1000,
+      );
       message = `Wait ${seconds} seconds before generating another plan. This request did not use an attempt.`;
     } else {
       reason = 'reservation_changed';
       status = 409;
-      message = 'The draft changed while this request was starting. Reload the saved draft and try again.';
+      message =
+        'The draft changed while this request was starting. Reload the saved draft and try again.';
     }
     // Fixed labels only: never log project content, identities, or credentials.
     console.warn('weft_plan_reservation_rejected', { reason });
@@ -352,12 +377,18 @@ async function generate(c: Context, input: any) {
   }
   try {
     const output = await generateEventPlan(generationContext, env.GROQ_API_KEY);
+    const reviewed = output.items.map((item) => ({
+      ...item,
+      owner: '',
+      included: true,
+    }));
+    const { matches } = planSelection(reviewed, existingPlanTasks(c));
     const draft = {
       ...output,
-      items: output.items.map((item) => ({
+      items: reviewed.map((item) => ({
         ...item,
         owner: '',
-        included: true,
+        included: matches.get(item.id)!.length === 0,
       })),
       generation: input.requestId,
       contextHash: c.contextHash,
@@ -453,40 +484,27 @@ async function applyDraft(c: Context, input: any) {
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
-  const selected = items.filter((item) => item.included),
-    selectedIds = new Set(selected.map((item) => item.id));
+  const { selected, reusable, missing, duplicates } = planSelection(
+    items,
+    existingPlanTasks(c),
+  );
   if (!selected.length)
     throw new HttpError(400, 'Select at least one item to add.');
-  if (
-    selected.some((item) => item.dependsOn.some((id) => !selectedIds.has(id)))
-  )
+  if (missing.length)
     throw new HttpError(
       400,
       'A selected task depends on an unchecked item. Include that item or remove the dependency.',
     );
-  const normalized = (value: string) =>
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .trim();
-  const signatures = new Set(
-    c.state.tasks.map(
-      (task: any) =>
-        normalized(task.title) + '|' + (task.schedule?.start || ''),
-    ),
-  );
-  const ids = new Map<string, string>();
+  const ids = new Map<string, string>(reusable);
+  const createdIds: string[] = [];
   try {
     for (const item of selected) {
-      const signature = normalized(item.title) + '|' + item.start;
-      if (signatures.has(signature))
+      if (duplicates.has(item.id))
         throw new Error(
           'A task named “' +
             item.title +
             '” already exists at this time. Uncheck or rename it.',
         );
-      signatures.add(signature);
       const task = c.store.addTask(
         {
           title: item.title,
@@ -512,6 +530,7 @@ async function applyDraft(c: Context, input: any) {
         'jack',
       );
       ids.set(item.id, task.id);
+      createdIds.push(task.id);
     }
     for (const item of selected)
       for (const prerequisite of item.dependsOn)
@@ -532,7 +551,7 @@ async function applyDraft(c: Context, input: any) {
   const receipt = {
     generation: input.generation,
     approvalHash,
-    taskIds: [...ids.values()],
+    taskIds: createdIds,
     appliedAt: new Date().toISOString(),
   };
   const payload = await seal(

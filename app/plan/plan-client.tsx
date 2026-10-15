@@ -6,6 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
+import { planSelection } from '@/lib/plan-selection';
 import {
   eventKinds,
   planCategories,
@@ -70,10 +71,11 @@ export function PlanReview({ query }: { query: string }) {
   const waiting = data?.status === 'generating',
     locked = busy || waiting,
     applied = !!data?.receipt;
-  const selected = items.filter((item) => item.included);
-  const missingDependencies = selected.some((item) =>
-    item.dependsOn.some((id) => !selected.some((other) => other.id === id)),
+  const { selected, reusable, matches, missing, duplicates } = planSelection(
+    items,
+    data?.existingTasks || [],
   );
+  const missingDependencies = missing.length > 0;
   function accept(result: any) {
     setData(result);
     setBrief(result.brief);
@@ -411,9 +413,15 @@ export function PlanReview({ query }: { query: string }) {
           </div>
           {data.draft.scheduleWarnings?.length > 0 && (
             <details className="rounded-lg border p-4 text-sm">
-              <summary className="cursor-pointer font-medium">Dates to review ({data.draft.scheduleWarnings.length})</summary>
+              <summary className="cursor-pointer font-medium">
+                Dates to review ({data.draft.scheduleWarnings.length})
+              </summary>
               <ul className="mt-2 list-disc space-y-2 pl-5">
-                {data.draft.scheduleWarnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+                {data.draft.scheduleWarnings.map(
+                  (warning: string, i: number) => (
+                    <li key={i}>{warning}</li>
+                  ),
+                )}
               </ul>
             </details>
           )}
@@ -499,6 +507,82 @@ export function PlanReview({ query }: { query: string }) {
                       />
                     </div>
                   </div>
+                  {!!matches.get(item.id)?.length && (
+                    <div className="space-y-2 text-sm" role="status">
+                      <p>
+                        {matches.get(item.id)!.length === 1
+                          ? 'Already in project. Leave unchecked to use the existing task for prerequisites. Its details will not change.'
+                          : 'Multiple matching tasks exist. Leave unchecked, then review any prerequisite links below.'}
+                      </p>
+                      {item.included && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-auto min-h-10 max-w-full whitespace-normal break-words text-left"
+                          onClick={() =>
+                            updateItem(item.id, { included: false })
+                          }
+                        >
+                          Skip existing task: {item.title}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  {duplicates.has(item.id) && !matches.get(item.id)?.length && (
+                    <p role="status" className="text-sm">
+                      Another selected draft item has this title and time.
+                      Uncheck or rename this item.
+                    </p>
+                  )}
+                  {missing
+                    .filter((link) => link.itemId === item.id)
+                    .map((link) => {
+                      const prerequisite = items.find(
+                        (other) => other.id === link.prerequisiteId,
+                      )!;
+                      return (
+                        <div
+                          key={link.prerequisiteId}
+                          className="rounded-lg border p-3 space-y-2 text-sm"
+                          role="status"
+                        >
+                          <p>
+                            “{item.title}” depends on unchecked “
+                            {prerequisite.title}”.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {!matches.get(prerequisite.id)?.length && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-auto min-h-10 max-w-full whitespace-normal break-words text-left"
+                                onClick={() =>
+                                  updateItem(prerequisite.id, {
+                                    included: true,
+                                  })
+                                }
+                              >
+                                Include prerequisite: {prerequisite.title}
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-auto min-h-10 max-w-full whitespace-normal break-words text-left"
+                              onClick={() =>
+                                updateItem(item.id, {
+                                  dependsOn: item.dependsOn.filter(
+                                    (id) => id !== prerequisite.id,
+                                  ),
+                                })
+                              }
+                            >
+                              Remove link: {item.title} → {prerequisite.title}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor={'owner-' + item.id}>Owner</Label>
@@ -650,7 +734,11 @@ export function PlanReview({ query }: { query: string }) {
                               />
                               <span className="break-words">
                                 {other.title}
-                                {!other.included ? ' (unchecked)' : ''}
+                                {reusable.has(other.id)
+                                  ? ' (existing project task)'
+                                  : !other.included
+                                    ? ' (unchecked)'
+                                    : ''}
                               </span>
                             </label>
                           ))}
@@ -671,8 +759,8 @@ export function PlanReview({ query }: { query: string }) {
               )}
               {missingDependencies && (
                 <p role="status" className="text-sm">
-                  Include unchecked prerequisites, or remove those links under
-                  Details.
+                  Resolve the unchecked prerequisites shown beside each affected
+                  task.
                 </p>
               )}
               <p className="text-sm text-muted-foreground">
@@ -685,6 +773,7 @@ export function PlanReview({ query }: { query: string }) {
                   locked ||
                   !selected.length ||
                   missingDependencies ||
+                  duplicates.size > 0 ||
                   data.contextChanged
                 }
                 onClick={() =>

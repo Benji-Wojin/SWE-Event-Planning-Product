@@ -795,6 +795,44 @@ export async function eventPlanTests({
         assert.equal((await post(project, save(first))).status, 409);
       },
     );
+    await t.test('repeated drafts skip existing work and reuse its prerequisite without modifying it', async () => {
+      const project = await setup();
+      await change(project, 'addTask', [{ title: baseItem.title, owner: 'jack', note: 'Keep original note.' }]);
+      const before = (await (await realRead(project)).json()).state.tasks[0];
+      let snap = await ready(project);
+      assert.equal(snap.draft.items[0].included, false);
+      assert.equal(snap.existingTasks[0].id, before.id);
+      assert.equal((await post(project, save(snap))).status, 200);
+      snap = await read(project);
+      assert.equal(snap.draft.items[0].included, false);
+      const response = await post(project, approval(snap));
+      assert.equal(response.status, 200, await response.clone().text());
+      const result = await response.json();
+      assert.equal(result.receipt.taskIds.length, 2);
+      assert.ok(!result.receipt.taskIds.includes(before.id));
+      const state = (await (await realRead(project)).json()).state;
+      assert.equal(state.tasks.length, 3);
+      assert.deepEqual(state.tasks.find(task => task.id === before.id), before);
+      assert.equal(state.tasks.find(task => task.title === 'Welcome attendees').dependencies[0].taskId, before.id);
+      assert.equal((await post(project, approval(snap))).status, 200);
+    });
+    await t.test('existing matches cannot bypass duplicate, ambiguity or stale-workspace checks', async () => {
+      const project = await setup();
+      await change(project, 'addTask', [{ title: baseItem.title }]);
+      let snap = await ready(project);
+      const input = approval(snap, { items: structuredClone(snap.draft.items) });
+      input.items[0].included = true;
+      assert.equal((await post(project, input)).status, 400);
+      await change(project, 'addTask', [{ title: baseItem.title }]);
+      assert.equal((await post(project, approval(snap))).status, 409);
+      cool(project);
+      snap = await ready(project);
+      assert.equal(snap.draft.items[0].included, false);
+      assert.equal((await post(project, approval(snap))).status, 400, 'Ambiguous matches require explicit removal of the prerequisite');
+      snap.draft.items[1].dependsOn = [];
+      assert.equal((await post(project, approval(snap))).status, 200);
+      assert.equal((await (await realRead(project)).json()).state.tasks.length, 4);
+    });
     await t.test(
       'invalid owners, hidden status, duplicates and unchecked prerequisites add no tasks',
       async () => {

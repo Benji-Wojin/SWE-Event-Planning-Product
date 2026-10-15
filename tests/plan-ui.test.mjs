@@ -221,6 +221,12 @@ function harness(server, initial = fixture()) {
       field.props.onChange({ target: { value } });
       await settle();
     },
+    async check(id, checked) {
+      const field = nodes(tree).find((node) => node.props?.id === id);
+      assert.ok(field, 'Checkbox ' + id);
+      field.props.onChange({ target: { checked } });
+      await settle();
+    },
     find(id) {
       return nodes(tree).find((node) => node.props?.id === id);
     },
@@ -432,15 +438,117 @@ test('terminal polling errors clear private content and stop; transient errors p
 });
 test('schedule recovery warnings appear in collapsed review details', async () => {
   const initial = fixture();
-  initial.draft.scheduleWarnings = ['Arrival: proposed timing was left unscheduled.'];
+  initial.draft.scheduleWarnings = [
+    'Arrival: proposed timing was left unscheduled.',
+  ];
   const app = harness(undefined, initial);
   try {
     await app.start();
-    const details = nodes(app.tree).find(node => node.type === 'details' && text(node).includes('Dates to review (1)'));
+    const details = nodes(app.tree).find(
+      (node) =>
+        node.type === 'details' && text(node).includes('Dates to review (1)'),
+    );
     assert.ok(details);
     assert.ok(!details.props.open);
     assert.match(text(details), /left unscheduled/);
-  } finally { app.dispose(); }
+  } finally {
+    app.dispose();
+  }
+});
+test('unchecking an existing prerequisite keeps the remaining draft items addable', async () => {
+  const initial = fixture();
+  initial.existingTasks = [{ id: 'existing', title: item.title, start: '' }];
+  initial.draft.items.push({
+    ...copy(item),
+    id: 'two',
+    title: 'Prepare arrival',
+    dependsOn: ['one'],
+  });
+  const app = harness((context) => {
+    if (context.input?.action === 'save')
+      context.value = {
+        ...context.saved,
+        draft: { ...context.saved.draft, items: context.input.items },
+      };
+  }, initial);
+  try {
+    await app.start();
+    await app.check('include-one', false);
+    await app.click('Add 1 selected items to project');
+    assert.equal(app.requests.at(-1).action, 'apply');
+    assert.deepEqual(app.requests.at(-1).items[1].dependsOn, ['one']);
+  } finally {
+    app.dispose();
+  }
+});
+test('unchecked prerequisites offer visible include or remove-link actions without losing other edits', async () => {
+  for (const action of ['include', 'remove']) {
+    const initial = fixture();
+    initial.draft.items.push({
+      ...copy(item),
+      id: 'two',
+      title: 'Prepare arrival',
+      dependsOn: ['one'],
+    });
+    const app = harness((context) => {
+      if (context.input?.action === 'save')
+        context.value = {
+          ...context.saved,
+          draft: { ...context.saved.draft, items: context.input.items },
+        };
+    }, initial);
+    try {
+      await app.start();
+      await app.edit('note-two', 'Keep my edited note');
+      await app.check('include-one', false);
+      const issue = nodes(app.tree).find(
+        (node) =>
+          node.props?.role === 'status' &&
+          text(node).includes('depends on unchecked'),
+      );
+      assert.ok(issue);
+      assert.ok(
+        !nodes(app.tree).some(
+          (node) => node.type === 'details' && nodes(node).includes(issue),
+        ),
+        'Recovery is outside collapsed details',
+      );
+      await app.click(
+        action === 'include'
+          ? 'Include prerequisite: Confirm activities'
+          : 'Remove link: Prepare arrival → Confirm activities',
+      );
+      await app.click(
+        `Add ${action === 'include' ? 2 : 1} selected items to project`,
+      );
+      const sent = app.requests.at(-1).items;
+      assert.equal(sent[1].note, 'Keep my edited note');
+      assert.deepEqual(sent[1].dependsOn, action === 'include' ? ['one'] : []);
+    } finally {
+      app.dispose();
+    }
+  }
+});
+test('existing duplicate offers a one-click skip and edited titles invalidate matches', async () => {
+  const initial = fixture();
+  initial.existingTasks = [{ id: 'existing', title: item.title, start: '' }];
+  initial.draft.items.push({
+    ...copy(item),
+    id: 'two',
+    title: 'Prepare arrival',
+    dependsOn: ['one'],
+  });
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    await app.click('Skip existing task: Confirm activities');
+    assert.equal(app.find('include-one').props.checked, false);
+    assert.doesNotMatch(text(app.tree), /depends on unchecked/);
+    await app.edit('title-one', 'A different prerequisite');
+    assert.match(text(app.tree), /depends on unchecked/);
+  } finally {
+    app.dispose();
+  }
 });
 test('draft reload asks before discarding local edits, and unattended reads never call generate', async () => {
   const app = harness();
