@@ -11,7 +11,7 @@ import {
 import { projectUser } from './project-access';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
-import { planSelection } from './plan-selection';
+import { duplicateSuggestions, planSelection } from './plan-selection';
 import {
   generateEventPlan,
   planRequestBody,
@@ -390,6 +390,7 @@ async function generate(c: Context, input: any) {
         owner: '',
         included: matches.get(item.id)!.length === 0,
       })),
+      duplicateSuggestions: duplicateSuggestions(reviewed, existingPlanTasks(c).slice(0, 200)),
       generation: input.requestId,
       contextHash: c.contextHash,
       brief,
@@ -484,10 +485,13 @@ async function applyDraft(c: Context, input: any) {
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
-  const { selected, reusable, missing, duplicates } = planSelection(
+  const { selected, reusable, missing, duplicates, unresolved, invalidReuse } = planSelection(
     items,
     existingPlanTasks(c),
+    data.draft.duplicateSuggestions || [],
   );
+  if (unresolved.size || invalidReuse.size)
+    throw new HttpError(400, 'Review possible duplicates: use the existing task or keep this as separate work. Edited tasks need a fresh review.');
   if (!selected.length)
     throw new HttpError(400, 'Select at least one item to add.');
   if (missing.length)

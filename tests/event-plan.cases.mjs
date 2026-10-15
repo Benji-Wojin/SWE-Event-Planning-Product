@@ -588,7 +588,7 @@ export async function eventPlanTests({
         {...missing(), items:[{...baseItem,completed:true}]},
         {...missing(), items:[{...baseItem,title:undefined}]},
         {...missing(), items:[{...baseItem,dependsOn:undefined}]},
-        output(),
+        {...output(), items:output().items.map(item => ({...item, existingTaskIndex:null}))},
       ]) {
         globalThis.fetch = async () => Response.json({error:{code:'json_validate_failed',failed_generation:JSON.stringify(value)}},{status:400});
         await assert.rejects(planGeneration.generateEventPlan(context, 'test-only-placeholder'));
@@ -815,6 +815,52 @@ export async function eventPlanTests({
       assert.deepEqual(state.tasks.find(task => task.id === before.id), before);
       assert.equal(state.tasks.find(task => task.title === 'Welcome attendees').dependencies[0].taskId, before.id);
       assert.equal((await post(project, approval(snap))).status, 200);
+    });
+    await t.test('semantic duplicate review persists choices, reuses an existing prerequisite and preserves its details', async () => {
+      const project = await setup();
+      await change(project, 'addTask', [{ title: 'Get approval for the event', owner: 'jack', note: 'Keep original note.' }]);
+      const before = (await (await realRead(project)).json()).state.tasks[0];
+      const generated = output();
+      generated.items[0].existingTaskIndex = 0;
+      provider(generated);
+      let response = await post(project, generation(await read(project)));
+      let snap = await response.json();
+      assert.equal(snap.draft.items[0].included,true,'Semantic hints never silently skip');
+      assert.equal(snap.draft.duplicateSuggestions[0].taskId,before.id);
+      assert.equal((await post(project,approval(snap))).status,400,'Unresolved choice blocks apply');
+      const forged = approval(snap, {items:structuredClone(snap.draft.items)});
+      forged.items[2].included=false;
+      forged.items[2].duplicateChoice='reuse';
+      assert.equal((await post(project,forged)).status,400,'Client cannot create a reuse target');
+      snap.draft.items[0].included=false;
+      snap.draft.items[0].duplicateChoice='reuse';
+      assert.equal((await post(project,save(snap))).status,200);
+      snap=await read(project);
+      assert.equal(snap.draft.items[0].duplicateChoice,'reuse');
+      const edited=approval(snap,{items:structuredClone(snap.draft.items)});
+      edited.items[0].title='Approve a different event';
+      assert.equal((await post(project,edited)).status,400,'Edits invalidate reuse');
+      response=await post(project,approval(snap));
+      assert.equal(response.status,200,await response.clone().text());
+      assert.equal((await response.json()).receipt.taskIds.length,2);
+      const state=(await (await realRead(project)).json()).state;
+      assert.equal(state.tasks.length,3);
+      assert.deepEqual(state.tasks.find(task=>task.id===before.id),before);
+      assert.equal(state.tasks.find(task=>task.title==='Welcome attendees').dependencies[0].taskId,before.id);
+      assert.equal((await post(project,approval(snap))).status,200);
+    });
+    await t.test('semantic suggestions can be kept separate and invalid provider references are ignored', async () => {
+      for (const index of [0,199]) {
+        const project=await setup();
+        await change(project,'addTask',[{title:'Get approval for the event'}]);
+        const generated=output();generated.items[0].existingTaskIndex=index;provider(generated);
+        const response=await post(project,generation(await read(project)));
+        const snap=await response.json();
+        assert.equal(snap.draft.duplicateSuggestions.length,index===0?1:0);
+        if(index===0)snap.draft.items[0].duplicateChoice='keep';
+        assert.equal((await post(project,approval(snap))).status,200);
+        assert.equal((await (await realRead(project)).json()).state.tasks.length,4);
+      }
     });
     await t.test('existing matches cannot bypass duplicate, ambiguity or stale-workspace checks', async () => {
       const project = await setup();

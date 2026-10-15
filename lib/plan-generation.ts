@@ -39,8 +39,13 @@ export type PlanItem = {
   end: string;
   location: string;
   dependsOn: string[];
+  existingTaskIndex?: number | null;
 };
-export type ReviewedItem = PlanItem & { owner: string; included: boolean };
+export type ReviewedItem = PlanItem & {
+  owner: string;
+  included: boolean;
+  duplicateChoice?: 'reuse' | 'keep';
+};
 export type PlanOutput = {
   items: PlanItem[];
   questions: string[];
@@ -116,6 +121,7 @@ const itemKeys = [
   'end',
   'location',
   'dependsOn',
+  'existingTaskIndex',
 ];
 export function parsePlanItems(
   input: any,
@@ -125,7 +131,10 @@ export function parsePlanItems(
     throw new Error('Use between 1 and 24 plan items.');
   const items = input.map((item: any) => {
     if (
-      !object(item, reviewed ? [...itemKeys, 'owner', 'included'] : itemKeys) ||
+      !object(item, reviewed ? [...itemKeys, 'owner', 'included', 'duplicateChoice'] : itemKeys) ||
+      (item.existingTaskIndex != null &&
+        (!Number.isInteger(item.existingTaskIndex) || item.existingTaskIndex < 0 || item.existingTaskIndex >= 200)) ||
+      (reviewed && item.duplicateChoice !== undefined && !['reuse', 'keep'].includes(item.duplicateChoice)) ||
       !text(item.id, 40, true) ||
       !/^[a-zA-Z0-9_-]+$/.test(item.id) ||
       !['preparation', 'activity'].includes(item.kind) ||
@@ -221,6 +230,7 @@ const itemSchema = {
     end: { ...localTimeSchema, description: localTimeSchema.description + ' Must be empty for preparation tasks.' },
     location: { type: 'string', description: 'Supplied location only, at most 240 characters; otherwise empty.' },
     dependsOn: { type: 'array', items: stringSchema, maxItems: 8 },
+    existingTaskIndex: { type: ['integer', 'null'], description: 'Zero-based index in supplied existingTasks only when this item has the SAME outcome and scope as that task, even with different wording. Otherwise null. Not a related task, prerequisite, subtask, different date/location, or a broader task.' },
   },
 };
 const schema = {
@@ -258,7 +268,8 @@ export function planRequestBody(context: any) {
   };
   // Include the wire shape in the instructions as well as response_format:
   // Groq can return json_validate_failed even with strict structured output.
-  body.messages[0].content += ' Output contract: return one JSON object with exactly items, questions, assumptions. Always include questions and assumptions, using [] when there are none. Both are arrays of plain strings, never objects. Every item must include all these fields: {"id":"task_1","kind":"preparation","title":"Confirm arrangements","category":"Program","note":"Review the proposed arrangements.","dueDate":"","start":"","end":"","location":"","dependsOn":[]}. Replace this example with tasks for the supplied event. kind is preparation or activity. category is exactly one of: Program, Venue, Guest care, Food & drink, Transport. Never add other fields.';
+  body.messages[0].content += ' Output contract: return one JSON object with exactly items, questions, assumptions. Always include questions and assumptions, using [] when there are none. Both are arrays of plain strings, never objects. Every item must include all these fields: {"id":"task_1","kind":"preparation","title":"Confirm arrangements","category":"Program","note":"Review the proposed arrangements.","dueDate":"","start":"","end":"","location":"","dependsOn":[],"existingTaskIndex":null}. Replace this example with tasks for the supplied event. kind is preparation or activity. category is exactly one of: Program, Venue, Guest care, Food & drink, Transport. Never add other fields.';
+  body.messages[0].content += ' Duplicate review: every item also includes existingTaskIndex (integer or null). Compare meaning, not just words: "Secure community hall booking" and "Book community hall" can represent the same work. "Choose catering menu" and "Collect dietary restrictions" do NOT; nor do "Research venues" and "Book venue". Different named people, places, dates, quantities, or additional scope are not interchangeable. If a task already exists, prefer not to repeat it. When you need that task as a prerequisite, include a draft representation and set existingTaskIndex to its zero-based index in existingTasks. Use null when uncertain. This is only a suggestion for human review; never claim tasks were merged.';
   if (!fitsGroqRequest(body)) throw new PlanProviderError('context_limit');
   return body;
 }
@@ -323,7 +334,7 @@ export async function generateEventPlan(
       normalized = { questions: [], assumptions: [], ...value };
       if (Array.isArray(value.items)) normalized.items = value.items.map((item: any) => {
         if (!object(item, itemKeys)) return item;
-        const emptyFields = { dueDate: '', start: '', end: '', location: '' };
+        const emptyFields = { dueDate: '', start: '', end: '', location: '', existingTaskIndex: null };
         if (Object.keys(emptyFields).some(key => !Object.hasOwn(item, key))) restoredOptionalFields = true;
         return { ...emptyFields, ...item };
       });

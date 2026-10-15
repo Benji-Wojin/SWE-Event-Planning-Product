@@ -550,6 +550,60 @@ test('existing duplicate offers a one-click skip and edited titles invalidate ma
     app.dispose();
   }
 });
+test('semantic duplicate choices are visible, preserve links, and are saved before applying', async () => {
+  for (const choice of ['reuse', 'keep']) {
+    const initial = fixture();
+    initial.existingTasks = [{ id: 'existing', title: 'Finalize activities', start: '' }];
+    initial.draft.duplicateSuggestions = [{
+      itemId: 'one', taskId: 'existing', taskIdentity: 'finalize activities|',
+      itemIdentity: JSON.stringify([item.title, item.kind, item.note, item.dueDate, item.start, item.end, item.location, item.category]),
+    }];
+    initial.draft.items.push({ ...copy(item), id: 'two', title: 'Prepare arrival', dependsOn: ['one'] });
+    const app = harness(context => {
+      if (context.input?.action === 'save') context.value = {
+        ...context.saved, draft: { ...context.saved.draft, items: context.input.items },
+      };
+    }, initial);
+    try {
+      await app.start();
+      assert.match(text(app.tree), /Possible duplicate of: Finalize activities/);
+      const add = () => nodes(app.tree).find(node => node.type === 'button' && /^Add \d+ selected/.test(text(node)));
+      assert.equal(add().props.disabled, true);
+      await app.click(choice === 'reuse' ? 'Use existing: Finalize activities' : 'Keep separate: Confirm activities');
+      // The server trims these fields; harmless whitespace must retain the choice.
+      await app.edit('title-one', item.title + ' ');
+      await app.edit('note-one', item.note + ' ');
+      assert.equal(app.find('include-one').props.checked, choice === 'keep');
+      assert.equal(!!add().props.disabled, false);
+      assert.doesNotMatch(text(app.tree), /depends on unchecked/);
+      await app.click(`Add ${choice === 'reuse' ? 1 : 2} selected items to project`);
+      assert.equal(app.requests.at(-1).action, 'apply');
+      assert.equal(app.requests.at(-1).items[0].duplicateChoice, choice);
+      assert.deepEqual(app.requests.at(-1).items[1].dependsOn, ['one']);
+    } finally { app.dispose(); }
+  }
+});
+test('editing a reused semantic suggestion invalidates the choice without losing the item', async () => {
+  for (const edit of ['note', 'checkbox']) {
+    const initial = fixture();
+    initial.existingTasks = [{ id: 'existing', title: 'Finalize activities', start: '' }];
+    initial.draft.duplicateSuggestions = [{
+      itemId: 'one', taskId: 'existing', taskIdentity: 'finalize activities|',
+      itemIdentity: JSON.stringify([item.title, item.kind, item.note, item.dueDate, item.start, item.end, item.location, item.category]),
+    }];
+    const app = harness(undefined, initial);
+    try {
+      await app.start();
+      await app.click('Use existing: Finalize activities');
+      if (edit === 'note') await app.edit('note-one', 'An expanded scope');
+      else await app.check('include-one', true);
+      assert.equal(app.find('include-one').props.checked, true);
+      assert.doesNotMatch(text(app.tree), /Using existing task:/);
+      const add = nodes(app.tree).find(node => node.type === 'button' && /^Add \d+ selected/.test(text(node)));
+      assert.equal(!!add.props.disabled, edit === 'checkbox');
+    } finally { app.dispose(); }
+  }
+});
 test('draft reload asks before discarding local edits, and unattended reads never call generate', async () => {
   const app = harness();
   try {

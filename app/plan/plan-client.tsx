@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
-import { planSelection } from '@/lib/plan-selection';
+import { duplicateItemIdentity, planSelection } from '@/lib/plan-selection';
 import {
   eventKinds,
   planCategories,
@@ -71,9 +71,19 @@ export function PlanReview({ query }: { query: string }) {
   const waiting = data?.status === 'generating',
     locked = busy || waiting,
     applied = !!data?.receipt;
-  const { selected, reusable, matches, missing, duplicates } = planSelection(
+  const {
+    selected,
+    reusable,
+    matches,
+    missing,
+    duplicates,
+    possible,
+    unresolved,
+    invalidReuse,
+  } = planSelection(
     items,
     data?.existingTasks || [],
+    data?.draft?.duplicateSuggestions || [],
   );
   const missingDependencies = missing.length > 0;
   function accept(result: any) {
@@ -148,7 +158,20 @@ export function PlanReview({ query }: { query: string }) {
   const updateItem = (id: string, patch: Partial<ReviewedItem>) => {
     request.current = null;
     setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      current.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, ...patch };
+        if (duplicateItemIdentity(next) !== duplicateItemIdentity(item)) {
+          delete next.duplicateChoice;
+          if (item.duplicateChoice === 'reuse') next.included = true;
+        } else if (
+          patch.included === true &&
+          item.duplicateChoice === 'reuse'
+        ) {
+          delete next.duplicateChoice;
+        }
+        return next;
+      }),
     );
   };
   async function save() {
@@ -507,7 +530,78 @@ export function PlanReview({ query }: { query: string }) {
                       />
                     </div>
                   </div>
-                  {!!matches.get(item.id)?.length && (
+                  {!applied && possible.has(item.id) && (
+                    <div
+                      className="rounded-lg border p-3 space-y-2 text-sm"
+                      role="status"
+                    >
+                      <p>
+                        {item.duplicateChoice === 'reuse'
+                          ? 'Using existing task: '
+                          : 'Possible duplicate of: '}
+                        <strong>{possible.get(item.id)!.title}</strong>
+                      </p>
+                      <p className="text-muted-foreground">
+                        {item.duplicateChoice === 'reuse'
+                          ? 'This item will not be added. Prerequisites will link to the existing task; its details stay unchanged.'
+                          : item.duplicateChoice === 'keep'
+                            ? 'Kept as separate work.'
+                            : 'AI found similar work. Choose whether it is the same task.'}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {item.duplicateChoice !== 'reuse' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-auto min-h-10 max-w-full whitespace-normal break-words text-left"
+                            onClick={() =>
+                              updateItem(item.id, {
+                                included: false,
+                                duplicateChoice: 'reuse',
+                              })
+                            }
+                          >
+                            Use existing: {possible.get(item.id)!.title}
+                          </Button>
+                        )}
+                        {item.duplicateChoice !== 'keep' && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-auto min-h-10 max-w-full whitespace-normal break-words text-left"
+                            onClick={() =>
+                              updateItem(item.id, {
+                                included: true,
+                                duplicateChoice: 'keep',
+                              })
+                            }
+                          >
+                            Keep separate: {item.title}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {!applied && invalidReuse.has(item.id) && (
+                    <div role="status" className="text-sm space-y-2">
+                      <p>
+                        The existing-task match changed. Review this item again.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          updateItem(item.id, {
+                            included: true,
+                            duplicateChoice: 'keep',
+                          })
+                        }
+                      >
+                        Keep separate: {item.title}
+                      </Button>
+                    </div>
+                  )}
+                  {!applied && !!matches.get(item.id)?.length && (
                     <div className="space-y-2 text-sm" role="status">
                       <p>
                         {matches.get(item.id)!.length === 1
@@ -763,6 +857,12 @@ export function PlanReview({ query }: { query: string }) {
                   task.
                 </p>
               )}
+              {(unresolved.size > 0 || invalidReuse.size > 0) && (
+                <p role="status" className="text-sm">
+                  Review the possible duplicates above: use an existing task or
+                  keep separate work.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">
                 Only selected items will be added, all as incomplete. Nothing
                 will be sent or booked.
@@ -774,6 +874,8 @@ export function PlanReview({ query }: { query: string }) {
                   !selected.length ||
                   missingDependencies ||
                   duplicates.size > 0 ||
+                  unresolved.size > 0 ||
+                  invalidReuse.size > 0 ||
                   data.contextChanged
                 }
                 onClick={() =>
