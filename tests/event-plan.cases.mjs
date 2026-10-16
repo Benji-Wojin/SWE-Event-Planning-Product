@@ -602,6 +602,18 @@ export async function eventPlanTests({
         await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));assert.equal(requests,1);
       } finally {clock.mock.restore();timeout.mock.restore();}
     });
+    await t.test('a later forbidden task field prevents correction of an earlier malformed field', async () => {
+      const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01'};
+      for (const forbidden of [{status:'done'},{owner:'PRIVATE_PERSON'},{sendEmail:true}]) {
+        let requests=0;
+        globalThis.fetch=async()=>{
+          requests++;
+          return success({...output(),items:[{...baseItem,start:'bad'},{...baseItem,id:'second',...forbidden}]});
+        };
+        await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));
+        assert.equal(requests,1);
+      }
+    });
     await t.test('field correction is skipped when adding its hint would exceed the request budget', async () => {
       const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01',extra:''};
       const remaining=8950-Buffer.byteLength(JSON.stringify(planGeneration.planRequestBody(context)));

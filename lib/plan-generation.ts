@@ -152,9 +152,12 @@ export function parsePlanItems(
 ): PlanItem[] | ReviewedItem[] {
   if (!Array.isArray(input) || input.length < 1 || input.length > 24)
     throw new Error('Use between 1 and 24 plan items.');
+  // Check the whole draft for forbidden fields before any mechanical failure
+  // can request a correction. A later task must not hide behind an earlier typo.
+  const allowedKeys = reviewed ? [...itemKeys, 'owner', 'included', 'duplicateChoice'] : itemKeys;
+  if (input.some((item: any) => !object(item, allowedKeys)))
+    throw new PlanItemValidationError('shape');
   const items = input.map((item: any) => {
-    if (!object(item, reviewed ? [...itemKeys, 'owner', 'included', 'duplicateChoice'] : itemKeys))
-      throw new PlanItemValidationError('shape');
     // Fixed field labels identify malformed provider output without logging task
     // names, values, model output, prompts or credentials. Keep all existing rules.
     const checks = [
