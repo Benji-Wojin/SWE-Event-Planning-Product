@@ -128,6 +128,24 @@ class PlanItemValidationError extends Error {
     super('Check each task, date, time, and dependency.');
   }
 }
+// Only these fixed, mechanical constraints can trigger one corrective request.
+// Never send rejected output, error text, task values or new context back to AI.
+const planCorrections: Record<string, string> = {
+  duplicate_index: 'existingTaskIndex must be null or a zero-based integer in the supplied existingTasks list. Use null when uncertain; never use -1.',
+  title: 'Every title must be a nonempty action title under 180 characters.',
+  category: 'category must be exactly Program, Venue, Guest care, Food & drink, or Transport.',
+  note: 'note must be a plain string under 2000 characters.',
+  due_date: 'dueDate must be an empty string or a real calendar date in YYYY-MM-DD format.',
+  start: 'start must be an empty string or event-local YYYY-MM-DDTHH:mm; never a date alone, seconds, timezone suffix or null.',
+  end: 'end must be an empty string or event-local YYYY-MM-DDTHH:mm; never a date alone, seconds, timezone suffix or null.',
+  end_order: 'Leave end blank when unknown; otherwise supply a valid start and an end strictly after start.',
+  preparation_schedule: 'Preparation tasks must have empty start and end. Use dueDate only for their deadline.',
+  activity_deadline: 'Activities must have empty dueDate. Use start/end only when the event schedule supplies enough information.',
+  location: 'location must be a plain string under 240 characters, or empty when no location was supplied.',
+};
+class CorrectablePlanOutputError extends PlanProviderError {
+  constructor(public field: string) { super('provider'); }
+}
 export function parsePlanItems(
   input: any,
   reviewed = false,
@@ -282,18 +300,40 @@ export async function generateEventPlan(
   context: any,
   apiKey: string,
 ): Promise<PlanOutput> {
+  const started = performance.now();
+  const signal = AbortSignal.timeout(40000);
+  try {
+    return await generateEventPlanAttempt(context, apiKey, signal);
+  } catch (error) {
+    if (!(error instanceof CorrectablePlanOutputError) || !planCorrections[error.field] ||
+      signal.aborted || performance.now() - started >= 35000) throw error;
+    const corrected = planRequestBody(context);
+    corrected.messages[0].content += ' A previous complete response failed a formatting check. Generate a fresh complete plan using the same supplied context. Correction: ' + planCorrections[error.field];
+    if (!fitsGroqRequest(corrected)) throw error;
+    // One retry, same provider and shared 40-second deadline, within the lease.
+    // Network failures, rate limits, refusals, truncation and hidden fields never retry.
+    return generateEventPlanAttempt(context, apiKey, signal, corrected);
+  }
+}
+
+async function generateEventPlanAttempt(
+  context: any,
+  apiKey: string,
+  signal: AbortSignal,
+  requestBody?: ReturnType<typeof planRequestBody>,
+): Promise<PlanOutput> {
   let stage = 'request';
   let httpStatus: number | undefined;
   let providerCode: string | undefined;
   try {
     const response = await fetch(GROQ_CHAT_URL, {
       method: 'POST',
-      signal: AbortSignal.timeout(40000),
+      signal,
       headers: {
         Authorization: 'Bearer ' + apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(planRequestBody(context)),
+      body: JSON.stringify(requestBody || planRequestBody(context)),
     });
     let content: string;
     let recoveringOptionalFields = false;
@@ -406,6 +446,8 @@ export async function generateEventPlan(
           : 'invalid_response',
     });
     if (error instanceof PlanProviderError) throw error;
+    if (stage === 'plan_validation' && error instanceof PlanItemValidationError && planCorrections[error.field])
+      throw new CorrectablePlanOutputError(error.field);
     throw new PlanProviderError('provider');
   }
 }

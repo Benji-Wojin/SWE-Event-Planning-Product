@@ -540,6 +540,77 @@ export async function eventPlanTests({
         assert.equal(JSON.stringify(snap.draft), before);
       },
     );
+    await t.test('one bounded field correction saves a valid draft and reuses one generation allowance', async () => {
+      const project = await setup();
+      const sent = [], signals = [];
+      globalThis.fetch = async (url, options) => {
+        assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
+        sent.push(JSON.parse(options.body)); signals.push(options.signal);
+        if (sent.length === 1) return success({...output(),items:[{...baseItem,start:'PRIVATE_REJECTED_VALUE'}]});
+        assert.equal(sent.length,2);
+        return success(output());
+      };
+      const input = generation(await read(project));
+      const response = await post(project,input);
+      assert.equal(response.status,200);
+      const snap = await response.json();
+      assert.equal(snap.status,'ready'); assert.equal(sent.length,2);
+      assert.equal(signals[0],signals[1]);
+      assert.equal(sent[0].messages[1].content,sent[1].messages[1].content);
+      assert.match(sent[1].messages[0].content,/Correction: start must/);
+      assert.ok(!JSON.stringify(sent[1]).includes('PRIVATE_REJECTED_VALUE'));
+      assert.deepEqual((await read(project)).draft,snap.draft);
+      assert.equal((await post(project,input)).status,200); assert.equal(sent.length,2);
+      assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count,1);
+      assert.equal((await post(project,approval(snap))).status,200);
+      assert.equal((await (await realRead(project)).json()).state.tasks.length,3);
+    });
+    await t.test('field correction is limited to two provider requests and never accepts the second malformed draft', async () => {
+      const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01'};
+      let requests=0;
+      globalThis.fetch=async()=>{requests++;return success({...output(),items:[{...baseItem,existingTaskIndex:-1}]});};
+      await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));
+      assert.equal(requests,2);
+    });
+    await t.test('no correction follows rate limits, credential errors, network uncertainty, or hidden fields', async () => {
+      const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01'};
+      for (const failure of [401,403,429,500,'network','shape','cycle','json']) {
+        let requests=0;
+        globalThis.fetch=async()=>{
+          requests++;
+          if (failure==='network') throw new Error('PRIVATE_TRANSPORT');
+          if (failure==='shape') return success({...output(),items:[{...baseItem,status:'done'}]});
+          if (failure==='cycle') return success({...output(),items:[{...baseItem,dependsOn:[baseItem.id]}]});
+          if (failure==='json') return Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'PRIVATE_INVALID_JSON'}}]});
+          return new Response('',{status:failure});
+        };
+        await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));
+        assert.equal(requests,1,failure);
+      }
+    });
+    await t.test('field correction stops when the shared deadline is aborted or nearly exhausted', async (caseContext) => {
+      const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01'};
+      const controller=new AbortController();
+      let requests=0, elapsed=0;
+      const clock=caseContext.mock.method(performance,'now',()=>elapsed);
+      const timeout=caseContext.mock.method(AbortSignal,'timeout',()=>controller.signal);
+      try {
+        globalThis.fetch=async()=>{requests++;elapsed=36000;return success({...output(),items:[{...baseItem,start:'bad'}]});};
+        await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));assert.equal(requests,1);
+        elapsed=0;requests=0;
+        globalThis.fetch=async()=>{requests++;controller.abort();return success({...output(),items:[{...baseItem,start:'bad'}]});};
+        await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));assert.equal(requests,1);
+      } finally {clock.mock.restore();timeout.mock.restore();}
+    });
+    await t.test('field correction is skipped when adding its hint would exceed the request budget', async () => {
+      const context={event:{date:'2030-10-04',timeZone:'America/Los_Angeles'},brief,today:'2030-10-01',extra:''};
+      const remaining=8950-Buffer.byteLength(JSON.stringify(planGeneration.planRequestBody(context)));
+      assert.ok(remaining>0);context.extra='x'.repeat(remaining);
+      planGeneration.planRequestBody(context);
+      let requests=0;
+      globalThis.fetch=async()=>{requests++;return success({...output(),items:[{...baseItem,start:'bad'}]});};
+      await assert.rejects(planGeneration.generateEventPlan(context,'test-only-placeholder'));assert.equal(requests,1);
+    });
     await t.test('chat completions reject truncated, refused, ambiguous and tool responses', async () => {
       const message = { role: 'assistant', content: JSON.stringify(output()) };
       for (const choices of [
@@ -551,8 +622,10 @@ export async function eventPlanTests({
         [{ finish_reason: 'stop', message: { ...message, role: 'user' } }],
         [{ finish_reason: 'stop', message }, { finish_reason: 'stop', message }],
       ]) {
-        globalThis.fetch = async () => Response.json({ choices });
+        let requests=0;
+        globalThis.fetch = async () => {requests++;return Response.json({ choices });};
         await assert.rejects(planGeneration.generateEventPlan({}, 'test-only-placeholder'));
+        assert.equal(requests,1);
       }
       assert.throws(() => planGeneration.planRequestBody({ oversized: 'x'.repeat(10000) }), /context_limit/);
     });
