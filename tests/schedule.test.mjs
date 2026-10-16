@@ -95,7 +95,7 @@ test('hosted schedule save awaits success and keeps the draft intact on failure'
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const source=readFileSync('public/gather-assets/app.js','utf8');
   assert.match(source,/await store\.setTaskSchedule\(/);
-  assert.match(readFileSync('public/workspace.html','utf8'),/\/gather-assets\/schedule-ui\.js/);
+  assert.match(readFileSync('public/workspace.html','utf8'),/\/gather-assets\/versioned\/[a-f0-9]{20}-schedule-ui\.js/);
   const submitSource=source.slice(source.indexOf("  document.addEventListener('submit'"),source.indexOf("  document.addEventListener('change'"));
   for(const id of ['scheduleForm','schedulePickerForm','newTaskForm']){
     let submit,reject,locked=false;const events=[];

@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
         { key: 'Referrer-Policy', value: 'no-referrer' },
         { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
       ],
+    }, {
+      source: '/gather-assets/versioned/:path*',
+      headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
     }];
   },
 };

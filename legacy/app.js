@@ -267,7 +267,9 @@
     $('#sidebar').inert=mobile&&!open;
     $('#mainContent').inert=mobile&&open;
     $('#sidebar').toggleAttribute('aria-modal',mobile&&open);
-    if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';focusable($('#sidebar'))[0]?.focus();}
+    // Announce the drawer without presenting its brand link as the selected action.
+    // Tab still reaches the first link and retains its normal visible focus ring.
+    if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';$('#sidebar').focus({preventScroll:true});}
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='') {
@@ -706,7 +708,7 @@
       const controls=focusable(scope);
       const first=controls[0],last=controls.at(-1);
       if(!first){event.preventDefault();scope.focus();return;}
-      if(!scope.contains(document.activeElement)){event.preventDefault();(event.shiftKey?last:first).focus();return;}
+      if(document.activeElement===scope||!scope.contains(document.activeElement)){event.preventDefault();(event.shiftKey?last:first).focus();return;}
       if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
       if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
     }

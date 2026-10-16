@@ -20,6 +20,8 @@ h1,h2,h3,h4{font-family:'Manrope','DM Sans',sans-serif;color:var(--ink)}
 /* Quiet navigation stays separate from the active work. */
 .sidebar{position:fixed;inset:0 auto 0 0;width:230px;z-index:40;display:flex;flex-direction:column;padding:29px 18px 17px;background:#f0f2e9;border-right:1px solid #e1e5d9;overflow-y:auto}
 .brand{display:flex;align-items:center;gap:11px;padding:0 12px 32px;text-decoration:none;color:var(--ink)}
+/* This programmatic dialog focus target is not an interactive control. */
+.sidebar[tabindex="-1"]:focus{outline:none}
 .brand-mark{display:grid;grid-template-columns:1fr 1fr;gap:3px;width:27px;height:30px;transform:rotate(-6deg)}
 .brand-mark span{background:var(--green);border-radius:4px 5px 4px 8px}
 .brand-mark span:first-child{grid-row:span 2;border-radius:9px 4px 8px 4px}

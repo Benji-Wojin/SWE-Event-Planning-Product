@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 mkdirSync('public/gather-assets', { recursive: true });
 let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
@@ -37,7 +38,6 @@ html = html.replace('<div class="top-actions">', '<div class="top-actions"><a cl
 html = html.replaceAll('Field Day 2026', 'Project')
   .replace('<span class="event-symbol">FD</span>', '<span class="event-symbol" aria-hidden="true">…</span>')
   .replace('<div class="app-shell" id="appShell">', '<main id="workspaceBoot" style="max-width:640px;margin:64px auto;padding:24px" aria-busy="true"><p role="status">Loading project…</p><a href="/" target="_top">All projects</a></main><div class="app-shell" id="appShell" hidden>');
-writeFileSync('public/workspace.html', html);
 writeFileSync('public/gather-assets/calendar.js',readFileSync('legacy/calendar.js','utf8'));
 writeFileSync('public/gather-assets/navigation.js',readFileSync('legacy/navigation.js','utf8'));
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
@@ -171,3 +171,28 @@ writeFileSync(
   'public/gather-assets/hosted-store.js',
   readFileSync('legacy/hosted-store.js', 'utf8'),
 );
+
+// Cache code, never user snapshots or authenticated pages. Content-addressed URLs
+// change on every asset edit, so a new release cannot reuse stale cached bytes.
+const versioned = 'public/gather-assets/versioned';
+mkdirSync(versioned, { recursive: true });
+const assetUrls = new Map();
+function versionAsset(name, content) {
+  const hash = createHash('sha256').update(content).digest('hex').slice(0, 20);
+  const url = `/gather-assets/versioned/${hash}-${name}`;
+  writeFileSync('public' + url, content);
+  assetUrls.set('/gather-assets/' + name, url);
+  return url;
+}
+for (const name of readdirSync('public/gather-assets')) {
+  if (!/\.(js|css)$/.test(name) || name === 'hosted-store.js') continue;
+  versionAsset(name, readFileSync('public/gather-assets/' + name, 'utf8'));
+}
+const appUrl = assetUrls.get('/gather-assets/app.js');
+versionAsset('hosted-store.js', readFileSync('public/gather-assets/hosted-store.js', 'utf8')
+  .replace("'/gather-assets/app.js'", JSON.stringify(appUrl)));
+html = html.replace(/\/gather-assets\/[a-z-]+\.(?:js|css)/g, url => assetUrls.get(url) || url)
+  .replace('</head>', `<link rel="preload" as="script" href="${appUrl}">\n</head>`)
+  // Deferred scripts download together and execute in order, after the DOM exists.
+  .replace(/<script src="([^"]+)"/g, (tag, url) => url.endsWith('-theme.js') ? tag : tag.replace('<script ', '<script defer '));
+writeFileSync('public/workspace.html', html);
