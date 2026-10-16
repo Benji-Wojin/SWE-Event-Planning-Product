@@ -37,7 +37,8 @@ export function TeamClient({ projectId }: { projectId: string }) {
     [error, setError] = useState(''),
     [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState('');
+    [notice, setNotice] = useState(''),
+    [emailDelivery, setEmailDelivery] = useState(true);
   const pending = useRef(false),
     requestId = useRef(''),
     readEpoch = useRef(0);
@@ -114,18 +115,24 @@ export function TeamClient({ projectId }: { projectId: string }) {
       );
   }, []);
   async function change(input: Record<string, unknown>) {
-    if (pending.current) return false;
+    if (pending.current) return null;
     pending.current = true;
     ++readEpoch.current;
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      setTeam(await accountRequest<TeamView>(endpoint, input));
-      return true;
+      const updated = await accountRequest<TeamView>(endpoint, input);
+      setTeam(updated);
+      return updated;
     } catch (e) {
       setError((e as Error).message);
-      return false;
+      // A send can finish even if its response is lost. Read its durable status
+      // before offering another attempt; never resend automatically.
+      if (input.action === 'sendInvite' || input.action === 'sendExistingInvite') {
+        try { setTeam(await accountRequest<TeamView>(endpoint)); } catch { /* Keep the original error. */ }
+      }
+      return null;
     } finally {
       pending.current = false;
       setBusy(false);
@@ -254,18 +261,28 @@ export function TeamClient({ projectId }: { projectId: string }) {
               onSubmit={async (e) => {
                 e.preventDefault();
                 requestId.current ||= crypto.randomUUID();
-                if (
-                  await change({
-                    action: 'invite',
-                    email,
-                    requestId: requestId.current,
-                  })
-                ) {
+                const sendEmail = emailDelivery && team.sender.connected;
+                const updated = await change({
+                  action: sendEmail ? 'sendInvite' : 'invite',
+                  email,
+                  requestId: requestId.current,
+                  ...(sendEmail ? { senderEmail: team.sender.email } : {}),
+                });
+                if (updated) {
+                  const invitation = updated.invitations.find(item => item.id === requestId.current);
                   setEmail('');
                   requestId.current = '';
-                  setNotice(
-                    'Invitation created. They can accept it from their Projects page when signed in with that email.',
-                  );
+                  if (!sendEmail) {
+                    setNotice('In-app invitation created. No email sent.');
+                  } else if (invitation?.delivery.status === 'sent') {
+                    setNotice('Invitation emailed. The email service accepted it; they can also accept in Weft.');
+                  } else if (invitation?.delivery.status === 'sending') {
+                    setNotice('Invitation created. Sending email…');
+                  } else {
+                    setError(invitation?.delivery.status === 'failed'
+                      ? 'Invitation created, but the email was not sent. ' + invitation.delivery.issue
+                      : 'Invitation created, but email delivery could not be confirmed. Check its status below before trying again.');
+                  }
                 }
               }}
             >
@@ -285,13 +302,18 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   }}
                 />
                 <Button disabled={busy} type="submit">
-                  {busy ? 'Working…' : 'Invite teammate'}
+                  {busy ? 'Working…' : emailDelivery && team.sender.connected ? 'Invite and send email' : 'Invite in Weft'}
                 </Button>
               </div>
+              {team.sender.connected && <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={emailDelivery} disabled={busy}
+                  onChange={e => setEmailDelivery(e.target.checked)} />
+                Send an invitation email
+              </label>}
             </form>
             <p className="text-sm text-muted-foreground">
               Appears on their Projects page. They can sign up with this email
-              if they do not have an account yet. Expires in 7 days. No email is sent automatically.
+              if they do not have an account yet. Expires in 7 days.
             </p>
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
@@ -370,7 +392,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                           ? 'Sending not confirmed'
                           : invite.delivery.status === 'failed'
                             ? 'Not sent'
-                            : 'Available in Weft'}
+                            : 'In-app only · Email not sent'}
                   </p>
                   {invite.delivery.issue && (
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -399,7 +421,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                     >
                       {invite.delivery.status === 'failed'
                         ? 'Retry sending'
-                        : 'Also send email'}
+                        : 'Send invitation email'}
                     </Button>
                   )}
                   <Button

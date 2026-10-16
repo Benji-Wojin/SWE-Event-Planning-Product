@@ -100,6 +100,7 @@ test('new organizer invites and sends without Gmail; recipient signs up and join
   assert.deepEqual(content.to, ['guest@example.com']);
   assert.equal(content.from, 'Weft <invites@weft.example>');
   assert.equal(content.subject, 'Weft project invitation');
+  assert.equal(content.reply_to, 'support@weftplan.com');
   assert.equal(content.bcc, undefined); assert.equal(content.raw, undefined);
   assert.match(content.text, /https:\/\/weft.example\/join\?invite=/);
   assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM gmail_senders').get().n, 0);
@@ -108,6 +109,25 @@ test('new organizer invites and sends without Gmail; recipient signs up and join
   const response = await modules.invitations.POST(request('/api/invitations', { id, action: 'accept' }));
   assert.equal(response.status, 200); assert.equal((await response.json()).projectId, project);
   assert.equal((await modules.gmail.GET(request('/api/gmail/status'))).status, 403);
+});
+test('one-step email invite creates the invitation and sends only once across repeated requests', async () => {
+  const requestId = crypto.randomUUID();
+  const input = {action:'sendInvite', email:'person@example.com', requestId, senderEmail:'invites@weft.example'};
+  const responses = await Promise.all([write(input),write(input)]);
+  assert.ok(responses.every(response => response.status === 200));
+  assert.equal((await write(input)).status,200);
+  const team = await read();
+  assert.equal(team.invitations.length,1); assert.equal(team.invitations[0].id,requestId);
+  assert.equal(team.invitations[0].delivery.status,'sent'); assert.equal(calls.length,1);
+});
+test('one-step invitation reports provider rejection and never sends if configuration is missing', async () => {
+  globalThis.fetch = async () => new Response('',{status:403});
+  const response = await write({action:'sendInvite', email:'person@example.com', requestId:crypto.randomUUID(), senderEmail:'invites@weft.example'});
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).invitations[0].delivery.status,'failed');
+  fixtureEnv.RESEND_API_KEY = '';
+  assert.equal((await write({action:'sendInvite',email:'other@example.com',requestId:crypto.randomUUID(),senderEmail:'invites@weft.example'})).status,409);
+  assert.equal((await read()).invitations.length,1);
 });
 test('concurrent sends and later retries dispatch only once', async () => {
   const id = await invite();

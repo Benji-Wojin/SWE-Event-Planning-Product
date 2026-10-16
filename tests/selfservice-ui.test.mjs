@@ -93,7 +93,7 @@ test('in-app invite is available without email delivery and no Gmail setup is of
       '',
     ]);
     const submit = tree.find(
-      (n) => n.type === 'button' && text(n) === 'Invite teammate',
+      (n) => n.type === 'button' && text(n) === 'Invite in Weft',
     );
     assert.equal(submit.props.disabled, false);
     assert.doesNotMatch(tree.map(text).join(''), /Connect invitation Gmail|Optional email delivery/);
@@ -115,6 +115,67 @@ test('in-app invite is available without email delivery and no Gmail setup is of
     globalThis.fetch = previous;
     delete globalThis.__selfserviceState;
   }
+});
+test('inviting sends email by default and reports the durable delivery result', async () => {
+  const previous = globalThis.fetch;
+  const team = { name: 'QA event', projectId: 'p_test', owner: {name:'Owner',email:'qa@example.com'},
+    members: [], invitations: [], sender: {configured:true,connected:true,email:'invites@weft.example'} };
+  try {
+    for (const status of ['sent', 'failed', 'unknown', 'sending']) {
+      const rendered = render(TeamClient, {projectId:'p_test'}, [team,'','person@example.com',false,'']);
+      const checkbox = rendered.tree.find(n => n.type === 'input' && n.props.type === 'checkbox');
+      assert.equal(checkbox.props.checked, true);
+      assert.ok(rendered.tree.some(n => n.type === 'button' && text(n) === 'Invite and send email'));
+      globalThis.fetch = async (url, options) => {
+        const body = JSON.parse(options.body);
+        assert.equal(body.action, 'sendInvite');
+        assert.equal(body.senderEmail, 'invites@weft.example');
+        assert.equal(body.email, 'person@example.com');
+        return Response.json({...team,invitations:[{id:body.requestId,delivery:{status,issue:'Fixture rejection.'}}]});
+      };
+      await rendered.tree.find(n => n.type === 'form').props.onSubmit({preventDefault(){}});
+      assert.equal(rendered.state[2], '');
+      if (status === 'sent') assert.match(rendered.state[4], /email service accepted/);
+      if (status === 'sending') assert.match(rendered.state[4], /Sending email/);
+      if (status === 'failed' || status === 'unknown') {
+        assert.equal(rendered.state[4], '');
+        assert.match(rendered.state[1], status === 'failed' ? /email was not sent/ : /could not be confirmed/);
+      }
+    }
+  } finally { globalThis.fetch = previous; delete globalThis.__selfserviceState; }
+});
+test('explicit in-app-only invite never dispatches email even with a configured sender', async () => {
+  const previous = globalThis.fetch;
+  const team = { name:'QA', owner:{name:'Owner',email:'owner@example.com'}, members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@weft.example'} };
+  try {
+    const rendered = render(TeamClient,{projectId:'p_test'},[team,'','person@example.com',false,'',false]);
+    assert.ok(rendered.tree.some(n => n.type === 'button' && text(n) === 'Invite in Weft'));
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.action, 'invite'); assert.equal(body.senderEmail, undefined);
+      return Response.json(team);
+    };
+    await rendered.tree.find(n => n.type === 'form').props.onSubmit({preventDefault(){}});
+    assert.match(rendered.state[4], /No email sent/);
+  } finally { globalThis.fetch = previous; delete globalThis.__selfserviceState; }
+});
+test('lost send response reloads status without dispatching again and keeps the typed address', async () => {
+  const previous = globalThis.fetch;
+  const team = { name:'QA', owner:{name:'Owner',email:'owner@example.com'}, members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@weft.example'} };
+  const calls=[];
+  try {
+    const rendered = render(TeamClient,{projectId:'p_test'},[team,'','person@example.com',false,'']);
+    globalThis.fetch = async (url, options) => {
+      calls.push(options.method);
+      if (options.method === 'POST') throw new Error('Lost response');
+      return Response.json({...team,name:'Recovered team'});
+    };
+    await rendered.tree.find(n => n.type === 'form').props.onSubmit({preventDefault(){}});
+    assert.deepEqual(calls,['POST','GET']); assert.equal(rendered.state[0].name,'Recovered team');
+    assert.equal(rendered.state[2],'person@example.com'); assert.equal(rendered.state[1],'Lost response');
+  } finally { globalThis.fetch = previous; delete globalThis.__selfserviceState; }
 });
 test('signup submits no caller identity and repeated clicks issue one guarded request', async () => {
   const previous = { fetch: globalThis.fetch, window: globalThis.window };

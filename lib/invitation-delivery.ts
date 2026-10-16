@@ -174,7 +174,7 @@ export async function sendInvitation(
         },
         body: JSON.stringify(GMAIL_ENABLED ? { raw } : {
           from: `Weft <${sender.email}>`, to: [invite.email],
-          reply_to: 'gathertemporary@gmail.com', subject: 'Weft project invitation', text,
+          reply_to: 'support@weftplan.com', subject: 'Weft project invitation', text,
         }),
         signal: AbortSignal.timeout(20000),
       },
