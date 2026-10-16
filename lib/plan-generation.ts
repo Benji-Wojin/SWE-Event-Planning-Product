@@ -123,6 +123,11 @@ const itemKeys = [
   'dependsOn',
   'existingTaskIndex',
 ];
+class PlanItemValidationError extends Error {
+  constructor(public field: string) {
+    super('Check each task, date, time, and dependency.');
+  }
+}
 export function parsePlanItems(
   input: any,
   reviewed = false,
@@ -130,32 +135,31 @@ export function parsePlanItems(
   if (!Array.isArray(input) || input.length < 1 || input.length > 24)
     throw new Error('Use between 1 and 24 plan items.');
   const items = input.map((item: any) => {
-    if (
-      !object(item, reviewed ? [...itemKeys, 'owner', 'included', 'duplicateChoice'] : itemKeys) ||
-      (item.existingTaskIndex != null &&
-        (!Number.isInteger(item.existingTaskIndex) || item.existingTaskIndex < 0 || item.existingTaskIndex >= 200)) ||
-      (reviewed && item.duplicateChoice !== undefined && !['reuse', 'keep'].includes(item.duplicateChoice)) ||
-      !text(item.id, 40, true) ||
-      !/^[a-zA-Z0-9_-]+$/.test(item.id) ||
-      !['preparation', 'activity'].includes(item.kind) ||
-      !text(item.title, 180, true) ||
-      !planCategories.includes(item.category) ||
-      !text(item.note, 2000) ||
-      !validPlanDate(item.dueDate) ||
-      !local(item.start) ||
-      !local(item.end) ||
-      (item.end && (!item.start || item.end <= item.start)) ||
-      (item.kind === 'preparation' && (item.start || item.end)) ||
-      (item.kind === 'activity' && item.dueDate) ||
-      !text(item.location, 240) ||
-      !Array.isArray(item.dependsOn) ||
-      item.dependsOn.length > 8 ||
-      item.dependsOn.some((id: any) => typeof id !== 'string') ||
-      new Set(item.dependsOn).size !== item.dependsOn.length ||
-      (reviewed &&
-        (!text(item.owner, 80) || typeof item.included !== 'boolean'))
-    )
-      throw new Error('Check each task, date, time, and dependency.');
+    if (!object(item, reviewed ? [...itemKeys, 'owner', 'included', 'duplicateChoice'] : itemKeys))
+      throw new PlanItemValidationError('shape');
+    // Fixed field labels identify malformed provider output without logging task
+    // names, values, model output, prompts or credentials. Keep all existing rules.
+    const checks = [
+      ['duplicate_index', () => item.existingTaskIndex == null || (Number.isInteger(item.existingTaskIndex) && item.existingTaskIndex >= 0 && item.existingTaskIndex < 200)],
+      ['duplicate_choice', () => !reviewed || item.duplicateChoice === undefined || ['reuse', 'keep'].includes(item.duplicateChoice)],
+      ['id', () => text(item.id, 40, true) && /^[a-zA-Z0-9_-]+$/.test(item.id)],
+      ['kind', () => ['preparation', 'activity'].includes(item.kind)],
+      ['title', () => text(item.title, 180, true)],
+      ['category', () => planCategories.includes(item.category)],
+      ['note', () => text(item.note, 2000)],
+      ['due_date', () => validPlanDate(item.dueDate)],
+      ['start', () => local(item.start)],
+      ['end', () => local(item.end)],
+      ['end_order', () => !item.end || (item.start && item.end > item.start)],
+      ['preparation_schedule', () => item.kind !== 'preparation' || (!item.start && !item.end)],
+      ['activity_deadline', () => item.kind !== 'activity' || !item.dueDate],
+      ['location', () => text(item.location, 240)],
+      ['dependencies', () => Array.isArray(item.dependsOn) && item.dependsOn.length <= 8 &&
+        item.dependsOn.every((id: any) => typeof id === 'string') && new Set(item.dependsOn).size === item.dependsOn.length],
+      ['review_fields', () => !reviewed || (text(item.owner, 80) && typeof item.included === 'boolean')],
+    ] as const;
+    const invalid = checks.find(([, valid]) => !valid());
+    if (invalid) throw new PlanItemValidationError(invalid[0]);
     return {
       ...item,
       title: item.title.trim(),
@@ -392,6 +396,7 @@ export async function generateEventPlan(
     };
     console.warn('weft_plan_generation_failed', {
       stage,
+      ...(stage === 'plan_validation' && error instanceof PlanItemValidationError ? { field: error.field } : {}),
       ...(httpStatus === undefined ? {} : { httpStatus }),
       ...(providerCode === undefined ? {} : { providerCode }),
       reason: error instanceof PlanProviderError

@@ -646,7 +646,29 @@ export async function eventPlanTests({
         assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'request',reason:'invalid_response'}]);
         provider({...output(),items:[{...baseItem,start:'PRIVATE_INVALID_VALUE'}]});
         await assert.rejects(planGeneration.generateEventPlan({}, 'test-only-placeholder'));
-        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'plan_validation',reason:'item_fields'}]);
+        assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'plan_validation',field:'start',reason:'item_fields'}]);
+        for (const [field, patch] of [
+          ['shape', {unexpected:'PRIVATE_FIELD'}],
+          ['duplicate_index', {existingTaskIndex:-1}],
+          ['id', {id:'PRIVATE INVALID ID'}],
+          ['kind', {kind:'PRIVATE_KIND'}],
+          ['title', {title:''}],
+          ['category', {category:'PRIVATE_CATEGORY'}],
+          ['note', {note:{private:'PRIVATE_NOTE'}}],
+          ['due_date', {dueDate:'2030-02-30'}],
+          ['start', {start:{toString:null},end:'2030-10-04T09:00'}],
+          ['end', {end:'PRIVATE_TIME'}],
+          ['end', {start:'2030-10-04T09:00',end:{toString:null}}],
+          ['end_order', {kind:'activity',dueDate:'',start:'2030-10-04T10:00',end:'2030-10-04T09:00'}],
+          ['preparation_schedule', {start:'2030-10-04T10:00'}],
+          ['activity_deadline', {kind:'activity'}],
+          ['location', {location:{private:'PRIVATE_LOCATION'}}],
+          ['dependencies', {dependsOn:['same','same']}],
+        ]) {
+          provider({...output(),items:[{...baseItem,...patch}]});
+          await assert.rejects(planGeneration.generateEventPlan({},'test-only-placeholder'));
+          assert.deepEqual(logs.pop(),['weft_plan_generation_failed',{stage:'plan_validation',field,reason:'item_fields'}]);
+        }
         globalThis.fetch = async () => Response.json({error:{code:'json_validate_failed',message:'PRIVATE_ERROR',failed_generation:'PRIVATE_MODEL_OUTPUT'}},{status:400});
         await assert.rejects(planGeneration.generateEventPlan({}, 'PRIVATE_API_KEY'));
         assert.deepEqual(logs.pop(), ['weft_plan_generation_failed', {stage:'output_json',httpStatus:400,providerCode:'json_validate_failed',reason:'invalid_response'}]);
