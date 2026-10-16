@@ -177,8 +177,40 @@ test('lost send response reloads status without dispatching again and keeps the 
     };
     await rendered.tree.find(n => n.type === 'form').props.onSubmit({preventDefault(){}});
     assert.deepEqual(calls,['POST','GET']); assert.equal(rendered.state[0].name,'Recovered team');
-    assert.equal(rendered.state[2],'person@example.com'); assert.equal(rendered.state[1],'Lost response');
+    assert.equal(rendered.state[2],'person@example.com');
+    assert.match(rendered.state[1],/may have completed.*Reload to check/);
+    assert.doesNotMatch(rendered.state[1],/Lost response/);
   } finally { globalThis.fetch = previous; delete globalThis.__selfserviceState; }
+});
+test('email invite times out safely, checks status, and keeps its request ID for an explicit retry', async (t) => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const previous=globalThis.fetch;
+  const team={name:'QA',owner:{name:'Owner',email:'owner@example.com'},members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@weft.example'}};
+  const calls=[];let release;
+  try {
+    const rendered=render(TeamClient,{projectId:'p_test'},[team,'','person@example.com',false,'']);
+    globalThis.fetch=(url,options)=>{
+      calls.push(options);
+      if(options.method==='POST')return new Promise(resolve=>{release=resolve;});
+      return Promise.resolve(Response.json({...team,name:'Recovered status'}));
+    };
+    const submit=rendered.tree.find(n=>n.type==='form').props.onSubmit;
+    const pending=submit({preventDefault(){}});
+    assert.equal(rendered.state[3],true);
+    t.mock.timers.tick(30001);await pending;
+    assert.deepEqual(calls.map(c=>c.method),['POST','GET']);
+    assert.equal(calls[0].signal.aborted,true);
+    assert.equal(rendered.state[3],false);
+    assert.equal(rendered.state[0].name,'Recovered status');
+    assert.equal(rendered.state[2],'person@example.com');
+    assert.match(rendered.state[1],/may have completed.*Reload to check/);
+    release(Response.json({...team,name:'Late old response'}));await settle();
+    assert.equal(rendered.state[0].name,'Recovered status');
+    globalThis.fetch=async(url,options)=>{calls.push(options);return Response.json(team);};
+    await submit({preventDefault(){}});
+    assert.equal(JSON.parse(calls[0].body).requestId,JSON.parse(calls[2].body).requestId);
+  } finally {globalThis.fetch=previous;delete globalThis.__selfserviceState;}
 });
 test('signup submits no caller identity and repeated clicks issue one guarded request', async () => {
   const previous = { fetch: globalThis.fetch, window: globalThis.window };
