@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 const workspace=readFileSync('legacy/lovable-ui.css','utf8');
 const shell=readFileSync('app/globals.css','utf8');
 const token=(css,name)=>css.match(new RegExp('--'+name+':\\s*(#[a-f0-9]{6})','i'))?.[1];
@@ -29,4 +30,14 @@ test('invitation warning and failure badges keep readable text in both themes',(
   for(const [fg,bg] of [['#77510b','#fff4dc'],['#96382c','#fff0ed'],['#f0c36c','#3d3321'],['#ffa99b','#422b2c']])assert.ok(contrast(fg,bg)>=4.5);
   assert.match(shell,/\.invitation-status[^}]+max-width: 100%/);
   assert.match(shell,/\.invitation-status[^}]+overflow-wrap: anywhere/);
+});
+test('render synchronizes participant controls after local profile switches and removes dead onboarding copy',()=>{
+  const app=readFileSync('legacy/app.js','utf8');
+  const render=app.slice(app.indexOf('  function render() {'),app.indexOf('  function setDrawer('));
+  const sync=render.match(/document\.body\.classList\.toggle\('participant',!isOrganizer\(\)\);/)?.[0];
+  assert.ok(sync,'Every render must synchronize role controls');
+  let organizer=true,participant;
+  const context={document:{body:{classList:{toggle(name,on){assert.equal(name,'participant');participant=on;}}}},isOrganizer:()=>organizer};
+  for(const role of [true,false,true,false]){organizer=role;vm.runInNewContext(sync,context);assert.equal(participant,!role);}
+  assert.doesNotMatch(readFileSync('scripts/prepare.mjs','utf8'),/team onboarding is not enabled/);
 });

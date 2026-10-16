@@ -224,6 +224,7 @@
     const s=store.getState();
     $('.event-switcher strong').textContent=s.event.name;
     $('.event-symbol').textContent=s.event.name.split(/\s+/).filter(Boolean).slice(0,2).map(word=>word[0]).join('').toUpperCase();
+    document.body.classList.toggle('participant',!isOrganizer());
     $$('.project-setup-link').forEach(link=>{link.hidden=!isOrganizer();});
     $('.breadcrumb > span').textContent=s.event.name;
     $('#taskNavCount').textContent=s.tasks.filter(t=>t.status!=='done').length;

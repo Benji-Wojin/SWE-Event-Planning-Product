@@ -135,10 +135,6 @@ app = app.replace(
 );
 app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):window.GatherMode.projectUrl("/project")}');
 app = app.replace(
-  'Team invitations are a draft in this local prototype. No invite or email will be sent.',
-  'Private to your account. Invitation drafts do not send messages or grant access; team onboarding is not enabled.',
-);
-app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
   `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles. Only enter fictional booking details. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. Team access manages invitations.</p><p>This release does not read Gmail. Planning suggestions use rules; optional AI searches use the task name, category and city.</p><p>Private details are excluded from shared exports and AI searches.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
