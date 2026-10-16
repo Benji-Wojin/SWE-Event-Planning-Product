@@ -15,23 +15,24 @@ function element(tag) {
     addEventListener(type, fn) { this.listeners[type] = fn; },
   };
 }
-function start(response, { oldDocument = false } = {}) {
+function start(response, { oldDocument = false, demo = false } = {}) {
   const boot = element('main'), shell = element('div'), body = element('body'), listeners = {};
   shell.hidden = !oldDocument;boot.attributes['aria-busy'] = 'true';
   body.classList = { toggle() {} };
   body.insertBefore = node => body.children.unshift(node);
   let reloads = 0, redirect;
+  const inviteLabel = element('span');inviteLabel.textContent = 'Invitation draft';
   const document = {
     getElementById: id => id === 'workspaceBoot' ? oldDocument ? null : boot : shell,
-    querySelectorAll: () => [], querySelector: () => null, createElement: element, body,
+    querySelectorAll: () => [], querySelector: selector => selector === '[data-invite-label]' ? inviteLabel : null, createElement: element, body,
   };
   const window = { top: { location: { replace(value) { redirect = value; } } }, addEventListener(type, fn) { listeners[type] = fn; } };
   const run = vm.runInNewContext(source, { window, document,
-    location: { search: '?project=new-project', origin: 'https://weft.example', reload() { reloads++; } },
+    location: { search: demo ? '?demo=1&as=jack' : '?project=new-project', origin: 'https://weft.example', reload() { reloads++; } },
     URL, URLSearchParams, structuredClone, fetch: () => response,
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
-    reloads: () => reloads, redirect: () => redirect };
+    inviteLabel, reloads: () => reloads, redirect: () => redirect };
 }
 const success = value => ({ ok: true, status: 200, json: async () => value });
 const text = node => [node.textContent || '', ...node.children.map(text)].join(' ');
@@ -85,8 +86,20 @@ test('failed app download or initialization gives a working retry screen', async
 test('older open documents receive a loading screen and setup redirects never reveal shell', async () => {
   const old = start(Promise.resolve(success(state)), { oldDocument: true });await old.run;
   assert.match(text(old.boot), /Loading project/);assert.equal(old.shell.hidden, true);
+  assert.ok(old.boot.children.some(node => node.tag === 'a' && node.href === '/' && node.target === '_top'), 'fallback loading screen has a Projects escape link');
   old.listeners['gather-workspace-ready']();assert.equal(old.shell.hidden, false);assert.equal(old.boot.hidden, true);
   const h = start(Promise.resolve(success({ ...state, setupRequired: true })));await h.run;
   assert.equal(h.redirect(), '/setup?project=new-project');assert.equal(h.shell.hidden, true);
   assert.equal(h.body.children.some(node => node.tag === 'script'), false);
+});
+
+test('invite label matches hosted navigation while demo remains explicitly simulated', async () => {
+  const hosted = start(Promise.resolve(success(state)));await hosted.run;
+  assert.equal(hosted.inviteLabel.textContent, 'Invite people');
+  const demo = start(Promise.resolve(success({...state,demo:true})),{demo:true});await demo.run;
+  assert.equal(demo.inviteLabel.textContent, 'Invitation draft');
+  const app=readFileSync('legacy/app.js','utf8');
+  const action=app.slice(app.indexOf("if(action==='invite')"),app.indexOf("if(action==='copy-invite')"));
+  assert.ok(action.indexOf("projectUrl('/team');return;") < action.indexOf("openDialog('Invitation draft'"));
+  assert.match(readFileSync('legacy/styles.css','utf8'),/\.participant \[data-action="invite"\]/);
 });

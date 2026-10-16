@@ -73,6 +73,22 @@ function render(component, props, values = []) {
   return { tree: nodes(component(props)), state };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+test('invitation states remain textual, distinct and recoverable with scanable badges', () => {
+  const expected = {sent:'Email accepted',sending:'Sending…',unknown:'Sending not confirmed',failed:'Not sent',none:'In-app only · Email not sent'};
+  for (const [status,label] of Object.entries(expected)) {
+    const team={name:'QA event',projectId:'p_test',members:[],owner:{name:'QA',email:'qa@example.com'},sender:{connected:true,configured:true,email:'invites@weft.example'},
+      invitations:[{id:'i_test',email:'person@example.com',expiresAt:1792200000000,delivery:{status,sentAt:1792100000000,sender:'invites@weft.example',canRetry:['none','failed'].includes(status),issue:status==='failed'?'Fictional provider failure.':''}}]};
+    const {tree}=render(TeamClient,{projectId:'p_test'},[team,'','',false,'']);
+    const badge=tree.find(n=>n.props.className==='invitation-status');
+    assert.equal(badge.props['data-delivery'],status);assert.equal(text(badge),label);
+    assert.ok(tree.some(n=>n.props.role==='status'&&text(n).includes(label)));
+    const retry=tree.find(n=>n.type==='button'&&['Retry sending','Send invitation email'].includes(text(n)));
+    assert.equal(Boolean(retry),['none','failed'].includes(status));
+    if(status==='sent')assert.match(tree.map(text).join(''),/inbox delivery is not guaranteed/);
+    if(status==='failed')assert.match(tree.map(text).join(''),/Fictional provider failure/);
+  }
+  delete globalThis.__selfserviceState;
+});
 test('in-app invite is available without email delivery and no Gmail setup is offered', async () => {
   const previous = globalThis.fetch,
     calls = [];

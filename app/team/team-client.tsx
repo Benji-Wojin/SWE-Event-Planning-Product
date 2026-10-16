@@ -356,17 +356,30 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   <p className="text-sm text-muted-foreground">
                     Expires {new Date(invite.expiresAt).toLocaleDateString()}
                   </p>
-                  <p className="mt-1 text-sm" role="status">
-                    {invite.delivery.status === 'sent'
-                      ? 'Email accepted · ' +
-                        new Date(invite.delivery.sentAt).toLocaleString()
-                      : invite.delivery.status === 'sending'
-                        ? 'Sending…'
-                        : invite.delivery.status === 'unknown'
-                          ? 'Sending not confirmed'
-                          : invite.delivery.status === 'failed'
-                            ? 'Not sent'
-                            : 'In-app only · Email not sent'}
+                  <p
+                    className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                    role="status"
+                  >
+                    <span
+                      className="invitation-status"
+                      data-delivery={invite.delivery.status}
+                    >
+                      {invite.delivery.status === 'sent'
+                        ? 'Email accepted'
+                        : invite.delivery.status === 'sending'
+                          ? 'Sending…'
+                          : invite.delivery.status === 'unknown'
+                            ? 'Sending not confirmed'
+                            : invite.delivery.status === 'failed'
+                              ? 'Not sent'
+                              : 'In-app only · Email not sent'}
+                    </span>
+                    {invite.delivery.status === 'sent' && (
+                      <span className="text-xs text-muted-foreground">
+                        {' · ' +
+                          new Date(invite.delivery.sentAt).toLocaleString()}
+                      </span>
+                    )}
                   </p>
                   {invite.delivery.issue && (
                     <p className="mt-1 text-sm text-muted-foreground">

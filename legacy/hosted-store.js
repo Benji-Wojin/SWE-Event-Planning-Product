@@ -11,10 +11,11 @@
   // An already-open document may load the newer script during a release.
   if (!boot) {
     boot = document.createElement('main');boot.id = 'workspaceBoot';
-    boot.style.cssText = 'max-width:640px;margin:64px auto;padding:24px';
     boot.setAttribute('aria-busy', 'true');
+    const brand = document.createElement('span');brand.className = 'workspace-boot-brand';brand.textContent = 'weft';brand.setAttribute('aria-hidden', 'true');
     const status = document.createElement('p');status.setAttribute('role', 'status');status.textContent = 'Loading project…';
-    boot.append(status);
+    const back = document.createElement('a');back.href = '/';back.target = '_top';back.textContent = 'All projects';
+    boot.append(brand, status, back);
     document.body.insertBefore(boot, shell);
   }
   shell.hidden = true;
@@ -125,6 +126,8 @@
     if(!demo&&snapshot.setupRequired){window.top.location.replace(projectUrl('/setup'));return;}
     if(!demo)document.querySelectorAll('a[href="/setup"],a[href="/settings"],a[href="/mail"]').forEach(link=>link.href=projectUrl(link.getAttribute('href')));
     window.GatherIdentity = snapshot.identity;
+    const inviteLabel = document.querySelector('[data-invite-label]');
+    if (inviteLabel) inviteLabel.textContent = demo ? 'Invitation draft' : 'Invite people';
     document.body.classList.toggle('participant', snapshot.identity.role !== 'admin');
     if (!demo && snapshot.identity.role !== 'admin') document.querySelector('.top-actions a[href="/demo"]')?.remove();
     if (demo) {

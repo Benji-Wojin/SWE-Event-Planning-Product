@@ -37,7 +37,7 @@ html = html.replace('<div class="top-actions">', '<div class="top-actions"><a cl
 // The hosted shell has no project identity until the authenticated snapshot loads.
 html = html.replaceAll('Field Day 2026', 'Project')
   .replace('<span class="event-symbol">FD</span>', '<span class="event-symbol" aria-hidden="true">…</span>')
-  .replace('<div class="app-shell" id="appShell">', '<main id="workspaceBoot" style="max-width:640px;margin:64px auto;padding:24px" aria-busy="true"><p role="status">Loading project…</p><a href="/" target="_top">All projects</a></main><div class="app-shell" id="appShell" hidden>');
+  .replace('<div class="app-shell" id="appShell">', '<main id="workspaceBoot" aria-busy="true"><span class="workspace-boot-brand" aria-hidden="true">weft</span><p role="status">Loading project…</p><a href="/" target="_top">All projects</a></main><div class="app-shell" id="appShell" hidden>');
 writeFileSync('public/gather-assets/calendar.js',readFileSync('legacy/calendar.js','utf8'));
 writeFileSync('public/gather-assets/navigation.js',readFileSync('legacy/navigation.js','utf8'));
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
