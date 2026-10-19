@@ -183,7 +183,7 @@ body {
 .dark .invitation-status[data-delivery="failed"] { background: #422b2c; color: #ffa99b; }
 
 .plan-sidebar-shell{padding:2px 0 8px;width:100%;min-width:0}
-body:has(>.plan-sidebar-shell){background:transparent}
+html:has(.plan-sidebar-shell),body:has(>.plan-sidebar-shell){background:var(--card)}
 .sidebar-item-note{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
 .plan-sidebar-review{font-size:13px;overflow-wrap:anywhere}
 .plan-sidebar-review [data-slot="card"]{box-shadow:none;gap:0;border-color:var(--border)}
