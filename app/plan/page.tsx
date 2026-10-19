@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export default async function Plan({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; demo?: string; as?: string; mode?: string }>;
+  searchParams: Promise<{ project?: string; demo?: string; as?: string; mode?: string; embed?: string }>;
 }) {
   const params = await searchParams;
   const suggestions = params.mode === 'suggestions';
@@ -14,6 +14,11 @@ export default async function Plan({
       ? 'demo=1&as=' + encodeURIComponent(params.as || 'jack')
       : 'project=' + encodeURIComponent(params.project || 'main')) + (suggestions ? '&mode=suggestions' : '');
   await requireChatGPTUser('/plan?' + query);
+  if (suggestions && params.embed === '1') return (
+    <main id="embeddedPlan" className="plan-sidebar-shell">
+      <PlanReview query={query} embedded />
+    </main>
+  );
   return (
     <main className="mx-auto w-full max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4">

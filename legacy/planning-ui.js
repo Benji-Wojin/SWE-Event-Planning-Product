@@ -56,7 +56,7 @@
       {view:'overview',target:'.stat-grid',title:'Your event, at a glance',copy:'Overview brings attention items, progress, and recent updates together. You can keep working while this tip is open.'},
       {view:'tasks',target:'#taskSearch',title:'Find work you can take',copy:'Search task names, notes, categories, or people. Use My tasks or Unassigned to narrow the list.'},
       {view:'tasks',target:'.task-view-switch',title:'See how work connects',copy:'Open Link map. Solid arrows are prerequisites; dashed links are related work. Related tasks do not prevent completion. Click a task for the reason.'},
-      ...(isOrganizer()?[{view:'overview',target:'#thoughtPartner',title:'AI proposes. You decide.',copy:'Find next steps asks AI for gaps in this event’s plan. Review every suggestion and link before adding anything. Automatic checks are labeled separately.'}]:[]),
+      ...(isOrganizer()?[{view:'overview',target:'#thoughtPartner',title:'AI proposes. You decide.',copy:'Enhance this plan reviews gaps right here in the sidebar. Review every suggestion and link before adding anything. Automatic checks are labeled separately.'}]:[]),
       {view:'inbox',target:'.page-heading',title:'Keep updates connected',copy:'Email briefing lets you review updates before they change a task. That’s it—reopen Quick tour any time.'},
     ];
     const remember=()=>{try{localStorage.setItem(storageKey,'seen');}catch{}};
@@ -88,5 +88,42 @@
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&box){event.preventDefault();event.stopImmediatePropagation();close();}},true);
     return {start,close,offer(){try{if(localStorage.getItem(storageKey))return;}catch{return;}start();}};
   }
-  root.GatherPlanningUI={readiness,graph,graphMarkup,createTour};
+  function sidebarMessage(event,frame,origin) {
+    const data=event.data;
+    if(!frame||event.origin!==origin||event.source!==frame.contentWindow||!data||data.type!=='weft-plan-sidebar')return null;
+    if(data.event==='state'&&typeof data.dirty==='boolean'&&typeof data.busy==='boolean')return data;
+    if(data.event==='height'&&Number.isFinite(data.height))return {event:'height',height:Math.max(240,Math.min(1600,data.height))};
+    return data.event==='applied'?{event:'applied'}:null;
+  }
+  function createSidebar({getUrl,onApplied,notify}) {
+    let dirty=false,busy=false;
+    const frame=()=>document.getElementById('planningSidebarFrame');
+    window.addEventListener('message',event=>{
+      const current=frame(),message=sidebarMessage(event,current,location.origin);if(!message)return;
+      if(message.event==='state'){dirty=message.dirty;busy=message.busy;}
+      if(message.event==='height')current.style.height=message.height+'px';
+      if(message.event==='applied')onApplied();
+    });
+    return {
+      open(){
+        const slot=document.getElementById('planningSidebarSlot');if(!slot)return;
+        if(!frame()){const element=document.createElement('iframe');element.id='planningSidebarFrame';element.title='Enhance this plan with AI';element.src=getUrl();slot.append(element);}
+        slot.hidden=false;document.getElementById('planningSidebarActions').hidden=true;
+        slot.querySelector('button').focus({preventScroll:true});
+      },
+      hide(){const slot=document.getElementById('planningSidebarSlot');if(slot)slot.hidden=true;const actions=document.getElementById('planningSidebarActions');if(actions){actions.hidden=false;actions.querySelector('button').focus({preventScroll:true});}},
+      active:()=>!!frame(),
+      unsaved:()=>!!frame()&&(dirty||busy),
+      canLeave(){if(!frame())return true;if(busy){notify('Please wait for the AI review request to finish.');return false;}return !dirty||window.confirm('Discard unsaved AI review edits and leave this view?');},
+      reset(){dirty=false;busy=false;},
+      preserve(container,markup){
+        const next=document.createElement('template');next.innerHTML=markup;
+        for(const id of ['overviewHeader','overviewMain','overviewEmail','overviewActivity','overviewSuggestions']){
+          const before=container.querySelector('#'+id),after=next.content.querySelector('#'+id);if(before&&after)before.replaceWith(after);
+        }
+        // Keep the mounted review document in place; workspace refreshes must not destroy edits or restart requests.
+      },
+    };
+  }
+  root.GatherPlanningUI={readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar};
 })(globalThis);

@@ -1,11 +1,47 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/planning-ui.js';
 const {graph,readiness,graphMarkup}=GatherPlanningUI;
 const make=(id,dependencies=[],status='todo')=>({id,title:id,category:'Program',status,dependencies});
 const link=(taskId,kind='dependency')=>({taskId,kind});
+
+test('sidebar accepts only its exact same-origin frame and validates message fields',()=>{
+  const source={},frame={contentWindow:source},origin='https://example.com';
+  const message=(data,extra={})=>GatherPlanningUI.sidebarMessage({source,origin,data:{type:'weft-plan-sidebar',...data},...extra},frame,origin);
+  assert.equal(message({event:'applied'},{source:{}}),null);
+  assert.equal(message({event:'applied'},{origin:'https://other.example'}),null);
+  assert.equal(message({event:'state',dirty:'true',busy:false}),null);
+  assert.equal(message({event:'height',height:Infinity}),null);
+  assert.equal(message({event:'height',height:-30}).height,240);
+  assert.equal(message({event:'height',height:9000}).height,1600);
+  assert.equal(message({event:'state',dirty:true,busy:false}).dirty,true);
+  assert.equal(message({event:'generate'}),null,'messages cannot request provider or database mutations');
+});
+
+test('sidebar hide/reopen keeps one review frame and guards unsaved or in-flight navigation',()=>{
+  const elements=new Map(),listeners={},notifications=[];let applied=0,confirmations=0,allow=false,appended=0;
+  const button={focus(){}},actions={hidden:false,querySelector:()=>button};
+  elements.set('planningSidebarActions',actions);
+  const slot={hidden:true,querySelector:()=>button,append(frame){elements.set(frame.id,frame);appended++;}};
+  elements.set('planningSidebarSlot',slot);
+  const context=vm.createContext({location:{origin:'https://example.com'},document:{getElementById:id=>elements.get(id),createElement:()=>({style:{},contentWindow:{}})},window:{addEventListener:(type,fn)=>listeners[type]=fn,confirm:()=>{confirmations++;return allow;}}});
+  vm.runInContext(readFileSync('legacy/planning-ui.js','utf8'),context);
+  const sidebar=context.GatherPlanningUI.createSidebar({getUrl:()=>'/plan?project=one&mode=suggestions&embed=1',onApplied:()=>applied++,notify:value=>notifications.push(value)});
+  sidebar.open();const frame=elements.get('planningSidebarFrame');
+  assert.match(frame.src,/project=one/);assert.equal(actions.hidden,true);
+  const send=data=>listeners.message({origin:'https://example.com',source:frame.contentWindow,data:{type:'weft-plan-sidebar',...data}});
+  send({event:'state',dirty:true,busy:false});assert.equal(sidebar.unsaved(),true);
+  assert.equal(sidebar.canLeave(),false);assert.equal(confirmations,1);
+  sidebar.hide();sidebar.open();assert.equal(appended,1,'hide and reopen must not restart or discard the review');
+  send({event:'state',dirty:false,busy:true});assert.equal(sidebar.canLeave(),false);assert.equal(confirmations,1);assert.equal(notifications.length,1);
+  send({event:'applied'});assert.equal(applied,1);
+  send({event:'state',dirty:true,busy:false});allow=true;assert.equal(sidebar.canLeave(),true);
+  sidebar.reset();assert.equal(sidebar.unsaved(),false);
+});
 
 test('map places prerequisites before dependents and represents shared parents once',()=>{
   const tasks=[make('quote'),make('deposit',[link('quote')]),make('program',[link('quote')]),make('open',[link('deposit'),link('program')])];

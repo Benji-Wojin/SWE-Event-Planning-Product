@@ -177,6 +177,8 @@ button.task-title:hover{color:#1c5933;text-decoration:underline;text-underline-o
 .planning-assistant .eyebrow{font-size:10px;letter-spacing:.13em;color:var(--muted);display:block;margin-bottom:8px}
 .planning-assistant>h2{margin:0 0 8px}.ai-panel.planning-assistant>p{margin:0 0 16px;line-height:1.5;color:var(--muted)}
 .planning-ai-actions{display:grid;justify-items:start;gap:12px;margin:12px 0 20px}.planning-ai-actions>.btn{width:100%;justify-content:space-between}.planning-ai-actions .text-button{font-size:13px}
+.planning-ai-actions[hidden],#planningSidebarSlot[hidden]{display:none}
+#planningSidebarSlot{margin-top:12px}#planningSidebarFrame{display:block;width:100%;height:540px;border:0;background:transparent;color-scheme:normal}.sidebar-hide{font-size:12px;margin-bottom:12px}
 .planning-checks-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;justify-content:space-between;border-top:1px solid var(--line);padding-top:16px;margin-top:18px}.planning-checks-heading h3{font-size:13px;margin:0}.planning-checks-heading>span{font-size:11px;color:var(--muted)}.planning-checks-title{margin-top:24px}
 .task-discovery{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:20px 24px;border-bottom:1px solid var(--line)}
 .search-input.task-search-prominent{flex:1 1 280px;max-width:620px;min-width:0;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:0 14px;min-height:46px}.task-search-prominent input{width:100%;min-width:0;font-size:14px}.task-view-switch{display:flex;gap:5px;margin-left:auto}

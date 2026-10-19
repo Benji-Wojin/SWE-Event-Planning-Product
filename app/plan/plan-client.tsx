@@ -53,7 +53,7 @@ async function api(query: string, body?: unknown) {
     );
   return data;
 }
-export function PlanReview({ query }: { query: string }) {
+export function PlanReview({ query, embedded = false }: { query: string; embedded?: boolean }) {
   const [data, setData] = useState<any>(null),
     [brief, setBrief] = useState<PlanBrief>(emptyBrief),
     [items, setItems] = useState<ReviewedItem[]>([]);
@@ -65,6 +65,22 @@ export function PlanReview({ query }: { query: string }) {
     request = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
   const dirty = !!data && editable(brief, items) !== initial;
+  useEffect(() => {
+    if (!embedded) return;
+    window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || data?.status === 'generating'}, window.location.origin);
+  }, [embedded, dirty, busy, data?.status]);
+  useEffect(() => {
+    if (!embedded) return;
+    const root = document.getElementById('embeddedPlan');
+    if (!root) return;
+    const measure = () => window.parent.postMessage({type:'weft-plan-sidebar', event:'height', height:Math.ceil(root.getBoundingClientRect().height) + 12}, window.location.origin);
+    const observer = new ResizeObserver(measure);
+    observer.observe(root); measure();
+    return () => observer.disconnect();
+  }, [embedded]);
+  useEffect(() => {
+    if (embedded && data?.receipt) window.parent.postMessage({type:'weft-plan-sidebar', event:'applied'}, window.location.origin);
+  }, [embedded, data?.receipt]);
   const params = new URLSearchParams(query),
     demo = params.get('demo') === '1';
   const suggestions = params.get('mode') === 'suggestions';
@@ -243,13 +259,13 @@ export function PlanReview({ query }: { query: string }) {
             Try again
           </Button>
         )}
-        <a href="/" className="mt-5 block text-sm underline">
+        <a href="/" target={embedded ? '_top' : undefined} className="mt-5 block text-sm underline">
           All projects
         </a>
       </section>
     );
   return (
-    <section aria-busy={locked}>
+    <section aria-busy={locked} className={embedded ? 'plan-sidebar-review' : undefined}>
       {alert}
       {error && waiting && (
         <Button
@@ -266,7 +282,7 @@ export function PlanReview({ query }: { query: string }) {
           {notice}
         </p>
       )}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-sm">
+      {!embedded && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-sm">
         <p className="min-w-0 break-words font-medium">
           {data.event.name}
           {demo ? ' · Demo' : ''}
@@ -274,7 +290,7 @@ export function PlanReview({ query }: { query: string }) {
         <a href={projectUrl} className="text-primary underline">
           {applied ? 'Open project' : 'Skip / open project'}
         </a>
-      </div>
+      </div>}
       {data.issue && (
         <p role="status" className="mb-4 rounded-lg border p-4 text-sm">
           {data.issue}
@@ -294,14 +310,16 @@ export function PlanReview({ query }: { query: string }) {
           <p className="font-medium">
             {data.receipt.taskIds.length} items added to the project.
           </p>
-          <a
+          {!embedded && <a
             href={projectUrl}
             className="mt-2 inline-block text-sm text-primary underline"
           >
             View tasks and schedule
-          </a>
+          </a>}
         </div>
       )}
+      <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>
+        <summary className={embedded ? 'cursor-pointer text-sm font-medium' : 'hidden'}>Review focus & event details</summary>
       <Card>
         <CardContent className="space-y-5 pt-6">
           <fieldset disabled={locked} className="space-y-5">
@@ -342,7 +360,7 @@ export function PlanReview({ query }: { query: string }) {
                 {demo ? (
                   'Edit event details in the demo.'
                 ) : (
-                  <a href={'/setup?' + query} className="underline">
+                  <a href={'/setup?' + query} target={embedded ? '_top' : undefined} className="underline">
                     Project settings
                   </a>
                 )}
@@ -421,6 +439,7 @@ export function PlanReview({ query }: { query: string }) {
           </fieldset>
         </CardContent>
       </Card>
+      </details>
       {waiting && (
         <p role="status" className="my-4 text-sm">
           Generating a private draft. You can return later; nothing is added
@@ -436,7 +455,7 @@ export function PlanReview({ query }: { query: string }) {
               Adds to your {data.existingTaskCount} existing tasks. Dates,
               owners, and activities below are proposals.
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">Required links mean one task needs another task’s output to be completed. Related work can run in parallel. Review and remove any unnecessary prerequisites below.</p>
+            <p className="mt-2 text-sm text-muted-foreground">{embedded ? 'Only true prerequisites block completion. Review links under Details.' : 'Required links mean one task needs another task’s output to be completed. Related work can run in parallel. Review and remove any unnecessary prerequisites below.'}</p>
           </div>
           {data.draft.scheduleWarnings?.length > 0 && (
             <details className="rounded-lg border p-4 text-sm">
@@ -517,13 +536,12 @@ export function PlanReview({ query }: { query: string }) {
                         htmlFor={'include-' + item.id}
                         className="text-sm font-medium"
                       >
-                        {index + 1}.{' '}
-                        {item.kind === 'activity' ? 'Activity' : 'Preparation'}
+                        {embedded ? item.title : `${index + 1}. ${item.kind === 'activity' ? 'Activity' : 'Preparation'}`}
                       </label>
                       <Label className="sr-only" htmlFor={'title-' + item.id}>
                         Title for item {index + 1}
                       </Label>
-                      <Input
+                      {!embedded && <Input
                         id={'title-' + item.id}
                         className="mt-2"
                         maxLength={180}
@@ -531,7 +549,8 @@ export function PlanReview({ query }: { query: string }) {
                         onChange={(e) =>
                           updateItem(item.id, { title: e.target.value })
                         }
-                      />
+                      />}
+                      {embedded && <p className="sidebar-item-note mt-2 text-xs text-muted-foreground">{item.note}</p>}
                     </div>
                   </div>
                   {!applied && possible.has(item.id) && (
@@ -681,6 +700,8 @@ export function PlanReview({ query }: { query: string }) {
                         </div>
                       );
                     })}
+                  <details open={!embedded}>
+                    <summary className={embedded ? 'cursor-pointer text-xs font-medium' : 'hidden'}>Owner & date</summary>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor={'owner-' + item.id}>Owner</Label>
@@ -736,6 +757,7 @@ export function PlanReview({ query }: { query: string }) {
                       />
                     </div>
                   </div>
+                  </details>
                   <details>
                     <summary className="cursor-pointer text-sm font-medium">
                       Details
@@ -744,6 +766,7 @@ export function PlanReview({ query }: { query: string }) {
                         : ''}
                     </summary>
                     <div className="mt-4 space-y-4">
+                      {embedded && <div className="space-y-2"><Label htmlFor={'title-' + item.id}>Task title</Label><Input id={'title-' + item.id} maxLength={180} value={item.title} onChange={e=>updateItem(item.id,{title:e.target.value})}/></div>}
                       <div className="space-y-2">
                         <Label htmlFor={'note-' + item.id}>
                           What needs to be done
@@ -932,9 +955,9 @@ export function PlanReview({ query }: { query: string }) {
         >
           Reload saved draft
         </button>
-        <a href={projectUrl} className="text-primary underline">
+        {!embedded && <a href={projectUrl} className="text-primary underline">
           Open project
-        </a>
+        </a>}
       </nav>
     </section>
   );

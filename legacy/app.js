@@ -10,6 +10,11 @@
   const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
+  const planSidebar=GatherPlanningUI.createSidebar({
+    getUrl:()=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode=suggestions&embed=1':window.GatherMode.projectUrl('/plan')+'&mode=suggestions&embed=1',
+    notify:message=>toast(message),
+    onApplied:async()=>{try{const result=await store.refresh(()=>!ui.pendingSave&&!unsavedDialog()&&!unsavedReview());if(result.pending)toast('Suggestions added. Finish your open edit before refreshing the workspace.');else{render();toast('Selected suggestions added to your plan.');}}catch(error){toast(error.message||'Suggestions added. Refresh the workspace to see the latest tasks.');}},
+  });
   const icons = {
     grid:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
     check:'m4 6 2 2 4-4M13 6h7M4 16l2 2 4-4M13 16h7',
@@ -128,23 +133,23 @@
     const days=s.event.date?Math.max(0,Math.ceil((new Date(s.event.date+'T00:00:00')-new Date(dateKey()+'T00:00:00'))/86400000)):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton}`)+setupNote+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton}`)+setupNote+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
         <button class="stat-card" data-view="inbox"><span class="stat-label">Email to review</span><strong class="stat-number">${emails.length}<span class="metric-icon">${icon('mail')}</span></strong></button>
         <button class="stat-card" data-view="team"><span class="stat-label">People</span><strong class="stat-number">${s.members.length}<span class="metric-icon">${icon('people')}</span></strong></button>
-      </section>
-      <div class="workspace-grid"><div class="stack">
+      </section></div>
+      <div class="workspace-grid"><div class="stack" id="overviewMain">
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
           <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
-        <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">PLANNING ASSISTANT</span><h2>What’s next?</h2><p>Get a focused review of gaps in your current plan. You choose what to add.</p>${window.GatherMode&&isOrganizer()?'<div class="planning-ai-actions"><button class="btn btn-primary" data-action="ai-suggestions">Find next steps with AI '+icon('spark')+'</button><button class="text-button" data-action="draft-plan">Draft a full plan '+icon('arrow')+'</button></div>':'<p class="notice">The organizer can request AI suggestions.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
-        <section class="panel email-preview"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
+        <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">PLANNING ASSISTANT</span><h2>What’s next?</h2><p>Get a focused review of gaps in your current plan. You choose what to add.</p>${window.GatherMode&&isOrganizer()?'<div class="planning-ai-actions" id="planningSidebarActions"><button class="btn btn-primary" data-action="ai-suggestions">Enhance this plan '+icon('spark')+'</button><button class="text-button" data-action="draft-plan">Draft a full plan '+icon('arrow')+'</button></div><div id="planningSidebarSlot" hidden><button class="text-button sidebar-hide" data-action="hide-ai-review">Hide AI review</button></div>':'<p class="notice">The organizer can request AI suggestions.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
+        <section class="panel email-preview" id="overviewEmail"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
-      <section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
+      <section class="panel section-gap" id="overviewActivity"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
   }
 
   function filteredTasks(s) {
@@ -235,7 +240,10 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    $('#viewRoot').innerHTML=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    if(ui.view==='overview'&&isOrganizer()&&planSidebar.active())planSidebar.preserve($('#viewRoot'),markup);
+    else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
+    $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
     if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
     const currentReview=$('#emailReviewForm');
     if(reviewDraft&&currentReview?.dataset.id===reviewDraft.id){
@@ -248,8 +256,9 @@
     if(previousFocus&&!previousFocus.isConnected)restoreFocus(previousFocus,$('#viewRoot'));
   }
   function navigate(view) {
-    if(ui.pendingSave){navigation.replace(ui.view);return;}
+    if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
+    if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
     navigation.replace(view);
@@ -257,6 +266,7 @@
     render();
     if(view==='details')loadPrivate();
     window.scrollTo({top:0,behavior:'instant'});
+    return true;
   }
   function setDrawer(open) {
     const mobile=matchMedia('(max-width:800px)').matches;
@@ -587,7 +597,8 @@
       if(action==='verification-toggle'){const task=store.getState().tasks.find(t=>t.id===id);store.updateTask(id,{requiresVerification:!task.requiresVerification},ui.actor);render();taskDialog(id);}
       if(action==='event-context')contextDialog();
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
-      if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack&mode=suggestions':window.GatherMode.projectUrl('/plan')+'&mode=suggestions';return;}
+      if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open();return;}
+      if(action==='hide-ai-review'){planSidebar.hide();return;}
       if(action==='edit-memory')memoryEditDialog(id);
       if(action==='reload-private')loadPrivate();
       if(action==='lock-private'){await lockPrivate();toast('Private details locked.');}
@@ -741,7 +752,7 @@
   let unsubscribeNavigation=navigation.subscribe(routeChanged);
   window.addEventListener('pagehide',()=>{unsubscribeNavigation();});
   window.addEventListener('pageshow',event=>{if(event.persisted){unsubscribeNavigation=navigation.subscribe(routeChanged);routeChanged(navigation.initial());}});
-  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()||planSidebar.unsaved()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshScheduleClock() {
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;
@@ -771,7 +782,7 @@
   window.addEventListener('pageshow',refreshAttentionDate);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
-  const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();if(ui.view!==view)navigate(view);return true;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
+  const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   setDrawer(false);
   navigate(navigation.initial());
   window.dispatchEvent(new Event('gather-workspace-ready'));

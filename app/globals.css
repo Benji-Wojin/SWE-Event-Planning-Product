@@ -182,6 +182,20 @@ body {
 .dark .invitation-status[data-delivery="unknown"] { background: #3d3321; color: #f0c36c; }
 .dark .invitation-status[data-delivery="failed"] { background: #422b2c; color: #ffa99b; }
 
+.plan-sidebar-shell{padding:2px 0 8px;width:100%;min-width:0}
+body:has(>.plan-sidebar-shell){background:transparent}
+.sidebar-item-note{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.plan-sidebar-review{font-size:13px;overflow-wrap:anywhere}
+.plan-sidebar-review [data-slot="card"]{box-shadow:none;gap:0;border-color:var(--border)}
+.plan-sidebar-review [data-slot="card-content"]{padding:14px}
+.plan-sidebar-review .sidebar-brief>[data-slot="card"]{border:0;background:transparent}
+.plan-sidebar-review .sidebar-brief>[data-slot="card"]>[data-slot="card-content"]{padding:12px 0 0}
+.plan-sidebar-review h2{font-size:16px;line-height:1.35}
+.plan-sidebar-review button{max-width:100%;white-space:normal;height:auto;min-height:36px;overflow-wrap:anywhere}
+.plan-sidebar-review input,.plan-sidebar-review textarea,.plan-sidebar-review select{font-size:13px;min-width:0}
+.plan-sidebar-review input[type="checkbox"]{min-height:0}
+.plan-sidebar-review nav{gap:10px;font-size:12px}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
