@@ -149,8 +149,9 @@ class CorrectablePlanOutputError extends PlanProviderError {
 export function parsePlanItems(
   input: any,
   reviewed = false,
+  allowEmpty = false,
 ): PlanItem[] | ReviewedItem[] {
-  if (!Array.isArray(input) || input.length < 1 || input.length > 24)
+  if (!Array.isArray(input) || input.length < (allowEmpty ? 0 : 1) || input.length > 24)
     throw new Error('Use between 1 and 24 plan items.');
   // Check the whole draft for forbidden fields before any mechanical failure
   // can request a correction. A later task must not hide behind an earlier typo.
@@ -213,7 +214,7 @@ export function parsePlanItems(
   items.forEach((item) => visit(item.id));
   return items;
 }
-export function parsePlanOutput(value: any): PlanOutput {
+export function parsePlanOutput(value: any, allowEmpty = false): PlanOutput {
   if (!object(value, ['items', 'questions', 'assumptions']))
     throw new Error('Invalid plan.');
   for (const field of ['questions', 'assumptions'])
@@ -224,7 +225,7 @@ export function parsePlanOutput(value: any): PlanOutput {
     )
       throw new Error('Invalid plan notes.');
   return {
-    items: parsePlanItems(value.items) as PlanItem[],
+    items: parsePlanItems(value.items, false, allowEmpty) as PlanItem[],
     questions: value.questions,
     assumptions: value.assumptions,
   };
@@ -284,7 +285,7 @@ export function planRequestBody(context: any) {
       json_schema: {
         name: 'event_starting_plan',
         strict: true,
-        schema,
+        schema: context.purpose === 'suggestions' ? {...schema, properties:{...schema.properties,items:{...schema.properties.items,minItems:0}}} : schema,
       },
     },
     messages: [{ role: 'system', content:
@@ -295,6 +296,8 @@ export function planRequestBody(context: any) {
   // Groq can return json_validate_failed even with strict structured output.
   body.messages[0].content += ' Output contract: return one JSON object with exactly items, questions, assumptions. Always include questions and assumptions, using [] when there are none. Both are arrays of plain strings, never objects. Every item must include all these fields: {"id":"task_1","kind":"preparation","title":"Confirm arrangements","category":"Program","note":"Review the proposed arrangements.","dueDate":"","start":"","end":"","location":"","dependsOn":[],"existingTaskIndex":null}. Replace this example with tasks for the supplied event. kind is preparation or activity. category is exactly one of: Program, Venue, Guest care, Food & drink, Transport. Never add other fields.';
   body.messages[0].content += ' Duplicate review: every item also includes existingTaskIndex (integer or null). Compare meaning, not just words: "Secure community hall booking" and "Book community hall" can represent the same work. "Choose catering menu" and "Collect dietary restrictions" do NOT; nor do "Research venues" and "Book venue". Different named people, places, dates, quantities, or additional scope are not interchangeable. If a task already exists, prefer not to repeat it. When you need that task as a prerequisite, include a draft representation and set existingTaskIndex to its zero-based index in existingTasks. Use null when uncertain. This is only a suggestion for human review; never claim tasks were merged.';
+  body.messages[0].content += ' Dependency discipline: dependsOn means the dependent task cannot be completed correctly without the specific output of the prerequisite. It does not mean related topic, same owner, nice-to-have information, chronological order, or work that can happen in parallel. Default to [] when uncertain. Prefer a few direct links, not chains across every task; do not repeat indirect/transitive prerequisites. Explain each required link in the dependent item note: what output is needed and why. Examples: "Pay venue deposit" requires "Approve venue quote"; "Design invitations" does not require "Choose catering menu". Accessibility and weather are not universal prerequisite tasks. Never make all tasks wait on a generic planning or approval task.';
+  if (context.purpose === 'suggestions') body.messages[0].content += ' THIS REQUEST IS A GAP REVIEW, NOT A STARTING PLAN. Propose 2–5 specific, high-value next steps missing from existingTasks, at most 5 new tasks. You may return zero items when no meaningful gaps are supported. Include only additional reused prerequisite representations when genuinely essential, never duplicate work merely to fill the list. Use the actual brief, event scale, dates and saved feedback. Do not default to rain plans or transport accessibility: weather needs an explicitly outdoor event; transport checks need explicitly organized transport. Do not assume buses, vendors, guest needs or large-event logistics. In every note explain the concrete gap and the supplied evidence, distinguish an assumption from a known fact, and describe the useful outcome. No generic safety checklist. Ask a concise question instead of inventing missing context. Keep the existing plan intact; these are optional proposals for human selection.';
   if (!fitsGroqRequest(body)) throw new PlanProviderError('context_limit');
   return body;
 }
@@ -389,7 +392,8 @@ async function generateEventPlanAttempt(
     if (recoveringOptionalFields && !restoredOptionalFields) throw new Error('Invalid plan.');
     // Absent optional dates/locations remain unknown. Never invent task identity,
     // content or dependencies, or replace malformed supplied values with blanks.
-    const plan = parsePlanOutput(normalized);
+    const plan = parsePlanOutput(normalized, context.purpose === 'suggestions');
+    if (context.purpose === 'suggestions' && plan.items.filter(item=>item.existingTaskIndex==null).length>5) throw new Error('Suggestion review must contain at most five new tasks.');
     stage = 'schedule_validation';
     const lastDay = context.brief.endDate || context.event.date;
     const scheduleWarnings: string[] = [];

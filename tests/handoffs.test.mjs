@@ -65,7 +65,7 @@ test('explicit associations are related links, not blockers; required links stil
  const required=store.addTask({title:'Check desk safety',status:'done',note:'Safe.'});
  report(store,id,'Waiting for a safety check.','blocked');assert.equal(task(store,id).dependencies.filter(link=>link.kind!=='related').length,1);store.addDependency(id,{taskId:required.id},'dev');store.resumeTask(id,'dev');assert.equal(task(store,id).status,'progress');
  report(store,id,'This depends on Review speaker slides.');suggestion=pending(store,id)[0];store.resolveHandoff(id,suggestion.id,{action:'link',taskId:other.id},'dev');assert.equal(task(store,id).dependencies.find(l=>l.taskId===other.id).kind,'dependency');
- store.updateTask(other.id,{status:'progress',note:'I need someone to prepare another desk.'},'maya');const reverse=pending(store,other.id)[0];
+ store.updateTask(other.id,{status:'progress',note:'I need someone to prepare another desk before I can continue.'},'maya');const reverse=pending(store,other.id)[0];
  assert.throws(()=>store.resolveHandoff(other.id,reverse.id,{action:'link',taskId:id},'maya'),/depend on each other/);
 });
 

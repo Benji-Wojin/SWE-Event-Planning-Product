@@ -100,6 +100,7 @@ const arity: Record<string, number> = {
   setTaskSchedule: 2,
   resolveHandoff: 3,
   addDependency: 2,
+  setDependencyKind: 2,
   removeDependency: 2,
   resumeTask: 1,
   claimTask: 1,
@@ -129,13 +130,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin' && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
+  if (user.role !== 'admin' && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
   const [a, b, c] = input.args;
-  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
+  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
     if (method === 'resolveHandoff' && c?.action === 'create' && c.owner && c.owner !== user.actorId)
@@ -171,6 +172,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'addDependency':
         result = store.addDependency(a, b, user.actorId);
+        break;
+      case 'setDependencyKind':
+        result = store.setDependencyKind(a, b, user.actorId);
         break;
       case 'removeDependency':
         result = store.removeDependency(a, b, user.actorId);

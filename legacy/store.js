@@ -723,7 +723,10 @@
         const title=clean((match[2]+match[3]).replace(/\s+(?:before (?:i|we) can|so (?:i|we) can)\b.*$/i,'').replace(/[,\s]+$/,''),200);
         if(title.length<5)continue;
         const key=requestKey(title), candidates=matchingRequestTasks(task,title);
-        specs.push({key:'request:'+key,title:title[0].toUpperCase()+title.slice(1),owner:people.length===1?people[0].id:'',taskId:candidates.length===1?candidates[0].id:'',matchIds:candidates.map(other=>other.id),kind:'dependency',sourceText:source});
+        // A request for help is not proof of a completion gate. Only explicit
+        // blocking language establishes a required dependency; otherwise relate it.
+        const required = /\b(?:before (?:i|we) can|so (?:i|we) can|cannot|can't|blocked by|depends on|waiting (?:on|for))\b/i.test(source) || task.status === 'blocked';
+        specs.push({key:'request:'+key,title:title[0].toUpperCase()+title.slice(1),owner:people.length===1?people[0].id:'',taskId:candidates.length===1?candidates[0].id:'',matchIds:candidates.map(other=>other.id),kind:required?'dependency':'related',sourceText:source});
       }
       return specs.filter((spec,index)=>specs.findIndex(other=>other.key===spec.key)===index);
     }
@@ -761,7 +764,6 @@
         target=taskById(data.taskId);
         if(target.id===task.id||target.status==='done')throw new Error('Choose a different open task.');
       }else{
-        if(suggestion.kind==='related')throw new Error('Choose the existing related task.');
         fields=taskFields({title:data.title,owner:data.owner??'',category:task.category,note:`Requested in “${task.title}”.\n${suggestion.sourceText}\n\nShare the result when reporting complete.`});
         if(actor!=='jack'&&fields.owner&&fields.owner!==actor)throw new Error('Only the organizer can assign another teammate. Create it unassigned or assign it to yourself.');
         const matches=matchingRequestTasks(task,fields.title);
@@ -902,7 +904,14 @@
     }
     function addDependency(taskId, data, actor = 'jack') {
       const task = taskById(taskId); canManageDependencies(task, actor);
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title','additional'].includes(key)) || data.additional !== undefined && typeof data.additional !== 'boolean') throw new Error('Choose an existing task or enter a follow-up title.');
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title','additional','kind','reason'].includes(key)) || data.additional !== undefined && typeof data.additional !== 'boolean' || data.kind !== undefined && !['dependency','related'].includes(data.kind) || data.reason !== undefined && (typeof data.reason !== 'string' || data.reason.length > 2000)) throw new Error('Choose an existing task or enter a follow-up title and valid relationship.');
+      const kind = data.kind || 'dependency';
+      if (kind === 'related') {
+        if (!data.taskId || data.title) throw new Error('Choose an existing task to relate.');
+        const other = taskById(data.taskId);
+        linkDependency(task,other,actor,false,'',kind,clean(data.reason,2000) || 'Related work; does not prevent completion.');
+        save(); return copy(other);
+      }
       const placeholder = data.additional ? null : unusedPlaceholder(task);
       let prerequisite;
       if (data.taskId) {
@@ -920,7 +929,7 @@
           entry(actor, `created ${prerequisite.title} from a blocker on ${task.title}`, prerequisite.id, 'blocker-task-created');
         }
       }
-      linkDependency(task, prerequisite, actor, false, blockerSpecs({...task,note:prerequisite.title})[0].key);
+      linkDependency(task, prerequisite, actor, false, blockerSpecs({...task,note:prerequisite.title})[0].key,kind,clean(data.reason,2000) || task.note || 'Required output from this task.');
       if (data.additional) {
         for (const link of task.dependencies.filter(link => genericLink(task,link) && !link.independent)) {
           link.independent = true;
@@ -929,6 +938,18 @@
       }
       task.blockerFingerprint = normalize(task.note);
       save(); return copy(prerequisite);
+    }
+    function setDependencyKind(taskId, data, actor = 'jack') {
+      const task = taskById(taskId); canManageDependencies(task, actor);
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key=>!['taskId','kind','reason'].includes(key)) || !['dependency','related'].includes(data.kind) || typeof data.reason !== 'string' || !data.reason.trim() || data.reason.length>2000) throw new Error('Choose a relationship and explain why it is needed.');
+      const link=task.dependencies.find(item=>item.taskId===data.taskId);
+      if (!link) throw new Error('That task is no longer linked.');
+      const other=taskById(data.taskId);
+      if (data.kind==='dependency' && dependsOn(other.id,task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
+      Object.assign(link,{kind:data.kind,reason:clean(data.reason,2000),automatic:false});
+      dependencyComment(task,`Relationship to “${other.title}”: ${data.kind==='related'?'related work, not a prerequisite':'required before completion'}. ${link.reason}`,actor,other.id,'dependency-reviewed');
+      task.blockerFingerprint=normalize(task.note);
+      save(); return copy(task);
     }
     function removeDependency(taskId, prerequisiteId, actor = 'jack') {
       const task = taskById(taskId); canManageDependencies(task, actor);
@@ -1021,7 +1042,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

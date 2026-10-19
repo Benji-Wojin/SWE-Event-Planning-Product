@@ -67,7 +67,9 @@ export function PlanReview({ query }: { query: string }) {
   const dirty = !!data && editable(brief, items) !== initial;
   const params = new URLSearchParams(query),
     demo = params.get('demo') === '1';
-  const projectUrl = demo ? '/demo?as=jack' : '/project?' + query;
+  const suggestions = params.get('mode') === 'suggestions';
+  const projectParams = new URLSearchParams(query); projectParams.delete('mode');
+  const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
     locked = busy || waiting,
     applied = !!data?.receipt;
@@ -320,14 +322,14 @@ export function PlanReview({ query }: { query: string }) {
               </NativeSelect>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="plan-brief">What are you planning?</Label>
+              <Label htmlFor="plan-brief">{suggestions ? 'What should AI check for?' : 'What are you planning?'}</Label>
               <Textarea
                 id="plan-brief"
-                rows={4}
+                rows={suggestions ? 2 : 4}
                 maxLength={4000}
                 value={brief.description}
                 onChange={(e) => updateBrief('description', e.target.value)}
-                placeholder="Purpose, activities, constraints, and decisions still to make"
+                placeholder={suggestions ? 'Optional focus: anything missing from our launch evening?' : 'Purpose, activities, constraints, and decisions still to make'}
               />
             </div>
             <details>
@@ -398,8 +400,8 @@ export function PlanReview({ query }: { query: string }) {
                   : request.current
                     ? 'Retry request'
                     : data.draft
-                      ? 'Generate another draft'
-                      : 'Generate draft'}
+                      ? suggestions ? 'Refresh suggestions' : 'Generate another draft'
+                      : suggestions ? 'Find next steps with AI' : 'Generate draft'}
               </Button>
               {!applied && (
                 <Button
@@ -427,12 +429,14 @@ export function PlanReview({ query }: { query: string }) {
       )}
       {data.draft && (
         <section className="mt-8 space-y-4" aria-label="Review draft">
+          {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
             <h2 className="text-xl font-semibold">Review proposed items</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Adds to your {data.existingTaskCount} existing tasks. Dates,
               owners, and activities below are proposals.
             </p>
+            <p className="mt-2 text-sm text-muted-foreground">Required links mean one task needs another task’s output to be completed. Related work can run in parallel. Review and remove any unnecessary prerequisites below.</p>
           </div>
           {data.draft.scheduleWarnings?.length > 0 && (
             <details className="rounded-lg border p-4 text-sm">
@@ -803,7 +807,7 @@ export function PlanReview({ query }: { query: string }) {
                       )}
                       <fieldset className="space-y-2">
                         <legend className="mb-2 text-sm font-medium">
-                          Depends on
+                          Required before completion
                         </legend>
                         {items
                           .filter((other) => other.id !== item.id)

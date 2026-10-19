@@ -8,7 +8,8 @@ test('workspace preloads code in parallel with fresh data, using matching conten
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const html=readFileSync('public/workspace.html','utf8');
   const urls=[...new Set(html.match(/\/gather-assets\/versioned\/[a-f0-9]{20}-[a-z-]+\.(?:js|css)/g))];
-  assert.equal(urls.length,14);
+  assert.equal(urls.length,15);
+  assert.ok(urls.some(url=>url.endsWith('-planning-ui.js')));
   for(const url of urls){
     const hash=createHash('sha256').update(readFileSync('public'+url)).digest('hex').slice(0,20);
     assert.ok(url.includes('/'+hash+'-'),url+' must match its bytes');

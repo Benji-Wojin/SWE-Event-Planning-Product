@@ -12,6 +12,7 @@ html = html
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
+  .replace('src="planning-ui.js"', 'src="/gather-assets/planning-ui.js"')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -45,6 +46,7 @@ writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','ut
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
+writeFileSync('public/gather-assets/planning-ui.js',readFileSync('legacy/planning-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
 for(const name of ['guests','info-ui'])writeFileSync('public/gather-assets/'+name+'.js',readFileSync('legacy/'+name+'.js','utf8'));
@@ -62,7 +64,7 @@ const mutations = [
   'setTaskPriority',
   'setTaskSchedule',
   'resolveHandoff',
-  'addDependency', 'removeDependency', 'resumeTask',
+    'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask',
   'claimTask',
   'resetDemo',
   'addTask',
@@ -136,7 +138,7 @@ app = app.replace(
 app = app.replace('[add your shared workspace link]', '${location.origin}${window.GatherMode?.demo?"/demo?as="+encodeURIComponent(ui.actor):window.GatherMode.projectUrl("/project")}');
 app = app.replace(
   /if\(action==='demo-info'\).*?;\n/,
-  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles. Only enter fictional booking details. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. Team access manages invitations.</p><p>This release does not read Gmail. Planning suggestions use rules; optional AI searches use the task name, category and city.</p><p>Private details are excluded from shared exports and AI searches.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
+  `if(action==='demo-info')openDialog('Workspace info',window.GatherMode?.demo?'<p>The full app with separate sample data and simulated profiles. Only enter fictional booking details. No emails are sent.</p>':'<p>Shared with invited project members. Changes are saved on the server. Team access manages invitations.</p><p>This release does not read Gmail. Automatic checks use rules. Organizers can separately request AI planning suggestions and review them before adding anything; the review screen explains what is shared with the provider. Optional AI link searches use the task name, category and city.</p><p>Private details are excluded from shared exports and AI planning or link searches.</p>','<button class="btn btn-secondary" data-action="export">Export shared plan</button>');\n`,
 );
 app = app
   .replace('Original email preserved.', 'Reviewed update saved.')

@@ -180,6 +180,38 @@ export async function eventPlanTests({
     return snap;
   }
   try {
+    await t.test('contextual suggestions have their own saved review, disclosed context and shared quota',async()=>{
+      const project=await setup();
+      const plan=await ready(project),planBefore=structuredClone(plan.draft);
+      const suggestionProject=project+'&mode=suggestions';
+      const blank=await read(suggestionProject);
+      assert.equal(blank.draft,null);assert.equal(blank.purpose,'suggestions');
+      assert.equal(blank.brief.description,brief.description);
+      const proposed=await ready(suggestionProject);
+      assert.deepEqual((await read(project)).draft,planBefore);
+      assert.notEqual(proposed.draft.generation,plan.draft.generation);
+      assert.match(calls[1].messages[0].content,/GAP REVIEW/);
+      assert.equal(calls[1].response_format.json_schema.schema.properties.items.minItems,0);
+      assert.equal(calls[0].response_format.json_schema.schema.properties.items.minItems,1);
+      assert.match(calls[1].messages[0].content,/cannot be completed correctly/);
+      const context=JSON.parse(calls[1].messages[1].content);
+      assert.equal(context.purpose,'suggestions');
+      assert.deepEqual(Object.keys(context).sort(),['brief','event','existingTasks','feedback','purpose','today']);
+      assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count,2);
+      assert.deepEqual((await read(suggestionProject)).draft,proposed.draft);
+    });
+    await t.test('no supported AI gaps is a valid empty suggestion review, never a fabricated task or empty full plan',async()=>{
+      const project=await setup(),target=project+'&mode=suggestions';
+      provider({items:[],questions:['What outcome matters most?'],assumptions:[]});
+      const response=await post(target,generation(await read(target)));
+      assert.equal(response.status,200);const snap=await response.json();
+      assert.equal(snap.status,'ready',snap.issue);assert.deepEqual(snap.draft.items,[]);
+      assert.equal((await (await realRead(project)).json()).state.tasks.length,0);
+      assert.equal((await post(target,save(snap))).status,200);
+      assert.equal((await post(target,approval(await read(target)))).status,400);
+      assert.throws(()=>planGeneration.parsePlanOutput({items:[],questions:[],assumptions:[]}));
+      assert.equal((await read(project)).draft,null);
+    });
     await t.test('saving a new brief does not consume quota or prevent the first generation', async () => {
       const project = await setup();
       const saved = await post(project, save(await read(project), { brief }));

@@ -7,6 +7,7 @@ import '../legacy/store.js';
 import '../legacy/priorities.js';
 import '../legacy/recovery-ui.js';
 import '../legacy/schedule-ui.js';
+import '../legacy/planning-ui.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
@@ -126,7 +127,7 @@ function taskDialogHtml(actor,id='dietary',identity,store=create()) {
   const context=vm.createContext({
     store,ui:{actor},window:identity?{GatherIdentity:identity}:{},
     openDialog:(_title,body)=>{html=body;},toast:()=>{},
-    GatherPriorities,reason:task=>GatherPriorities.analyze(task,[]),
+    GatherPriorities,GatherPlanningUI,icon:()=>'',reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),
     statusBadge:status=>status,sourceButton:()=>'',dayLabel:value=>value,
     timeLabel:value=>value,relative:value=>value,
@@ -249,7 +250,7 @@ test('task dialogs explain prerequisites and offer completion only when required
   const store=create();
   let html=taskDialogHtml('maya','catering',undefined,store);
   assert.match(html,/Finish required work/);
-  assert.match(html,/Required task/);
+  assert.match(html,/REQUIRED BEFORE COMPLETION/);
   assert.doesNotMatch(html,/Report complete/);
   assert.match(html,/Share progress/);
   assert.match(html,/Unlink · keep task/);

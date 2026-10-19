@@ -60,6 +60,7 @@ const existingPlanTasks = (c: Context) =>
 async function loadContext(request: Request) {
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
+  const purpose = params.get('mode') === 'suggestions' ? 'suggestions' : 'plan';
   const identity = demo ? await administrator() : await principal();
   const user = demo ? identity : await projectUser(identity, request);
   if (
@@ -79,7 +80,8 @@ async function loadContext(request: Request) {
     ? [user.userId, projectId, state.demoGeneration]
     : [projectId, user.userId, projectId, user.userId];
   const scope = demo ? projectId + ':' + state.demoGeneration : projectId;
-  const id = await hash([scope, user.userId]);
+  // Separate review documents; asking for suggestions must never replace a plan draft.
+  const id = await hash(purpose === 'plan' ? [scope, user.userId] : [scope, user.userId, purpose]);
   // Explicitly exclude contacts, emails, files, booking records, progress notes and member identities.
   const source = {
     event: Object.fromEntries(
@@ -112,6 +114,7 @@ async function loadContext(request: Request) {
     store,
     state,
     id,
+    purpose,
     ownerSql,
     ownerArgs,
     source,
@@ -144,11 +147,16 @@ const issueText: Record<string, string> = {
 async function snapshot(c: Context) {
   const row = await read(c.id),
     data = await decode(row);
+  if (c.purpose === 'suggestions' && !row) {
+    const starting = await decode(await read(await hash([c.demo ? c.projectId + ':' + c.state.demoGeneration : c.projectId, c.user.userId])));
+    data.brief = starting.brief?.description ? starting.brief : {...emptyBrief, description: c.state.event.name};
+  }
   await authorized(c);
   return {
     revision: row?.revision || 0,
     workspaceRevision: c.row.revision,
     event: c.state.event,
+    ...(c.purpose === 'suggestions' ? {purpose: c.purpose} : {}),
     members: c.state.members.filter((m: any) => m.active !== false),
     existingTaskCount: c.state.tasks.length,
     existingTasks: existingPlanTasks(c),
@@ -171,7 +179,7 @@ export async function readEventPlan(request: Request) {
   return snapshot(await loadContext(request));
 }
 function reviewedItems(items: any, draft: any): ReviewedItem[] {
-  const rows = parsePlanItems(items, true) as ReviewedItem[];
+  const rows = parsePlanItems(items, true, draft.items.length === 0) as ReviewedItem[];
   if (
     rows.length !== draft.items.length ||
     rows.some(
@@ -279,6 +287,7 @@ async function generate(c: Context, input: any) {
     );
   const generationContext = {
     ...c.source,
+    ...(c.purpose === 'suggestions' ? {purpose: c.purpose} : {}),
     brief,
     today: (globalThis as any).GatherCalendar.dayKey(
       new Date(),
@@ -540,7 +549,7 @@ async function applyDraft(c: Context, input: any) {
       for (const prerequisite of item.dependsOn)
         c.store.addDependency(
           ids.get(item.id),
-          { taskId: ids.get(prerequisite) },
+          { taskId: ids.get(prerequisite), reason: item.note },
           'jack',
         );
   } catch (error) {

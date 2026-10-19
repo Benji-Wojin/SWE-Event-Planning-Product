@@ -6,13 +6,13 @@ export const dynamic = 'force-dynamic';
 export default async function Plan({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; demo?: string; as?: string }>;
+  searchParams: Promise<{ project?: string; demo?: string; as?: string; mode?: string }>;
 }) {
   const params = await searchParams;
-  const query =
-    params.demo === '1'
+  const suggestions = params.mode === 'suggestions';
+  const query = (params.demo === '1'
       ? 'demo=1&as=' + encodeURIComponent(params.as || 'jack')
-      : 'project=' + encodeURIComponent(params.project || 'main');
+      : 'project=' + encodeURIComponent(params.project || 'main')) + (suggestions ? '&mode=suggestions' : '');
   await requireChatGPTUser('/plan?' + query);
   return (
     <main className="mx-auto w-full max-w-4xl px-5 py-8 sm:px-8 sm:py-12">
@@ -25,9 +25,9 @@ export default async function Plan({
         </a>
         <ThemeToggle />
       </header>
-      <h1 className="mb-2 text-3xl font-semibold">Draft a plan</h1>
+      <h1 className="mb-2 text-3xl font-semibold">{suggestions ? 'Find your next steps' : 'Draft a plan'}</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        Private until you add selected items to the project.
+        {suggestions ? 'A focused AI review of what’s missing—not another generic checklist. ' : ''}Private until you add selected items to the project.
       </p>
       <PlanReview query={query} />
     </main>
