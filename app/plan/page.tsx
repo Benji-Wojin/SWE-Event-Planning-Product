@@ -10,11 +10,12 @@ export default async function Plan({
 }) {
   const params = await searchParams;
   const suggestions = params.mode === 'suggestions';
+  const assistant = params.mode === 'assistant';
   const query = (params.demo === '1'
       ? 'demo=1&as=' + encodeURIComponent(params.as || 'jack')
-      : 'project=' + encodeURIComponent(params.project || 'main')) + (suggestions ? '&mode=suggestions' : '');
+      : 'project=' + encodeURIComponent(params.project || 'main')) + (assistant ? '&mode=assistant' : suggestions ? '&mode=suggestions' : '');
   await requireChatGPTUser('/plan?' + query);
-  if (suggestions && params.embed === '1') return (
+  if ((suggestions || assistant) && params.embed === '1') return (
     <main id="embeddedPlan" className="plan-sidebar-shell">
       <PlanReview query={query} embedded />
     </main>
@@ -30,7 +31,7 @@ export default async function Plan({
         </a>
         <ThemeToggle />
       </header>
-      <h1 className="mb-2 text-3xl font-semibold">{suggestions ? 'Find your next steps' : 'Draft a plan'}</h1>
+      <h1 className="mb-2 text-3xl font-semibold">{assistant ? 'Create tasks with Weft' : suggestions ? 'Find your next steps' : 'Draft a plan'}</h1>
       <p className="mb-6 text-sm text-muted-foreground">
         {suggestions ? 'A focused AI review of what’s missing—not another generic checklist. ' : ''}Private until you add selected items to the project.
       </p>

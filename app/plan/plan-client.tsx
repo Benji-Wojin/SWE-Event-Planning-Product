@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection } from '@/lib/plan-selection';
+import {TaskChat} from './task-chat';
 import {
   eventKinds,
   planCategories,
@@ -64,7 +65,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const pending = useRef(false),
     request = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
-  const dirty = !!data && editable(brief, items) !== initial;
+  const [chatDirty,setChatDirty]=useState(false);
+  const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
+  const draftDirty = !!data && editable(brief, items) !== initial;
+  const dirty = draftDirty || chatDirty;
   useEffect(() => {
     if (!embedded) return;
     window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || data?.status === 'generating'}, window.location.origin);
@@ -84,11 +88,12 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const params = new URLSearchParams(query),
     demo = params.get('demo') === '1';
   const suggestions = params.get('mode') === 'suggestions';
+  const assistant = params.get('mode') === 'assistant';
   const projectParams = new URLSearchParams(query); projectParams.delete('mode');
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
     locked = busy || waiting,
-    applied = !!data?.receipt;
+    applied = !!data?.receipt && !chatStartingNew;
   const {
     selected,
     reusable,
@@ -105,6 +110,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   );
   const missingDependencies = missing.length > 0;
   function accept(result: any) {
+    setChatStartingNew(false);
     setData(result);
     setBrief(result.brief);
     setItems(result.draft?.items || []);
@@ -204,25 +210,29 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     request.current = null;
     return result;
   }
-  async function generate() {
+  async function generate(nextBrief=brief) {
+    let accepted=false;
     await run(async () => {
+      if(request.current && JSON.stringify(request.current.brief)!==JSON.stringify(nextBrief))request.current=null;
       if (!request.current) {
         // Preserve edited drafts before regeneration so a provider failure cannot discard them.
-        const latest = dirty && !applied ? await save() : data;
+        const latest = draftDirty && !applied ? await save() : data;
         request.current = {
           action: 'generate',
           revision: latest.revision,
           workspaceRevision: latest.workspaceRevision,
           requestId: crypto.randomUUID(),
-          brief,
+          brief:nextBrief,
           consent: true,
           consentVersion: 'groq-plan-v1',
         };
       }
       const result = await api(query, request.current);
       accept(result);
+      accepted=true;
       request.current = null;
     });
+    return accepted;
   }
   async function refreshContext() {
     await run(async () => {
@@ -318,7 +328,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>
+      {assistant ? <TaskChat key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
+        if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
+        request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatDirty(false);setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice('Start a new request. The earlier saved draft is not replaced until you send it.');
+      }}/> : <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>
         <summary className={embedded ? 'cursor-pointer text-sm font-medium' : 'hidden'}>Review focus & event details</summary>
       <Card>
         <CardContent className="space-y-5 pt-6">
@@ -411,7 +424,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                 disabled={
                   locked || !brief.description.trim() || !data.configured
                 }
-                onClick={generate}
+                onClick={()=>void generate()}
               >
                 {waiting
                   ? 'Generating…'
@@ -439,15 +452,16 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </fieldset>
         </CardContent>
       </Card>
-      </details>
+      </details>}
       {waiting && (
         <p role="status" className="my-4 text-sm">
           Generating a private draft. You can return later; nothing is added
           automatically.
         </p>
       )}
-      {data.draft && (
+      {data.draft && !(assistant && chatStartingNew) && (
         <section className="mt-8 space-y-4" aria-label="Review draft">
+          {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
             <h2 className="text-xl font-semibold">Review proposed items</h2>
@@ -828,7 +842,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                           </div>
                         </div>
                       )}
-                      <fieldset className="space-y-2">
+                      {!assistant && <fieldset className="space-y-2">
                         <legend className="mb-2 text-sm font-medium">
                           Required before completion
                         </legend>
@@ -863,7 +877,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                               </span>
                             </label>
                           ))}
-                      </fieldset>
+                      </fieldset>}
                     </div>
                   </details>
                 </CardContent>
@@ -907,7 +921,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                 }
                 onClick={() =>
                   void run(async () => {
-                    const latest = dirty ? await save() : data;
+                    const latest = draftDirty ? await save() : data;
                     const result = await api(query, {
                       action: 'apply',
                       revision: latest.revision,

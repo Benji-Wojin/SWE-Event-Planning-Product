@@ -8,7 +8,9 @@ import {
   seal,
   unseal,
 } from './security';
-import { projectUser } from './project-access';
+import { projectUser, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
+import {generateTaskProposal} from './task-assistant';
+import {taskConversation} from './task-conversation';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
 import { duplicateSuggestions, planSelection } from './plan-selection';
@@ -60,23 +62,20 @@ const existingPlanTasks = (c: Context) =>
 async function loadContext(request: Request) {
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
-  const purpose = params.get('mode') === 'suggestions' ? 'suggestions' : 'plan';
+  const purpose = params.get('mode') === 'assistant' ? 'assistant' : params.get('mode') === 'suggestions' ? 'suggestions' : 'plan';
   const identity = demo ? await administrator() : await principal();
   const user = demo ? identity : await projectUser(identity, request);
-  if (
-    user.role !== 'admin' ||
-    (demo && demoPersona(params.get('as')) !== 'jack')
-  )
-    throw new HttpError(403, 'Only the organizer can review starting plans.');
   const projectId = demo ? 'demo:' + user.userId : (user as any).projectId;
   const { row, store } = demo
     ? await loadDemo(user)
     : await loadWorkspace(user, projectId);
   const state = store.getState();
-  const ownerSql = demo
+  const memberAssistant = !demo && purpose==='assistant' && user.role==='member' && state.event.membersCanCreateTasks===true;
+  if ((!memberAssistant && user.role!=='admin') || (demo && demoPersona(params.get('as'))!=='jack')) throw new HttpError(403,'Only the organizer can review plans. Ask the organizer to enable teammate task creation for the task assistant.');
+  const ownerSql = memberAssistant ? `(${projectWriteAccess}) AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.event.membersCanCreateTasks')=1)` : demo
     ? `EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin') AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?)`
     : `((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))`;
-  const ownerArgs = demo
+  const ownerArgs = memberAssistant ? [...accessArgs(user as ProjectUser),projectId] : demo
     ? [user.userId, projectId, state.demoGeneration]
     : [projectId, user.userId, projectId, user.userId];
   const scope = demo ? projectId + ':' + state.demoGeneration : projectId;
@@ -115,6 +114,7 @@ async function loadContext(request: Request) {
     state,
     id,
     purpose,
+    memberAssistant,
     ownerSql,
     ownerArgs,
     source,
@@ -136,6 +136,7 @@ const decode = (row: any) =>
     ? unseal(row.payload, 'event-plan:' + row.id)
     : Promise.resolve({ brief: emptyBrief, draft: null, receipt: null });
 const issueText: Record<string, string> = {
+  context_limit:'This conversation and project context are too long for AI. Start a shorter conversation or add the task manually. Your saved draft is kept.',
   rate_limit:
     'Groq’s free-plan limit was reached. Your saved draft is unchanged. Try again later.',
   credentials: 'AI planning credentials need attention from the app owner.',
@@ -156,8 +157,9 @@ async function snapshot(c: Context) {
     revision: row?.revision || 0,
     workspaceRevision: c.row.revision,
     event: c.state.event,
-    ...(c.purpose === 'suggestions' ? {purpose: c.purpose} : {}),
-    members: c.state.members.filter((m: any) => m.active !== false),
+    ...(c.purpose !== 'plan' ? {purpose: c.purpose} : {}),
+    members: c.state.members.filter((m: any) => m.active !== false && (!c.memberAssistant || m.id===c.user.actorId)),
+    actorId:c.user.actorId,
     existingTaskCount: c.state.tasks.length,
     existingTasks: existingPlanTasks(c),
     configured: !!env.GROQ_API_KEY,
@@ -171,7 +173,7 @@ async function snapshot(c: Context) {
     issue: issueText[row?.issue] || '',
     contextChanged: !!data.draft && data.draft.contextHash !== c.contextHash,
     retryAfter: row
-      ? Math.max(0, Math.ceil((row.started_at + 60000 - Date.now()) / 1000))
+        ? Math.max(0, Math.ceil((row.started_at + (c.purpose==='assistant'?2000:60000) - Date.now()) / 1000))
       : 0,
   };
 }
@@ -204,6 +206,7 @@ async function saveDraft(c: Context, input: any) {
     throw new HttpError(409, 'This draft changed. Reload it before saving.');
   try {
     data.brief = parseBrief(input.brief, c.state.event.date);
+    if(c.purpose==='assistant')taskConversation(data.brief.description);
     if (data.draft) {
       if (input.generation !== data.draft.generation)
         throw new Error('This draft changed.');
@@ -259,6 +262,7 @@ async function generate(c: Context, input: any) {
   let brief;
   try {
     brief = parseBrief(input.brief, c.state.event.date);
+    if(c.purpose==='assistant')taskConversation(brief.description);
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
@@ -287,7 +291,7 @@ async function generate(c: Context, input: any) {
     );
   const generationContext = {
     ...c.source,
-    ...(c.purpose === 'suggestions' ? {purpose: c.purpose} : {}),
+    ...(c.purpose !== 'plan' ? {purpose: c.purpose} : {}),
     brief,
     today: (globalThis as any).GatherCalendar.dayKey(
       new Date(),
@@ -303,6 +307,7 @@ async function generate(c: Context, input: any) {
     );
   }
   const now = Date.now(),
+    cooldown = c.purpose==='assistant' ? 2000 : 60000,
     lease = crypto.randomUUID(),
     quota =
       'plan-ai:' +
@@ -330,7 +335,7 @@ async function generate(c: Context, input: any) {
       ...c.ownerArgs,
       input.revision,
       now,
-      now - 60000,
+      now - cooldown,
     ),
     env.DB.prepare(
       `INSERT INTO resource_usage (id,count) SELECT ?,1 WHERE EXISTS (SELECT 1 FROM plan_drafts WHERE id=? AND lease=?) ON CONFLICT(id) DO UPDATE SET count=count+1`,
@@ -367,11 +372,11 @@ async function generate(c: Context, input: any) {
       status = 409;
       message =
         'The draft changed while this request was starting. Reload the saved draft before generating again.';
-    } else if (current?.started_at + 60000 > checkedAt) {
+    } else if (current?.started_at + cooldown > checkedAt) {
       reason = 'cooldown';
       status = 429;
       const seconds = Math.ceil(
-        (current.started_at + 60000 - checkedAt) / 1000,
+        (current.started_at + cooldown - checkedAt) / 1000,
       );
       message = `Wait ${seconds} seconds before generating another plan. This request did not use an attempt.`;
     } else {
@@ -385,7 +390,7 @@ async function generate(c: Context, input: any) {
     throw new HttpError(status, message);
   }
   try {
-    const output = await generateEventPlan(generationContext, env.GROQ_API_KEY);
+    const output = c.purpose==='assistant' ? await generateTaskProposal(generationContext, env.GROQ_API_KEY) : await generateEventPlan(generationContext, env.GROQ_API_KEY);
     const reviewed = output.items.map((item) => ({
       ...item,
       owner: '',
@@ -491,6 +496,7 @@ async function applyDraft(c: Context, input: any) {
   let items: ReviewedItem[];
   try {
     items = reviewedItems(input.items, data.draft);
+    if(c.purpose==='assistant' && items.some(item=>item.kind!=='preparation' || item.start || item.end || item.location || item.dependsOn.length || (c.memberAssistant && item.owner && item.owner!==c.user.actorId))) throw new Error('The task assistant adds unscheduled tasks only. Teammates may choose themselves or Unassigned.');
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
@@ -540,7 +546,7 @@ async function applyDraft(c: Context, input: any) {
               }
             : {}),
         },
-        'jack',
+        c.memberAssistant ? c.user.actorId : 'jack',
       );
       ids.set(item.id, task.id);
       createdIds.push(task.id);

@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
 import { eventPlanTests } from './event-plan.cases.mjs';
 import { selfserviceTests } from './selfservice.cases.mjs';
+import {taskAssistantTests} from './task-assistant.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -96,6 +97,7 @@ before(async () => {
     bundle: true,
     platform: 'node',
     format: 'esm',
+    banner:{js:"import {createRequire} from 'node:module'; const require=createRequire(import.meta.url);"},
     plugins: [
       {
         name: 'test-environment',
@@ -2183,3 +2185,4 @@ test('automatic Gmail integration', async t => {
 test('self-service accounts and internal invitations', async t=>{
   await selfserviceTests({t,assert,sqlite,db,request,security,signupApi,invitationsApi,projectsApi,teamApi,workspace,privateApi,gmailApi,senderApi,owner});
 });
+test('task creation assistant integration',async t=>taskAssistantTests({t,assert,sqlite,owner,request,planApi,workspace,newTeamProject,joinPerson,asTeammate}));

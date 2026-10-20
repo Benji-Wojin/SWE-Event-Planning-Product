@@ -105,9 +105,10 @@
       if(message.event==='applied')onApplied();
     });
     return {
-      open(){
+      open(mode='suggestions'){
         const slot=document.getElementById('planningSidebarSlot');if(!slot)return;
-        if(!frame()){const element=document.createElement('iframe');element.id='planningSidebarFrame';element.title='Enhance this plan with AI';element.src=getUrl();slot.append(element);}
+        if(frame() && (frame().dataset.mode||'suggestions')!==mode){if(busy){notify('Please wait for the AI request to finish.');return;}if(dirty&&!window.confirm('Discard unsaved assistant edits and switch AI tools?'))return;frame().remove();dirty=false;busy=false;}
+        if(!frame()){const element=document.createElement('iframe');element.id='planningSidebarFrame';element.dataset.mode=mode;element.title=mode==='assistant'?'Create tasks with Weft':'Enhance this plan with AI';element.src=getUrl(mode);slot.append(element);}
         slot.hidden=false;document.getElementById('planningSidebarActions').hidden=true;
         slot.querySelector('button').focus({preventScroll:true});
       },

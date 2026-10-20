@@ -28,7 +28,7 @@ test('sidebar hide/reopen keeps one review frame and guards unsaved or in-flight
   elements.set('planningSidebarActions',actions);
   const slot={hidden:true,querySelector:()=>button,append(frame){elements.set(frame.id,frame);appended++;}};
   elements.set('planningSidebarSlot',slot);
-  const context=vm.createContext({location:{origin:'https://example.com'},document:{getElementById:id=>elements.get(id),createElement:()=>({style:{},contentWindow:{}})},window:{addEventListener:(type,fn)=>listeners[type]=fn,confirm:()=>{confirmations++;return allow;}}});
+  const context=vm.createContext({location:{origin:'https://example.com'},document:{getElementById:id=>elements.get(id),createElement:()=>({style:{},dataset:{},contentWindow:{},remove(){elements.delete(this.id);}})},window:{addEventListener:(type,fn)=>listeners[type]=fn,confirm:()=>{confirmations++;return allow;}}});
   vm.runInContext(readFileSync('legacy/planning-ui.js','utf8'),context);
   const sidebar=context.GatherPlanningUI.createSidebar({getUrl:()=>'/plan?project=one&mode=suggestions&embed=1',onApplied:()=>applied++,notify:value=>notifications.push(value)});
   sidebar.open();const frame=elements.get('planningSidebarFrame');
@@ -41,6 +41,11 @@ test('sidebar hide/reopen keeps one review frame and guards unsaved or in-flight
   send({event:'applied'});assert.equal(applied,1);
   send({event:'state',dirty:true,busy:false});allow=true;assert.equal(sidebar.canLeave(),true);
   sidebar.reset();assert.equal(sidebar.unsaved(),false);
+  sidebar.open('assistant');assert.equal(appended,2);const assistantFrame=elements.get('planningSidebarFrame');
+  assert.equal(assistantFrame.dataset.mode,'assistant');assert.equal(assistantFrame.title,'Create tasks with Weft');
+  send({event:'applied'});assert.equal(applied,1,'messages from the replaced frame are ignored');
+  listeners.message({origin:'https://example.com',source:assistantFrame.contentWindow,data:{type:'weft-plan-sidebar',event:'state',dirty:true,busy:false}});
+  allow=false;sidebar.open('suggestions');assert.equal(elements.get('planningSidebarFrame'),assistantFrame,'switching tools guards unsaved chat input');
 });
 
 test('map places prerequisites before dependents and represents shared parents once',()=>{

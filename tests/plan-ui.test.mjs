@@ -100,7 +100,7 @@ function nodes(node) {
       ? node.flatMap(nodes)
       : [node, ...nodes(node.props?.children)];
 }
-function harness(server, initial = fixture()) {
+function harness(server, initial = fixture(), query = 'project=p_example') {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -182,7 +182,7 @@ function harness(server, initial = fixture()) {
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query: 'project=p_example' });
+    tree = PlanReview({ query });
     const next = effects;
     effects = [];
     next.forEach((callback) => callback());
@@ -202,6 +202,13 @@ function harness(server, initial = fixture()) {
     },
     get saved() {
       return saved;
+    },
+    async chat(action, ...args) {
+      const chat = nodes(tree).find(node => typeof node.type === 'function' && node.props?.onSend);
+      assert.ok(chat, 'Task conversation');
+      const result = await chat.props[action](...args);
+      await settle();
+      return result;
     },
     async start() {
       await settle();
@@ -620,4 +627,37 @@ test('draft reload asks before discarding local edits, and unattended reads neve
   } finally {
     app.dispose();
   }
+});
+test('task assistant retries the same request but uses a fresh request for an edited message', async () => {
+  const initial=fixture();initial.brief.description='';initial.draft=null;
+  const app=harness(context=>context.input?.action==='generate' ? Response.json({error:'Connection lost'},{status:503}) : undefined,initial,'project=p_example&mode=assistant');
+  try {
+    await app.start();
+    const first={...initial.brief,description:JSON.stringify([{role:'user',content:'Prepare signs'}])};
+    const second={...first,description:JSON.stringify([{role:'user',content:'Prepare badges instead'}])};
+    assert.equal(await app.chat('onSend',first),false);
+    await app.chat('onSend',first);
+    await app.chat('onSend',second);
+    const calls=app.requests.filter(row=>row.action==='generate');
+    assert.equal(calls[0].requestId,calls[1].requestId);
+    assert.notEqual(calls[1].requestId,calls[2].requestId);
+    assert.equal(calls[2].brief.description,second.description);
+  } finally {app.dispose();}
+});
+test('new task conversation confirms unsaved edits and hides the old draft without a server write', async () => {
+  const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Prepare signs'}]);
+  const app=harness(undefined,initial,'project=p_example&mode=assistant');
+  try {
+    await app.start();
+    assert.ok(app.find('title-one'));
+    await app.chat('onDirty',true);
+    globalThis.window.confirm=()=>false;
+    await app.chat('onNew');
+    assert.ok(app.find('title-one'));
+    globalThis.window.confirm=()=>true;
+    await app.chat('onNew');
+    assert.equal(app.find('title-one'),undefined);
+    assert.deepEqual(app.requests.map(row=>row.action),['get']);
+    assert.equal(app.saved.draft.items[0].title,item.title);
+  } finally {app.dispose();}
 });
