@@ -1412,6 +1412,49 @@ async function joinPerson(project,email='maya-real@example.com',userId='real-may
   const invite=await invitePerson(project,email);asTeammate(email,userId);
   const response=await joinApi.POST(request('/api/join',{token:invite.token}));assert.equal(response.status,200);assert.equal((await response.json()).projectId,project);return invite;
 }
+test('project task-creation setting is owner-only, project-scoped and enforced on every member write',async()=>{
+  const project=await newTeamProject('Task permission fixture');
+  const asPermissionMember=()=>asTeammate('task-permission@example.com','task-permission-user');
+  await joinPerson(project,'task-permission@example.com','task-permission-user');
+  const path='/api/workspace?project='+project;
+  const get=async()=>{const response=await workspace.GET(getRequest(path));assert.equal(response.status,200);return response.json();};
+  const write=async(method,args,revision)=>(await workspace.POST(request(path,{method,args,revision:revision??(await get()).revision})));
+  let state=await get();
+  assert.equal(state.state.event.membersCanCreateTasks,false);
+  assert.equal((await write('addTask',[{title:'Not enabled'}])).status,403);
+  assert.equal((await write('completeSetup',[{membersCanCreateTasks:true}])).status,403);
+  assert.equal((await write('updateEvent',[{membersCanCreateTasks:true}])).status,403);
+  owner();
+  assert.equal((await write('completeSetup',[{membersCanCreateTasks:'true'}])).status,400);
+  assert.equal((await write('completeSetup',[{membersCanCreateTasks:true}])).status,200);
+  asPermissionMember();state=await get();const actor=state.identity.actorId;
+  let response=await write('addTask',[{title:'Member-created task',owner:actor,note:'Fictional fixture',dueDate:'2026-11-20'}]);
+  assert.equal(response.status,200);const created=(await response.json()).result;
+  assert.equal(created.owner,actor);assert.equal(created.updatedBy,actor);assert.equal(created.status,'todo');
+  assert.equal((await write('addTask',[{title:'Unassigned member task'}])).status,200);
+  const before=await get();
+  for(const fields of [{owner:'jack'},{status:'done'},{schedule:null},{requiresVerification:true},{role:'admin'}]) {
+    response=await write('addTask',[{title:'Invalid task',...fields}]);assert.equal(response.status,400);
+  }
+  assert.equal((await write('updateTask',[created.id,{title:'Elevated editing'}])).status,403);
+  assert.equal((await write('setTaskSchedule',[created.id,null])).status,403);
+  assert.equal((await get()).state.tasks.length,before.state.tasks.length);
+  const other=await newTeamProject('Permission remains off elsewhere');
+  await joinPerson(other,'task-permission@example.com','task-permission-user');const otherState=await (await workspace.GET(getRequest('/api/workspace?project='+other))).json();
+  assert.equal(otherState.state.event.membersCanCreateTasks,false);
+  assert.equal((await workspace.POST(request('/api/workspace?project='+other,{method:'addTask',args:[{title:'Wrong project'}],revision:otherState.revision}))).status,403);
+  asPermissionMember();const stale=await get();owner();
+  assert.equal((await write('completeSetup',[{membersCanCreateTasks:false}])).status,200);
+  asPermissionMember();assert.equal((await write('addTask',[{title:'Stale permission'}],stale.revision)).status,409);
+  assert.equal((await write('addTask',[{title:'Disabled again'}])).status,403);
+  owner();assert.equal((await write('completeSetup',[{membersCanCreateTasks:true}])).status,200);
+  asPermissionMember();const active=await get();
+  sqlite.prepare("UPDATE project_members SET revoked_at='fixture',revision=revision+1 WHERE project_id=? AND user_id=?").run(project,'task-permission-user');
+  assert.equal((await workspace.POST(request(path,{method:'addTask',args:[{title:'Revoked member'}],revision:active.revision}))).status,404);
+  globalThis.__gatherUser=null;
+  assert.equal((await workspace.POST(request(path,{method:'addTask',args:[{title:'Anonymous task'}],revision:active.revision}))).status,401);
+  owner();
+});
 test('invitation creation is organizer-only, encrypted, email-bound, expiring and idempotent',async()=>{
   const id=await newTeamProject(), requestId=crypto.randomUUID();
   let response=await teamWrite(id,{action:'invite',email:'New@example.com',requestId});assert.equal(response.status,200);

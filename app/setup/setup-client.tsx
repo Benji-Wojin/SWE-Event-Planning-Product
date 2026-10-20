@@ -8,12 +8,13 @@ import { Card, CardContent } from '@/components/ui/card';
 
 type Details = {
   name: string; date: string; location: string; timeZone: string; guestCount: string;
-  dietaryOutstanding: string; cateringDeadline: string; outdoor: boolean; transportNeeded: boolean;
+  dietaryOutstanding: string; cateringDeadline: string; outdoor: boolean; transportNeeded: boolean; membersCanCreateTasks: boolean;
 };
 const values = (event: any): Details => ({
   name: event.name, date: event.date, location: event.location, timeZone: event.timeZone || '',
   guestCount: String(event.guestCount), dietaryOutstanding: String(event.dietaryOutstanding),
   cateringDeadline: event.cateringDeadline, outdoor: Boolean(event.outdoor), transportNeeded: Boolean(event.transportNeeded),
+  membersCanCreateTasks: event.membersCanCreateTasks === true,
 });
 async function workspaceRequest(projectId: string, body?: unknown) {
   const response = await fetch('/api/workspace?project=' + encodeURIComponent(projectId), {
@@ -123,6 +124,15 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
           <div className="space-y-5 border-t pt-6">
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-outdoor">Outdoor event</Label><Switch id="setup-outdoor" checked={form.outdoor} onCheckedChange={checked => update('outdoor', checked)} /></div>
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-transportNeeded">Organized transport needed</Label><Switch id="setup-transportNeeded" checked={form.transportNeeded} onCheckedChange={checked => update('transportNeeded', checked)} /></div>
+          </div>
+          <div className="border-t pt-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="setup-membersCanCreateTasks">Let teammates create tasks</Label>
+                <p id="task-creation-help" className="text-sm text-muted-foreground">Invited project members can add tasks for themselves or leave them unassigned. Only you can assign other people, change project settings or add AI-generated plans. Off by default.</p>
+              </div>
+              <Switch id="setup-membersCanCreateTasks" aria-describedby="task-creation-help" checked={form.membersCanCreateTasks} onCheckedChange={checked => update('membersCanCreateTasks', checked)} />
+            </div>
           </div>
           <details className="border-t pt-5">
             <summary className="cursor-pointer text-sm font-medium">Catering details (optional)</summary>

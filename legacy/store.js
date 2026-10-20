@@ -140,6 +140,7 @@
     }
     // Additive migration: preserve the existing browser workspace and source history.
     state.event = { outdoor: true, transportNeeded: true, guestCount: 120, dietaryOutstanding: 14, cateringDeadline: day(2), timeZone: '', ...state.event };
+    state.event.membersCanCreateTasks = state.event.membersCanCreateTasks === true;
     const migrateDependencies = state.tasks.filter(task => !Array.isArray(task.dependencies));
     state.tasks.forEach((task) => {
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
@@ -252,6 +253,12 @@
     }
     function addTask(data, actor = "jack") {
       actorId(actor);
+      if (actor !== 'jack') {
+        if (state.event.membersCanCreateTasks !== true) throw new Error('Only the organizer can add tasks.');
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','owner','dueDate','status'].includes(key))) throw new Error('Teammates can add a task name, context, category, due date and owner.');
+        if (data.owner && data.owner !== actor) throw new Error('Assign the new task to yourself or leave it unassigned.');
+        if (data.status !== undefined && data.status !== 'todo') throw new Error('New teammate tasks start as To do. Report progress after creating the task.');
+      }
       const schedule = data.schedule === undefined ? null : scheduleFields(data.schedule, actor);
       const task = createTask(data, actor);
       task.schedule = schedule;
@@ -602,8 +609,12 @@
       entry(actor, `recorded a follow-up sent outside Weft for ${task.title}; next check ${afterDate}`, taskId, 'followup-recorded'); save();
     }
     function eventFields(data) {
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline','timeZone','confirmScheduleTimeZone'].includes(key))) throw new Error('Use valid event details.');
+      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['name','date','location','guestCount','dietaryOutstanding','outdoor','transportNeeded','cateringDeadline','timeZone','confirmScheduleTimeZone','membersCanCreateTasks'].includes(key))) throw new Error('Use valid event details.');
       const next = {...state.event};
+      if (data.membersCanCreateTasks !== undefined) {
+        if (typeof data.membersCanCreateTasks !== 'boolean') throw new Error('Choose whether teammates can create tasks.');
+        next.membersCanCreateTasks = data.membersCanCreateTasks;
+      }
       if (data.confirmScheduleTimeZone !== undefined && typeof data.confirmScheduleTimeZone !== 'boolean') throw new Error('Confirm the time zone change.');
       if (data.timeZone !== undefined) {
         if (data.timeZone !== '' && !validZone(data.timeZone)) throw new Error('Choose a valid event time zone, such as America/Los_Angeles.');
@@ -644,7 +655,9 @@
       entry(actor, 'saved the project setup', '', 'project-setup'); save(true, false); return copy(next);
     }
     function updateEvent(data, actor = 'jack') {
-      actorId(actor); const next = eventFields(data);
+      actorId(actor);
+      if (actor !== 'jack') throw new Error('Only the organizer can change project settings.');
+      const next = eventFields(data);
       state.event = next; entry(actor, 'updated the event context used by planning checks', '', 'event-context'); save(); return copy(next);
     }
     function addMemory(data, actor = "jack") {

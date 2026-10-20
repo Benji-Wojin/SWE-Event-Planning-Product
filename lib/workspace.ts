@@ -130,7 +130,8 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  if (user.role !== 'admin' && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
+  const memberTaskCreation = method === 'addTask' && store.getState().event.membersCanCreateTasks === true;
+  if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',

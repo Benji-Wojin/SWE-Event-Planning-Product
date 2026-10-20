@@ -10,6 +10,7 @@
   const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
+  const canCreateTasks = () => isOrganizer() || store.getState().event.membersCanCreateTasks === true;
   const planSidebar=GatherPlanningUI.createSidebar({
     getUrl:()=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode=suggestions&embed=1':window.GatherMode.projectUrl('/plan')+'&mode=suggestions&embed=1',
     notify:message=>toast(message),
@@ -105,7 +106,7 @@
   const latestUpdate = task => {const last=task.comments.at(-1);return last&&last.at===task.updatedAt?last.text:task.note;};
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
-  const addButton = isOrganizer()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
+  const addButton = () => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
 
   function taskRow(task) {
@@ -133,7 +134,7 @@
     const days=s.event.date?Math.max(0,Math.ceil((new Date(s.event.date+'T00:00:00')-new Date(dateKey()+'T00:00:00'))/86400000)):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton}`)+setupNote+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton()}`)+setupNote+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
@@ -169,7 +170,7 @@
   }
   function tasksView(s) {
     const tasks=filteredTasks(s);
-    return pageHeading('','Tasks','',addButton)+`
+    return pageHeading('','Tasks','',addButton())+`
       ${ui.tab==='mine'?recovery.nextUpPanel(s):''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
@@ -208,7 +209,7 @@
   }
   function timelineView(s) {
     const scheduled=ui.timelineMode!=='deadlines';
-    const controls=isOrganizer()?(scheduled?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':addButton):'';
+    const controls=scheduled?(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':''):addButton();
     const heading=pageHeading('','Timeline','',controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
     if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -409,7 +410,9 @@
     if(decision)recovery.syncDecision(decision);
   }
   function newTaskDialog() {
-    openDialog('Add task',`<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${ownerOptions('')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Status<select name="status">${statusOptions('todo')}</select></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
+    if(!canCreateTasks())throw new Error('Only the organizer can add tasks.');
+    const organizer=isOrganizer();
+    openDialog('Add task',`${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
   }
   function followupDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
