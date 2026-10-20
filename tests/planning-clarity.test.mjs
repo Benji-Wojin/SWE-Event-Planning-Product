@@ -21,6 +21,19 @@ test('sidebar accepts only its exact same-origin frame and validates message fie
   assert.equal(message({event:'state',dirty:true,busy:false}).dirty,true);
   assert.equal(message({event:'generate'}),null,'messages cannot request provider or database mutations');
 });
+test('Ask Weft popup retains its frame and draft state across close/reopen; background feed never blocks navigation',()=>{
+  const elements=new Map(),listeners=[],created=[];let applied=0;
+  const element=tag=>({tag,style:{},dataset:{},contentWindow:{postMessage(){}},children:[],append(...children){this.children.push(...children);for(const child of children)if(child.id)elements.set(child.id,child);},setAttribute(){},showModal(){this.open=true;},close(){this.open=false;}});
+  const slot=element('div');elements.set('planningSidebarSlot',slot);
+  const context=vm.createContext({location:{origin:'https://example.com'},document:{body:element('body'),getElementById:id=>elements.get(id),createElement:tag=>{const e=element(tag);created.push(e);return e;}},window:{addEventListener:(type,fn)=>{if(type==='message')listeners.push(fn);},confirm:()=>{throw Error('Background checks must not ask to navigate.');}}});
+  vm.runInContext(readFileSync('legacy/planning-ui.js','utf8'),context);
+  const popup=context.GatherPlanningUI.createAgentPopup({getUrl:()=>'/plan?mode=assistant',onApplied:()=>applied++});popup.open();const dialog=created.find(e=>e.tag==='dialog'),frame=created.find(e=>e.tag==='iframe');dialog.close();popup.open();assert.equal(created.filter(e=>e.tag==='iframe').length,1);assert.equal(dialog.open,true);
+  listeners[0]({origin:'https://wrong.example',source:frame.contentWindow,data:{type:'weft-plan-sidebar',event:'state',dirty:true,busy:true}});assert.equal(popup.unsaved(),false);
+  listeners[0]({origin:'https://example.com',source:frame.contentWindow,data:{type:'weft-plan-sidebar',event:'state',dirty:true,busy:false}});assert.equal(popup.unsaved(),true);
+  listeners[0]({origin:'https://example.com',source:frame.contentWindow,data:{type:'weft-plan-sidebar',event:'applied'}});assert.equal(applied,1);
+  const sidebar=context.GatherPlanningUI.createSidebar({getUrl:()=>'/plan?mode=suggestions',notify(){throw Error('Must not block');},onApplied(){}});sidebar.open('suggestions',true);
+  const feed=elements.get('planningSidebarFrame');listeners[1]({origin:'https://example.com',source:feed.contentWindow,data:{type:'weft-plan-sidebar',event:'state',dirty:false,busy:true}});assert.equal(sidebar.canLeave(),true);assert.equal(sidebar.unsaved(),false);
+});
 
 test('sidebar hide/reopen keeps one review frame and guards unsaved or in-flight navigation',()=>{
   const elements=new Map(),listeners={},notifications=[];let applied=0,confirmations=0,allow=false,appended=0;

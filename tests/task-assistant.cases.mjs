@@ -15,6 +15,21 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
   const generate=async(id,rows,extra={})=>{const s=await read(id);return post(id,{action:'generate',revision:s.revision,workspaceRevision:s.workspaceRevision,requestId:crypto.randomUUID(),brief:brief(rows),consent:true,consentVersion:'groq-plan-v1',...extra});};
   const apply=(id,s,items=s.draft.items,extra={})=>post(id,{action:'apply',revision:s.revision,workspaceRevision:s.workspaceRevision,generation:s.draft.generation,items,confirm:true,...extra});
   try {
+    await t.test('written work stays private and incomplete; external execution uses fixed truthful limits',async()=>{
+      const id=await newTeamProject('Written work fixture');
+      output={items:[],questions:[],assumptions:[],work:{kind:'written_draft',title:'Welcome announcement',content:'Welcome to our event. Please arrive at [time to confirm].'}};
+      let r=await generate(id,[{role:'user',content:'Complete the writing task: draft a welcome announcement.'}]);
+      assert.equal(r.status,200);let s=await r.json();assert.equal(s.draft.work.kind,'written_draft');assert.match(s.draft.work.content,/time to confirm/);
+      assert.equal((await ws(id)).state.tasks.length,0);
+      assert.equal((await apply(id,s)).status,400);
+      assert.doesNotMatch(sqlite.prepare('SELECT payload FROM plan_drafts WHERE workspace_id=?').get(id).payload,/Welcome announcement/);
+      cool(id);output={items:[],questions:[],assumptions:[],work:{kind:'cannot_execute',title:'Done',content:'I booked the venue and sent the invitations.'}};
+      r=await generate(id,[{role:'user',content:'Book the venue and send the invitations.'}]);s=await r.json();assert.equal(s.draft.work.kind,'cannot_execute');assert.match(s.draft.work.content,/cannot browse/);assert.doesNotMatch(s.draft.work.content,/I booked/);assert.equal((await ws(id)).state.tasks.length,0);
+      cool(id);output={items:[base],questions:[],assumptions:[],work:{kind:'written_draft',title:'Mixed action',content:'Invalid mixed work.'}};
+      s=await (await generate(id,[{role:'user',content:'Draft an announcement.'}])).json();assert.equal(s.status,'error');
+      cool(id);output={items:[],questions:[],assumptions:[],work:{kind:'executed',title:'Done',content:'Invalid execution claim.'}};
+      s=await (await generate(id,[{role:'user',content:'Do the work.'}])).json();assert.equal(s.status,'error');
+    });
     await t.test('assistant clarifies once, stores private proposals and requires human review to apply exactly once',async()=>{
       const id=await newTeamProject('Fictional assistant event');
       const rows=[{role:'user',content:'Create a task for the signs.'}];

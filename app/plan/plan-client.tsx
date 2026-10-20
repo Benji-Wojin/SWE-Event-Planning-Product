@@ -328,7 +328,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      {assistant ? <TaskChat key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
+      {assistant ? <TaskChat key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
         request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatDirty(false);setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice('Start a new request. The earlier saved draft is not replaced until you send it.');
       }}/> : <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>
@@ -459,7 +459,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           automatically.
         </p>
       )}
-      {data.draft && !(assistant && chatStartingNew) && (
+      {data.draft && !(assistant && (chatStartingNew || data.draft.work)) && (
         <section className="mt-8 space-y-4" aria-label="Review draft">
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
@@ -941,7 +941,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           )}
         </section>
       )}
-      <nav
+      <details open={!assistant} className="mt-6"><summary className={assistant?'cursor-pointer text-xs text-muted-foreground':'hidden'}>Conversation recovery</summary><nav
         aria-label="Draft navigation"
         className="mt-6 flex flex-wrap gap-4 text-sm"
       >
@@ -972,7 +972,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         {!embedded && <a href={projectUrl} className="text-primary underline">
           Open project
         </a>}
-      </nav>
+      </nav></details>
     </section>
   );
 }

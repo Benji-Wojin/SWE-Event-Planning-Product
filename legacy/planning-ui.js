@@ -56,7 +56,7 @@
       {view:'overview',target:'.stat-grid',title:'Your event, at a glance',copy:'Overview brings attention items, progress, and recent updates together. You can keep working while this tip is open.'},
       {view:'tasks',target:'#taskSearch',title:'Find work you can take',copy:'Search task names, notes, categories, or people. Use My tasks or Unassigned to narrow the list.'},
       {view:'tasks',target:'.task-view-switch',title:'See how work connects',copy:'Open Link map. Solid arrows are prerequisites; dashed links are related work. Related tasks do not prevent completion. Click a task for the reason.'},
-      ...(isOrganizer()?[{view:'overview',target:'#thoughtPartner',title:'AI proposes. You decide.',copy:'Enhance this plan reviews gaps right here in the sidebar. Review every suggestion and link before adding anything. Automatic checks are labeled separately.'}]:[]),
+      ...(isOrganizer()?[{view:'overview',target:'#thoughtPartner',title:'Suggestions here. Conversation in Ask Weft.',copy:'Enable optional automatic suggestions in this sidebar. Add or dismiss them; nothing is added automatically. Use Ask Weft to request tasks or written drafts. Rule-based checks are labeled separately.'}]:[]),
       {view:'inbox',target:'.page-heading',title:'Keep updates connected',copy:'Email briefing lets you review updates before they change a task. That’s it—reopen Quick tour any time.'},
     ];
     const remember=()=>{try{localStorage.setItem(storageKey,'seen');}catch{}};
@@ -96,7 +96,7 @@
     return data.event==='applied'?{event:'applied'}:null;
   }
   function createSidebar({getUrl,onApplied,notify}) {
-    let dirty=false,busy=false;
+    let dirty=false,busy=false,automaticFeed=false;
     const frame=()=>document.getElementById('planningSidebarFrame');
     window.addEventListener('message',event=>{
       const current=frame(),message=sidebarMessage(event,current,location.origin);if(!message)return;
@@ -105,18 +105,20 @@
       if(message.event==='applied')onApplied();
     });
     return {
-      open(mode='suggestions'){
+      open(mode='suggestions',automatic=false){
+        automaticFeed=automatic;
         const slot=document.getElementById('planningSidebarSlot');if(!slot)return;
         if(frame() && (frame().dataset.mode||'suggestions')!==mode){if(busy){notify('Please wait for the AI request to finish.');return;}if(dirty&&!window.confirm('Discard unsaved assistant edits and switch AI tools?'))return;frame().remove();dirty=false;busy=false;}
         if(!frame()){const element=document.createElement('iframe');element.id='planningSidebarFrame';element.dataset.mode=mode;element.title=mode==='assistant'?'Create tasks with Weft':'Enhance this plan with AI';element.src=getUrl(mode);slot.append(element);}
-        slot.hidden=false;document.getElementById('planningSidebarActions').hidden=true;
-        slot.querySelector('button').focus({preventScroll:true});
+        slot.hidden=false;const actions=document.getElementById('planningSidebarActions');if(actions)actions.hidden=true;
+        if(!automatic)slot.querySelector('button')?.focus({preventScroll:true});
       },
       hide(){const slot=document.getElementById('planningSidebarSlot');if(slot)slot.hidden=true;const actions=document.getElementById('planningSidebarActions');if(actions){actions.hidden=false;actions.querySelector('button').focus({preventScroll:true});}},
       active:()=>!!frame(),
-      unsaved:()=>!!frame()&&(dirty||busy),
-      canLeave(){if(!frame())return true;if(busy){notify('Please wait for the AI review request to finish.');return false;}return !dirty||window.confirm('Discard unsaved AI review edits and leave this view?');},
+      unsaved:()=>!!frame()&&!automaticFeed&&(dirty||busy),
+      canLeave(){if(!frame()||automaticFeed)return true;if(busy){notify('Please wait for the AI review request to finish.');return false;}return !dirty||window.confirm('Discard unsaved AI review edits and leave this view?');},
       reset(){dirty=false;busy=false;},
+      refresh(){frame()?.contentWindow.postMessage({type:'weft-context-changed'},location.origin);},
       preserve(container,markup){
         const next=document.createElement('template');next.innerHTML=markup;
         for(const id of ['overviewHeader','overviewMain','overviewEmail','overviewActivity','overviewSuggestions']){
@@ -126,5 +128,25 @@
       },
     };
   }
-  root.GatherPlanningUI={readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar};
+  function createAgentPopup({getUrl,onApplied}) {
+    let dialog,frame,dirty=false,busy=false;
+    window.addEventListener('message',event=>{
+      const message=sidebarMessage(event,frame,location.origin);if(!message)return;
+      if(message.event==='state'){dirty=message.dirty;busy=message.busy;}
+      if(message.event==='applied')onApplied();
+    });
+    return {
+      open(){
+        if(!dialog){
+          dialog=document.createElement('dialog');dialog.className='weft-agent-popup';dialog.setAttribute('aria-labelledby','weftAgentTitle');
+          const header=document.createElement('header'),title=document.createElement('h2'),close=document.createElement('button');
+          title.id='weftAgentTitle';title.textContent='Ask Weft';close.type='button';close.className='icon-button';close.textContent='×';close.setAttribute('aria-label','Close Ask Weft');close.onclick=()=>dialog.close();
+          header.append(title,close);frame=document.createElement('iframe');frame.title='Ask Weft — tasks and written drafts';frame.src=getUrl();dialog.append(header,frame);document.body.append(dialog);
+        }
+        if(!dialog.open)dialog.showModal();
+      },
+      unsaved:()=>!!frame&&(dirty||busy),
+    };
+  }
+  root.GatherPlanningUI={readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup};
 })(globalThis);

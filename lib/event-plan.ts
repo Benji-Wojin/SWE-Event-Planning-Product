@@ -160,6 +160,8 @@ async function snapshot(c: Context) {
     ...(c.purpose !== 'plan' ? {purpose: c.purpose} : {}),
     members: c.state.members.filter((m: any) => m.active !== false && (!c.memberAssistant || m.id===c.user.actorId)),
     actorId:c.user.actorId,
+    suggestionScope:c.purpose==='suggestions'?c.id:undefined,
+    contextKey:c.purpose==='suggestions'?c.contextHash:undefined,
     existingTaskCount: c.state.tasks.length,
     existingTasks: existingPlanTasks(c),
     configured: !!env.GROQ_API_KEY,

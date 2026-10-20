@@ -26,3 +26,24 @@ test('chat asks only the current clarification and preserves unsent input on tra
     props.brief.description=sent[0].description;tree=TaskChat(props);assert.doesNotMatch(text(tree),/one quick question/);
   }finally{delete globalThis.__taskChatHooks;}
 });
+test('written-draft followups share a bounded excerpt and disclose capability limits',async()=>{
+  let message='Make it friendlier',sent;
+  globalThis.__taskChatHooks=()=>[message,value=>{message=value;}];
+  try{
+    const tree=TaskChat({brief:{kind:'other',description:JSON.stringify([{role:'user',content:'Write a welcome message'}]),endDate:'',startTime:'',endTime:''},reply:'Welcome to our event.',applied:false,locked:false,configured:true,failed:false,onSend:async value=>{sent=value;return true;},onDirty(){},onNew(){}});
+    assert.match(text(tree),/can’t browse/);assert.match(text(tree),/draft isn’t proof/);
+    await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+    assert.deepEqual(JSON.parse(sent.description).slice(-2),[{role:'assistant',content:'Welcome to our event.'},{role:'user',content:'Make it friendlier'}]);
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('long written drafts remain revisable within the per-message server limit',async()=>{
+  let sent;
+  globalThis.__taskChatHooks=()=>['Shorten it',()=>{}];
+  try{
+    for(const length of [1751,1800,1801,6000]){
+      const tree=TaskChat({brief:{kind:'other',description:JSON.stringify([{role:'user',content:'Write a welcome message'}]),endDate:'',startTime:'',endTime:''},reply:'x'.repeat(length),applied:false,locked:false,configured:true,failed:false,onSend:async value=>{sent=value;return true;},onDirty(){},onNew(){}});
+      await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+      const rows=JSON.parse(sent.description);assert.ok(rows.every(row=>row.content.length<=1800));assert.ok(sent.description.length<=4000);if(length>1800)assert.match(rows[1].content,/Earlier draft excerpt/);
+    }
+  }finally{delete globalThis.__taskChatHooks;}
+});

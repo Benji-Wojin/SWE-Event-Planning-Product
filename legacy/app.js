@@ -16,6 +16,10 @@
     notify:message=>toast(message),
     onApplied:async()=>{try{const result=await store.refresh(()=>!ui.pendingSave&&!unsavedDialog()&&!unsavedReview());if(result.pending)toast('Suggestions added. Finish your open edit before refreshing the workspace.');else{render();toast('Selected suggestions added to your plan.');}}catch(error){toast(error.message||'Suggestions added. Refresh the workspace to see the latest tasks.');}},
   });
+  const agentPopup=GatherPlanningUI.createAgentPopup({
+    getUrl:()=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode=assistant&embed=1':window.GatherMode.projectUrl('/plan')+'&mode=assistant&embed=1',
+    onApplied:async()=>{try{const result=await store.refresh(()=>!ui.pendingSave&&!unsavedDialog()&&!unsavedReview());if(!result.pending)render();toast(result.pending?'Tasks added. Finish your open edit before refreshing.':'Tasks added · still to do.');}catch{toast('Tasks added. Refresh your workspace to see them.');}},
+  });
   const icons = {
     grid:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
     check:'m4 6 2 2 4-4M13 6h7M4 16l2 2 4-4M13 16h7',
@@ -147,7 +151,7 @@
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
       </div><aside class="stack">
-        <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">PLANNING ASSISTANT</span><h2>What’s next?</h2><p>Get a focused review of gaps in your current plan. You choose what to add.</p>${window.GatherMode&&canCreateTasks()?'<div class="planning-ai-actions" id="planningSidebarActions"><button class="btn btn-primary" data-action="ai-task-assistant">Create tasks with Weft '+icon('spark')+'</button>'+(isOrganizer()?'<button class="btn btn-secondary" data-action="ai-suggestions">Enhance this plan</button><button class="text-button" data-action="draft-plan">Draft a full plan '+icon('arrow')+'</button>':'')+'</div><div id="planningSidebarSlot" hidden><button class="text-button sidebar-hide" data-action="hide-ai-review">Hide assistant</button></div>':'<p class="notice">The organizer can request AI suggestions or enable teammate task creation.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
+        <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">SUGGESTIONS</span><h2>What’s next?</h2>${window.GatherMode&&isOrganizer()?'<div id="planningSidebarSlot"></div>':'<p class="muted">The organizer can enable automatic AI suggestions. Use Ask Weft for task requests when teammate task creation is enabled.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
         <section class="panel email-preview" id="overviewEmail"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
       <section class="panel section-gap" id="overviewActivity"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,true)).join('')}</div></section>`;
@@ -242,8 +246,10 @@
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
     const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
-    if(ui.view==='overview'&&canCreateTasks()&&planSidebar.active())planSidebar.preserve($('#viewRoot'),markup);
+    $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
+    if(ui.view==='overview'&&isOrganizer()&&planSidebar.active())planSidebar.preserve($('#viewRoot'),markup);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
+    if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
     if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
     const currentReview=$('#emailReviewForm');
@@ -435,7 +441,7 @@
   }
   function thoughtDialog() {
     const suggestions=store.getSuggestions();
-    openDialog('Planning assistant',`${window.GatherMode&&isOrganizer()?'<div class="planning-ai-actions"><p>Ask AI to find specific gaps in this event’s existing plan. Nothing is added without your review.</p><button class="btn btn-primary" data-action="ai-suggestions">Find next steps with AI '+icon('spark')+'</button><button class="text-button" data-action="draft-plan">Draft a full plan '+icon('arrow')+'</button></div>':''}<h3 class="planning-checks-title">Automatic checks · rules, not AI</h3><details class="suggestion-details"><summary>How checks update</summary><p>These rule-based checks refresh as tasks, deadlines, event details, and feedback change. AI suggestions are generated separately, only when the organizer requests them.</p></details><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap" id="suggestionList">${suggestions.map(insightMarkup).join('')||empty('No automatic checks.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
+    openDialog('Automatic checks',`<h3 class="planning-checks-title">Rules, not AI</h3><details class="suggestion-details"><summary>How checks update</summary><p>These rule-based checks refresh as tasks, deadlines, event details, and feedback change. Optional AI suggestions live in the Overview sidebar. Use Ask Weft for conversation and written drafts.</p></details><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap" id="suggestionList">${suggestions.map(insightMarkup).join('')||empty('No automatic checks.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
   function refreshSuggestionSurfaces() {
@@ -601,7 +607,7 @@
       if(action==='event-context')contextDialog();
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
       if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open();return;}
-      if(action==='ai-task-assistant'&&canCreateTasks()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open('assistant');return;}
+      if(action==='ai-task-assistant'&&canCreateTasks()&&window.GatherMode){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();agentPopup.open();return;}
       if(action==='hide-ai-review'){planSidebar.hide();return;}
       if(action==='edit-memory')memoryEditDialog(id);
       if(action==='reload-private')loadPrivate();
@@ -756,7 +762,7 @@
   let unsubscribeNavigation=navigation.subscribe(routeChanged);
   window.addEventListener('pagehide',()=>{unsubscribeNavigation();});
   window.addEventListener('pageshow',event=>{if(event.persisted){unsubscribeNavigation=navigation.subscribe(routeChanged);routeChanged(navigation.initial());}});
-  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()||planSidebar.unsaved()){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()||planSidebar.unsaved()||agentPopup.unsaved()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshScheduleClock() {
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;

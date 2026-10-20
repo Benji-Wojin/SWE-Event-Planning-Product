@@ -209,3 +209,5 @@ html:has(.plan-sidebar-shell),body:has(>.plan-sidebar-shell){background:var(--ca
     @apply font-sans;
   }
 }
+.suggestion-card,.weft-work{padding:14px;border:1px solid var(--border);border-radius:12px;overflow-wrap:anywhere}
+.weft-work{margin-bottom:20px;background:var(--muted)}
