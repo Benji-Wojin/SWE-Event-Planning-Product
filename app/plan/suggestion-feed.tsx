@@ -8,6 +8,7 @@ async function read(query: string, body?: unknown) {
     method: body ? 'POST' : 'GET',
     credentials: 'same-origin',
     cache: 'no-store',
+    signal: AbortSignal.timeout(45000),
     headers: body
       ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
       : {},
@@ -17,7 +18,7 @@ async function read(query: string, body?: unknown) {
   if (!response.ok || !result?.event)
     throw Object.assign(
       new Error(result?.error || 'Could not load suggestions.'),
-      { status: response.status },
+      { status: response.status, staleWrite: !!body && response.status === 409 },
     );
   return result;
 }
@@ -71,7 +72,14 @@ export function SuggestionFeed({ query }: { query: string }) {
         setDismissed([]);
         queuedReload.current = false;
       }
-      setError(e instanceof Error ? e.message : 'Suggestions are unavailable.');
+      // A rejected stale write must refresh the saved snapshot, never replay the write.
+      if ((e as { staleWrite?: boolean }).staleWrite)
+        queuedReload.current = true;
+      setError(
+        e instanceof Error && ['TimeoutError', 'AbortError'].includes(e.name)
+          ? 'The request timed out. Reload suggestions to check the saved result before retrying.'
+          : e instanceof Error ? e.message : 'Suggestions are unavailable.',
+      );
     } finally {
       pending.current = false;
       setBusy(false);
@@ -272,7 +280,7 @@ export function SuggestionFeed({ query }: { query: string }) {
           AI suggestions · review before adding{' '}
           <button
             className="underline"
-            disabled={locked}
+            disabled={busy}
             onClick={() => {
               remember(consentKey, null);
               setEnabled(false);
@@ -295,7 +303,7 @@ export function SuggestionFeed({ query }: { query: string }) {
           </p>
           <button
             className="text-xs underline"
-            disabled={locked}
+            disabled={busy}
             onClick={() => void reload()}
           >
             Reload suggestions
@@ -308,10 +316,19 @@ export function SuggestionFeed({ query }: { query: string }) {
         </p>
       )}
       {data.contextChanged && (
-        <p className="text-xs" role="status">
-          Your plan changed. These suggestions need a fresh review before
-          adding.
-        </p>
+        <div className="space-y-2" role="status">
+          <p className="text-xs">
+            Your plan changed. Refresh these suggestions before adding tasks.
+            Refreshing uses an AI attempt.
+          </p>
+          {enabled && data.configured ? (
+            <Button disabled={locked} onClick={() => void generate(true)}>
+              Refresh changed suggestions
+            </Button>
+          ) : !enabled ? (
+            <p className="text-xs">Enable automatic suggestions above to refresh with AI.</p>
+          ) : null}
+        </div>
       )}
       {data.receipt && (
         <p role="status" className="text-sm">
@@ -350,12 +367,15 @@ export function SuggestionFeed({ query }: { query: string }) {
               {item.location ? ' · ' + item.location : ''} · Added as incomplete
             </p>
             <div className="flex gap-3 items-center">
-              <Button
-                disabled={locked || data.contextChanged || complex}
-                onClick={() => void add(item.id)}
-              >
-                Add task
-              </Button>
+              {!data.contextChanged && (complex ? (
+                <a className="suggestion-review-link" target="_top" href={'/plan?' + query}>
+                  Review &amp; add
+                </a>
+              ) : (
+                <Button disabled={locked} onClick={() => void add(item.id)}>
+                  Add task
+                </Button>
+              ))}
               <button
                 className="text-xs underline"
                 disabled={locked}
@@ -367,16 +387,12 @@ export function SuggestionFeed({ query }: { query: string }) {
               >
                 Dismiss
               </button>
-              {complex && (
-                <a
-                  className="text-xs underline"
-                  target="_top"
-                  href={'/plan?' + query}
-                >
-                  Review links & duplicates
-                </a>
-              )}
             </div>
+            {complex && !data.contextChanged && (
+              <p className="text-xs text-muted-foreground">
+                Review links &amp; duplicates before adding this task.
+              </p>
+            )}
           </article>
         );
       })}

@@ -247,7 +247,7 @@
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
     const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
-    if(ui.view==='overview'&&isOrganizer()&&planSidebar.active())planSidebar.preserve($('#viewRoot'),markup);
+    if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});

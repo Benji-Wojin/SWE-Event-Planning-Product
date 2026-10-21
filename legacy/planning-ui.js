@@ -97,6 +97,7 @@
   }
   function createSidebar({getUrl,onApplied,notify}) {
     let dirty=false,busy=false,automaticFeed=false;
+    let overviewView,otherView;
     const frame=()=>document.getElementById('planningSidebarFrame');
     window.addEventListener('message',event=>{
       const current=frame(),message=sidebarMessage(event,current,location.origin);if(!message)return;
@@ -119,6 +120,22 @@
       canLeave(){if(!frame()||automaticFeed)return true;if(busy){notify('Please wait for the AI review request to finish.');return false;}return !dirty||window.confirm('Discard unsaved AI review edits and leave this view?');},
       reset(){dirty=false;busy=false;},
       refresh(){frame()?.contentWindow.postMessage({type:'weft-context-changed'},location.origin);},
+      render(container,markup,view){
+        if(!overviewView||!container.contains(overviewView)){
+          overviewView=document.createElement('div');otherView=document.createElement('div');
+          overviewView.dataset.workspaceView='overview';otherView.dataset.workspaceView='current';
+          container.replaceChildren(overviewView,otherView);
+        }
+        overviewView.hidden=view!=='overview';overviewView.inert=view!=='overview';
+        otherView.hidden=view==='overview';otherView.inert=view==='overview';
+        if(view==='overview'){
+          if(frame())this.preserve(overviewView,markup);
+          else overviewView.innerHTML=markup;
+          otherView.replaceChildren();
+        }else otherView.innerHTML=markup;
+        // Never detach or reparent a live iframe: either operation reloads its document.
+        // Keeping Overview mounted preserves the feed's styles, controls and request state.
+      },
       preserve(container,markup){
         const next=document.createElement('template');next.innerHTML=markup;
         for(const id of ['overviewHeader','overviewMain','overviewEmail','overviewActivity','overviewSuggestions']){

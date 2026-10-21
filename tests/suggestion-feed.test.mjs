@@ -375,11 +375,11 @@ test('suggestion cards disclose every applied schedule field and complex links r
     assert.match(content, /2030-11-20T11:00/);
     assert.match(content, /Main hall/);
     assert.match(content, /Added as incomplete/);
-    assert.equal(
-      nodes(app.tree).find((n) => n.type === 'button' && text(n) === 'Add task')
-        .props.disabled,
-      true,
-    );
+    assert.equal(nodes(app.tree).some((n) => n.type === 'button' && text(n) === 'Add task'), true,
+      'independent tasks still have an Add button');
+    const reviewLink = nodes(app.tree).find((n) => n.type === 'a' && text(n) === 'Review & add');
+    assert.ok(reviewLink, 'linked tasks offer an active review path, not a disabled Add');
+    assert.equal(reviewLink.props.href, '/plan?project=fixture&mode=suggestions');
     assert.match(content, /Review links & duplicates/);
   } finally {
     app.restore();
@@ -435,9 +435,112 @@ test('even reused exact-match prerequisites require explicit link review', async
     const button = nodes(app.tree).find(
       (n) => n.type === 'button' && text(n) === 'Add task',
     );
-    assert.equal(button.props.disabled, true);
+    assert.equal(button, undefined);
+    assert.ok(nodes(app.tree).some((n) => n.type === 'a' && text(n) === 'Review & add'));
     assert.match(text(app.tree), /Review links & duplicates/);
   } finally {
     app.restore();
   }
+});
+
+test('stale cards offer an explicit refresh and become addable only after fresh generation', async () => {
+  const app = harness((input, data) => input?.action === 'generate'
+    ? { ...data, revision: 3, contextChanged: false, draft: { ...data.draft, generation: 'fresh' } }
+    : undefined);
+  try {
+    app.storage.set('weft-auto-suggestions-v1:owner:project', 'enabled');
+    app.data = { ...app.data, status: 'ready', contextChanged: true,
+      draft: { generation: 'old', items: [item('one')], duplicateSuggestions: [] } };
+    await app.settle();
+    assert.equal(nodes(app.tree).some(n => n.type === 'button' && text(n) === 'Add task'), false);
+    assert.match(text(app.tree), /Refreshing uses an AI attempt/);
+    await app.click('Refresh changed suggestions');
+    const add = nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Add task');
+    assert.ok(add && !add.props.disabled);
+    assert.equal(app.calls.filter(c => c.action === 'generate').length, 1);
+    assert.equal(app.calls.filter(c => c.action === 'apply').length, 0);
+  } finally { app.restore(); }
+});
+
+test('stale cards with consent off explain how to re-enable instead of exposing a no-op refresh', async () => {
+  const app = harness();
+  try {
+    app.data = { ...app.data, status: 'ready', contextChanged: true,
+      draft: { generation: 'old', items: [item('one')], duplicateSuggestions: [] } };
+    await app.settle();
+    assert.match(text(app.tree), /Enable automatic suggestions above to refresh/);
+    assert.equal(nodes(app.tree).some(n => n.type === 'button' && text(n) === 'Refresh changed suggestions'), false);
+    assert.equal(app.calls.filter(c => c.action === 'generate').length, 0);
+  } finally { app.restore(); }
+});
+
+test('a rejected Add reloads current revisions once without replaying the mutation', async () => {
+  let first = true;
+  const app = harness((input, data) => {
+    if (input?.action === 'apply' && first) {
+      first = false;
+      app.data = { ...data, workspaceRevision: 7 };
+      return Response.json({ error: 'Project changed' }, { status: 409 });
+    }
+    if (input?.action === 'apply') return { ...data, receipt: { taskIds: ['new-task'] }, status: 'applied' };
+  });
+  try {
+    app.data = { ...app.data, status: 'ready',
+      draft: { generation: 'one', items: [item('one')], duplicateSuggestions: [] } };
+    await app.settle();
+    await app.click('Add task');
+    assert.equal(app.calls.filter(c => c.action === 'apply').length, 1);
+    assert.equal(app.calls.filter(c => c.action === 'get').length, 2);
+    await app.click('Add task');
+    assert.equal(app.calls.filter(c => c.action === 'apply').at(-1).workspaceRevision, 7);
+    assert.match(text(app.tree), /Task added/);
+  } finally { app.restore(); }
+});
+
+test('failed reads do not loop, and a timed-out Add unlocks without automatically resending', async () => {
+  let readFails = false;
+  const app = harness(input => {
+    if (input?.action === 'apply') throw new DOMException('Timeout', 'TimeoutError');
+    if (readFails) return Response.json({ error: 'Read changed' }, { status: 409 });
+  });
+  try {
+    app.data = { ...app.data, status: 'ready',
+      draft: { generation: 'one', items: [item('one')], duplicateSuggestions: [] } };
+    await app.settle();
+    await app.click('Add task');
+    assert.match(text(app.tree), /request timed out/);
+    assert.equal(app.calls.filter(c => c.action === 'apply').length, 1);
+    assert.equal(nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Add task').props.disabled, false);
+    readFails = true;
+    await app.click('Reload suggestions');
+    await app.settle();
+    assert.equal(app.calls.filter(c => c.action === 'get').length, 2, 'one explicit GET, no retry loop');
+    assert.match(text(app.tree), /Read changed/);
+  } finally { app.restore(); }
+});
+
+test('a failed poll of a generating draft leaves read-only reload and consent revocation usable', async () => {
+  let failRead = false;
+  const app = harness(() => failRead
+    ? Promise.reject(new DOMException('Timeout', 'TimeoutError')) : undefined);
+  try {
+    app.storage.set('weft-auto-suggestions-v1:owner:project', 'enabled');
+    app.data = { ...app.data, status: 'generating' };
+    await app.settle();
+    failRead = true;
+    await app.tick();
+    assert.match(text(app.tree), /request timed out/);
+    const reload = nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Reload suggestions');
+    const turnOff = nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Turn off');
+    assert.equal(reload.props.disabled, false, 'saved generating status cannot disable a read-only recovery');
+    assert.equal(turnOff.props.disabled, false, 'a failed poll cannot trap consent on');
+    await app.click('Turn off');
+    assert.equal(app.storage.has('weft-auto-suggestions-v1:owner:project'), false);
+    failRead = false;
+    app.data = { ...app.data, status: 'ready', draft: { generation: 'ready', items: [item('one')], duplicateSuggestions: [] } };
+    await app.click('Reload suggestions');
+    const add = nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Add task');
+    assert.ok(add && !add.props.disabled);
+    assert.equal(app.calls.filter(c => c.action === 'generate' || c.action === 'apply').length, 0);
+  } finally { app.restore(); }
 });

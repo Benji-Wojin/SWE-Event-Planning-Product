@@ -211,4 +211,6 @@ html:has(.plan-sidebar-shell),body:has(>.plan-sidebar-shell){background:var(--ca
   }
 }
 .suggestion-card,.weft-work{padding:14px;border:1px solid var(--border);border-radius:12px;overflow-wrap:anywhere}
+.suggestion-review-link{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:6px 10px;border-radius:8px;background:var(--primary);color:var(--primary-foreground);font-size:14px;font-weight:500;text-decoration:none}
+.suggestion-review-link:focus-visible{outline:3px solid var(--ring);outline-offset:3px}
 .weft-work{margin-bottom:20px;background:var(--muted)}

@@ -61,6 +61,38 @@ test('sidebar hide/reopen keeps one review frame and guards unsaved or in-flight
   allow=false;sidebar.open('suggestions');assert.equal(elements.get('planningSidebarFrame'),assistantFrame,'switching tools guards unsaved chat input');
 });
 
+test('workspace navigation keeps the suggestions document mounted and hides it accessibly',()=>{
+  const elements=new Map();
+  const node=()=>({children:[],dataset:{},style:{},hidden:false,inert:false,
+    contains(child){return child===this||this.children.some(n=>n.contains?.(child));},
+    append(...children){this.children.push(...children);for(const child of children)if(child.id)elements.set(child.id,child);},
+    replaceChildren(...children){this.children=children;},
+    set innerHTML(markup){this.markup=markup;this.children=[];},get innerHTML(){return this.markup||'';},
+    querySelector(){return null;},
+  });
+  const root=node(),slot=node();elements.set('planningSidebarSlot',slot);
+  const context=vm.createContext({location:{origin:'https://example.com'},
+    document:{getElementById:id=>elements.get(id),createElement:tag=>tag==='template'?{content:{querySelector:()=>null}}:node()},
+    window:{addEventListener(){},confirm(){throw Error('No automatic-feed confirmation');}}});
+  vm.runInContext(readFileSync('legacy/planning-ui.js','utf8'),context);
+  const sidebar=context.GatherPlanningUI.createSidebar({getUrl:()=>'/plan?mode=suggestions&embed=1',onApplied(){},notify(){}});
+  sidebar.render(root,'Overview','overview');
+  const [overview,other]=root.children;overview.append(slot);
+  sidebar.open('suggestions',true);const frame=elements.get('planningSidebarFrame');
+  assert.ok(root.contains(frame));
+  sidebar.render(root,'Tasks','tasks');
+  assert.ok(root.contains(frame),'the iframe is not detached or reparented');
+  assert.equal(overview.hidden,true);assert.equal(overview.inert,true);
+  assert.equal(other.hidden,false);assert.equal(other.inert,false);
+  sidebar.render(root,'Overview refreshed','overview');
+  assert.equal(root.children[0],overview);assert.equal(elements.get('planningSidebarFrame'),frame);
+  assert.ok(root.contains(frame));assert.equal(overview.hidden,false);assert.equal(overview.inert,false);
+  assert.equal(other.hidden,true);assert.equal(other.inert,true);assert.equal(other.children.length,0);
+  assert.equal(sidebar.canLeave(),true);
+  const source=readFileSync('legacy/app.js','utf8');
+  assert.match(source,/if\(window.GatherMode&&isOrganizer\(\)\)planSidebar\.render\(\$\('#viewRoot'\),markup,ui.view\)/);
+});
+
 test('map places prerequisites before dependents and represents shared parents once',()=>{
   const tasks=[make('quote'),make('deposit',[link('quote')]),make('program',[link('quote')]),make('open',[link('deposit'),link('program')])];
   const map=graph(tasks);
