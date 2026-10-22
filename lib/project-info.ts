@@ -1,5 +1,6 @@
 import { env } from '@/lib/runtime';
 import '@/legacy/guests.js';
+import '@/legacy/budget.js';
 import {
   administrator,
   principal,
@@ -11,8 +12,10 @@ import {
 } from './security';
 import { demoPersona, loadDemo } from './demo';
 import { projectUser, assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
+import { loadWorkspace } from './workspace';
 
 const guests = (globalThis as any).GatherGuests;
+const budgetModel = (globalThis as any).GatherBudget;
 // Leave room for multipart overhead within Vercel's 4.5 MB function limit.
 const MAX_FILE = 4 * 1024 * 1024,
   MAX_STORAGE = 50 * 1024 * 1024;
@@ -25,8 +28,10 @@ type Context = {
   demoId: string;
   generation: string;
   authorization?: ProjectUser;
+  budgetWorkspaceRevision?: number;
+  budgetWrite?: boolean;
 };
-type Info = { guests: any[]; files: any[]; receipts: any[] };
+type Info = { guests: any[]; files: any[]; receipts: any[]; budget?: any };
 export async function infoContext(request: Request): Promise<Context> {
   const params = new URL(request.url).searchParams;
   if (params.get('demo') === '1') {
@@ -135,6 +140,7 @@ export function infoSnapshot(context: Context, state: Info, revision: number) {
       canArchive: context.admin || file.createdBy === context.actor,
     })),
     uploadsAvailable: !!env.BUCKET,
+    budget: state.budget || budgetModel.initial(),
   };
 }
 export async function readInfo(context: Context) {
@@ -208,7 +214,9 @@ async function save(
   const result =
     await env.DB.prepare(`UPDATE project_info SET payload=?,revision=revision+1 WHERE scope=? AND revision=?
     AND (?='' OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?))
-    AND ${context.authorization ? projectWriteAccess : '1'}`)
+    AND ${context.authorization ? projectWriteAccess : '1'}
+    AND (?=-1 OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?))
+    AND ${context.budgetWrite && context.authorization ? "((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))" : '1'}`)
       .bind(
         await seal(state, 'info:' + context.scope),
         context.scope,
@@ -217,6 +225,10 @@ async function save(
         context.demoId,
         context.generation,
         ...(context.authorization ? accessArgs(context.authorization) : []),
+        context.budgetWorkspaceRevision ?? -1,
+        context.demoId || context.scope,
+        context.budgetWorkspaceRevision ?? -1,
+        ...(context.budgetWrite && context.authorization ? [context.scope, context.userId, context.scope, context.userId] : []),
       )
       .run();
   if (result.meta.changes !== 1)
@@ -241,6 +253,7 @@ function preview(csv: unknown, state: Info) {
   }
 }
 export async function mutateInfo(context: Context, input: any) {
+  context = { ...context, budgetWorkspaceRevision: undefined, budgetWrite: false };
   const allowed: Record<string, string[]> = {
     add: ['guest'],
     edit: ['id', 'guest'],
@@ -248,10 +261,16 @@ export async function mutateInfo(context: Context, input: any) {
     archiveFile: ['id', 'archived'],
     preview: ['csv'],
     import: ['csv', 'filename'],
+    budgetSettings: ['settings'],
+    budgetItem: ['id', 'item'],
+    budgetArchive: ['id', 'archived'],
   };
   if (!Object.hasOwn(allowed, input.action))
     throw new HttpError(400, 'Choose a valid event info action.');
   keys(input, ['action', 'revision', 'requestId', ...allowed[input.action]]);
+  const budgetAction = input.action.startsWith('budget');
+  if (budgetAction && !context.admin)
+    throw new HttpError(403, 'Only the organizer can edit the event budget.');
   const { state, revision } = await load(context);
   if (input.action === 'preview') {
     checkRevision(input.revision, revision);
@@ -272,6 +291,53 @@ export async function mutateInfo(context: Context, input: any) {
       updatedBy: context.actor,
       updatedName: context.name,
     };
+  if (budgetAction) {
+    const budget = state.budget ||= budgetModel.initial();
+    const before = input.action === 'budgetSettings'
+      ? { enabled: budget.enabled, currency: budget.currency, target: budget.target }
+      : structuredClone(budget.items.find((row: any) => row.id === input.id) || null);
+    let after;
+    try {
+      if (input.action === 'budgetSettings') {
+        after = budgetModel.settings(input.settings);
+        if (after.currency !== budget.currency && budget.items.length)
+          throw new Error('Currency cannot change after adding costs, including archived costs. No amounts are converted.');
+        Object.assign(budget, after);
+      } else {
+        if (!budget.enabled) throw new Error('Enable the budget tracker before editing costs.');
+        if (typeof input.id !== 'string' || input.id.length > 100) throw new Error('Invalid budget item.');
+        const existing = budget.items.find((row: any) => row.id === input.id);
+        if (input.action === 'budgetArchive') {
+          if (!existing || typeof input.archived !== 'boolean') throw new Error('Choose an existing cost to archive or restore.');
+          Object.assign(existing, { archivedAt: input.archived ? at : '', ...audit });
+          after = structuredClone(existing);
+        } else {
+          if (input.id && (!existing || existing.archivedAt)) throw new Error('Cost not found in the active budget.');
+          if (!existing && budget.items.length >= 500) throw new Error('This budget supports 500 costs, including archived costs.');
+          const normalized = budgetModel.item(input.item, budget.currency);
+          // Link only to this project's current task/roster; guard their revision at commit.
+          const workspace = context.demoId
+            ? await loadDemo(await administrator())
+            : await loadWorkspace(context.authorization!, context.scope);
+          if (context.demoId && context.demoId + ':' + workspace.store.getState().demoGeneration !== context.scope)
+            throw new HttpError(409, 'The demo restarted. Reload the budget.');
+          const current = workspace.store.getState();
+          if (normalized.taskId && !current.tasks.some((task: any) => task.id === normalized.taskId)) throw new Error('Choose a task from this project, or leave the task link blank.');
+          if (normalized.owner && !current.members.some((member: any) => member.id === normalized.owner && member.active !== false && !member.role.startsWith('Former'))) throw new Error('Choose a current project member, or leave the owner blank.');
+          context.budgetWorkspaceRevision = workspace.row.revision;
+          if (existing) Object.assign(existing, normalized, audit);
+          else budget.items.push({ id: crypto.randomUUID(), ...normalized, ...audit, archivedAt: '' });
+          after = structuredClone(existing || budget.items.at(-1));
+        }
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, (error as Error).message);
+    }
+    budget.history.push({ id, action: input.action, at, actor: context.actor, name: context.name, before, after });
+    budget.history = budget.history.slice(-100);
+    context.budgetWrite = true;
+  }
   if (input.action === 'add' || input.action === 'edit') {
     const guest = normalizeGuest(input.guest),
       existing =

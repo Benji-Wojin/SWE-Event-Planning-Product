@@ -10,6 +10,7 @@ import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
 import { eventPlanTests } from './event-plan.cases.mjs';
 import { selfserviceTests } from './selfservice.cases.mjs';
 import {taskAssistantTests} from './task-assistant.cases.mjs';
+import {budgetTests} from './budget.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -1195,6 +1196,7 @@ test('concurrent resource readers share one lookup; provider failures never expo
 
 const infoRead=(query='')=>infoApi.GET(new Request('https://gather.example/api/info'+query));
 const infoWrite=(data,query='')=>infoApi.POST(request('/api/info'+query,data));
+budgetTests({sqlite,owner,infoRead,infoWrite,get infoCore(){return infoCore;},get workspace(){return workspace;},env:globalThis.__gatherEnv});
 const infoContext=scope=>({scope,userId:'upload-test-'+scope,actor:'jack',name:'Jack',admin:true,demoId:'',generation:''});
 const uploadRequest=(revision,name='list.txt',content='Private guest details',query='',id=crypto.randomUUID(),origin='https://gather.example')=>{
   const form=new FormData();form.set('file',new Blob([content]),name);form.set('revision',revision);form.set('requestId',id);

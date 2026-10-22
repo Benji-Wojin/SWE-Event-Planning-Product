@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  const views = new Set(['overview', 'tasks', 'inbox', 'updates', 'team', 'info', 'timeline', 'memory', 'details']);
+  const views = new Set(['overview', 'tasks', 'inbox', 'updates', 'team', 'info', 'budget', 'timeline', 'memory', 'details']);
   const viewFrom = hash => views.has(hash.slice(1)) ? hash.slice(1) : '';
   function create(frame) {
     let host = frame;

@@ -77,6 +77,14 @@ New Helpful links searches are disabled by default during migration; unexpired c
 
 ## Event information
 
+### Optional manual budget
+
+The **Budget** page is off by default. Organizers can enable a single-currency tracker, set an optional target, and record costs with an estimate, commitment, net payment recorded, owner, due date and optional task link. Teammates can view; only organizers can edit. This is a manual planning record: no payment, approval, reservation or task completion is executed. Do not enter bank/card information or private booking references.
+
+Amounts use exact minor units. Blank amounts remain unknown, with partial totals labelled explicitly. Estimates, commitments and payments are separate totals, never summed together. Expected total uses the commitment when known, otherwise the estimate, and never less than the recorded payment. Cancelled costs retain net payments in totals; archiving hides a row but does not remove its costs. Currency is locked after the first cost; there is no conversion. Supported currencies are USD, CAD, EUR, GBP, AUD, JPY and KWD. Limits: 500 costs including archived records and the latest 100 changes in visible history. Turning the tracker off preserves its records.
+
+Budget data uses the existing encrypted, project-scoped `project_info` sidecar, revision checks, retry receipts and write-time authorization. Task links are checked against the current project without modifying tasks. Budget amounts are not added to AI context or shared workspace exports. No schema migration is needed for this optional field.
+
 ### Private starting plans
 
 Organizers can open **Draft a plan with AI** from Overview or continue after creating a project. A brief identifies the event type, intent, optional last day, and daily activity hours. Schools and corporate events have tailored planning guidance; off-sites, trips, parties and anniversaries share the same review flow. Saving a brief and opening the project do not call AI. **Generate draft** explicitly sends the brief, basic event details, up to 200 existing task titles/start times and eight relevant saved-feedback suggestions to Groq—not emails, contacts, uploads, booking records, member identities or progress comments. The organizer should avoid entering sensitive information in the brief itself.

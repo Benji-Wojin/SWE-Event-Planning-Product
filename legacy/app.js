@@ -7,7 +7,7 @@
   const store = GatherStore.createStore();
   const navigation = GatherNavigation.create(window);
   const ui = { view:'overview', actor:'jack', tab:'all', taskView:'list', mapFocus:'', timelineMode:'schedule', scheduleMine:false, owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
-  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
+  const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',budget:'Budget',timeline:'Timeline',memory:'Event feedback',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
   const canCreateTasks = () => isOrganizer() || store.getState().event.membersCanCreateTasks === true;
@@ -166,6 +166,7 @@
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const schedule = GatherScheduleUI.create({h,options,person,statusBadge});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
+  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState()});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
     if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;
@@ -227,6 +228,7 @@
   }
 
   function render() {
+    projectBudget?.unmount();
     const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
     const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
     ui.reviewDirty=false;
@@ -245,13 +247,14 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
     if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
+    if(ui.view==='budget')projectBudget?.mount($('#eventBudget'));
     const currentReview=$('#emailReviewForm');
     if(reviewDraft&&currentReview?.dataset.id===reviewDraft.id){
       for(const field of reviewDraft.fields){const input=currentReview.elements.namedItem(field.name);if(input){input.value=field.value;if(input.type==='checkbox')input.checked=field.checked;}}
