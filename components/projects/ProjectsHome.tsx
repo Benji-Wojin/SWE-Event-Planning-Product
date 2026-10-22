@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Invitations } from './Invitations';
+import { FirstProjectIntro } from './FirstProjectIntro';
 
 import { Button } from "@/components/ui/button";
 
@@ -116,6 +117,7 @@ function ProjectsErrorState({ message, onRetry }: { message: string; onRetry?: (
 }
 
 function ProjectsEmptyState({ onCreate, canCreate }: { onCreate: () => void; canCreate:boolean }) {
+  if (canCreate) return <FirstProjectIntro onCreate={onCreate} />;
   return (
     <section className="projects-state">
       <h2>No projects yet</h2>

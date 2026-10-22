@@ -35,6 +35,7 @@ export default async function SignUpPage({
         <p className="text-sm text-muted-foreground">
           Create a private event project or join your team.
         </p>
+        <ul className="space-y-2 border-y py-4 text-sm text-muted-foreground"><li>A shared home for tasks, people and event-day plans.</li><li>Optional AI help. You review before adding anything.</li><li>Joining an invitation? We’ll keep you on that path.</li></ul>
         {!isAuthConfigured() ? (
           <p role="alert">
             Sign-up is temporarily unavailable. Please try again later.

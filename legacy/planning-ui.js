@@ -51,18 +51,21 @@
     return `<div class="map-legend"><span><i></i>Required before completion →</span><span><i class="related"></i>Related · can run in parallel</span><span>Click a task to see why it’s linked.</span></div>${focusId?'<button class="text-button map-clear" data-action="map-clear">Show all tasks</button>':''}${model.truncated?'<p class="notice">Showing a bounded map. Search for a task to focus its connections.</p>':''}${model.cycles?'<p class="notice">Some saved required links form a loop. Review those relationships before completing tasks.</p>':''}<div class="task-map-scroll" role="region" aria-label="Task dependency map, scroll to explore" tabindex="0"><div class="task-map-canvas" style="width:${model.width}px;height:${model.height}px"><span class="map-direction">Prerequisite work <span aria-hidden="true">→</span> Work it unlocks</span><svg width="${model.width}" height="${model.height}" aria-hidden="true"><defs><marker id="task-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z"/></marker></defs>${lines}</svg>${cards}</div></div>`;
   }
   function createTour({navigate,isOrganizer,storageKey}) {
-    let box,step=0,previousFocus;
+    let box,step=0,previousFocus,resizeObserver;
     const steps=()=>[
-      {view:'overview',target:'.stat-grid',title:'Your event, at a glance',copy:'Overview brings attention items, progress, and recent updates together. You can keep working while this tip is open.'},
+      {view:'overview',target:'#overviewHeader',title:'Welcome to Weft. Bring the plan together.',copy:'Weft is a shared home for your event: what needs doing, who owns it, and what happens on the day. Start small and build the plan together. This tour is optional—skip it or reopen Quick tour any time.'},
       {view:'tasks',target:'#taskSearch',title:'Find work you can take',copy:'Search task names, notes, categories, or people. Use My tasks or Unassigned to narrow the list.'},
       {view:'tasks',target:'.task-view-switch',title:'See how work connects',copy:'Open Link map. Solid arrows are prerequisites; dashed links are related work. Related tasks do not prevent completion. Click a task for the reason.'},
+      {view:'timeline',target:'.page-heading',title:'From getting ready to the day itself',copy:'Timeline keeps preparation deadlines separate from scheduled activities. The event schedule uses the same tasks and progress—not a second checklist. Clock time alone never marks work complete.'},
+      {view:'info',target:'#eventInfo',title:'A place for the other details',copy:'Event info holds your shared guest list and files. Guest attendance is recorded manually; no RSVP messages are sent. The optional Budget page keeps estimates, commitments and recorded payments separate. Only the organizer can edit budget costs.'},
       ...(isOrganizer()?[{view:'overview',target:'#thoughtPartner',title:'Suggestions here. Conversation in Ask Weft.',copy:'Enable optional automatic suggestions in this sidebar. Add or dismiss them; nothing is added automatically. Use Ask Weft to request tasks or written drafts. Rule-based checks are labeled separately.'}]:[]),
       {view:'inbox',target:'.page-heading',title:'Keep updates connected',copy:'Email briefing lets you review updates before they change a task. That’s it—reopen Quick tour any time.'},
     ];
     const remember=()=>{try{localStorage.setItem(storageKey,'seen');}catch{}};
+    const currentTarget=()=>[...document.querySelectorAll(steps()[step].target)].find(target=>!target.closest('[hidden],[inert]')&&target.getBoundingClientRect().width>0);
     function position() {
       if(!box)return;
-      const target=document.querySelector(steps()[step].target),rect=target?.getBoundingClientRect();
+      const target=currentTarget(),rect=target?.getBoundingClientRect();
       document.querySelectorAll('.tour-highlight').forEach(el=>el.classList.remove('tour-highlight'));
       if(target&&!target.closest('[hidden]'))target.classList.add('tour-highlight');
       const width=Math.min(328,window.innerWidth-24),height=box.offsetHeight||220;
@@ -71,6 +74,7 @@
       box.style.width=width+'px';box.style.left=left+'px';box.style.top=Math.max(12,Math.min(window.innerHeight-height-12,rect?(below?rect.bottom+12:rect.top-height-12):80))+'px';
     }
     function close() {
+      resizeObserver?.disconnect();resizeObserver=null;
       remember();box?.remove();box=null;
       document.querySelectorAll('.tour-highlight').forEach(el=>el.classList.remove('tour-highlight'));
       if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});
@@ -80,6 +84,9 @@
       if(!box){box=document.createElement('section');box.className='quick-tour';box.setAttribute('role','dialog');box.setAttribute('aria-modal','false');box.setAttribute('aria-labelledby','quickTourTitle');document.body.append(box);}
       box.innerHTML=`<div class="quick-tour-top"><span>QUICK TOUR · ${step+1} / ${steps().length}</span><button type="button" data-tour="close" aria-label="Close quick tour">×</button></div><h2 id="quickTourTitle">${escape(s.title)}</h2><p>${escape(s.copy)}</p><div class="quick-tour-actions"><button type="button" data-tour="close" class="text-button">Skip tour</button><span>${step?'<button type="button" data-tour="back" class="btn btn-secondary btn-small">Back</button>':''}<button type="button" data-tour="next" class="btn btn-primary btn-small">${step===steps().length-1?'Done':'Next'}</button></span></div>`;
       box.onclick=event=>{const action=event.target.closest('[data-tour]')?.dataset.tour;if(action==='close')close();if(action==='back')show(step-1);if(action==='next'){if(step===steps().length-1)close();else show(step+1);}};
+      resizeObserver?.disconnect();
+      const target=currentTarget();
+      if(target&&typeof ResizeObserver!=='undefined'){resizeObserver=new ResizeObserver(position);resizeObserver.observe(target);}
       position();box.querySelector('[data-tour="next"]').focus({preventScroll:true});
       return true;
     }
