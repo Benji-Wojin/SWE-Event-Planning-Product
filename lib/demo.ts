@@ -2,6 +2,7 @@ import { env } from '@/lib/runtime';
 import { model, applyWorkspaceAction } from './workspace';
 import { HttpError, seal, unseal, type administrator } from './security';
 import { bookingRecord } from './bookings';
+import {completionFiles} from './completion-files';
 
 // Demo personas are a presentation tool for the authenticated owner, not logins.
 export function demoPersona(value: unknown) {
@@ -71,6 +72,7 @@ export async function mutateDemo(user: Awaited<ReturnType<typeof administrator>>
   };
   const action = rpc ? input : legacy[input.action];
   if (!action) throw new HttpError(400, 'Unsupported demo action.');
+  const files=await completionFiles(id+':'+store.getState().demoGeneration,action);
   let next = store;
   let outcome;
   if (action.method === 'resetDemo') {
@@ -82,8 +84,8 @@ export async function mutateDemo(user: Awaited<ReturnType<typeof administrator>>
   const serialized = next.exportState();
   if (new TextEncoder().encode(serialized).length > 500000)
     throw new HttpError(413, 'This demo is full. Switch to Jack and restart it.');
-  const write = env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?')
-    .bind(serialized, id, row.revision);
+  const write = env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?'+(files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''))
+    .bind(serialized, id, row.revision,...(files?[files.scope,files.revision]:[]));
   const key = 'demo-bookings:' + user.userId;
   const result = action.method === 'resetDemo'
     ? (await env.DB.batch([write, env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=? AND data=?)')

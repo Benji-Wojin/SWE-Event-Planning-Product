@@ -67,7 +67,7 @@ test('recovery form minimum and suggested check-in follow event day for a distan
   vm.runInContext(readFileSync('legacy/recovery-ui.js','utf8'),context);
   const ui=context.GatherRecoveryUI.create({store:{getState:()=>({event:{timeZone:zone}})}});
   const proposed={required:false,disabled:false,min:''};
-  ui.syncResponse({elements:{response:{value:'date'},proposedDate:proposed},querySelector:()=>({hidden:true})});
+  ui.syncResponse({elements:{response:{value:'date'},proposedDate:proposed},querySelector:selector=>selector==='[data-completion-only]'?null:({hidden:true})});
   assert.equal(proposed.min,'2026-10-11');
   const form={elements:{action:{value:'checkin'},dueDate:{},owner:{value:''},scope:{},reviewAfter:{}},querySelectorAll:()=>[],querySelector:()=>({})};
   ui.syncDecision(form);

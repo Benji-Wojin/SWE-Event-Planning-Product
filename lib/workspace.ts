@@ -3,6 +3,7 @@ import '@/legacy/calendar.js';
 import '@/legacy/store.js';
 import { HttpError, principal } from './security';
 import { accessArgs, projectWriteAccess, projectUser } from './project-access';
+import {completionFiles} from './completion-files';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
@@ -114,6 +115,7 @@ const arity: Record<string, number> = {
   ignoreMessage: 1,
   acceptTask: 1,
   reportCompletion: 2,
+  setCompletionEvidence: 2,
   verifyTask: 1,
   recordFollowup: 2,
   updateEvent: 1,
@@ -131,13 +133,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   )
     throw new HttpError(400, 'Unsupported workspace action.');
   const memberTaskCreation = method === 'addTask' && store.getState().event.membersCanCreateTasks === true;
-  if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
+  if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
   const [a, b, c] = input.args;
-  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'updateTask', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
+  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
     if (method === 'resolveHandoff' && c?.action === 'create' && c.owner && c.owner !== user.actorId)
@@ -216,6 +218,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
       case 'reportCompletion':
         result = store.reportCompletion(a, b, user.actorId);
         break;
+      case 'setCompletionEvidence':
+        result = store.setCompletionEvidence(a, b, user.actorId);
+        break;
       case 'verifyTask':
         result = store.verifyTask(a, user.actorId);
         break;
@@ -258,6 +263,7 @@ export async function mutateWorkspace(
     throw new HttpError(400, 'Unsupported workspace request field.');
   if (input.revision !== row.revision)
     throw new HttpError(409, 'The plan changed in another tab. Reload this page, review the latest plan, and retry.');
+  const files=await completionFiles(projectId,input,authorized);
   const result = applyWorkspaceAction(store, user, input);
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
@@ -266,9 +272,9 @@ export async function mutateWorkspace(
       'This pilot workspace is full. Export your plan before adding more content.',
     );
   const write = await env.DB.prepare(
-    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}`,
+    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
-    .bind(serialized, projectId, row.revision,...accessArgs(authorized))
+    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(files?[files.scope,files.revision]:[]))
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

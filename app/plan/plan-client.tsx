@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection } from '@/lib/plan-selection';
-import {TaskChat} from './task-chat';
+import {AskWeftPanel} from './ask-weft-panel';
 import {
   eventKinds,
   planCategories,
@@ -66,13 +66,14 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     request = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
   const [chatDirty,setChatDirty]=useState(false);
+  const [researchBusy,setResearchBusy]=useState(false);
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
   const dirty = draftDirty || chatDirty;
   useEffect(() => {
     if (!embedded) return;
-    window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || data?.status === 'generating'}, window.location.origin);
-  }, [embedded, dirty, busy, data?.status]);
+    window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || researchBusy || data?.status === 'generating'}, window.location.origin);
+  }, [embedded, dirty, busy, researchBusy, data?.status]);
   useEffect(() => {
     if (!embedded) return;
     const root = document.getElementById('embeddedPlan');
@@ -92,7 +93,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const projectParams = new URLSearchParams(query); projectParams.delete('mode');
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
-    locked = busy || waiting,
+    locked = busy || waiting || researchBusy,
     applied = !!data?.receipt && !chatStartingNew;
   const {
     selected,
@@ -328,7 +329,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      {assistant ? <TaskChat key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
+      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
         request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatDirty(false);setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice('Start a new request. The earlier saved draft is not replaced until you send it.');
       }}/> : <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>

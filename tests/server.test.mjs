@@ -11,6 +11,7 @@ import { eventPlanTests } from './event-plan.cases.mjs';
 import { selfserviceTests } from './selfservice.cases.mjs';
 import {taskAssistantTests} from './task-assistant.cases.mjs';
 import {budgetTests} from './budget.cases.mjs';
+import {researchTests} from './research.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -65,7 +66,7 @@ globalThis.__gatherEnv = {
   GATHER_ORIGIN: 'https://gather.example',
 };
 globalThis.__gatherUser = null;
-let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore, planApi, planGeneration, signupApi, invitationsApi;
+let workspace, privateApi, gmailApi, security, gmailCore, demoApi, resourcesApi, resourcesCore, infoApi, infoCore, projectsApi, teamApi, joinApi, accessCore, senderCore, senderApi, automaticCore, automaticApi, classifierCore, planApi, planGeneration, signupApi, invitationsApi, researchApi;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'gather-server-test-'));
   await build({
@@ -78,6 +79,7 @@ before(async () => {
       demo: 'app/api/demo/route.ts',
       resources: 'app/api/resources/route.ts',
       resourcesCore: 'lib/task-resources.ts',
+      research: 'app/api/research/route.ts',
       info: 'app/api/info/route.ts',
       infoCore: 'lib/project-info.ts',
       projects: 'app/api/projects/route.ts',
@@ -136,6 +138,7 @@ before(async () => {
   [automaticCore, automaticApi, classifierCore] = await Promise.all(['automaticCore', 'automaticApi', 'classifierCore'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
   [planApi, planGeneration] = await Promise.all(['planApi','planGeneration'].map(name=>import(pathToFileURL(join(directory,name+'.js')))));
   [signupApi, invitationsApi] = await Promise.all(['signupApi','invitationsApi'].map(name=>import(pathToFileURL(join(directory,name+'.js')))));
+  researchApi = await import(pathToFileURL(join(directory,'research.js')));
 });
 const owner = () => {
   globalThis.__gatherUser = {
@@ -1197,11 +1200,36 @@ test('concurrent resource readers share one lookup; provider failures never expo
 const infoRead=(query='')=>infoApi.GET(new Request('https://gather.example/api/info'+query));
 const infoWrite=(data,query='')=>infoApi.POST(request('/api/info'+query,data));
 budgetTests({sqlite,owner,infoRead,infoWrite,get infoCore(){return infoCore;},get workspace(){return workspace;},env:globalThis.__gatherEnv});
+researchTests({sqlite,owner,request,get api(){return researchApi;},env:globalThis.__gatherEnv});
 const infoContext=scope=>({scope,userId:'upload-test-'+scope,actor:'jack',name:'Jack',admin:true,demoId:'',generation:''});
 const uploadRequest=(revision,name='list.txt',content='Private guest details',query='',id=crypto.randomUUID(),origin='https://gather.example')=>{
   const form=new FormData();form.set('file',new Blob([content]),name);form.set('revision',revision);form.set('requestId',id);
   return new Request('https://gather.example/api/info?upload=1'+query,{method:'POST',headers:{Origin:origin,'X-Gather-Request':'1'},body:form});
 };
+
+test('completion file references are scoped, active and revision-bound at the workspace commit',async()=>{
+  owner();
+  for(const race of [false,true]){
+    const id='p_'+crypto.randomUUID(),query='?project='+id;
+    sqlite.prepare('INSERT INTO projects (id,owner_id,request_payload,created_at) VALUES (?,?,?,?)').run(id,'owner-1','{}',new Date().toISOString());
+    const store=GatherStore.createStore({storage:null}),task=store.addTask({title:'Fictional file evidence',owner:'jack'});
+    sqlite.prepare('INSERT INTO workspaces (id,data,revision) VALUES (?,?,1)').run(id,store.exportState());
+    await infoRead(query);let state=await (await infoApi.POST(uploadRequest(1,'public-checklist.txt','Fictional shared checklist',query.replace('?','&')))).json();
+    const file=state.files[0];assert.ok(file);
+    const method='reportCompletion',args=[task.id,{note:'Prepared.',fileIds:[file.id],links:[]}];
+    assert.equal((await workspace.POST(request('/api/workspace'+query,{method,args:[task.id,{note:'No cross-project file',fileIds:['foreign']}],revision:1}))).status,400);
+    const prepare=db.prepare;
+    if(race)db.prepare=function(sql){if(sql.startsWith('UPDATE workspaces SET data='))sqlite.prepare('UPDATE project_info SET revision=revision+1 WHERE scope=?').run(id);return prepare.call(this,sql);};
+    let response;try{response=await workspace.POST(request('/api/workspace'+query,{method,args,revision:1}));}finally{db.prepare=prepare;}
+    assert.equal(response.status,race?409:200);
+    const saved=JSON.parse(sqlite.prepare('SELECT data FROM workspaces WHERE id=?').get(id).data).tasks.find(t=>t.id===task.id);
+    if(race)assert.equal(saved.status,'todo');else assert.deepEqual(saved.completionEvidence.fileIds,[file.id]);
+    state=await (await infoRead(query)).json();await infoWrite({action:'archiveFile',id:file.id,archived:true,revision:state.revision,requestId:crypto.randomUUID()},query);
+    const revision=sqlite.prepare('SELECT revision FROM workspaces WHERE id=?').get(id).revision;
+    assert.equal((await workspace.POST(request('/api/workspace'+query,{method:race?'reportCompletion':'setCompletionEvidence',args,revision}))).status,400);
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+  }
+});
 
 test('event info denies anonymous, outsiders, actor injection and cross-origin writes',async()=>{
   globalThis.__gatherUser=null;assert.equal((await infoRead()).status,401);

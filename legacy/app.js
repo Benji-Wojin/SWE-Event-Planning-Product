@@ -73,6 +73,7 @@
     return !!root&&$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
+      if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
       const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
       return input.value!==(original??'');
     });
@@ -370,9 +371,10 @@
     return $$('#dialog form').filter(form=>form.id!==exclude).flatMap(form=>
       $$('input[name],textarea[name],select[name]',form).filter(input=>{
         if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
+        if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
         const initial=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)?.value??input.options[0]?.value??''):input.defaultValue;
         return input.value!==initial;
-      }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked})));
+      }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked,...(input.multiple?{selected:[...input.selectedOptions].map(option=>({value:option.value,text:option.textContent}))}:{})})));
   }
   function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
   function taskDialog(id,submittedForm='') {
@@ -393,6 +395,7 @@
       ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
+      ${window.GatherCompletionUI?.section(task,own||organizer)||''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}" ${completionBlocked?'disabled':''}>Verify completion</button>`:''}</div>`:''}
       ${recovery.recoveryMarkup(task,organizer)}
       ${dependencyMarkup(task)}
@@ -403,12 +406,13 @@
       ${priorityMarkup(task,organizer)}
       ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details>`:''}`, '',false,'task');
     if(sameTask){
-      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
+      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
       requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
     syncRecoveryForms();
+    window.GatherCompletionUI?.mount($('#dialog'));
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
     window.GatherResourcesUI?.mount(id,$('#dialog'));
@@ -573,7 +577,7 @@
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
       if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}
       if(action==='map-focus'){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();ui.taskView='map';ui.mapFocus=id;ui.search='';ui.owner='';ui.status='';ui.tab='all';navigate('tasks');return;}
-      if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()||((t.requiresVerification||dependencyInfo(t).open.length)&&t.status!=='done')){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();toast(t.status==='done'?'Task reopened. Its history is preserved.':`Marked done by ${member(ui.actor).name}. Recorded in team updates.`);}
+      if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()||((t.requiresVerification||dependencyInfo(t).open.length)&&t.status!=='done')){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();if(t.status==='done')toast('Task reopened. Its history is preserved.');else window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
       if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
       if(action==='claim'){store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}
@@ -605,7 +609,7 @@
       if(action==='resume-task'){el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}}
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);
-      if(action==='verify-task'){store.verifyTask(id,ui.actor);render();taskDialog(id);toast('Completion verified by the organizer.');}
+      if(action==='verify-task'){store.verifyTask(id,ui.actor);render();taskDialog(id);window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
       if(action==='verification-toggle'){const task=store.getState().tasks.find(t=>t.id===id);store.updateTask(id,{requiresVerification:!task.requiresVerification},ui.actor);render();taskDialog(id);}
       if(action==='event-context')contextDialog();
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
@@ -656,7 +660,8 @@
         store.setTaskSchedule(taskId,event.submitter?.value==='remove'?null:{start:data.start,end:data.end,location:data.location},ui.actor);
         render();taskDialog(taskId,form.id);toast(event.submitter?.value==='remove'?'Removed from schedule. The task is unchanged.':'Schedule saved.');
       }
-      if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;store.updateTask(form.dataset.id,data,ui.actor);const keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;const before=store.getState().tasks.find(task=>task.id===form.dataset.id);store.updateTask(form.dataset.id,data,ui.actor);const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());else toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='completionEvidenceForm'){store.setCompletionEvidence(form.dataset.id,window.GatherCompletionUI.collect(form),ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Completion evidence saved. Task status and verification are unchanged.');}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
       if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
@@ -675,7 +680,7 @@
       if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
       if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
       if(form.id==='relationshipAddForm'){store.addDependency(form.dataset.id,{taskId:data.taskId,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Tasks linked. Task status is unchanged.');}
-      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,data.note,ui.actor);else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const hasSuggestions=(store.getState().tasks.find(task=>task.id===id)?.handoffs||[]).some(item=>item.status==='pending');toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
+      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed')store.reportCompletion(id,window.GatherCompletionUI.collect(form,data.note),ui.actor);else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const task=store.getState().tasks.find(task=>task.id===id),hasSuggestions=(task?.handoffs||[]).some(item=>item.status==='pending');if(response==='completed')window.GatherCompletionUI?.celebrate(task,store.getState());else toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
       if(form.id==='contextForm'){
         const state=store.getState();
         if(data.timeZone!==state.event.timeZone&&state.tasks.some(task=>task.schedule)){

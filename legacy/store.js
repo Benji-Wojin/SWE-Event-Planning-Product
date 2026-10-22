@@ -26,6 +26,21 @@
     typeof value.end === 'string' && (value.end === '' || validLocalTime(value.end) && value.end > value.start) &&
     typeof value.location === 'string' && value.location.length <= 240;
 
+  function completionEvidence(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key=>!['note','links','fileIds'].includes(key))) throw new Error('Unsupported completion detail.');
+    const note=value.note??'',links=value.links??[],fileIds=value.fileIds??[];
+    if(typeof note!=='string'||note.length>3000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(note)||!Array.isArray(links)||links.length>5||!Array.isArray(fileIds)||fileIds.length>5)throw new Error('Use a note up to 3000 characters and at most 5 links and 5 shared files.');
+    const safe=links.map(value=>{
+      if(typeof value!=='string'||value.length>2048||/[\s\\\u0000-\u001f\u007f]/.test(value))throw new Error('Use a public HTTPS link without credentials.');
+      let url;try{url=new URL(value);}catch{throw new Error('Use a valid HTTPS link.');}
+      const host=url.hostname.toLowerCase().replace(/\.$/,'');
+      if(url.protocol!=='https:'||url.username||url.password||url.port||!host.includes('.')||/^[\d.]+$/.test(host)||host.includes(':')||/(^|\.)(localhost|local|internal|lan|home|test|invalid|example)$/.test(host)||[...url.searchParams.keys()].some(key=>/token|secret|password|credential|authorization|session|confirmation|booking|api.?key/i.test(key)))throw new Error('Keep private booking codes and credential links in Private details, not shared completion evidence.');
+      return url.href;
+    });
+    if(fileIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,160}$/.test(id)))throw new Error('Choose a shared file from this project.');
+    return {note:note.trim(),links:[...new Set(safe)],fileIds:[...new Set(fileIds)]};
+  }
+
   function createStore(options = {}) {
     const clock = typeof options.now === "function" ? options.now : () => options.now == null ? Date.now() : options.now;
     const timestamp = () => {
@@ -114,7 +129,12 @@
       const validOwner = (owner) => owner === "" || value.members?.some((member) => member.id === owner);
       const list = (items, predicate) => Array.isArray(items) && items.every(predicate);
       const uniqueIds = (items) => new Set(items.map((item) => item.id)).size === items.length;
+      const validEvidence = item => {
+        if(item===undefined||item===null)return true;
+        try { const normalized=completionEvidence({note:item.note,links:item.links,fileIds:item.fileIds});return Object.keys(item).every(key=>['note','links','fileIds','at','actor'].includes(key))&&validTime(item.at)&&validOwner(item.actor)&&JSON.stringify(normalized)===JSON.stringify({note:item.note,links:item.links,fileIds:item.fileIds}); }catch{return false;}
+      };
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
+        list(value.tasks,task=>validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
         (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
         list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
@@ -243,6 +263,7 @@
       if (changed.includes('status') && task.status !== 'done') { task.verifiedAt = ''; task.verifiedBy = ''; task.reportedAt = ''; task.reportedBy = ''; }
       // A pending report describes its exact note, not a later replacement.
       if (changed.includes('note') && previousStatus !== 'done' && task.reportedAt && !task.verifiedAt) { task.reportedAt = ''; task.reportedBy = ''; }
+      if(task.status!=='done'&&!task.reportedAt&&task.completionEvidence){archiveEvidence(task);task.completionEvidence=null;}
       task.updatedAt = timestamp();
       task.updatedBy = actor;
       if (task.status === "done" && previousStatus !== "done") { task.completedAt = task.updatedAt; task.completedBy = actor; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
@@ -575,8 +596,20 @@
       if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
       return copy(task);
     }
-    function reportCompletion(taskId, note, actor = 'jack') {
+    function archiveEvidence(task) {
+      if(task.completionEvidence)task.completionEvidenceHistory=[copy(task.completionEvidence),...(task.completionEvidenceHistory||[])].slice(0,10);
+    }
+    function setCompletionEvidence(taskId, input, actor='jack') {
+      actorId(actor);const task=taskById(taskId),details=completionEvidence(input);
+      if(actor!=='jack'&&task.owner!==actor)throw new Error('Only the assigned owner or organizer can edit completion evidence.');
+      if(task.status!=='done'&&!task.reportedAt)throw new Error('Report completion before adding completion evidence.');
+      archiveEvidence(task);task.completionEvidence={...details,at:timestamp(),actor};task.completionEvidenceReviewAt='';task.revision++;
+      task.updatedAt=timestamp();task.updatedBy=actor;
+      entry(actor,'updated shared completion evidence',task.id,'completion-evidence');save();return copy(task);
+    }
+    function reportCompletion(taskId, input, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
+      const details=typeof input==='string'?completionEvidence({note:input}):completionEvidence(input),note=details.note;
       if (task.owner !== actor) throw new Error('Only the assigned owner can report this commitment complete.');
       if (!clean(note)) throw new Error('Add a completion note so the organizer knows what happened.');
       if (task.verifiedAt) return copy(task);
@@ -586,6 +619,7 @@
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
       task.verifiedAt = ''; task.verifiedBy = '';
       task.blockerFingerprint = '';
+      archiveEvidence(task);task.completionEvidence={...details,at:timestamp(),actor};task.completionEvidenceReviewAt='';
       if (task.status === 'done') captureCompletion(task, actor, task.reportedBy);
       entry(actor, `reported ${task.title} complete${task.requiresVerification ? '; awaiting organizer verification' : ''}`, task.id, 'reported'); save(); return copy(task);
     }
@@ -597,6 +631,7 @@
       const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };
       patchTask(task, { status: 'done' }, actor); Object.assign(task, report);
       task.verifiedAt = timestamp(); task.verifiedBy = actor; task.revision++;
+      task.completionEvidenceReviewAt=task.completionEvidence?task.verifiedAt:'';
       captureCompletion(task, actor, task.reportedBy);
       entry(actor, `verified completion of ${task.title}`, task.id, 'verified'); save(); return copy(task);
     }
@@ -1055,8 +1090,8 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
-  return { createStore, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
+  return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
 });

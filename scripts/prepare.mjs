@@ -13,6 +13,7 @@ html = html
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
   .replace('src="planning-ui.js"', 'src="/gather-assets/planning-ui.js"')
+  .replace('src="completion-ui.js"', 'src="/gather-assets/completion-ui.js"')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -47,6 +48,7 @@ writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/prioriti
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
 writeFileSync('public/gather-assets/planning-ui.js',readFileSync('legacy/planning-ui.js','utf8'));
+writeFileSync('public/gather-assets/completion-ui.js',readFileSync('legacy/completion-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
 for(const name of ['guests','info-ui','budget','budget-ui'])writeFileSync('public/gather-assets/'+name+'.js',readFileSync('legacy/'+name+'.js','utf8'));
@@ -77,6 +79,7 @@ const mutations = [
   'ignoreMessage',
   'acceptTask',
   'reportCompletion',
+  'setCompletionEvidence',
   'verifyTask',
   'recordFollowup',
   'updateEvent',

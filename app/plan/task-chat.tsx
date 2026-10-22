@@ -5,6 +5,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { taskConversation, type TaskMessage } from '@/lib/task-conversation';
 import type { PlanBrief, PlanOutput } from '@/lib/plan-generation';
+const chatStarters = ['Plan my next three steps','Write a welcoming announcement','Draft a day-of checklist'];
 
 export function TaskChat({
   brief,
@@ -74,19 +75,17 @@ export function TaskChat({
     JSON.stringify(nextRows()).length > 4000 || nextRows().length > 8;
   return (
     <section className="task-chat" aria-label="Ask Weft conversation">
-      <p className="text-sm text-muted-foreground">
-        Ask me to plan tasks or do the writing: an announcement, checklist,
-        agenda or task brief. I’ll show the result here for your review.
-      </p>
+      {history.length===0&&!work&&<div className="chat-welcome"><span className="chat-avatar" aria-hidden="true">✦</span><div><h2>What can we take off your mind?</h2><p>Plan the next steps. Find the right words. Make a little room for the good part.</p></div></div>}
       <details className="text-sm text-muted-foreground">
         <summary>What I can actually do</summary>
         <p>
           I can propose tasks and prepare written drafts from the context shared
-          here. I can’t browse, see task notes or files, send messages, book,
+          here. This planning chat can’t browse (use Search web for that), see task notes or files, send messages, book,
           buy, run code, verify real-world work or mark tasks complete. A draft
           isn’t proof a task is finished.
         </p>
       </details>
+      {history.length===0&&!work&&<div className="chat-starters" aria-label="Example requests">{chatStarters.map(prompt=><button key={prompt} type="button" disabled={locked} onClick={()=>{setMessage(prompt);onDirty(true);document.getElementById('task-chat-message')?.focus();}}>{prompt}<span aria-hidden="true">↗</span></button>)}</div>}
       <div className="task-chat-history" role="log" aria-label="Conversation">
         {history.map((row, index) => (
           <article
@@ -130,7 +129,7 @@ export function TaskChat({
           </p>
         )}
       </div>
-      <form onSubmit={send} className="space-y-3">
+      <form onSubmit={send} className="chat-composer space-y-3">
         <Label htmlFor="task-chat-message">
           {applied
             ? 'What else would you like to do?'
@@ -140,7 +139,7 @@ export function TaskChat({
         </Label>
         <Textarea
           id="task-chat-message"
-          rows={3}
+          rows={2}
           maxLength={1800}
           disabled={locked}
           value={message}
@@ -154,11 +153,11 @@ export function TaskChat({
             onDirty(!!event.target.value.trim());
           }}
         />
-        <p className="text-xs text-muted-foreground">
+        <details className="text-xs text-muted-foreground"><summary>What Send shares</summary><p>
           Send shares this conversation, event details, shared task names and
           saved event feedback with Groq. No emails, guest lists, files or
           private bookings. Each message uses an AI attempt.
-        </p>
+        </p></details>
         {overLimit && (
           <p role="status" className="text-sm">
             This conversation is full. Start a new conversation to continue.
