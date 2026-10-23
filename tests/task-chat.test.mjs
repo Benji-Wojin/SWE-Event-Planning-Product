@@ -5,7 +5,7 @@ let TaskChat;
 before(async()=>{
   const bundle=await build({entryPoints:['app/plan/task-chat.tsx'],bundle:true,platform:'node',format:'esm',write:false,jsx:'automatic',plugins:[{name:'chat-ui',setup(b){
     b.onResolve({filter:/^react(?:\/jsx-runtime)?$|^@\/components\/ui\//},args=>({path:args.path,namespace:'mock'}));
-    b.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'js',contents:args.path==='react'?'export const useState=(v)=>globalThis.__taskChatHooks(v);':args.path==='react/jsx-runtime'?'export const jsx=(type,props)=>({type,props}),jsxs=jsx;':'export const Button="button",Textarea="textarea",Label="label";'}));
+    b.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'js',contents:args.path==='react'?'export const useState=(v)=>globalThis.__taskChatHooks(v),useRef=v=>({current:v}),useEffect=()=>{};':args.path==='react/jsx-runtime'?'export const jsx=(type,props)=>({type,props}),jsxs=jsx,Fragment="fragment";':'export const Button="button",Textarea="textarea",Label="label";'}));
   }}]});
   ({TaskChat}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64')));
 });
@@ -31,7 +31,7 @@ test('written-draft followups share a bounded excerpt and disclose capability li
   globalThis.__taskChatHooks=()=>[message,value=>{message=value;}];
   try{
     const tree=TaskChat({brief:{kind:'other',description:JSON.stringify([{role:'user',content:'Write a welcome message'}]),endDate:'',startTime:'',endTime:''},reply:'Welcome to our event.',applied:false,locked:false,configured:true,failed:false,onSend:async value=>{sent=value;return true;},onDirty(){},onNew(){}});
-    assert.match(text(tree),/can’t browse/);assert.match(text(tree),/draft isn’t proof/);
+    assert.match(text(tree),/cited research/);assert.match(text(tree),/draft isn’t proof/);
     await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
     assert.deepEqual(JSON.parse(sent.description).slice(-2),[{role:'assistant',content:'Welcome to our event.'},{role:'user',content:'Make it friendlier'}]);
   }finally{delete globalThis.__taskChatHooks;}
@@ -45,5 +45,28 @@ test('long written drafts remain revisable within the per-message server limit',
       await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
       const rows=JSON.parse(sent.description);assert.ok(rows.every(row=>row.content.length<=1800));assert.ok(sent.description.length<=4000);if(length>1800)assert.match(rows[1].content,/Earlier draft excerpt/);
     }
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('one composer routes standalone web requests, discloses transmission and preserves failed drafts',async()=>{
+  let message='Find outdoor venues in Seattle',searches=[],plans=[],dirty=true,resolve;
+  globalThis.__taskChatHooks=()=>[message,value=>message=value];
+  const research={data:{configured:true,status:'ready',query:'Prior private search',answer:'DO NOT COPY WEB RESULT',sources:[],generatedAt:new Date().toISOString()},busy:false,error:'',uncertain:false,search:async q=>{searches.push(q);return new Promise(r=>resolve=r);},reload:async()=>{}};
+  const props={brief:{kind:'other',description:JSON.stringify([{role:'user',content:'Plan a welcome task'}]),endDate:'',startTime:'',endTime:''},applied:false,locked:false,configured:true,failed:false,onSend:async value=>{plans.push(value);return true;},onDirty:value=>dirty=value,onNew(){},research};
+  try{
+    let tree=TaskChat(props),form=nodes(tree).find(n=>n.type==='form');assert.equal(nodes(tree).filter(n=>n.type==='textarea').length,1);assert.match(text(tree),/this message only/);assert.match(text(tree),/Send & search/);
+    const first=form.props.onSubmit({preventDefault(){}});await form.props.onSubmit({preventDefault(){}});assert.equal(searches.length,1);assert.equal(plans.length,0);resolve(false);await first;assert.equal(message,'Find outdoor venues in Seattle');assert.equal(dirty,true);
+    props.research={...research,data:{...research.data,configured:false}};tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});assert.equal(searches.length,1);assert.equal(plans.length,0);assert.match(text(tree),/Nothing will be sent/);
+    message='Find me something';props.research=research;tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});assert.equal(searches.length,1);assert.equal(plans.length,0);assert.match(text(tree),/What would you like me to find/);
+    message='Write a welcome announcement';tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});assert.equal(plans.length,1);assert.doesNotMatch(plans[0].description,/Prior private search|DO NOT COPY WEB RESULT/);
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('web limits are independent of planning transcript capacity; Enter respects composition and Shift',async()=>{
+  let message='Find venues '+'x'.repeat(1200),searches=0,plans=0,submits=0;
+  globalThis.__taskChatHooks=()=>[message,v=>message=v];
+  const props={brief:{description:JSON.stringify([{role:'user',content:'x'.repeat(1800)},{role:'assistant',content:'y'.repeat(1700)},{role:'user',content:'z'.repeat(400)}])},applied:false,locked:false,configured:true,failed:false,onSend:async()=>{plans++;return true;},onDirty(){},onNew(){},research:{data:{configured:true,status:'empty'},search:async()=>{searches++;return true;},reload:async()=>{},busy:false,error:'',uncertain:false}};
+  try{
+    let tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});assert.equal(searches,0);
+    message='Find venues in Seattle';tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});assert.equal(searches,1);assert.equal(plans,0);
+    const handler=nodes(tree).find(n=>n.type==='textarea').props.onKeyDown,base={key:'Enter',shiftKey:false,nativeEvent:{isComposing:false},currentTarget:{form:{requestSubmit(){submits++;}}},preventDefault(){}};handler({...base,shiftKey:true});handler({...base,nativeEvent:{isComposing:true}});assert.equal(submits,0);handler(base);assert.equal(submits,1);
   }finally{delete globalThis.__taskChatHooks;}
 });

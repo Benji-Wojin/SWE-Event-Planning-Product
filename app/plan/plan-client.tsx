@@ -329,7 +329,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} brief={brief} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
+      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
         request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatDirty(false);setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice('Start a new request. The earlier saved draft is not replaced until you send it.');
       }}/> : <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>

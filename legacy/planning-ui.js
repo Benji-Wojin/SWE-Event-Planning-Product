@@ -165,7 +165,7 @@
           dialog=document.createElement('dialog');dialog.className='weft-agent-popup';dialog.setAttribute('aria-labelledby','weftAgentTitle');
           const header=document.createElement('header'),title=document.createElement('h2'),close=document.createElement('button');
           title.id='weftAgentTitle';title.textContent='Ask Weft';close.type='button';close.className='icon-button';close.textContent='×';close.setAttribute('aria-label','Close Ask Weft');close.onclick=()=>dialog.close();
-          header.append(title,close);frame=document.createElement('iframe');frame.title='Ask Weft — tasks and written drafts';frame.src=getUrl();dialog.append(header,frame);document.body.append(dialog);
+          header.append(title,close);frame=document.createElement('iframe');frame.title='Ask Weft — conversation and research';frame.src=getUrl();dialog.append(header,frame);document.body.append(dialog);
         }
         if(!dialog.open)dialog.showModal();
       },

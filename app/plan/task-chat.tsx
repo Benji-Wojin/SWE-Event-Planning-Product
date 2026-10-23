@@ -1,11 +1,19 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { taskConversation, type TaskMessage } from '@/lib/task-conversation';
 import type { PlanBrief, PlanOutput } from '@/lib/plan-generation';
-const chatStarters = ['Plan my next three steps','Write a welcoming announcement','Draft a day-of checklist'];
+import { researchIntent } from '@/lib/research-intent';
+import { ResearchMessages } from './research-messages';
+import type { ResearchController } from './use-research';
+const chatStarters = [
+  'Plan my next three steps',
+  'Write a welcoming announcement',
+  'Draft a day-of checklist',
+  'Find outdoor event ideas in Seattle',
+];
 
 export function TaskChat({
   brief,
@@ -19,6 +27,9 @@ export function TaskChat({
   onSend,
   onDirty,
   onNew,
+  research,
+  replyAt,
+  proposalCount = 0,
 }: {
   brief: PlanBrief;
   question?: string;
@@ -31,8 +42,20 @@ export function TaskChat({
   onSend: (brief: PlanBrief) => Promise<boolean>;
   onDirty: (value: boolean) => void;
   onNew: () => void;
+  research?: ResearchController;
+  replyAt?: string;
+  proposalCount?: number;
 }) {
   const [message, setMessage] = useState('');
+  const sending = useRef(false);
+  const threadBox = useRef<HTMLDivElement>(null), followLatest = useRef(true);
+  useEffect(() => {
+    const element = threadBox.current;
+    if (element && followLatest.current) element.scrollTop = element.scrollHeight;
+  }, [brief.description, work?.content, question, research?.data?.requestId, research?.busy]);
+  const intent = researchIntent(message),
+    web = intent === 'search',
+    clarify = intent === 'clarify';
   let history: TaskMessage[] = [];
   if (brief.description)
     try {
@@ -62,75 +85,167 @@ export function TaskChat({
   ];
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    if (locked || !message.trim()) return;
-    const next: TaskMessage[] = nextRows();
-    const description = JSON.stringify(next);
-    if (description.length > 4000) return;
-    if (await onSend({ ...brief, description })) {
-      setMessage('');
-      onDirty(false);
+    if (locked || sending.current || !message.trim() || clarify) return;
+    if (
+      web &&
+      (!research?.data?.configured ||
+        research.uncertain ||
+        research.data.status === 'loading' ||
+        message.length > 1200)
+    )
+      return;
+    const description = web ? '' : JSON.stringify(nextRows());
+    if (!web && (description.length > 4000 || nextRows().length > 8)) return;
+    sending.current = true;
+    followLatest.current = true;
+    try {
+      if (
+        await (web
+          ? research!.search(message.trim())
+          : onSend({ ...brief, description }))
+      ) {
+        setMessage('');
+        onDirty(false);
+      }
+    } finally {
+      sending.current = false;
     }
   }
-  const overLimit =
-    JSON.stringify(nextRows()).length > 4000 || nextRows().length > 8;
+  const overLimit = web
+    ? message.length > 1200
+    : JSON.stringify(nextRows()).length > 4000 || nextRows().length > 8;
+  const hasResearch = !!research?.data?.query;
+  const researchFirst =
+    hasResearch &&
+    !!replyAt &&
+    !!research?.data?.generatedAt &&
+    replyAt > research.data.generatedAt;
+  const thread = (
+    <>
+      {researchFirst && <ResearchMessages data={research!.data} />}
+      {history.map((row, index) => (
+        <article
+          key={index}
+          className={'task-chat-message task-chat-' + row.role}
+        >
+          <span>{row.role === 'user' ? 'You' : '✦ Weft'}</span>
+          <p>{row.content}</p>
+        </article>
+      ))}
+      {asking && (
+        <article className="task-chat-message task-chat-assistant">
+          <span>Weft · one quick question</span>
+          <p>{question}</p>
+        </article>
+      )}
+      {work && (
+        <article
+          className="task-chat-message task-chat-assistant weft-work"
+          aria-label="Weft response"
+        >
+          <span>
+            ✦ Weft ·{' '}
+            {work.kind === 'written_draft'
+              ? 'private written draft'
+              : 'capability limit'}
+          </span>
+          <h2>{work.title}</h2>
+          <p>{work.content}</p>
+          {work.kind === 'written_draft' && (
+            <small>
+              Review facts and placeholders before using this. Nothing was sent,
+              booked or changed in your project. No task was marked complete.
+            </small>
+          )}
+        </article>
+      )}
+      {!work && !asking && !failed && !applied && proposalCount > 0 && (
+        <article className="task-chat-message task-chat-assistant">
+          <span>✦ Weft · task suggestions</span>
+          <p>I’ve prepared {proposalCount} task {proposalCount === 1 ? 'suggestion' : 'suggestions'} for your review below. Nothing has been added yet.</p>
+        </article>
+      )}
+      {!researchFirst && <ResearchMessages data={research?.data || null} />}
+    </>
+  );
   return (
     <section className="task-chat" aria-label="Ask Weft conversation">
-      {history.length===0&&!work&&<div className="chat-welcome"><span className="chat-avatar" aria-hidden="true">✦</span><div><h2>What can we take off your mind?</h2><p>Plan the next steps. Find the right words. Make a little room for the good part.</p></div></div>}
-      <details className="text-sm text-muted-foreground">
+      <div className="chat-presence">
+        <span className="chat-avatar" aria-hidden="true">
+          ✦
+        </span>
+        <div>
+          <strong>Your planning partner</strong>
+          <span>Plan, write, or ask me to find something.</span>
+        </div>
+      </div>
+      <details className="chat-capabilities text-xs text-muted-foreground">
         <summary>What I can actually do</summary>
         <p>
           I can propose tasks and prepare written drafts from the context shared
-          here. This planning chat can’t browse (use Search web for that), see task notes or files, send messages, book,
-          buy, run code, verify real-world work or mark tasks complete. A draft
-          isn’t proof a task is finished.
+          here. Ask me to find something or search the web for cited research
+          when search is activated. I can’t see task notes or files, send
+          messages, book, buy, run code, verify real-world work or mark tasks
+          complete. A draft isn’t proof a task is finished.
+        </p>
+        <p>
+          Planning uses a bounded conversation; only the latest web result is
+          restored after reload. Web results stay separate from planning context
+          unless you explicitly copy them into a new message. Research is
+          visible for 24 hours, then cleared on next access.
         </p>
       </details>
-      {history.length===0&&!work&&<div className="chat-starters" aria-label="Example requests">{chatStarters.map(prompt=><button key={prompt} type="button" disabled={locked} onClick={()=>{setMessage(prompt);onDirty(true);document.getElementById('task-chat-message')?.focus();}}>{prompt}<span aria-hidden="true">↗</span></button>)}</div>}
-      <div className="task-chat-history" role="log" aria-label="Conversation">
-        {history.map((row, index) => (
-          <article
-            key={index}
-            className={'task-chat-message task-chat-' + row.role}
-          >
-            <span>{row.role === 'user' ? 'You' : 'Weft'}</span>
-            <p>{row.content}</p>
-          </article>
-        ))}
-        {asking && (
-          <article className="task-chat-message task-chat-assistant">
-            <span>Weft · one quick question</span>
-            <p>{question}</p>
-          </article>
+      <div
+        className="task-chat-thread"
+        ref={threadBox}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+        }}
+        tabIndex={0}
+        role="region"
+        aria-label="Conversation messages"
+      >
+        {history.length === 0 && !work && !hasResearch && (
+          <div className="chat-empty">
+            <span aria-hidden="true">✦</span>
+            <h2>What can we take off your mind?</h2>
+            <p>We’ll find the next step together.</p>
+            <div className="chat-starters" aria-label="Example requests">
+              {chatStarters.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  disabled={locked}
+                  onClick={() => {
+                    setMessage(prompt);
+                    onDirty(true);
+                    document.getElementById('task-chat-message')?.focus();
+                  }}
+                >
+                  {prompt}
+                  <span aria-hidden="true">↗</span>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
-        {work && (
-          <article className="weft-work space-y-3" aria-label="Weft response">
-            <p className="text-xs font-medium">
-              {work.kind === 'written_draft'
-                ? 'WRITTEN DRAFT · PRIVATE · NOT APPLIED'
-                : 'CAPABILITY LIMIT'}
-            </p>
-            <h2 className="font-semibold">{work.title}</h2>
-            <p className="whitespace-pre-wrap break-words text-sm">
-              {work.content}
-            </p>
-            {work.kind === 'written_draft' && (
-              <p className="text-xs text-muted-foreground">
-                Review facts and placeholders before using this. Nothing was
-                sent, booked or changed in your project. No task was marked
-                complete.
-              </p>
-            )}
-          </article>
-        )}
-        {!asking && history.length > 0 && !applied && (
-          <p className="text-xs text-muted-foreground">
-            Review the response and any proposed tasks before using them. You
-            can also ask for a revision.
+        <div
+          className="task-chat-history"
+          role="log"
+          aria-label="Conversation"
+          aria-live="polite"
+        >
+          {thread}
+        </div>
+        {locked && (
+          <p className="chat-thinking" role="status">
+            ✦ {research?.busy ? 'Searching the web…' : 'Weft is thinking…'}
           </p>
         )}
       </div>
-      <form onSubmit={send} className="chat-composer space-y-3">
-        <Label htmlFor="task-chat-message">
+      <form onSubmit={send} className="chat-composer">
+        <Label className="sr-only" htmlFor="task-chat-message">
           {applied
             ? 'What else would you like to do?'
             : asking
@@ -146,35 +261,108 @@ export function TaskChat({
           placeholder={
             asking
               ? 'A short answer is enough…'
-              : 'Write a welcome announcement for the event…'
+              : 'Ask Weft anything about your event…'
           }
+          onKeyDown={(event) => {
+            if (
+              event.key === 'Enter' &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
           onChange={(event) => {
             setMessage(event.target.value);
             onDirty(!!event.target.value.trim());
           }}
         />
-        <details className="text-xs text-muted-foreground"><summary>What Send shares</summary><p>
-          Send shares this conversation, event details, shared task names and
-          saved event feedback with Groq. No emails, guest lists, files or
-          private bookings. Each message uses an AI attempt.
-        </p></details>
+        {web ? (
+          <p className="chat-route-note" role="status">
+            ↗ I’ll search the web for this message only. Send &amp; search
+            shares it with Groq and its web-search provider—not your project or
+            chat history. Keep private data, links and booking codes out.
+          </p>
+        ) : clarify ? (
+          <p className="chat-route-note" role="status">
+            What would you like me to find, and where? Include the details in
+            this message; I won’t infer them from your project or send this
+            vague request.
+          </p>
+        ) : (
+          <details className="text-xs text-muted-foreground">
+            <summary>What Send shares</summary>
+            <p>
+              Send shares this conversation, event details, shared task names
+              and saved event feedback with Groq. No emails, guest lists, files
+              or private bookings. Each message uses an AI attempt.
+            </p>
+          </details>
+        )}
         {overLimit && (
           <p role="status" className="text-sm">
-            This conversation is full. Start a new conversation to continue.
+            {web
+              ? 'Keep a web request to 1200 characters.'
+              : 'This conversation is full. Start a new conversation to continue.'}
           </p>
         )}
-        {!configured && (
+        {web && !research?.data?.configured ? (
           <p role="status" className="text-sm">
-            AI isn’t configured. You can still use Add task.
+            Web search is not activated here yet. Nothing will be sent; you can
+            still ask me to plan or write.
+          </p>
+        ) : (
+          !web &&
+          !configured && (
+            <p role="status" className="text-sm">
+              AI isn’t configured. You can still use Add task.
+            </p>
+          )
+        )}
+        {research?.error && (
+          <p role="alert" className="text-sm">
+            {research.error}
           </p>
         )}
-        <Button
-          type="submit"
-          disabled={locked || !configured || !message.trim() || overLimit}
-        >
-          {locked ? 'Thinking…' : asking ? 'Send answer' : 'Send'}
-        </Button>
-        {failed && history.length > 0 && (
+        <div className="chat-composer-actions">
+          <span className="chat-key-hint">Shift + Enter for a new line</span>
+          <Button
+            type="submit"
+            disabled={
+              locked ||
+              !(web ? research?.data?.configured : configured) ||
+              !message.trim() ||
+              overLimit ||
+              clarify ||
+              !!(
+                web &&
+                (research?.uncertain || research?.data?.status === 'loading')
+              )
+            }
+          >
+            {locked
+              ? 'Working…'
+              : web
+                ? 'Send & search ↗'
+                : asking
+                  ? 'Send answer ↑'
+                  : 'Send ↑'}
+          </Button>
+        </div>
+        {(research?.error ||
+          research?.data?.status === 'loading' ||
+          research?.uncertain) && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={locked}
+            onClick={() => void research?.reload()}
+          >
+            Check search status
+          </Button>
+        )}
+        {!web && failed && history.length > 0 && (
           <Button
             type="button"
             variant="outline"
