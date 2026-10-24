@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { gmailAutomaticTests } from './gmail-automatic.cases.mjs';
 import { eventPlanTests } from './event-plan.cases.mjs';
+import {starterChecklistTests} from './starter-checklists.cases.mjs';
 import { selfserviceTests } from './selfservice.cases.mjs';
 import {taskAssistantTests} from './task-assistant.cases.mjs';
 import {budgetTests} from './budget.cases.mjs';
@@ -2216,3 +2217,20 @@ test('self-service accounts and internal invitations', async t=>{
   await selfserviceTests({t,assert,sqlite,db,request,security,signupApi,invitationsApi,projectsApi,teamApi,workspace,privateApi,gmailApi,senderApi,owner});
 });
 test('task creation assistant integration',async t=>taskAssistantTests({t,assert,sqlite,owner,request,planApi,workspace,newTeamProject,joinPerson,asTeammate}));
+test('starter checklist integration',async t=>{
+  // The main regression fixture can already contain 100 owner projects. This
+  // feature gets a fresh database, not a raised or bypassed product limit.
+  const isolated=new DatabaseSync(':memory:');
+  for(const name of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort())isolated.exec(readFileSync('drizzle/'+name,'utf8'));
+  let tail=Promise.resolve();
+  const isolatedDb={
+    prepare(sql){let values=[];return {bind(...args){values=args;return this;},async first(){return isolated.prepare(sql).get(...values)||null;},async all(){return {results:isolated.prepare(sql).all(...values)};},async run(){return {meta:{changes:Number(isolated.prepare(sql).run(...values).changes)}};}};},
+    batch(statements){const next=tail.then(async()=>{isolated.exec('BEGIN');try{const out=[];for(const statement of statements)out.push(await statement.run());isolated.exec('COMMIT');return out;}catch(error){isolated.exec('ROLLBACK');throw error;}});tail=next.catch(()=>{});return next;},
+  };
+  const previousDb=globalThis.__gatherEnv.DB;
+  globalThis.__gatherEnv.DB=isolatedDb;
+  try{
+    owner();assert.equal((await workspace.GET(getRequest('/api/workspace?project=main'))).status,200);
+    await starterChecklistTests({t,assert,sqlite:isolated,db:isolatedDb,owner,request,planApi,workspace,newTeamProject,joinPerson,asTeammate});
+  }finally{globalThis.__gatherEnv.DB=previousDb;isolated.close();owner();}
+});

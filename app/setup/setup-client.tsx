@@ -142,7 +142,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
             </div>
           </details>
           <div className="border-t pt-5">
-            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: draft a plan with AI or start with an empty project. Your other projects are unchanged.' : 'Changes only this project’s settings.'}</p>
+            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: use a starter checklist, draft a plan with AI, or start with an empty project. Your other projects are unchanged.' : 'Changes only this project’s settings.'}</p>
             <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>
           </div>
         </fieldset>

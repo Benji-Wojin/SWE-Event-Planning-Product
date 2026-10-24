@@ -252,6 +252,59 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
     },
   };
 }
+test('starter checklist is available with an empty brief and no AI configuration, without generating or applying',async()=>{
+  const initial=fixture();initial.configured=false;initial.draft=null;initial.status='empty';initial.brief={...brief,description:''};
+  const active=harness(context=>{
+    if(context.input?.action==='starter'){
+      assert.equal(context.input.brief.description,'Example event');assert.equal(context.input.brief.kind,'corporate');assert.equal(context.input.replace,false);
+      context.value={...context.saved,revision:3,status:'ready',brief:context.input.brief,draft:{...fixture().draft,source:'starter',brief:context.input.brief}};
+    }
+  },initial);
+  try{
+    await active.start();await active.edit('plan-kind','corporate');await active.click('Use starter checklist');
+    assert.deepEqual(active.requests.map(r=>r.action),['get','starter']);
+    assert.match(text(active.tree),/Product-authored starter checklist/);assert.match(text(active.tree),/no shared tasks were added/);
+    assert.equal(active.saved.receipt,null);
+  }finally{active.dispose();}
+});
+
+test('starter replacement saves edited work and retries the same request after an uncertain response',async()=>{
+  let first=true,body;
+  const active=harness(context=>{
+    if(context.input?.action==='save')context.value={...context.saved,revision:context.saved.revision+1,brief:copy(context.input.brief),draft:{...context.saved.draft,items:copy(context.input.items)}};
+    if(context.input?.action==='starter'){
+      assert.equal(context.input.replace,true);assert.equal(context.saved.draft.items[0].title,'Keep this edited task');
+      if(first){first=false;body=copy(context.input);return Response.json({error:'Response interrupted'},{status:503});}
+      assert.deepEqual(context.input,body);
+      context.value={...context.saved,revision:context.saved.revision+1,draft:{...context.saved.draft,source:'starter'}};
+    }
+  });
+  try{
+    await active.start();await active.edit('title-one','Keep this edited task');await active.click('Replace with starter checklist');
+    assert.deepEqual(active.requests.map(r=>r.action),['get','save','starter']);
+    assert.equal(active.saved.draft.items[0].title,'Keep this edited task');
+    await active.click('Retry checklist request');assert.deepEqual(active.requests.map(r=>r.action),['get','save','starter','starter']);
+  }finally{active.dispose();}
+});
+
+test('starter replacement cancellation does not save, generate or replace the draft',async()=>{
+  const active=harness();
+  try{await active.start();globalThis.window.confirm=()=>false;await active.click('Replace with starter checklist');assert.deepEqual(active.requests.map(r=>r.action),['get']);}
+  finally{active.dispose();}
+});
+
+test('starter controls stay locked during generation and are absent from conversation or suggestions modes',async()=>{
+  const initial=fixture();initial.status='generating';
+  let active=harness(undefined,initial);
+  try{await active.start();const button=nodes(active.tree).find(n=>n.type==='button'&&text(n)==='Replace with starter checklist');assert.ok(button.props.disabled);}
+  finally{active.dispose();}
+  for(const mode of ['assistant','suggestions']){
+    active=harness(undefined,fixture(),'project=p_example&mode='+mode);
+    try{await active.start();assert.ok(!nodes(active.tree).some(n=>n.type==='button'&&/starter checklist/.test(text(n))));}
+    finally{active.dispose();}
+  }
+});
+
 test('apply saves brief edits and sends normalized reviewed items, without losing either on a failed response', async () => {
   let first = true;
   const active = harness((context) => {

@@ -64,6 +64,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     [busy, setBusy] = useState(false);
   const pending = useRef(false),
     request = useRef<any>(null),
+    starterRequest = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
   const [chatDirty,setChatDirty]=useState(false);
   const [researchBusy,setResearchBusy]=useState(false);
@@ -132,6 +133,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         setItems([]);
         setInitial('');
         request.current = null;
+        starterRequest.current = null;
       }
       setError(
         e instanceof Error
@@ -147,6 +149,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     await run(async () => {
       accept(await api(query));
       request.current = null;
+      starterRequest.current = null;
     });
   }
   useEffect(() => {
@@ -178,10 +181,12 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     value: PlanBrief[K],
   ) => {
     request.current = null;
+    starterRequest.current = null;
     setBrief((current) => ({ ...current, [key]: value }));
   };
   const updateItem = (id: string, patch: Partial<ReviewedItem>) => {
     request.current = null;
+    starterRequest.current = null;
     setItems((current) =>
       current.map((item) => {
         if (item.id !== id) return item;
@@ -209,11 +214,31 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     });
     accept(result);
     request.current = null;
+    starterRequest.current = null;
     return result;
+  }
+  async function useStarter() {
+    if (!starterRequest.current && data.draft && !window.confirm('Replace the saved private draft with a starter checklist? Your existing shared tasks will not change.')) return;
+    await run(async () => {
+      request.current = null;
+      if (!starterRequest.current) {
+        // Save edited work first; a failed replacement must leave the old draft recoverable.
+        const latest = draftDirty && data.draft && !applied ? await save() : data;
+        starterRequest.current = {
+          action:'starter', revision:latest.revision, workspaceRevision:latest.workspaceRevision,
+          requestId:crypto.randomUUID(), replace:!!latest.draft,
+          brief:{...brief,description:brief.description.trim() || data.event.name || names[brief.kind]},
+        };
+      }
+      accept(await api(query,starterRequest.current));
+      starterRequest.current = null;
+      setNotice('Starter checklist ready to review. No AI was used; no shared tasks were added.');
+    });
   }
   async function generate(nextBrief=brief) {
     let accepted=false;
     await run(async () => {
+      starterRequest.current = null;
       if(request.current && JSON.stringify(request.current.brief)!==JSON.stringify(nextBrief))request.current=null;
       if (!request.current) {
         // Preserve edited drafts before regeneration so a provider failure cannot discard them.
@@ -244,9 +269,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         );
       setData(result);
       request.current = null;
+      starterRequest.current = null;
       setNotice(
         result.contextChanged
-          ? 'Event details or tasks changed. Generate a new draft before adding it.'
+          ? result.draft?.source==='starter' ? 'Event details or tasks changed. Choose a fresh starter checklist before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
           : 'Project context refreshed. Your draft edits are kept.',
       );
     });
@@ -416,8 +442,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
             </p>
             {!data.configured && (
               <p className="text-sm text-muted-foreground">
-                AI is not configured. You can save this brief and add tasks
-                manually.
+                AI is not configured. You can use a starter checklist, save this brief, or add tasks manually.
               </p>
             )}
             <div className="flex flex-wrap gap-3">
@@ -450,6 +475,12 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                 </Button>
               )}
             </div>
+            {!suggestions && <div className="space-y-3 border-t pt-4">
+              <p className="text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Dates and owners start unset; this is not a complete policy or safety checklist.</p>
+              <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
+                {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
+              </Button>
+            </div>}
           </fieldset>
         </CardContent>
       </Card>
@@ -462,6 +493,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       )}
       {data.draft && !(assistant && (chatStartingNew || data.draft.work)) && (
         <section className="mt-8 space-y-4" aria-label="Review draft">
+          {data.draft.source==='starter' && <p className="rounded-lg border p-4 text-sm">Product-authored starter checklist · No AI used. Not tailored to your brief; review every item, date and owner before adding it.</p>}
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
@@ -889,8 +921,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
             <div className="rounded-lg border p-5 space-y-3">
               {data.contextChanged && (
                 <p role="status" className="text-sm">
-                  Project details or tasks changed. Generate a new draft before
-                  adding it.
+                  Project details or tasks changed. {data.draft.source==='starter' ? 'Choose a fresh starter checklist' : 'Generate a new draft'} before adding it.
                 </p>
               )}
               {missingDependencies && (

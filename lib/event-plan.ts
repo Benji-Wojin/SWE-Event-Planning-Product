@@ -11,6 +11,7 @@ import {
 import { projectUser, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
 import {generateTaskProposal} from './task-assistant';
 import {taskConversation} from './task-conversation';
+import {starterChecklist} from './starter-checklists';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
 import { duplicateSuggestions, planSelection } from './plan-selection';
@@ -242,6 +243,49 @@ async function saveDraft(c: Context, input: any) {
         409,
         'The draft changed. Your edits have not replaced it.',
       );
+  }
+  return snapshot(c);
+}
+async function createStarter(c: Context, input: any) {
+  if (c.purpose !== 'plan') throw new HttpError(400, 'Starter checklists belong in the event plan, not a conversation or suggestions review.');
+  if (!exact(input, ['action', 'revision', 'workspaceRevision', 'requestId', 'brief', 'replace']) || !uuid(input.requestId) || typeof input.replace !== 'boolean')
+    throw new HttpError(400, 'Review the starter checklist request.');
+  let brief, output;
+  try {
+    brief = parseBrief(input.brief, c.state.event.date);
+    output = starterChecklist(brief.kind);
+  } catch (error) { throw new HttpError(400, (error as Error).message); }
+  const previous = await read(c.id), oldData = await decode(previous);
+  const fingerprint = await hash({action:'starter', version:1, source:c.source, brief});
+  if (previous?.request_id === input.requestId) {
+    if (previous.request_hash !== fingerprint) throw new HttpError(409, 'This request was already used for different event details.');
+    return snapshot(c);
+  }
+  if (input.revision !== (previous?.revision || 0) || input.workspaceRevision !== c.row.revision || previous?.lease_until > Date.now())
+    throw new HttpError(409, 'The project or draft changed. Reload before choosing a checklist.');
+  if (oldData.draft && !input.replace) throw new HttpError(409, 'Confirm replacing the saved private draft first. Shared tasks will not change.');
+  const reviewed = output.items.map(item => ({...item, owner:'', included:true}));
+  const {matches} = planSelection(reviewed, existingPlanTasks(c));
+  const draft = {
+    ...output,
+    source:'starter', starterVersion:1,
+    items:reviewed.map(item=>({...item, included:matches.get(item.id)!.length===0})),
+    duplicateSuggestions:duplicateSuggestions(reviewed,existingPlanTasks(c).slice(0,200)),
+    generation:input.requestId, contextHash:c.contextHash, brief, generatedAt:new Date().toISOString(),
+  };
+  // One compare-and-swap write. No provider, quota write, lease acquisition or workspace mutation.
+  // Preserve started_at on replacement so choosing a checklist cannot reset AI cooldowns.
+  const payload = await seal({brief,draft,receipt:null},'event-plan:'+c.id);
+  const saved = await env.DB.prepare(`INSERT INTO plan_drafts (id,owner_id,workspace_id,payload,draft_generation,request_id,request_hash,status)
+    SELECT ?,?,?,?,?,?,?,'ready' WHERE ${c.ownerSql} AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?)
+    ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,draft_generation=excluded.draft_generation,request_id=excluded.request_id,request_hash=excluded.request_hash,status='ready',issue='',lease='',lease_until=0,revision=revision+1
+    WHERE plan_drafts.revision=? AND plan_drafts.lease_until<=?`)
+    .bind(c.id,c.user.userId,c.projectId,payload,input.requestId,input.requestId,fingerprint,...c.ownerArgs,c.projectId,c.row.revision,input.revision,Date.now()).run();
+  if (saved.meta.changes !== 1) {
+    await authorized(c);
+    const latest = await read(c.id);
+    if (latest?.request_id === input.requestId && latest.request_hash === fingerprint) return snapshot(c);
+    throw new HttpError(409, 'Another update saved first. Reload the draft before choosing a checklist.');
   }
   return snapshot(c);
 }
@@ -622,6 +666,7 @@ export async function writeEventPlan(request: Request, input: any) {
   const c = await loadContext(request);
   await authorized(c);
   if (input.action === 'save') return saveDraft(c, input);
+  if (input.action === 'starter') return createStarter(c, input);
   if (input.action === 'generate') return generate(c, input);
   if (input.action === 'apply') {
     await applyDraft(c, input);
