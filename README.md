@@ -77,6 +77,12 @@ New Helpful links searches are disabled by default during migration; unexpired c
 
 ## Event information
 
+### Event wrap-up
+
+**Wrap up** (the existing `#memory` link still works) brings task close-out and team lessons together. All tasks or My tasks separates still-open work, completion awaiting required organizer verification, and recorded completions. Every task appears once; all recorded completions are available, not just a recent preview. Open a task to use its normal progress, evidence and verification workflow. The event date never completes a task or closes the event. These are task counts, not an event-success or safety score.
+
+Team lessons remain shared regardless of the task filter. Save an action to repeat or improve, its applicability and optional event rating; no rating is preselected. Saving a lesson neither creates a task nor sends a message. Add follow-up task uses the existing permission-checked task form. Budget, guest/file records and private bookings remain separate and must be reviewed where relevant. No project archive, automatic completion, payment, external contact or new AI call is performed by this page.
+
 ### Event-day run sheet
 
 Organizers can use **Timeline → Move event plan** to review a different event date and select individual preparation deadlines or activities to shift by the same number of calendar days. Nothing is selected automatically. Activity clock times and the event time zone stay fixed; ambiguous or nonexistent moved local times require separate editing. Fixed external deadlines and completed/reported work cannot be moved by this batch review. Changed tasks retain their owners and progress, but acceptance and Next up commitments are cleared for reconfirmation. Task history records the change. The event date and selected task dates save together, with stale-write and organizer-access checks.

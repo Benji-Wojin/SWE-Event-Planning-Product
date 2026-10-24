@@ -8,7 +8,8 @@ test('workspace preloads code in parallel with fresh data, using matching conten
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const html=readFileSync('public/workspace.html','utf8');
   const urls=[...new Set(html.match(/\/gather-assets\/versioned\/[a-f0-9]{20}-[a-z-]+\.(?:js|css)/g))];
-  assert.equal(urls.length,19);
+  assert.equal(urls.length,20);
+  assert.ok(urls.some(url=>url.endsWith('-wrap-up.js')));
   assert.ok(urls.some(url=>url.endsWith('-reschedule.js')));
   assert.ok(urls.some(url=>url.endsWith('-completion-ui.js')));
   assert.ok(urls.some(url=>url.endsWith('-planning-ui.js')));

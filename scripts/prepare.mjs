@@ -15,6 +15,7 @@ html = html
   .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
   .replace('src="planning-ui.js"', 'src="/gather-assets/planning-ui.js"')
   .replace('src="completion-ui.js"', 'src="/gather-assets/completion-ui.js"')
+  .replace('src="wrap-up.js"', 'src="/gather-assets/wrap-up.js"')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
   .replace(
     '<script src="app.js?v=coordination-1"></script>',
@@ -49,6 +50,7 @@ writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','ut
 writeFileSync('public/gather-assets/priorities.js',readFileSync('legacy/priorities.js','utf8'));
 writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recovery-ui.js','utf8'));
 writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
+writeFileSync('public/gather-assets/wrap-up.js',readFileSync('legacy/wrap-up.js','utf8'));
 writeFileSync('public/gather-assets/planning-ui.js',readFileSync('legacy/planning-ui.js','utf8'));
 writeFileSync('public/gather-assets/completion-ui.js',readFileSync('legacy/completion-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
