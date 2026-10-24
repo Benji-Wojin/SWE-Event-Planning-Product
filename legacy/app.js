@@ -213,6 +213,11 @@
     $('#assignmentCount',form).textContent=`${selected.length} ${selected.length===1?'task':'tasks'} selected; ${changes} owner ${changes===1?'change':'changes'}.`;
     $('#assignmentSubmit',form).disabled=!changes||!$('input[name="confirmed"]',form).checked;
   }
+  function focusAfterAcceptance() {
+    // The review button disappears when all visible assignments are accepted.
+    // Wait for saveLock to release, and never steal focus from another control.
+    queueMicrotask(()=>{if(ui.view==='tasks'&&document.activeElement===document.body)skipToContent();});
+  }
   function acceptanceCandidates(tasks) {
     return tasks.filter(task=>task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
   }
@@ -739,7 +744,7 @@
       }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
-        store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);
+        store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);focusAfterAcceptance();
       }
       if(form.id==='newTaskForm'){
         let taskData=data;

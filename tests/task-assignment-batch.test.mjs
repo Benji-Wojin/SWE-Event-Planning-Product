@@ -306,6 +306,41 @@ test('confirmation and an actual owner change are required before submit', () =>
   assert.equal(button.disabled, false);
   assert.equal(count.textContent, '1 task selected; 1 owner change.');
 });
+test('acceptance restores lost keyboard focus after saving without stealing a new focus or view', () => {
+  const body = {},
+    control = {},
+    pending = [],
+    ui = { view: 'tasks' };
+  let focused = 0;
+  const context = vm.createContext({
+    ui,
+    document: { body, activeElement: body },
+    queueMicrotask: (fn) => pending.push(fn),
+    skipToContent: () => focused++,
+  });
+  vm.runInContext(
+    app.slice(
+      app.indexOf('  function focusAfterAcceptance('),
+      app.indexOf('  function acceptanceCandidates('),
+    ),
+    context,
+  );
+  const queue = () => vm.runInContext('focusAfterAcceptance()', context);
+  queue();
+  assert.equal(focused, 0);
+  pending.shift()();
+  assert.equal(focused, 1);
+  queue();
+  context.document.activeElement = control;
+  pending.shift()();
+  assert.equal(focused, 1);
+  context.document.activeElement = body;
+  queue();
+  ui.view = 'timeline';
+  pending.shift()();
+  assert.equal(focused, 1);
+  assert.match(app, /Completion is unchanged\.`\);focusAfterAcceptance\(\);/);
+});
 test('prepared client awaits one actor-free batch mutation and captures refs before locking', () => {
   execFileSync(process.execPath, ['scripts/prepare.mjs']);
   const hosted = readFileSync('public/gather-assets/app.js', 'utf8'),
