@@ -248,15 +248,16 @@ async function saveDraft(c: Context, input: any) {
 }
 async function createStarter(c: Context, input: any) {
   if (c.purpose !== 'plan') throw new HttpError(400, 'Starter checklists belong in the event plan, not a conversation or suggestions review.');
-  if (!exact(input, ['action', 'revision', 'workspaceRevision', 'requestId', 'brief', 'replace']) || !uuid(input.requestId) || typeof input.replace !== 'boolean')
+  if (!exact(input, ['action', 'revision', 'workspaceRevision', 'requestId', 'brief', 'replace', 'suggestDates']) || !uuid(input.requestId) || typeof input.replace !== 'boolean' || input.suggestDates !== undefined && typeof input.suggestDates !== 'boolean')
     throw new HttpError(400, 'Review the starter checklist request.');
-  let brief, output;
+  let brief;
   try {
     brief = parseBrief(input.brief, c.state.event.date);
-    output = starterChecklist(brief.kind);
   } catch (error) { throw new HttpError(400, (error as Error).message); }
   const previous = await read(c.id), oldData = await decode(previous);
-  const fingerprint = await hash({action:'starter', version:1, source:c.source, brief});
+  // Keep undated request fingerprints compatible. A retry never recalculates
+  // yesterday's reviewed suggestions just because the local day has changed.
+  const fingerprint = await hash({action:'starter', version:input.suggestDates ? 2 : 1, source:c.source, brief});
   if (previous?.request_id === input.requestId) {
     if (previous.request_hash !== fingerprint) throw new HttpError(409, 'This request was already used for different event details.');
     return snapshot(c);
@@ -264,11 +265,20 @@ async function createStarter(c: Context, input: any) {
   if (input.revision !== (previous?.revision || 0) || input.workspaceRevision !== c.row.revision || previous?.lease_until > Date.now())
     throw new HttpError(409, 'The project or draft changed. Reload before choosing a checklist.');
   if (oldData.draft && !input.replace) throw new HttpError(409, 'Confirm replacing the saved private draft first. Shared tasks will not change.');
+  let output;
+  try {
+    if (input.suggestDates && (!c.state.event.date || !c.state.event.timeZone)) throw new Error('Set an event date and time zone in Project settings before suggesting preparation dates.');
+    output = starterChecklist(brief.kind, input.suggestDates ? {
+      eventDate:c.state.event.date, endDate:brief.endDate,
+      today:(globalThis as any).GatherCalendar.dayKey(new Date(),c.state.event.timeZone),
+    } : undefined);
+  } catch (error) { throw new HttpError(400,(error as Error).message); }
   const reviewed = output.items.map(item => ({...item, owner:'', included:true}));
   const {matches} = planSelection(reviewed, existingPlanTasks(c));
   const draft = {
     ...output,
-    source:'starter', starterVersion:1,
+    source:'starter', starterVersion:input.suggestDates ? 2 : 1,
+    ...(input.suggestDates ? {starterDates:{eventDate:c.state.event.date,endDate:brief.endDate || c.state.event.date}} : {}),
     items:reviewed.map(item=>({...item, included:matches.get(item.id)!.length===0})),
     duplicateSuggestions:duplicateSuggestions(reviewed,existingPlanTasks(c).slice(0,200)),
     generation:input.requestId, contextHash:c.contextHash, brief, generatedAt:new Date().toISOString(),

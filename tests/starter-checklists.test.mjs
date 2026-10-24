@@ -35,3 +35,31 @@ test('starter outputs are fresh copies and prototype keys cannot select a checkl
   const fresh=starterChecklist('school');assert.notEqual(fresh.items[0].title,'Changed');assert.doesNotThrow(()=>parsePlanItems(fresh.items));
   for(const bad of ['__proto__','constructor','unknown','School'])assert.throws(()=>starterChecklist(bad),/supported event type/);
 });
+test('optional starter dates are editable calendar-day suggestions with unset owners and activity times',()=>{
+  for(const kind of eventKinds){
+    const plan=starterChecklist(kind,{eventDate:'2028-03-12',endDate:'2028-03-14',today:'2028-01-01'});
+    assert.doesNotThrow(()=>parsePlanItems(plan.items));
+    assert.ok(plan.items.every(i=>i.dueDate && !i.start && !i.end && !i.owner));
+    assert.ok(plan.assumptions.some(s=>s.includes('not confirmed deadlines')));
+    for(const item of plan.items)for(const dependency of item.dependsOn)assert.ok(plan.items.find(i=>i.id===dependency).dueDate<=item.dueDate);
+    assert.equal(plan.scheduleWarnings,undefined);
+  }
+  const school=starterChecklist('school',{eventDate:'2028-03-12',endDate:'2028-03-14',today:'2028-01-01'});
+  assert.equal(school.items.find(i=>i.id==='av').dueDate,'2028-03-10');
+  assert.equal(school.items.find(i=>i.id==='needs').dueDate,'2028-02-20');
+  assert.equal(school.items.find(i=>i.id==='feedback').dueDate,'2028-03-16');
+  assert.equal(starterChecklist('corporate',{eventDate:'2028-03-12',endDate:'2028-03-14',today:'2028-01-01'}).items.find(i=>i.id==='followup').dueDate,'2028-03-15');
+});
+test('short-notice suggestions never backdate preparation and disclose compressed lead times',()=>{
+  const plan=starterChecklist('school',{eventDate:'2026-10-25',endDate:'',today:'2026-10-24'});
+  assert.ok(plan.items.every(i=>i.dueDate>='2026-10-24'));
+  assert.equal(plan.items.find(i=>i.id==='purpose').dueDate,'2026-10-24');
+  assert.equal(plan.items.find(i=>i.id==='feedback').dueDate,'2026-10-27');
+  assert.match(plan.scheduleWarnings.join(' '),/Short notice/);assert.match(plan.scheduleWarnings.join(' '),/Review what is feasible/);
+  assert.ok(starterChecklist('party').items.every(i=>!i.dueDate));
+});
+test('dated starters reject missing, malformed, past or reversed dates and calendar overflow',()=>{
+  const valid={eventDate:'2026-12-01',endDate:'',today:'2026-10-24'};
+  for(const value of [{eventDate:''},{today:''},{eventDate:'2026-02-30'},{today:'bad'},{eventDate:'2026-10-23'},{endDate:'2026-11-30'},{eventDate:'9999-12-31',endDate:'9999-12-31'}])
+    assert.throws(()=>starterChecklist('school',{...valid,...value}));
+});

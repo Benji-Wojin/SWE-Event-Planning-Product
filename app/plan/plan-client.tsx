@@ -68,6 +68,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     errorBox = useRef<HTMLParagraphElement>(null);
   const [chatDirty,setChatDirty]=useState(false);
   const [batchOwner,setBatchOwner]=useState('');
+  const [suggestStarterDates,setSuggestStarterDates]=useState(false);
   const [researchBusy,setResearchBusy]=useState(false);
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
@@ -118,6 +119,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     setBrief(result.brief);
     setItems(result.draft?.items || []);
     setBatchOwner('');
+    setSuggestStarterDates(!!result.draft?.starterDates && !!result.event.date && !!result.event.timeZone);
     setInitial(editable(result.brief, result.draft?.items || []));
   }
   async function run(operation: () => Promise<void>) {
@@ -237,6 +239,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         starterRequest.current = {
           action:'starter', revision:latest.revision, workspaceRevision:latest.workspaceRevision,
           requestId:crypto.randomUUID(), replace:!!latest.draft,
+          suggestDates:suggestStarterDates,
           brief:{...brief,description:brief.description.trim() || data.event.name || names[brief.kind]},
         };
       }
@@ -486,7 +489,11 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
               )}
             </div>
             {!suggestions && <div className="space-y-3 border-t pt-4">
-              <p className="text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Dates and owners start unset; this is not a complete policy or safety checklist.</p>
+              <p className="text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={suggestStarterDates} disabled={!data.event.date || !data.event.timeZone} onChange={e=>{setSuggestStarterDates(e.target.checked);starterRequest.current=null;}} />
+                <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
+              </label>
               <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
                 {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
               </Button>

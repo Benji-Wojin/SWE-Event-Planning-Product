@@ -29,6 +29,57 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       const next=await ready(project);assert.equal(next.draft.items[0].included,false,'exact existing work is not preselected');
       assert.equal(JSON.parse(ws(project).data).tasks.length,1);
     });
+    await t.test('dated starter is opt-in, requires dated project context, and applies only reviewed deadlines',async()=>{
+      const project=await setup(),blank=await read(project);
+      assert.equal((await post(project,input(blank,{suggestDates:true}))).status,400);
+      assert.equal((await post(project,input(blank,{suggestDates:'yes'}))).status,400);
+      assert.equal((await post(project,input(blank,{suggestDates:true,today:'2100-01-01'}))).status,400);
+      const context=await workspace.GET(new Request('https://gather.example/api/workspace?project='+project));
+      const updated=await workspace.POST(request('/api/workspace?project='+project,{method:'updateEvent',args:[{date:'2100-03-14',timeZone:'America/New_York'}],revision:(await context.json()).revision}));
+      assert.equal(updated.status,200);
+      const start=await read(project),before=ws(project),body=input(start,{suggestDates:true,brief:{...brief,kind:'corporate',endDate:'2100-03-16'}});
+      const response=await post(project,body);assert.equal(response.status,200,await response.clone().text());const snap=await response.json();
+      assert.deepEqual(ws(project),before);assert.equal(snap.draft.starterVersion,2);
+      assert.deepEqual(snap.draft.starterDates,{eventDate:'2100-03-14',endDate:'2100-03-16'});
+      assert.equal(snap.draft.items.find(i=>i.id==='av').dueDate,'2100-03-12');
+      assert.equal(snap.draft.items.find(i=>i.id==='followup').dueDate,'2100-03-17');
+      assert.ok(snap.draft.items.every(i=>!i.owner && !i.start && !i.end));
+      assert.deepEqual(await (await post(project,body)).json(),snap);
+      assert.equal((await post(project,{...body,suggestDates:false})).status,409);
+      const items=snap.draft.items.map(i=>({...i,included:i.id==='av',owner:i.id==='av'?'jack':''}));
+      items.find(i=>i.id==='av').dueDate='2100-03-10';
+      assert.equal((await post(project,{action:'apply',revision:snap.revision,workspaceRevision:snap.workspaceRevision,generation:snap.draft.generation,items,confirm:true})).status,200);
+      const tasks=JSON.parse(ws(project).data).tasks;assert.equal(tasks.length,1);assert.equal(tasks[0].dueDate,'2100-03-10');assert.equal(tasks[0].status,'todo');
+      assert.equal(tasks[0].schedule,null);
+    });
+    await t.test('event date changes invalidate dated starter application without rescheduling shared tasks',async()=>{
+      const project=await setup();let state=JSON.parse(ws(project).data);state.event.date='2100-03-14';state.event.timeZone='Pacific/Kiritimati';sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(JSON.stringify(state),project);
+      const snap=await ready(project,{suggestDates:true});
+      state=JSON.parse(ws(project).data);state.event.date='2100-03-15';sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(JSON.stringify(state),project);
+      const latest=await read(project);assert.equal(latest.contextChanged,true);
+      const response=await post(project,{action:'apply',revision:snap.revision,workspaceRevision:latest.workspaceRevision,generation:snap.draft.generation,items:snap.draft.items,confirm:true});
+      assert.equal(response.status,409);assert.equal(JSON.parse(ws(project).data).tasks.length,0);
+    });
+    await t.test('project-local midnight changes fresh short-notice proposals but never rewrites an idempotent replay',async()=>{
+      const RealDate=Date;let instant=RealDate.parse('2028-03-12T04:59:00Z');
+      globalThis.Date=class extends RealDate {
+        constructor(...args){super(...(args.length?args:[instant]));}
+        static now(){return instant;}
+      };
+      try {
+        const project=await setup(),state=JSON.parse(ws(project).data);
+        state.event.date='2028-03-12';state.event.timeZone='America/New_York';
+        sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(JSON.stringify(state),project);
+        const body=input(await read(project),{suggestDates:true});
+        const first=await post(project,body);assert.equal(first.status,200);const saved=await first.json();
+        assert.equal(saved.draft.items.find(i=>i.id==='purpose').dueDate,'2028-03-11');
+        instant=RealDate.parse('2028-03-12T05:01:00Z');
+        assert.deepEqual(await (await post(project,body)).json(),saved);
+        const fresh=await ready(project,{suggestDates:true});
+        assert.equal(fresh.draft.items.find(i=>i.id==='purpose').dueDate,'2028-03-12');
+        assert.equal(JSON.parse(ws(project).data).tasks.length,0);
+      } finally {globalThis.Date=RealDate;}
+    });
     await t.test('creation retries are idempotent and request IDs cannot be reused with a different checklist',async()=>{
       const project=await setup(),start=await read(project),body=input(start);
       const responses=await Promise.all([post(project,body),post(project,body)]);assert.deepEqual(responses.map(r=>r.status),[200,200]);

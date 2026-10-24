@@ -1,4 +1,5 @@
 import type { PlanItem, PlanOutput } from './plan-generation';
+import { validPlanDate } from './plan-generation';
 
 // Product-authored starting points, not AI output or a complete policy/safety checklist.
 // Unknown dates, bookings, costs and people must stay unknown until the team decides.
@@ -70,13 +71,42 @@ const checklists: Record<string, Entry[]> = {
   other: [shared.purpose, shared.venue, shared.budget, shared.needs, shared.programme, shared.roles, shared.cleanup, shared.feedback],
 };
 
-export function starterChecklist(kind: string): PlanOutput {
+type PreparationDates = { eventDate: string; endDate: string; today: string };
+// Product-authored lead times, not venue requirements or organizational policy.
+const leadDays: Record<string, number> = {
+  purpose: 42, approval: 35, decisions: 35, budget: 35, venue: 28,
+  vendors: 28, needs: 21, speakers: 21, travel: 21, choices: 28,
+  arrival: 14, programme: 14, roles: 14, itinerary: 14,
+  communications: 7, contingency: 7, meeting: 7, cleanup: 7,
+  shape: 21, place: 14, food: 7, invites: 7, activities: 3, memories: 7,
+  av: 2, briefing: 1, day: 1,
+};
+function shiftDay(day: string, offset: number) {
+  const date = new Date(day + 'T12:00:00Z');
+  date.setUTCDate(date.getUTCDate() + offset);
+  const value = date.toISOString().slice(0, 10);
+  if (!value || !validPlanDate(value)) throw new Error('The suggested dates fall outside the supported calendar range. Leave dates unset or choose another event date.');
+  return value;
+}
+export function starterChecklist(kind: string, dates?: PreparationDates): PlanOutput {
   if (!Object.hasOwn(checklists, kind)) throw new Error('Choose a supported event type.');
+  if (dates && (!dates.eventDate || !dates.today || !validPlanDate(dates.eventDate) || !validPlanDate(dates.today) || !validPlanDate(dates.endDate) || dates.eventDate < dates.today || dates.endDate && dates.endDate < dates.eventDate))
+    throw new Error('Use a current or future event date and check the last day, or leave preparation dates unset.');
+  const compressed: string[] = [];
+  const due = (id: string, title: string) => {
+    if (!dates) return '';
+    if (id === 'feedback' || id === 'followup') return shiftDay(dates.endDate || dates.eventDate, id === 'feedback' ? 2 : 1);
+    const proposed = shiftDay(dates.eventDate, -(leadDays[id] ?? 7));
+    if (proposed < dates.today) { compressed.push(title); return dates.today; }
+    return proposed;
+  };
+  const items = checklists[kind].map(([id, title, category, note, dependsOn]) => ({
+    id, title, category, note, kind: 'preparation', dueDate: due(id, title), start: '', end: '', location: '', dependsOn: [...(dependsOn || [])], existingTaskIndex: null,
+  } satisfies PlanItem));
   return {
-    items: checklists[kind].map(([id, title, category, note, dependsOn]) => ({
-      id, title, category, note, kind: 'preparation', dueDate: '', start: '', end: '', location: '', dependsOn: [...(dependsOn || [])], existingTaskIndex: null,
-    } satisfies PlanItem)),
+    items,
     questions: ['Which items fit your event, and who will own them?', 'What dates, confirmations and details still need a decision?'],
-    assumptions: ['Product-authored starter checklist, not AI-generated or tailored to your brief.', 'Nothing is booked, approved, sent or completed. Dates, times and owners are intentionally unset.', 'A starting point, not a complete safety, legal or organizational-policy checklist. Review it for your event.'],
+    assumptions: ['Product-authored starter checklist, not AI-generated or tailored to your brief.', dates ? `Preparation deadlines are editable lead-time suggestions anchored to ${dates.eventDate}; wrap-up uses ${dates.endDate || dates.eventDate}. They are not confirmed deadlines. Owners and activity times remain unset; nothing is booked, approved, sent or completed.` : 'Nothing is booked, approved, sent or completed. Dates, times and owners are intentionally unset.', 'A starting point, not a complete safety, legal or organizational-policy checklist. Review it for your event.'],
+    ...(compressed.length ? {scheduleWarnings:[`Short notice: ${compressed.length} suggested preparation deadlines would fall before ${dates!.today}, so they are proposed for today instead. Review what is feasible, reduce scope or change dates before adding tasks: ${compressed.join('; ')}.`]} : {}),
   };
 }
