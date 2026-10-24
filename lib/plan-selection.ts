@@ -60,6 +60,17 @@ export function planTaskSignature(item: { title: string; start: string }) {
     item.start
   );
 }
+// Selection convenience only. Never decide semantic reuse/keep choices or alter
+// proposal content, owners, dates, links, or existing shared tasks.
+export function selectNewPlanItems(items: ReviewedItem[], existing: ExistingPlanTask[]) {
+  const seen = new Set(existing.map(planTaskSignature));
+  return items.map(item => {
+    if (item.duplicateChoice === 'reuse') return item;
+    const signature = planTaskSignature(item), included = !seen.has(signature);
+    seen.add(signature);
+    return {...item, included};
+  });
+}
 export function planSelection(
   items: ReviewedItem[],
   existing: ExistingPlanTask[],

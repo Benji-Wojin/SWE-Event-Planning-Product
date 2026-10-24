@@ -697,6 +697,95 @@ test('task assistant retries the same request but uses a fresh request for an ed
     assert.equal(calls[2].brief.description,second.description);
   } finally {app.dispose();}
 });
+test('batch selection changes only inclusion, preserves draft edits, and never calls save or apply',async()=>{
+  const initial=fixture();initial.draft.items=[copy(item),{...copy(item),id:'two',title:'Check venue',included:false},
+    {...copy(item),id:'repeat',title:'Check venue',included:false}];
+  initial.existingTasks=[{id:'existing',title:item.title,start:''}];
+  const app=harness(undefined,initial);
+  try{
+    await app.start();await app.edit('note-two','Keep this reviewed note.');
+    await app.click('Select none');assert.equal(app.find('include-one').props.checked,false);assert.equal(app.find('include-two').props.checked,false);
+    await app.click('Select all new items');assert.equal(app.find('include-one').props.checked,false);assert.equal(app.find('include-two').props.checked,true);assert.equal(app.find('include-repeat').props.checked,false);
+    assert.equal(app.find('note-two').props.value,'Keep this reviewed note.');
+    assert(app.requests.every(r=>r.action==='get'));assert.match(text(app.tree),/1 of 3 proposals selected/);
+  }finally{app.dispose();}
+});
+
+test('batch owner assignment changes selected proposals only and saves through the existing draft workflow',async()=>{
+  const initial=fixture();initial.members.push({id:'maya',name:'Maya'},{id:'former',name:'Former',active:false});
+  initial.draft.items=[{...copy(item),owner:'jack',dueDate:'2030-10-02'},
+    {...copy(item),id:'excluded',title:'Excluded work',owner:'jack',included:false},
+    {...copy(item),id:'reuse',title:'Secure venue',owner:'jack',included:false,duplicateChoice:'reuse',existingTaskIndex:0}];
+  initial.existingTasks=[{id:'existing',title:'Book venue',start:''}];
+  initial.draft.duplicateSuggestions=[{itemId:'reuse',taskId:'existing',taskIdentity:'book venue|',itemIdentity:JSON.stringify(['Secure venue','preparation',item.note,'','','','','Program'])}];
+  const app=harness(context=>{if(context.input?.action==='save')context.value={...context.saved,revision:3,draft:{...context.saved.draft,items:context.input.items}};},initial);
+  try{
+    await app.start();await app.edit('batch-owner','maya');await app.click('Assign selected');
+    assert.equal(app.find('owner-one').props.value,'maya');assert.equal(app.find('owner-excluded').props.value,'jack');assert.equal(app.find('owner-reuse').props.value,'jack');
+    assert.equal(app.find('date-one').props.value,'2030-10-02');assert(app.requests.every(r=>r.action==='get'));
+    assert.match(text(app.tree),/shared tasks have not changed/);await app.click('Save draft');
+    const saved=app.requests.at(-1);assert.equal(saved.action,'save');assert.equal(saved.items[0].owner,'maya');
+    assert.deepEqual(saved.items[1],initial.draft.items[1]);assert.deepEqual(saved.items[2],initial.draft.items[2]);
+    assert.equal(app.find('batch-owner').props.value,'');
+  }finally{app.dispose();}
+});
+
+test('batch assignment requires a selected item and a current active owner',async()=>{
+  const initial=fixture();initial.members.push({id:'former',name:'Former',active:false});initial.draft.items.push({...copy(item),id:'two',title:'Other work'});
+  const app=harness(undefined,initial);
+  const assign=()=>nodes(app.tree).find(n=>n.type==='button'&&text(n)==='Assign selected');
+  try{
+    await app.start();assert.equal(assign().props.disabled,true);
+    await app.edit('batch-owner','unknown');assert.equal(assign().props.disabled,true);
+    await app.edit('batch-owner','former');assert.equal(assign().props.disabled,true);
+    await app.edit('batch-owner','jack');assert.equal(assign().props.disabled,false);
+    await app.click('Select none');assert.equal(assign().props.disabled,true);assert(app.requests.every(r=>r.action==='get'));
+    assert(!nodes(app.find('batch-owner')).some(n=>n.type==='option'&&n.props.value==='former'));
+  }finally{app.dispose();}
+});
+
+test('batch controls cannot edit running, applied, or single-item drafts',async()=>{
+  for(const mode of ['generating','applied','single']){
+    const initial=fixture();if(mode!=='single')initial.draft.items.push({...copy(item),id:'two',title:'Other work'});
+    if(mode==='generating')initial.status='generating';if(mode==='applied')initial.receipt={taskIds:['saved']};
+    const app=harness(undefined,initial);
+    try{await app.start();const buttons=nodes(app.tree).filter(n=>n.type==='button'&&['Select all new items','Select none','Assign selected'].includes(text(n)));
+      if(mode==='generating'){assert.equal(buttons.length,3);assert(buttons.every(b=>b.props.disabled));}
+      else assert.equal(buttons.length,0);
+    }finally{app.dispose();}
+  }
+});
+
+test('batch assignment does not resolve possible semantic duplicates or allow their application',async()=>{
+  const initial=fixture();initial.draft.items.push({...copy(item),id:'two',title:'Other work'});
+  initial.existingTasks=[{id:'existing',title:'Finalize activities',start:''}];
+  initial.draft.duplicateSuggestions=[{itemId:'one',taskId:'existing',taskIdentity:'finalize activities|',itemIdentity:JSON.stringify([item.title,item.kind,item.note,'','','','',item.category])}];
+  const app=harness(undefined,initial);
+  try{await app.start();await app.click('Select none');await app.click('Select all new items');await app.edit('batch-owner','jack');await app.click('Assign selected');
+    const add=nodes(app.tree).find(n=>n.type==='button'&&/^Add \d+ selected/.test(text(n)));assert.equal(add.props.disabled,true);
+    assert.match(text(app.tree),/Possible duplicate of: Finalize activities/);assert(app.requests.every(r=>r.action==='get'));
+  }finally{app.dispose();}
+});
+
+test('batch edits invalidate an uncertain generation retry and preserve the updated draft before a new request',async()=>{
+  for(const edit of ['selection','owner']){
+    const initial=fixture();initial.draft.items.push({...copy(item),id:'two',title:'Other work'});
+    let failed=false;
+    const app=harness(context=>{
+      if(context.input?.action==='generate'&&!failed){failed=true;throw Error('Network unavailable');}
+      if(context.input?.action==='save')context.value={...context.saved,revision:3,draft:{...context.saved.draft,items:context.input.items}};
+    },initial);
+    try{await app.start();await app.click('Generate another draft');
+      if(edit==='selection')await app.click('Select none');
+      else {await app.edit('batch-owner','jack');await app.click('Assign selected');}
+      await app.click('Generate another draft');
+      const attempts=app.requests.filter(r=>r.action==='generate');assert.equal(attempts.length,2);assert.notEqual(attempts[0].requestId,attempts[1].requestId);
+      const saved=app.requests.find(r=>r.action==='save');assert.ok(saved);
+      if(edit==='selection')assert(saved.items.every(i=>!i.included));else assert(saved.items.every(i=>i.owner==='jack'));
+    }finally{app.dispose();}
+  }
+});
+
 test('new task conversation confirms unsaved edits and hides the old draft without a server write', async () => {
   const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Prepare signs'}]);
   const app=harness(undefined,initial,'project=p_example&mode=assistant');

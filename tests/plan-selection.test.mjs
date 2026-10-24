@@ -8,7 +8,7 @@ const bundle = await build({
   format: 'esm',
   write: false,
 });
-const { planSelection, duplicateSuggestions } = await import(
+const { planSelection, duplicateSuggestions, selectNewPlanItems } = await import(
   'data:text/javascript;base64,' +
     Buffer.from(bundle.outputFiles[0].text).toString('base64')
 );
@@ -32,6 +32,31 @@ const dependent = {
   dependsOn: ['one'],
   included: true,
 };
+test('select-all-new skips existing and repeated exact signatures without altering proposal content',()=>{
+  const items=[{...item,included:true,owner:'maya',dueDate:'2030-10-01'},
+    {...item,id:'duplicate',title:'CONFIRM venue!',included:true},
+    {...item,id:'new',title:'Prepare programme',owner:'jack',included:false},
+    {...item,id:'repeat',title:'Prepare programme',included:true},
+    {...item,id:'different-time',title:'Prepare programme',start:'2030-10-03T09:00',included:false}];
+  const before=structuredClone(items),selected=selectNewPlanItems(items,[{id:'saved',title:'Confirm venue',start:''}]);
+  assert.deepEqual(selected.map(i=>i.included),[false,false,true,false,true]);
+  selected.forEach((next,index)=>assert.deepEqual({...next,included:before[index].included},before[index]));
+  assert.deepEqual(items,before);assert.equal(planSelection(selected,[{id:'saved',title:'Confirm venue',start:''}]).duplicates.size,0);
+});
+test('batch selection preserves bound semantic reuse and never chooses keep for an unresolved hint',()=>{
+  const existing=[{id:'old',title:'Book venue',start:''}],proposal={...item,title:'Secure venue',existingTaskIndex:0};
+  const bound={...proposal,id:'reuse',duplicateChoice:'reuse',included:false};
+  const unknown={...proposal,id:'unknown'},suggestions=duplicateSuggestions([bound,unknown],existing);
+  const selected=selectNewPlanItems([bound,unknown],existing),result=planSelection(selected,existing,suggestions);
+  assert.deepEqual(selected[0],bound);assert.equal(selected[1].included,true);assert.equal(selected[1].duplicateChoice,undefined);
+  assert.equal(result.reusable.get('reuse'),'old');assert(result.unresolved.has('unknown'));
+});
+test('batch selection keeps prerequisite links and existing-task reuse behavior intact',()=>{
+  const existing=[{id:'old',title:'Confirm venue',start:''}];
+  const selected=selectNewPlanItems([item,{...dependent,included:false}],existing);
+  assert.deepEqual(selected[1].dependsOn,['one']);assert.equal(selected[0].included,false);assert.equal(selected[1].included,true);
+  assert.equal(planSelection(selected,existing).missing.length,0);
+});
 test('unique exact matches can satisfy an excluded prerequisite, without fuzzy title or date matches', () => {
   const existing = [{ id: 'old', title: ' CONFIRM venue! ', start: '' }];
   const resolved = planSelection([item, dependent], existing);

@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
-import { duplicateItemIdentity, planSelection } from '@/lib/plan-selection';
+import { duplicateItemIdentity, planSelection, selectNewPlanItems } from '@/lib/plan-selection';
 import {AskWeftPanel} from './ask-weft-panel';
 import {
   eventKinds,
@@ -67,6 +67,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     starterRequest = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
   const [chatDirty,setChatDirty]=useState(false);
+  const [batchOwner,setBatchOwner]=useState('');
   const [researchBusy,setResearchBusy]=useState(false);
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
@@ -116,6 +117,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     setData(result);
     setBrief(result.brief);
     setItems(result.draft?.items || []);
+    setBatchOwner('');
     setInitial(editable(result.brief, result.draft?.items || []));
   }
   async function run(operation: () => Promise<void>) {
@@ -204,6 +206,14 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       }),
     );
   };
+  function editBatch(operation: (current: ReviewedItem[]) => ReviewedItem[]) {
+    if (locked || applied || pending.current) return;
+    request.current = null;
+    starterRequest.current = null;
+    setItems(operation);
+    setError('');
+    setNotice('Private draft updated. Review the items before adding them; shared tasks have not changed.');
+  }
   async function save() {
     const result = await api(query, {
       action: 'save',
@@ -562,6 +572,28 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           )}
           <fieldset disabled={locked || applied} className="space-y-4">
             <legend className="sr-only">Proposed tasks and activities</legend>
+            {items.length > 1 && !applied && <div className="space-y-3 rounded-lg border p-4" role="group" aria-label="Draft selection and assignment">
+              <p className="text-sm" role="status">{selected.length} of {items.length} proposals selected.</p>
+              <div className="flex flex-wrap gap-3">
+                <Button type="button" variant="outline" disabled={locked} onClick={()=>editBatch(current=>selectNewPlanItems(current,data.existingTasks||[]))}>Select all new items</Button>
+                <Button type="button" variant="outline" disabled={locked||!selected.length} onClick={()=>editBatch(current=>current.map(item=>({...item,included:false})))}>Select none</Button>
+              </div>
+              <p className="text-sm text-muted-foreground">Exact matches already in the project and repeated title/time matches are skipped. Possible duplicates still need your review; saved reuse choices are kept.</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Label htmlFor="batch-owner">Owner for selected items</Label>
+                  <NativeSelect id="batch-owner" className="w-full" value={batchOwner} onChange={e=>setBatchOwner(e.target.value)}>
+                    <option value="" disabled>Choose an owner</option>
+                    {data.members.filter((member:any)=>member.active!==false).map((member:any)=><option key={member.id} value={member.id}>{member.name}</option>)}
+                  </NativeSelect>
+                </div>
+                <Button type="button" variant="outline" disabled={locked||!selected.length||!batchOwner||!data.members.some((member:any)=>member.id===batchOwner&&member.active!==false)} onClick={()=>{
+                  if(!batchOwner||!data.members.some((member:any)=>member.id===batchOwner&&member.active!==false))return;
+                  editBatch(current=>current.map(item=>item.included&&item.duplicateChoice!=='reuse'?{...item,owner:batchOwner}:item));
+                }}>Assign selected</Button>
+              </div>
+              <p className="text-sm text-muted-foreground">Changes only the selected private proposals, including any owners already chosen for them. Excluded and reused items, dates and prerequisites stay unchanged. Nothing is assigned in the shared project until you add the reviewed items.</p>
+            </div>}
             {items.map((item, index) => (
               <Card key={item.id}>
                 <CardContent className="space-y-4 pt-6">
