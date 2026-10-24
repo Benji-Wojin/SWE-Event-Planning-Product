@@ -73,13 +73,16 @@ test('mobile drawer focuses its container, traps Tab, and restores the opener wi
     };
   }
   const document={body:{style:{}},get activeElement(){return active;}};
-  const setDrawer=vm.runInNewContext(source+'\nsetDrawer;',{document,$:id=>elements[id],matchMedia:()=>({matches:mobile})});
+  let tourClosed=0;
+  const setDrawer=vm.runInNewContext(source+'\nsetDrawer;',{document,$:id=>elements[id],matchMedia:()=>({matches:mobile}),tour:{close(options){assert.equal(options.restoreFocus,false);tourClosed++;}}});
   active=elements['#mobileMenu'];setDrawer(true);
+  assert.equal(tourClosed,1);
   assert.equal(active,elements['#sidebar']);assert.equal(elements['#sidebar'].attributes.role,'dialog');
   assert.equal(elements['#mainContent'].inert,true);assert.equal(elements['#sidebar'].inert,false);
   setDrawer(false);assert.equal(active,elements['#mobileMenu']);assert.equal(elements['#sidebar'].inert,true);
   assert.equal(elements['#mainContent'].inert,false);assert.equal(document.body.style.overflow,'');
   mobile=false;setDrawer(false);assert.equal(elements['#sidebar'].inert,false);
+  assert.equal(tourClosed,1,'closing or desktop resize does not dismiss an unrelated tour');
   assert.match(readFileSync('legacy/index.html','utf8'),/id="sidebar"[^>]+tabindex="-1"/);
   const css=readFileSync('legacy/styles.css','utf8');
   assert.match(css,/:focus-visible\{outline:3px solid/);

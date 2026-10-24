@@ -73,11 +73,13 @@
       const below=rect&&rect.bottom+height+16<window.innerHeight;
       box.style.width=width+'px';box.style.left=left+'px';box.style.top=Math.max(12,Math.min(window.innerHeight-height-12,rect?(below?rect.bottom+12:rect.top-height-12):80))+'px';
     }
-    function close() {
+    function close({restoreFocus=true}={}) {
+      if(!box)return;
       resizeObserver?.disconnect();resizeObserver=null;
       remember();box?.remove();box=null;
       document.querySelectorAll('.tour-highlight').forEach(el=>el.classList.remove('tour-highlight'));
-      if(previousFocus?.isConnected)previousFocus.focus({preventScroll:true});
+      if(restoreFocus&&previousFocus?.isConnected)previousFocus.focus({preventScroll:true});
+      previousFocus=null;
     }
     function show(next=step) {
       const s=steps()[next];if(navigate(s.view)===false)return false;step=next;

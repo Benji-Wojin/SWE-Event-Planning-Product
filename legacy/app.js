@@ -281,6 +281,7 @@
   }
   function setDrawer(open) {
     const mobile=matchMedia('(max-width:800px)').matches;
+    if(open&&mobile)tour.close({restoreFocus:false});
     const wasOpen=$('#sidebar').classList.contains('open');
     const focusInDrawer=$('#sidebar').contains(document.activeElement)||document.activeElement===$('#mobileOverlay');
     $('#sidebar').classList.toggle('open',open);
@@ -297,6 +298,7 @@
   function openDialog(title,body,footer='',wide=false,kind='') {
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
+    tour.close({restoreFocus:false});
     ui.dialogKind=kind;
     $('#dialogBackdrop').dataset.dialogKind=kind;
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
@@ -617,7 +619,7 @@
       if(action==='event-context')contextDialog();
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
       if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open();return;}
-      if(action==='ai-task-assistant'&&canCreateTasks()&&window.GatherMode){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();agentPopup.open();return;}
+      if(action==='ai-task-assistant'&&canCreateTasks()&&window.GatherMode){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();tour.close({restoreFocus:false});agentPopup.open();return;}
       if(action==='hide-ai-review'){planSidebar.hide();return;}
       if(action==='edit-memory')memoryEditDialog(id);
       if(action==='reload-private')loadPrivate();
