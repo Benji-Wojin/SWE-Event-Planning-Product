@@ -42,21 +42,26 @@
 
   // Every schedule uses the same event-local zone. Compare wall times directly;
   // converting them in the viewer's zone would change overlap results.
-  function ownerOverlaps(tasks) {
-    const byOwner=new Map(),result=new Map();
+  function overlapsBy(tasks,keyFor) {
+    const groups=new Map(),result=new Map();
     for(const task of ordered(tasks)) {
-      if(!task.owner||resolved(task))continue;
-      const earlier=(byOwner.get(task.owner)||[]).filter(other=>
+      const key=keyFor(task);
+      if(!key||resolved(task))continue;
+      const earlier=(groups.get(key)||[]).filter(other=>
         other.schedule.end?other.schedule.end>task.schedule.start:other.schedule.start===task.schedule.start);
       for(const other of earlier) {
         if(!result.has(task.id))result.set(task.id,[]);
         if(!result.has(other.id))result.set(other.id,[]);
         result.get(task.id).push(other);result.get(other.id).push(task);
       }
-      earlier.push(task);byOwner.set(task.owner,earlier);
+      earlier.push(task);groups.set(key,earlier);
     }
     return result;
   }
+  const ownerOverlaps = tasks => overlapsBy(tasks,task=>task.owner);
+  // Labels are not venue reservations. Match only the entered location, with
+  // compatibility/case/whitespace normalization; never infer aliases or capacity.
+  const locationOverlaps = tasks => overlapsBy(tasks,task=>typeof task.schedule.location==='string'?task.schedule.location.normalize('NFKC').trim().replace(/\s+/gu,' ').toLowerCase():'');
 
   // A review of saved facts, not a safety certification or a readiness score.
   // Unscheduled tasks are preparation; activity dates never imply completion.
@@ -64,7 +69,7 @@
     const tasks=scoped(state.tasks,scope),open=tasks.filter(task=>!resolved(task));
     const byId=new Map(state.tasks.map(task=>[task.id,task]));
     const day=momentKey(now,state.event.timeZone)?.slice(0,10);
-    const overlapIds=ownerOverlaps(tasks);
+    const overlapIds=ownerOverlaps(tasks),locationIds=locationOverlaps(state.tasks);
     return [
       {key:'preparation',title:'Preparation still open',help:'Tasks without an activity time that are not complete or awaiting verification.',tasks:open.filter(task=>!task.schedule&&!waitingVerification(task))},
       {key:'verification',title:'Completion needs verification',help:'A completion report or completed record still needs the required organizer verification.',tasks:open.filter(waitingVerification)},
@@ -75,11 +80,16 @@
       {key:'overdue',title:'Preparation deadline passed',help:'The entered due date is before today in the event time zone. Check the real progress.',tasks:day?open.filter(task=>task.dueDate&&task.dueDate<day&&!waitingVerification(task)):[]},
       {key:'prerequisites',title:'Required work not complete',help:'One or more required linked tasks are incomplete, awaiting verification, or unavailable. Related links do not block completion.',tasks:open.filter(task=>(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId)))))},
       {key:'overlaps',title:'Activities with owner overlaps',help:'The same owner has overlapping entered activity times. Missing end times limit which overlaps can be detected.',tasks:open.filter(task=>overlapIds.has(task.id))},
+      {key:'locations',title:'Potential location overlaps',help:'Matching location labels have overlapping entered times, including activities outside My tasks. A space may be shared or divisible; confirm with the organizer. Aliases, capacity, travel and external bookings are not checked. Missing ends limit detection.',tasks:open.filter(task=>locationIds.has(task.id))},
       {key:'activity-details',title:'Activity details not entered',help:'An activity has no end time or no activity location. These may be intentional; confirm what the team needs.',tasks:open.filter(task=>task.schedule&&(!task.schedule.end||!task.schedule.location))},
     ];
   }
 
   function create({h,options,person,statusBadge}) {
+    function locationNotice(tasks,locations) {
+      const count=tasks.filter(task=>locations.has(task.id)).length;
+      return count?`<p class="schedule-overlap-summary">${count} ${count===1?'activity has a':'activities have'} potential location overlap. Matching location labels can include other teams outside this view. Confirm shared space with the organizer; this is not a booking check.</p>`:'';
+    }
     function fields(schedule={}) {
       return `<div class="form-grid"><label class="field">Starts<input name="start" type="datetime-local" required step="60" value="${h(schedule.start||'')}"></label><label class="field">Ends (optional)<input name="end" type="datetime-local" step="60" value="${h(schedule.end||'')}"></label><label class="field full-width">Activity location (optional)<input name="location" maxlength="240" value="${h(schedule.location||'')}"></label></div>`;
     }
@@ -96,17 +106,18 @@
       return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',true)}</div>`:''}</div>`,labels:live.labels};
     }
     function view(state,organizer,now=Date.now(),scope={}) {
-      const tasks=ordered(scoped(state.tasks,scope)),dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))],overlaps=ownerOverlaps(tasks);
+      const tasks=ordered(scoped(state.tasks,scope)),dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))],overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks);
       const live=clock(state,now,scope),hasSchedule=state.tasks.some(task=>task.schedule);
       const filters=hasSchedule?`<div class="schedule-switch" role="group" aria-label="Activity scope"><button class="filter-tab ${scope.mine?'':'active'}" aria-pressed="${!scope.mine}" data-action="schedule-scope" data-id="all">All activities</button><button class="filter-tab ${scope.mine?'active':''}" aria-pressed="${!!scope.mine}" data-action="schedule-scope" data-id="mine">My activities</button></div>`:'';
       const empty=scope.mine&&hasSchedule?'<h2>No activities assigned to you</h2><button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':`<h2>No scheduled activities</h2>${organizer?(state.event.timeZone?'<p class="muted">Add an activity or schedule an existing task.</p>':needsZone()):'<p class="muted">The organizer can add the event schedule here.</p>'}`;
-      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${tasks.length?dates.map(date=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<button class="schedule-row" data-action="task" data-id="${h(task.id)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}"${live.labels.has(task.id)?'':' hidden'}>${h(live.labels.get(task.id)||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span class="schedule-overlap-label">Owner overlap</span>':''}</span><span class="schedule-owner">${person(task.owner)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span></button>`).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
+      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${locationNotice(tasks,locations)}${tasks.length?dates.map(date=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<button class="schedule-row" data-action="task" data-id="${h(task.id)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}"${live.labels.has(task.id)?'':' hidden'}>${h(live.labels.get(task.id)||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span class="schedule-overlap-label">Owner overlap</span>':''}${locations.has(task.id)?'<span class="schedule-overlap-label">Potential location overlap</span>':''}</span><span class="schedule-owner">${person(task.owner)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span></button>`).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
     }
     function details(task,organizer,event,tasks=[]) {
       const current=task.schedule;
-      const overlaps=ownerOverlaps(tasks).get(task.id)||[];
+      const overlaps=ownerOverlaps(tasks).get(task.id)||[],locations=locationOverlaps(tasks).get(task.id)||[];
       const warning=overlaps.length?`<details class="schedule-overlap-details"><summary>Owner overlap · ${overlaps.length} ${overlaps.length===1?'activity':'activities'}</summary><p>The same owner is scheduled at overlapping times. ${organizer?'Review the times or choose another owner.':'Ask the organizer to review the times or owner.'}</p><ul>${overlaps.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul>${!current?.end||overlaps.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
-      const facts=current?`<section class="schedule-facts"><h3>Scheduled activity</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(event.timeZone)}${current.location?' · '+h(current.location):''}</p>${warning}</section>`:'';
+      const locationWarning=locations.length?`<details class="schedule-overlap-details"><summary>Potential location overlap · ${locations.length} ${locations.length===1?'activity':'activities'}</summary><p>Matching location labels have overlapping entered times. The space may be shared or divisible. ${organizer?'Confirm whether these activities can share the space, or edit the times or activity location.':'Ask the organizer to confirm shared space, times or activity locations.'}</p><ul>${locations.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(other.schedule.location)} · ${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul><p class="muted">Only matching labels are checked, ignoring case and extra spaces. Different room names, capacity, travel and external bookings are not checked.</p>${!current?.end||locations.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
+      const facts=current?`<section class="schedule-facts"><h3>Scheduled activity</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(event.timeZone)}${current.location?' · '+h(current.location):''}</p>${warning}${locationWarning}</section>`:'';
       return facts+(organizer?`<details class="task-schedule task-organizer section-gap"><summary>${current?'Edit schedule':'Add to event schedule'}</summary>${event.timeZone?`<form id="scheduleForm" data-id="${h(task.id)}" class="section-gap">${zone(event)}${fields(current||{})}<div class="form-actions"><button class="btn btn-secondary" type="submit" value="save">Save schedule</button>${current?'<button class="text-button" type="submit" value="remove" formnovalidate>Remove from schedule</button>':''}</div></form>`:needsZone()}</details>`:'');
     }
     function picker(state) {
@@ -126,7 +137,7 @@
       return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. No task is changed and no message is sent.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. Unscheduled tasks appear as preparation; not every task needs an activity time.</p>${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&group.tasks.length<=3?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span></li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
     }
     function runSheet(state,now=Date.now(),scope={}) {
-      const tasks=ordered(scoped(state.tasks,scope)),overlaps=ownerOverlaps(tasks);
+      const tasks=ordered(scoped(state.tasks,scope)),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks);
       const dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))];
       const name=id=>state.members.find(member=>member.id===id)?.name||'Unassigned';
       const local=momentKey(now,state.event.timeZone);
@@ -135,7 +146,7 @@
       const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
       // Deliberately project only schedule facts. Never serialize the workspace,
       // notes, comments, guest records, email, files or private booking details.
-      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(state.event.timeZone||'Time zone not set')}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. This copy is not live. Confirm changes with your team; scheduled times never mark work complete.</p><p class="muted">Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.</p></header>${overlaps.size?`<p class="notice">${overlaps.size} activities have owner overlaps. Review these with the organizer.</p>`:''}${dates.map(date=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(dateLabel(date))}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(dateLabel(date))}<span>${h(scopeLabel)} · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<tr><td data-label="Time">${h(range(task.schedule))}${!task.schedule.end?'<span>No end time set</span>':''}</td><th scope="row">${h(task.title)}${task.schedule.location?`<span>${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span>Owner overlap</span>':''}</th><td data-label="Owner">${h(name(task.owner))}</td><td data-label="Status at snapshot">${h(status(task))}</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p>No scheduled activities in this view.</p>'}</article>`;
+      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(state.event.timeZone||'Time zone not set')}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. This copy is not live. Confirm changes with your team; scheduled times never mark work complete.</p><p class="muted">Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.</p></header>${overlaps.size?`<p class="notice">${overlaps.size} activities have owner overlaps. Review these with the organizer.</p>`:''}${locationNotice(tasks,locations)}${dates.map(date=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(dateLabel(date))}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(dateLabel(date))}<span>${h(scopeLabel)} · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<tr><td data-label="Time">${h(range(task.schedule))}${!task.schedule.end?'<span>No end time set</span>':''}</td><th scope="row">${h(task.title)}${task.schedule.location?`<span>${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span>Owner overlap</span>':''}${locations.has(task.id)?'<span>Potential location overlap</span>':''}</th><td data-label="Owner">${h(name(task.owner))}</td><td data-label="Status at snapshot">${h(status(task))}</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p>No scheduled activities in this view.</p>'}</article>`;
     }
     function newActivity(state) {
       if(!state.event.timeZone)return needsZone();
@@ -143,5 +154,5 @@
     }
     return {view,details,picker,newActivity,clock,runSheet,preparationReview};
   }
-  root.GatherScheduleUI={create,ordered,range,dateLabel,ownerOverlaps,timing,momentKey,reviewItems};
+  root.GatherScheduleUI={create,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems};
 })(typeof window!=='undefined'?window:globalThis);
