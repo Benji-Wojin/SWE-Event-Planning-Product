@@ -97,3 +97,18 @@ test('phone run sheets stack labeled facts without changing the print table',()=
   assert.match(css,/content:attr\(data-label\)/);
   assert.match(html,/<th scope="col">Owner<\/th>/);assert.match(html,/<th scope="row">Check-in/);
 });
+
+test('every printed continuation header identifies event, day, scope and snapshot time',()=>{
+  const input=state(),html=ui.runSheet(input,now,{mine:true,actor:'maya'});
+  const heads=[...html.matchAll(/<thead>([\s\S]*?)<\/thead>/g)].map(match=>match[1]);
+  assert.equal(heads.length,2);
+  for(const head of heads){
+    assert.match(head,/run-sheet-repeat-heading/);assert.match(head,/School dance/);
+    assert.match(head,/My activities · Maya Chen/);assert.match(head,/2026-11-20 · 15:00 · America\/Los_Angeles/);
+  }
+  assert.match(heads[0],/Fri, Nov 20, 2026/);assert.match(heads[1],/Sat, Nov 21, 2026/);
+  const css=readFileSync('legacy/styles.css','utf8');
+  assert.match(css,/\.run-sheet-repeat-heading\{display:none\}/);
+  assert.match(css,/#eventRunSheet \.run-sheet-repeat-heading\{display:table-row\}/);
+  assert.match(css,/#eventRunSheet caption\{display:none\}/);
+});
