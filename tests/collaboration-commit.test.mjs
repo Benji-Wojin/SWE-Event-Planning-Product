@@ -210,6 +210,25 @@ async function setup() {
 }
 const isCommit = (project, sql, args) =>
   sql.startsWith('UPDATE workspaces SET data=') && args[1] === project;
+test('event reschedule uses real project guards, stale CAS and commit-time organizer authority',async()=>{
+  const {project,actor}=await setup();
+  await save(project,organizer,'completeSetup',[{date:'2026-10-30'}]);
+  const task=(await save(project,organizer,'addTask',[{title:'School dance check-in',owner:actor,dueDate:'2026-10-23',schedule:{start:'2026-10-30T17:00',end:'2026-10-30T18:00',location:'Hall'}}])).result;
+  const current=await read(project),input={fromDate:'2026-10-30',toDate:'2026-11-06',timeZone:'America/Los_Angeles',tasks:[{id:task.id,revision:task.revision,moveDue:true,moveSchedule:true}]};
+  const before=stored(project);
+  assert.equal((await mutate(project,teammate,'rescheduleEvent',[input],current.revision)).status,403);assert.deepEqual(stored(project),before);
+  assert.equal((await mutate(project,organizer,'rescheduleEvent',[{...input,tasks:[{...input.tasks[0],owner:'jack'}]}],current.revision)).status,400);assert.deepEqual(stored(project),before);
+  const foreign=await setup();await save(foreign.project,organizer,'completeSetup',[{date:'2026-10-30'}]);
+  const untouched=stored(foreign.project);assert.equal((await mutate(foreign.project,organizer,'rescheduleEvent',[input])).status,400);assert.deepEqual(stored(foreign.project),untouched);
+  const saved=await mutate(project,organizer,'rescheduleEvent',[input],current.revision);assert.equal(saved.status,200,await saved.clone().text());
+  const next=await saved.json();assert.equal(next.state.event.date,'2026-11-06');assert.equal(next.state.tasks.find(t=>t.id===task.id).dueDate,'2026-10-30');
+  const stable=stored(project);assert.equal((await mutate(project,organizer,'rescheduleEvent',[input],current.revision)).status,409);assert.deepEqual(stored(project),stable);
+  const {project:race}=await setup();await save(race,organizer,'completeSetup',[{date:'2026-10-30'}]);
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('reschedule-owner-race',race,organizer.userId,'jack','fictional',new Date().toISOString());
+  const original=stored(race);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(race,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,race);}};
+  try{assert.equal((await mutate(race,organizer,'rescheduleEvent',[{...input,tasks:[]}])).status,409);assert.ok(intercepted);assert.deepEqual(stored(race),original);}finally{beforeRun=undefined;}
+});
 test('batch acceptance commits one reviewed owner-only selection with no partial invalid or stale save', async () => {
   const { project, actor } = await setup();
   const a = (

@@ -96,6 +96,7 @@
     listeners.forEach((fn) => fn(snapshot.state));
   }
   const methods = [
+    'rescheduleEvent',
     'setNextUp', 'requestRecovery', 'resolveRecovery',
     'setTaskPriority',
     'setTaskSchedule',
@@ -201,6 +202,7 @@
       verifyTask: 1,
       recordFollowup: 2,
       updateEvent: 1,
+      rescheduleEvent: 1,
       addMemory: 1,
       updateMemory: 2,
       acceptSuggestion: 1,

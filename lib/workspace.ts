@@ -1,5 +1,6 @@
 import { env } from '@/lib/runtime';
 import '@/legacy/calendar.js';
+import '@/legacy/reschedule.js';
 import '@/legacy/store.js';
 import { HttpError, principal } from './security';
 import { accessArgs, projectWriteAccess, projectUser } from './project-access';
@@ -94,6 +95,7 @@ export function snapshot(
 }
 const arity: Record<string, number> = {
   completeSetup: 1,
+  rescheduleEvent: 1,
   setNextUp: 2,
   requestRecovery: 2,
   resolveRecovery: 2,
@@ -161,6 +163,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     switch (method) {
       case 'completeSetup':
         result = store.completeSetup(a, user.actorId);
+        break;
+      case 'rescheduleEvent':
+        result = store.rescheduleEvent(a, user.actorId);
         break;
       case 'setNextUp':
         result = store.setNextUp(a, b, user.actorId);
@@ -282,9 +287,9 @@ export async function mutateWorkspace(
       'This pilot workspace is full. Export your plan before adding more content.',
     );
   const write = await env.DB.prepare(
-    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
+    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${input.method==='rescheduleEvent'?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
-    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(files?[files.scope,files.revision]:[]))
+    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(input.method==='rescheduleEvent'?[projectId,user.userId,projectId,user.userId]:[]),...(files?[files.scope,files.revision]:[]))
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

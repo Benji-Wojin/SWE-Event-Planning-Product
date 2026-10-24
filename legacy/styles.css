@@ -700,3 +700,8 @@ form[aria-busy="true"]{cursor:progress}
 .availability-polls .panel { min-width:0; overflow-wrap:anywhere; }
 .availability-dates { list-style:none; padding:0; display:grid; gap:16px; }
 .availability-dates > li { border-top:1px solid var(--line); padding-top:12px; overflow-wrap:anywhere; }
+.reschedule-review {display:grid;gap:16px;margin:20px 0;}
+.reschedule-row {min-width:0;border:1px solid var(--border);border-radius:10px;padding:16px;}
+.reschedule-row legend {max-width:100%;font-weight:600;overflow-wrap:anywhere;}
+.reschedule-row .check-field {align-items:flex-start;margin-top:12px;}
+.reschedule-row .check-field span {min-width:0;overflow-wrap:anywhere;}

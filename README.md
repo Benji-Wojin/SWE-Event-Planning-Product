@@ -79,6 +79,10 @@ New Helpful links searches are disabled by default during migration; unexpired c
 
 ### Event-day run sheet
 
+Organizers can use **Timeline → Move event plan** to review a different event date and select individual preparation deadlines or activities to shift by the same number of calendar days. Nothing is selected automatically. Activity clock times and the event time zone stay fixed; ambiguous or nonexistent moved local times require separate editing. Fixed external deadlines and completed/reported work cannot be moved by this batch review. Changed tasks retain their owners and progress, but acceptance and Next up commitments are cleared for reconfirmation. Task history records the change. The event date and selected task dates save together, with stale-write and organizer-access checks.
+
+Unselected tasks, catering cutoffs, budget due dates, bookings, saved planning briefs and availability-poll options stay unchanged. Review these separately, and check owner overlaps and dependencies in Before the event afterward. No invitations, messages, reservations or payments are made. Changing Project settings by itself still does not move task dates.
+
 **Timeline → Before the event** reviews the current saved plan: open preparation, required verification, blocked work, ownership/acceptance, overdue deadlines, unfinished prerequisites, owner overlaps and missing activity details. It follows All/My scope (preparation-deadline view reviews all tasks). Sections can overlap; zero findings never certifies safety, approvals, bookings or readiness. Open a task to take an explicit action; reopening refreshes the snapshot. No automatic task changes or messages are made.
 
 The event schedule keeps unfinished activities in **Check progress** after their entered end time, or once a start time is reached without an end set. Open an activity to check with its owner and record the real outcome. Time alone never changes task status; reported work awaiting verification stays in the dated timetable rather than asking for another progress report. The section follows the current All activities / My activities scope and refreshes with the schedule clock.

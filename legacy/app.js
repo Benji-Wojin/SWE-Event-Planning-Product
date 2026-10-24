@@ -242,7 +242,7 @@
   }
   function timelineView(s) {
     const scheduled=ui.timelineMode!=='deadlines';
-    const controls=scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton();
+    const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
     const heading=pageHeading('','Timeline','','<button class="btn btn-secondary" data-action="before-event-review">Before the event</button>'+controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
     if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -580,6 +580,12 @@
   }
   function memoryFields(m={}) {return `<label class="field section-gap">When does this apply?<select name="scope">${options([['always','All events'],['outdoor','Outdoor events only'],['transport','When organized transport is needed'],['same-venue','At this venue only']],m.scope||'always')}</select></label><label class="field section-gap">Context / exceptions<textarea name="context" rows="2" maxlength="2000" placeholder="Useful for arrivals above 100 people; reconsider for smaller events…">${h(m.context||'')}</textarea></label>`;}
 
+  function rescheduleDialog() {
+    if(!isOrganizer()||window.GatherAccessLost)return;
+    const state=store.getState();
+    if(!GatherReschedule.validDay(state.event.date))throw new Error('Set the current event date in Project settings before moving the plan.');
+    openDialog('Move event plan',`<p>Current event date: <strong>${h(state.event.date)}</strong>. Choose the new date, then review which preparation deadlines and activities to move. Nothing changes until you save the review.</p><form id="rescheduleDateForm"><label class="field">New event date<input type="date" name="toDate" required></label><div class="form-actions"><button type="submit" class="btn btn-primary">Review proposed dates</button></div></form>`,'',false,'reschedule');
+  }
   document.addEventListener('click',async event=>{
     if(ui.pendingSave){event.preventDefault();return;}
     const el=event.target.closest('[data-action], [data-view]');
@@ -589,7 +595,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','task','review-acceptance','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','move-event-plan','task','review-acceptance','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -597,6 +603,7 @@
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
+      if(action==='move-event-plan')rescheduleDialog();
       if(action==='add-task')newTaskDialog();
       if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
       if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState()));
@@ -685,10 +692,22 @@
     event.preventDefault();
     if(ui.pendingSave||form.dataset.saving==='true')return;
     const data=Object.fromEntries(new FormData(form));
+    if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
     if(form.id==='acceptTasksForm')data.selections=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
     $('.form-error',form)?.remove();
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
+      if(form.id==='rescheduleDateForm'){
+        const state=store.getState(),plan=GatherReschedule.preview(state,data.toDate);
+        openDialog('Review event date changes',GatherReschedule.reviewMarkup(state,plan,h),'',true,'reschedule');
+        $('#rescheduleReviewForm').dataset.zone=state.event.timeZone;
+      }
+      if(form.id==='rescheduleReviewForm'){
+        if(!isOrganizer()||window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen the date review.');
+        if(data.confirmed!=='on')throw new Error('Confirm that you reviewed the selected changes.');
+        const result=store.rescheduleEvent({fromDate:form.dataset.from,toDate:form.dataset.to,timeZone:form.dataset.zone,tasks:data.tasks},ui.actor);
+        closeDialog();render();toast(`Event date moved. ${result.changedTaskCount} tasks have reviewed date changes; progress is unchanged.`);
+      }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
         store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);

@@ -8,6 +8,7 @@ let html = readFileSync('legacy/index.html', 'utf8')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
   .replace('calendar.js?v=coordination-1', '/gather-assets/calendar.js')
+  .replace('src="reschedule.js"', 'src="/gather-assets/reschedule.js"')
   .replace('navigation.js?v=coordination-1', '/gather-assets/navigation.js')
   .replace('priorities.js?v=coordination-1', '/gather-assets/priorities.js')
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
@@ -41,6 +42,7 @@ html = html.replaceAll('Field Day 2026', 'Project')
   .replace('<span class="event-symbol">FD</span>', '<span class="event-symbol" aria-hidden="true">…</span>')
   .replace('<div class="app-shell" id="appShell">', '<main id="workspaceBoot" aria-busy="true"><span class="workspace-boot-brand" aria-hidden="true">weft</span><p role="status">Loading project…</p><a href="/" target="_top">All projects</a></main><div class="app-shell" id="appShell" hidden>');
 writeFileSync('public/gather-assets/calendar.js',readFileSync('legacy/calendar.js','utf8'));
+writeFileSync('public/gather-assets/reschedule.js',readFileSync('legacy/reschedule.js','utf8'));
 writeFileSync('public/gather-assets/navigation.js',readFileSync('legacy/navigation.js','utf8'));
 writeFileSync('public/gather-assets/lovable-ui.css',readFileSync('legacy/lovable-ui.css','utf8'));
 writeFileSync('public/gather-assets/theme.js',readFileSync('legacy/theme.js','utf8'));
@@ -62,6 +64,7 @@ app=app.replace("messageId:''", "messageId:new URLSearchParams(location.search).
   .replace("if(action==='refresh-inbox')", "if(action==='private-original')await showPrivateOriginal(id);\n      if(action==='refresh-inbox')")
   .replace("if(document.hidden)lockPrivate();", "if(document.hidden){lockPrivate();clearPrivateOriginal();}");
 const mutations = [
+  'rescheduleEvent',
   'setNextUp', 'requestRecovery', 'resolveRecovery',
   'setTaskPriority',
   'setTaskSchedule',

@@ -712,6 +712,38 @@
       const next = eventFields(data);
       state.event = next; entry(actor, 'updated the event context used by planning checks', '', 'event-context'); save(); return copy(next);
     }
+    function rescheduleEvent(input, actor='jack') {
+      actorId(actor);
+      if(actor!=='jack')throw new Error('Only the organizer can move the event plan.');
+      if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['fromDate','toDate','timeZone','tasks'].includes(key))||
+        input.fromDate!==state.event.date||input.timeZone!==state.event.timeZone||!Array.isArray(input.tasks)||input.tasks.length>200||new Set(input.tasks.map(item=>item?.id)).size!==input.tasks.length)
+        throw new Error('Reload and review the current event date and up to 200 different tasks.');
+      const plan=globalThis.GatherReschedule.preview(state,input.toDate);
+      // Validate the entire selection before changing any event or task data.
+      const changes=input.tasks.map(item=>{
+        if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','revision','moveDue','moveSchedule'].includes(key))||
+          typeof item.id!=='string'||!Number.isSafeInteger(item.revision)||typeof item.moveDue!=='boolean'||typeof item.moveSchedule!=='boolean'||(!item.moveDue&&!item.moveSchedule))throw new Error('Review which task dates should move.');
+        const row=plan.rows.find(row=>row.id===item.id);
+        if(!row||row.revision!==item.revision)throw new Error('A selected task changed. Reload and review the plan.');
+        if(item.moveDue&&!row.due||item.moveSchedule&&!row.schedule)throw new Error('Completed, reported, fixed or invalid dates cannot be moved by this review.');
+        return {task:taskById(item.id),row,item};
+      });
+      const at=timestamp();
+      for(const {task,row,item} of changes){
+        if(item.moveDue){task.deadlineHistory.push({from:task.dueDate,to:row.due,at,actor});task.dueDate=row.due;}
+        if(item.moveSchedule)task.schedule=copy(row.schedule);
+        closeRecovery(task,'superseded',actor);
+        for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
+        task.revision++;
+        const text=`Event date moved ${plan.fromDate} → ${plan.toDate}. ${item.moveDue?'Preparation deadline: '+row.oldDue+' → '+row.due+'. ':''}${item.moveSchedule?'Activity: '+row.oldSchedule.start+' → '+row.schedule.start+'. ':''}Please review and reconfirm your responsibility. Progress is unchanged.`;
+        task.comments.push({id:id('comment'),actor,text,at,kind:'plan-decision'});
+        entry(actor,text,task.id,'event-reschedule');
+      }
+      state.event.date=plan.toDate;
+      entry(actor,`moved the event date ${plan.fromDate} → ${plan.toDate}; reviewed date changes for ${changes.length} tasks`,'','event-reschedule');
+      save(true,false);
+      return {date:plan.toDate,changedTaskCount:changes.length};
+    }
     function addMemory(data, actor = "jack") {
       actorId(actor);
       const change = clean(data.change, 3000);
@@ -1107,7 +1139,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
