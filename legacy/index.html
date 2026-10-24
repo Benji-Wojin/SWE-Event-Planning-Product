@@ -13,6 +13,7 @@
 </head>
 <body>
   <div class="app-shell" id="appShell">
+    <a class="workspace-skip-link" href="#viewRoot" data-action="skip-content">Skip to content</a>
     <button class="mobile-overlay" id="mobileOverlay" aria-label="Close navigation" tabindex="-1"></button>
     <aside class="sidebar" id="sidebar" aria-label="Main navigation" tabindex="-1">
       <a class="brand" href="#overview" data-view="overview" aria-label="Weft home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-name">weft</span></a>
@@ -54,7 +55,7 @@
       </header>
       <div class="storage-warning" id="storageWarning" role="status" hidden>Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.</div>
       <div class="workspace-sync-notice" id="workspaceSyncNotice" role="status" hidden>New project updates are available. Your unsaved text is unchanged. <button class="text-button" data-action="reload-workspace">Reload &amp; discard unsaved edits</button></div>
-      <div class="page-wrap" id="viewRoot"></div>
+      <div class="page-wrap" id="viewRoot" tabindex="-1"></div>
     </main>
   </div>
   <div class="dialog-backdrop" id="dialogBackdrop" hidden>

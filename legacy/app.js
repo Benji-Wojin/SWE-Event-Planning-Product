@@ -39,6 +39,17 @@
   const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name] || icons.grid}"/></svg>`;
   const fillIcons = root => $$('[data-icon]', root).forEach(el => el.innerHTML = icon(el.dataset.icon));
   const focusable = root => $$('a[href],button,input,select,textarea,summary,[tabindex]',root).filter(el=>el.tabIndex>=0&&!el.matches(':disabled')&&el.getClientRects().length&&!el.closest('[hidden],[inert]'));
+  function skipToContent() {
+    const root=$('#viewRoot');
+    if(ui.pendingSave||window.GatherAccessLost||!root||root.closest('[hidden],[inert]')||!$('#dialogBackdrop').hidden||$('#sidebar').classList.contains('open'))return false;
+    const target=$$('h1',root).find(el=>!el.closest('[hidden],[inert]')&&el.getClientRects().length)||root;
+    tour.close({restoreFocus:false});
+    target.style.scrollMarginTop=`${Math.ceil($('.topbar')?.getBoundingClientRect().height||0)+16}px`;
+    target.setAttribute('tabindex','-1');
+    target.focus({preventScroll:true});
+    target.scrollIntoView({block:'start',behavior:'instant'});
+    return true;
+  }
   function restoreFocus(previous,root=document) {
     if(!previous)return false;
     const target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
@@ -557,6 +568,7 @@
     if(ui.pendingSave){event.preventDefault();return;}
     const el=event.target.closest('[data-action], [data-view]');
     if(!el)return;
+    if(el.dataset.action==='skip-content'){event.preventDefault();skipToContent();return;}
     if(el.dataset.view){event.preventDefault();if(el.dataset.view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}if(!confirmDiscard($('#dialog'),el.dataset.view!==ui.view?$('#emailReviewForm'):null))return;if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;

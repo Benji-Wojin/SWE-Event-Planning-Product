@@ -8,6 +8,9 @@ button,input,select,textarea{font:inherit;-webkit-tap-highlight-color:transparen
 button{color:inherit;cursor:pointer}
 button:disabled{cursor:not-allowed;opacity:.5}
 :focus-visible{outline:3px solid #70987c;outline-offset:3px}
+.workspace-skip-link{position:fixed;top:12px;left:12px;z-index:120;max-width:calc(100vw - 24px);padding:12px 16px;transform:translateY(calc(-100% - 24px));border:1px solid var(--line);border-radius:8px;background:var(--white);color:var(--ink);box-shadow:var(--shadow);font-weight:600;text-decoration:underline}
+.workspace-skip-link:focus{transform:translateY(0)}
+#viewRoot,#viewRoot h1[tabindex="-1"]{scroll-margin-top:100px}
 button,a{touch-action:manipulation}
 button svg,.nav-icon svg,.metric-icon svg,.email-icon svg,.activity-icon svg,.briefing-icon svg,.ai-orb svg{width:18px;height:18px;flex:0 0 auto;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 svg{vertical-align:middle}
