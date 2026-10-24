@@ -77,6 +77,12 @@ New Helpful links searches are disabled by default during migration; unexpired c
 
 ## Event information
 
+### Event-day run sheet
+
+When activities are scheduled, **Timeline → Run sheet** opens a read-only snapshot of the current All activities or My activities view. It groups event-local times by date and shows activity names, locations, owners, status and entered owner-overlap warnings. Completion awaiting verification stays distinct from Done. It never changes tasks or infers completion from the clock.
+
+**Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
+
 ### Optional manual budget
 
 The **Budget** page is off by default. Organizers can enable a single-currency tracker, set an optional target, and record costs with an estimate, commitment, net payment recorded, owner, due date and optional task link. Teammates can view; only organizers can edit. This is a manual planning record: no payment, approval, reservation or task completion is executed. Do not enter bank/card information or private booking references.

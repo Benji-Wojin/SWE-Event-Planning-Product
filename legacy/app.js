@@ -215,7 +215,7 @@
   }
   function timelineView(s) {
     const scheduled=ui.timelineMode!=='deadlines';
-    const controls=scheduled?(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':''):addButton();
+    const controls=scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton();
     const heading=pageHeading('','Timeline','',controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
     if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -559,7 +559,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','task','add-task','add-activity','schedule-task','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','task','add-task','add-activity','schedule-task','run-sheet','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -572,6 +572,8 @@
       if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState()));
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
+      if(action==='run-sheet'&&!window.GatherAccessLost)openDialog('Event run sheet',schedule.runSheet(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor}),'<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
+      if(action==='print-run-sheet'&&ui.dialogKind==='run-sheet'&&$('#eventRunSheet')&&!window.GatherAccessLost)window.print();
       if(action==='task')taskDialog(id);
       if(action==='quick-tour'){if(confirmDiscard($('#dialog'),$('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}

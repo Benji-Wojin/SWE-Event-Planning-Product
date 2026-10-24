@@ -94,11 +94,22 @@
       if(!available.length)return '<p>All existing tasks are scheduled.</p><button class="btn btn-primary" data-action="add-activity">Add activity</button>';
       return `<form id="schedulePickerForm">${zone(state.event)}<label class="field">Existing task<select name="taskId" required>${options([['','Choose a task'],...available.map(task=>[task.id,task.title])],'')}</select></label>${fields()}<div class="form-actions"><button class="btn btn-primary" type="submit">Add to schedule</button></div></form>`;
     }
+    function runSheet(state,now=Date.now(),scope={}) {
+      const tasks=ordered(scoped(state.tasks,scope)),overlaps=ownerOverlaps(tasks);
+      const dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))];
+      const name=id=>state.members.find(member=>member.id===id)?.name||'Unassigned';
+      const local=momentKey(now,state.event.timeZone);
+      const timestamp=local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC';
+      const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
+      // Deliberately project only schedule facts. Never serialize the workspace,
+      // notes, comments, guest records, email, files or private booking details.
+      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(state.event.name||'Untitled event')}</h2><p>${h(scope.mine?'My activities · '+name(scope.actor):'All activities')}</p><p>All activity times: ${h(state.event.timeZone||'Time zone not set')}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. This copy is not live. Confirm changes with your team; scheduled times never mark work complete.</p><p class="muted">Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.</p></header>${overlaps.size?`<p class="notice">${overlaps.size} activities have owner overlaps. Review these with the organizer.</p>`:''}${dates.map(date=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(dateLabel(date))}</caption><thead><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<tr><td data-label="Time">${h(range(task.schedule))}${!task.schedule.end?'<span>No end time set</span>':''}</td><th scope="row">${h(task.title)}${task.schedule.location?`<span>${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span>Owner overlap</span>':''}</th><td data-label="Owner">${h(name(task.owner))}</td><td data-label="Status at snapshot">${h(status(task))}</td></tr>`).join('')}</tbody></table></div>`).join('')||'<p>No scheduled activities in this view.</p>'}</article>`;
+    }
     function newActivity(state) {
       if(!state.event.timeZone)return needsZone();
       return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(member=>member.active!==false).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${zone(state.event)}${fields()}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><input name="category" type="hidden" value="Program"><input name="status" type="hidden" value="todo"><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
     }
-    return {view,details,picker,newActivity,clock};
+    return {view,details,picker,newActivity,clock,runSheet};
   }
   root.GatherScheduleUI={create,ordered,range,dateLabel,ownerOverlaps,timing,momentKey};
 })(typeof window!=='undefined'?window:globalThis);
