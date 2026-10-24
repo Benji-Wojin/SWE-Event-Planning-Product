@@ -84,6 +84,7 @@ const mutations = [
   'ignoreMessage',
   'acceptTask',
   'acceptTasks',
+  'assignTasks',
   'reportCompletion',
   'setCompletionEvidence',
   'verifyTask',

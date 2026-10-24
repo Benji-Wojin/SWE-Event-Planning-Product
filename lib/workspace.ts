@@ -117,6 +117,7 @@ const arity: Record<string, number> = {
   ignoreMessage: 1,
   acceptTask: 1,
   acceptTasks: 1,
+  assignTasks: 1,
   reportCompletion: 2,
   setCompletionEvidence: 2,
   verifyTask: 1,
@@ -230,6 +231,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
       case 'acceptTasks':
         result = store.acceptTasks(a, user.actorId);
         break;
+      case 'assignTasks':
+        result = store.assignTasks(a, user.actorId);
+        break;
       case 'reportCompletion':
         result = store.reportCompletion(a, b, user.actorId);
         break;
@@ -280,6 +284,17 @@ export async function mutateWorkspace(
     throw new HttpError(409, 'The plan changed in another tab. Reload this page, review the latest plan, and retry.');
   const files=await completionFiles(projectId,input,authorized);
   const result = applyWorkspaceAction(store, user, input);
+  // The destination must still be a real active project member at commit,
+  // not a legacy example or a removed/reinvited membership generation.
+  let assignment: { actor: string; revision: number } | undefined;
+  if (input.method === 'assignTasks' && input.args[0].owner !== 'jack') {
+    const actor = input.args[0].owner;
+    const membership = await env.DB.prepare("SELECT revision FROM project_members WHERE project_id=? AND actor_id=? AND revoked_at=''")
+      .bind(projectId, actor).first<{ revision: number }>();
+    if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
+    assignment = { actor, revision: membership.revision };
+  }
+  const organizerOnly = ['rescheduleEvent', 'assignTasks'].includes(input.method);
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(
@@ -287,9 +302,9 @@ export async function mutateWorkspace(
       'This pilot workspace is full. Export your plan before adding more content.',
     );
   const write = await env.DB.prepare(
-    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${input.method==='rescheduleEvent'?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
+    `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${organizerOnly?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${assignment?" AND EXISTS (SELECT 1 FROM project_members WHERE project_id=? AND actor_id=? AND revision=? AND revoked_at='')":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
-    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(input.method==='rescheduleEvent'?[projectId,user.userId,projectId,user.userId]:[]),...(files?[files.scope,files.revision]:[]))
+    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]))
     .run();
   if (write.meta.changes !== 1)
     throw new HttpError(

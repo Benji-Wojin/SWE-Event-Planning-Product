@@ -67,6 +67,8 @@ The settings page distinguishes configured background scheduling, a completed ch
 
 ## Task focus and helpful links
 
+Organizers can use **Tasks → Assign tasks** to delegate selected open tasks from the current filtered view to one active teammate in a single reviewed save (up to 100 tasks). Nothing is selected by default; choose the owner and confirm the changes. Completed work and pending completion reports are excluded. Tasks already owned by that person stay unchanged. Reassignment resets the previous acceptance, Next up commitment and pending recovery requests, but preserves task progress, instructions, preparation deadlines, schedules and prerequisites. The new owner must accept responsibility separately. No messages are sent. Stale task reviews, removed teammates and changed organizer access cannot partially apply a batch.
+
 Owners can commit to up to three actionable Next up tasks, propose a date or ask for help without changing the agreed plan. Organizer decisions stay in Needs attention. Decisions record a check-in, deadline history and an owner-visible comment; fixed external dates require explicit confirmation. Ranking considers essential work and downstream deadlines, not only overdue age. Waiting parents route attention to their prerequisites. These are in-app prompts, not background email reminders.
 
 When Next up is empty, ready tasks are shown directly; unavailable work and no assignments have distinct empty states. Reassignment advice considers active teammates only.

@@ -190,12 +190,28 @@
   }
   function tasksView(s) {
     const tasks=filteredTasks(s);
-    return pageHeading('','Tasks','',addButton())+`
+    return pageHeading('','Tasks','',`${isOrganizer()?'<button class="btn btn-secondary" data-action="review-assignments">Assign tasks</button>':''}${addButton()}`)+`
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table"><thead><tr><th><span class="sr-only">Completion</span></th><th scope="col">TASK</th><th scope="col">OWNER</th><th scope="col">STATUS</th><th scope="col">DUE</th><th scope="col">LATEST UPDATE</th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
+  }
+  function assignmentCandidates(tasks) {
+    return tasks.filter(task=>task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
+  }
+  function assignmentDialog() {
+    if(!isOrganizer()||window.GatherAccessLost)return;
+    const state=store.getState(),tasks=assignmentCandidates(filteredTasks(state));
+    if(!tasks.length){toast('No open tasks in this view can be assigned together. Review completed or reported work separately.');return;}
+    const people=state.members.filter(person=>person.active!==false&&(!window.GatherMode||window.GatherMode.demo||!person.role?.includes('· example')));
+    openDialog('Assign tasks to a teammate',`<p>Choose tasks from the current filtered view, up to 100 at a time, then choose one owner. Nothing is selected for you. Repeat for another teammate.</p><p class="notice">Only open work without a completion report is included. Reassignment clears the previous owner’s acceptance, Next up commitment and pending plan requests; the new owner must accept responsibility. Task progress, instructions, dates, schedules and prerequisites stay unchanged. No messages are sent.</p><form id="assignTasksForm" data-actor="${h(ui.actor)}"><label class="field">New owner<select name="owner" required>${options([['','Choose a teammate'],...people.map(person=>[person.id,person.name])],'')}</select></label><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="assignTask" value="${h(task.id)}" data-revision="${task.revision}" data-owner="${h(task.owner)}"><span><strong>${h(task.title)}</strong><span>Current owner: ${h(task.owner?member(task.owner).name:'Unassigned')} · ${h(statuses[task.status]||task.status)}</span><span>${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}${task.schedule?' · Activity '+h(task.schedule.start.replace('T',' '))+' · '+h(state.event.timeZone):''}</span><span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="assignmentCount" role="status">0 tasks selected; 0 owner changes.</p><label class="acceptance-item"><input type="checkbox" name="confirmed" required><span>I reviewed these owner changes and the need for renewed acceptance. Tasks already owned by this teammate will stay unchanged.</span></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button id="assignmentSubmit" class="btn btn-primary" type="submit" disabled>Assign selected tasks</button></div></form>`,'',true,'assignment');
+  }
+  function syncAssignmentSelection(form) {
+    const selected=$$('input[name="assignTask"]:checked',form),owner=$('select[name="owner"]',form).value;
+    const changes=owner?selected.filter(input=>input.dataset.owner!==owner).length:0;
+    $('#assignmentCount',form).textContent=`${selected.length} ${selected.length===1?'task':'tasks'} selected; ${changes} owner ${changes===1?'change':'changes'}.`;
+    $('#assignmentSubmit',form).disabled=!changes||!$('input[name="confirmed"]',form).checked;
   }
   function acceptanceCandidates(tasks) {
     return tasks.filter(task=>task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
@@ -595,7 +611,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','move-event-plan','task','review-acceptance','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','move-event-plan','task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -647,6 +663,11 @@
       if(action==='ignore-message'){store.ignoreMessage(id,ui.actor);ui.messageId='';render();toast('Set aside. The plan was not changed.');}
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Responsibility accepted.');}
       if(action==='review-acceptance'&&!window.GatherAccessLost)acceptanceDialog();
+      if(action==='review-assignments')assignmentDialog();
+      if(action==='assignment-select'){
+        const form=$('#assignTasksForm');
+        if(form){$$('input[name="assignTask"]',form).forEach(input=>input.checked=id==='all');syncAssignmentSelection(form);}
+      }
       if(action==='acceptance-select'){
         const form=$('#acceptTasksForm');
         if(form){$$('input[name="acceptTask"]',form).forEach(input=>input.checked=id==='all');syncAcceptanceSelection(form);}
@@ -695,6 +716,7 @@
     const data=Object.fromEntries(new FormData(form));
     if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
     if(form.id==='acceptTasksForm')data.selections=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
+    if(form.id==='assignTasksForm')data.tasks=$$('input[name="assignTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
     $('.form-error',form)?.remove();
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
@@ -708,6 +730,12 @@
         if(data.confirmed!=='on')throw new Error('Confirm that you reviewed the selected changes.');
         const result=store.rescheduleEvent({fromDate:form.dataset.from,toDate:form.dataset.to,timeZone:form.dataset.zone,tasks:data.tasks},ui.actor);
         closeDialog();render();toast(`Event date moved. ${result.changedTaskCount} tasks have reviewed date changes; progress is unchanged.`);
+      }
+      if(form.id==='assignTasksForm'){
+        if(!isOrganizer()||window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task assignment.');
+        if(data.confirmed!=='on')throw new Error('Confirm that you reviewed the owner changes.');
+        const result=store.assignTasks({owner:data.owner,tasks:data.tasks},ui.actor);
+        closeDialog();render();toast(`${result.changedTaskCount} ${result.changedTaskCount===1?'task assigned':'tasks assigned'}. New owners still need to accept; progress is unchanged.`);
       }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
@@ -774,6 +802,7 @@
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
+    if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'));
     if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
     if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
     if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);

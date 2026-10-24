@@ -349,6 +349,39 @@ test('membership revoked during a batch acceptance commit leaves every selected 
   assert.equal(response.status, 409);
   assert.deepEqual(stored(project), baseline);
 });
+test('batch assignment is organizer-only, revision-bound, project-scoped and accepted separately',async()=>{
+  const {project,actor}=await setup();
+  const a=(await save(project,organizer,'addTask',[{title:'School volunteer briefing',owner:'jack',dueDate:'2027-02-01'}])).result;
+  const b=(await save(project,organizer,'addTask',[{title:'Corporate AV check',owner:'jack',schedule:{start:'2027-02-02T09:00',end:'2027-02-02T10:00',location:'Hall'}}])).result;
+  const input={owner:actor,tasks:[a,b].map(t=>({id:t.id,revision:t.revision}))};
+  let before=stored(project);
+  assert.equal((await mutate(project,teammate,'assignTasks',[input],before.revision)).status,403);assert.deepEqual(stored(project),before);
+  assert.equal((await mutate(project,organizer,'assignTasks',[{...input,tasks:[input.tasks[0],{...input.tasks[1],owner:actor}]}],before.revision)).status,400);assert.deepEqual(stored(project),before);
+  const foreign=await setup(),untouched=stored(foreign.project);
+  assert.equal((await mutate(foreign.project,organizer,'assignTasks',[input])).status,400);assert.deepEqual(stored(foreign.project),untouched);
+  await save(project,organizer,'updateTask',[b.id,{note:'Revised instructions'}]);before=stored(project);
+  assert.equal((await mutate(project,organizer,'assignTasks',[input],before.revision)).status,400);assert.deepEqual(stored(project),before);
+  const current=await read(project),fresh={owner:actor,tasks:current.state.tasks.map(t=>({id:t.id,revision:t.revision}))};
+  const saved=await save(project,organizer,'assignTasks',[fresh]);assert.equal(saved.revision,current.revision+1);assert.equal(saved.result.changedTaskCount,2);
+  for(const task of saved.result.tasks){const old=current.state.tasks.find(t=>t.id===task.id);assert.equal(task.owner,actor);assert.equal(task.acceptedAt,'');assert.equal(task.status,'todo');assert.deepEqual(task.schedule,old.schedule);assert.equal(task.dueDate,old.dueDate);assert.equal(task.note,old.note);}
+  const stable=stored(project);assert.equal((await mutate(project,organizer,'assignTasks',[fresh],current.revision)).status,409);assert.deepEqual(stored(project),stable);
+  const accepted=await save(project,teammate,'acceptTasks',[saved.result.tasks.map(t=>({id:t.id,revision:t.revision}))]);assert.ok(accepted.result.every(t=>t.acceptedBy===actor&&t.status==='todo'));
+});
+test('assignment target removal or renewed membership at commit cannot partially save',async()=>{
+  for(const renewed of [false,true]){
+    const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'School dance check-in'}])).result;
+    const baseline=stored(project);let intercepted=false;
+    beforeRun=(sql,args)=>{if(!isCommit(project,sql,args)||intercepted)return;intercepted=true;sqlite.prepare('UPDATE project_members SET revoked_at=?,revision=revision+1 WHERE project_id=? AND actor_id=?').run(renewed?'':'removed',project,actor);};
+    try{assert.equal((await mutate(project,organizer,'assignTasks',[{owner:actor,tasks:[{id:task.id,revision:task.revision}]}],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
+  }
+});
+test('assignment loses organizer authority even if old organizer remains a teammate',async()=>{
+  const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate handoff'}])).result;
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('batch-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
+  const baseline=stored(project);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  try{assert.equal((await mutate(project,organizer,'assignTasks',[{owner:'jack',tasks:[{id:task.id,revision:task.revision}]}],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
+});
 async function bounded(promise) {
   let timer;
   try {
