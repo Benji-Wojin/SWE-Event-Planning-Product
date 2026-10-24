@@ -8,6 +8,7 @@ import type { PlanBrief, PlanOutput } from '@/lib/plan-generation';
 import { researchIntent } from '@/lib/research-intent';
 import { ResearchMessages } from './research-messages';
 import type { ResearchController } from './use-research';
+import { writtenDraftArtifact } from '@/lib/written-draft';
 const chatStarters = [
   'Plan my next three steps',
   'Write a welcoming announcement',
@@ -48,11 +49,19 @@ export function TaskChat({
 }) {
   const [message, setMessage] = useState('');
   const sending = useRef(false);
-  const threadBox = useRef<HTMLDivElement>(null), followLatest = useRef(true);
+  const threadBox = useRef<HTMLDivElement>(null),
+    followLatest = useRef(true);
   useEffect(() => {
     const element = threadBox.current;
-    if (element && followLatest.current) element.scrollTop = element.scrollHeight;
-  }, [brief.description, work?.content, question, research?.data?.requestId, research?.busy]);
+    if (element && followLatest.current)
+      element.scrollTop = element.scrollHeight;
+  }, [
+    brief.description,
+    work?.content,
+    question,
+    research?.data?.requestId,
+    research?.busy,
+  ]);
   const intent = researchIntent(message),
     web = intent === 'search',
     clarify = intent === 'clarify';
@@ -152,17 +161,25 @@ export function TaskChat({
           <h2>{work.title}</h2>
           <p>{work.content}</p>
           {work.kind === 'written_draft' && (
-            <small>
-              Review facts and placeholders before using this. Nothing was sent,
-              booked or changed in your project. No task was marked complete.
-            </small>
+            <>
+              <small>
+                Review facts and placeholders before using this. Nothing was
+                sent, booked or changed in your project. No task was marked
+                complete.
+              </small>
+              <WrittenDraftActions work={work} locked={locked} />
+            </>
           )}
         </article>
       )}
       {!work && !asking && !failed && !applied && proposalCount > 0 && (
         <article className="task-chat-message task-chat-assistant">
           <span>✦ Weft · task suggestions</span>
-          <p>I’ve prepared {proposalCount} task {proposalCount === 1 ? 'suggestion' : 'suggestions'} for your review below. Nothing has been added yet.</p>
+          <p>
+            I’ve prepared {proposalCount} task{' '}
+            {proposalCount === 1 ? 'suggestion' : 'suggestions'} for your review
+            below. Nothing has been added yet.
+          </p>
         </article>
       )}
       {!researchFirst && <ResearchMessages data={research?.data || null} />}
@@ -200,7 +217,9 @@ export function TaskChat({
         ref={threadBox}
         onScroll={(event) => {
           const element = event.currentTarget;
-          followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+          followLatest.current =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            48;
         }}
         tabIndex={0}
         role="region"
@@ -384,5 +403,118 @@ export function TaskChat({
         )}
       </form>
     </section>
+  );
+}
+
+export function WrittenDraftActions({
+  work,
+  locked,
+}: {
+  work: PlanOutput['work'];
+  locked: boolean;
+}) {
+  const artifact = writtenDraftArtifact(work);
+  const [feedback, setFeedback] = useState({ source: '', message: '' });
+  const [copyingSource, setCopyingSource] = useState('');
+  const notice = feedback.source === artifact?.text ? feedback.message : '';
+  const copying = !!artifact && copyingSource === artifact.text;
+  const attempt = useRef(0),
+    inFlight = useRef(false);
+  useEffect(() => {
+    inFlight.current = false;
+    // Cancel progress too: an invalidated clipboard request cannot clear it later.
+    setCopyingSource('');
+    return () => {
+      attempt.current++;
+    };
+  }, [artifact?.text]);
+  if (!artifact) return null;
+  async function copyDraft() {
+    if (locked || inFlight.current || !artifact) return;
+    const ticket = ++attempt.current;
+    const notify = (message: string) =>
+      setFeedback({ source: artifact.text, message });
+    inFlight.current = true;
+    setCopyingSource(artifact.text);
+    notify('');
+    try {
+      if (!navigator.clipboard?.writeText)
+        throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(artifact.text);
+      if (ticket === attempt.current)
+        notify('Draft copied. Review it before sharing.');
+    } catch {
+      if (ticket === attempt.current)
+        notify(
+          'Copy is unavailable here. Download the draft, or select its text to copy it.',
+        );
+    } finally {
+      if (ticket === attempt.current) {
+        inFlight.current = false;
+        setCopyingSource('');
+      }
+    }
+  }
+  function downloadDraft() {
+    if (locked || !artifact) return;
+    const notify = (message: string) =>
+      setFeedback({ source: artifact.text, message });
+    let url: string | undefined, link: HTMLAnchorElement | undefined;
+    try {
+      url = URL.createObjectURL(
+        new Blob([artifact.text], { type: 'text/plain;charset=utf-8' }),
+      );
+      link = document.createElement('a');
+      link.href = url;
+      link.download = artifact.filename;
+      document.body.appendChild(link);
+      link.click();
+      notify('Download requested. Check your downloads.');
+    } catch {
+      notify(
+        'The download could not start. You can select and copy the draft text.',
+      );
+    } finally {
+      link?.remove();
+      if (url) {
+        const downloadUrl = url;
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      }
+    }
+  }
+  return (
+    <div className="mt-3 space-y-2">
+      <div
+        className="flex flex-wrap gap-2"
+        role="group"
+        aria-label="Use written draft"
+      >
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={locked || copying}
+          onClick={() => void copyDraft()}
+        >
+          {copying ? 'Copying…' : 'Copy draft'}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={locked}
+          onClick={downloadDraft}
+        >
+          Download draft (.txt)
+        </Button>
+      </div>
+      <small>
+        Includes this draft’s title, text and review reminder only. It is not
+        shared with your team.
+      </small>
+      <p role="status" aria-live="polite" className="text-xs">
+        {notice}
+      </p>
+    </div>
   );
 }
