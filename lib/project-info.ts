@@ -13,6 +13,7 @@ import {
 import { demoPersona, loadDemo } from './demo';
 import { projectUser, assertProjectAccess, projectWriteAccess, accessArgs, type ProjectUser } from './project-access';
 import { loadWorkspace } from './workspace';
+import { datePollProposal, datePollAnswers, type DatePoll } from './date-availability';
 
 const guests = (globalThis as any).GatherGuests;
 const budgetModel = (globalThis as any).GatherBudget;
@@ -29,9 +30,9 @@ type Context = {
   generation: string;
   authorization?: ProjectUser;
   budgetWorkspaceRevision?: number;
-  budgetWrite?: boolean;
+  organizerWrite?: boolean;
 };
-type Info = { guests: any[]; files: any[]; receipts: any[]; budget?: any };
+type Info = { guests: any[]; files: any[]; receipts: any[]; budget?: any; datePolls?: DatePoll[] };
 export async function infoContext(request: Request): Promise<Context> {
   const params = new URL(request.url).searchParams;
   if (params.get('demo') === '1') {
@@ -141,6 +142,7 @@ export function infoSnapshot(context: Context, state: Info, revision: number) {
     })),
     uploadsAvailable: !!env.BUCKET,
     budget: state.budget || budgetModel.initial(),
+    datePolls: state.datePolls || [],
   };
 }
 export async function readInfo(context: Context) {
@@ -216,7 +218,7 @@ async function save(
     AND (?='' OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?))
     AND ${context.authorization ? projectWriteAccess : '1'}
     AND (?=-1 OR EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?))
-    AND ${context.budgetWrite && context.authorization ? "((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))" : '1'}`)
+    AND ${context.organizerWrite && context.authorization ? "((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))" : '1'}`)
       .bind(
         await seal(state, 'info:' + context.scope),
         context.scope,
@@ -228,7 +230,7 @@ async function save(
         context.budgetWorkspaceRevision ?? -1,
         context.demoId || context.scope,
         context.budgetWorkspaceRevision ?? -1,
-        ...(context.budgetWrite && context.authorization ? [context.scope, context.userId, context.scope, context.userId] : []),
+        ...(context.organizerWrite && context.authorization ? [context.scope, context.userId, context.scope, context.userId] : []),
       )
       .run();
   if (result.meta.changes !== 1)
@@ -253,7 +255,7 @@ function preview(csv: unknown, state: Info) {
   }
 }
 export async function mutateInfo(context: Context, input: any) {
-  context = { ...context, budgetWorkspaceRevision: undefined, budgetWrite: false };
+  context = { ...context, budgetWorkspaceRevision: undefined, organizerWrite: false };
   const allowed: Record<string, string[]> = {
     add: ['guest'],
     edit: ['id', 'guest'],
@@ -265,6 +267,9 @@ export async function mutateInfo(context: Context, input: any) {
     budgetSettings: ['settings'],
     budgetItem: ['id', 'item'],
     budgetArchive: ['id', 'archived'],
+    createDatePoll: ['poll'],
+    respondDatePoll: ['id', 'answers'],
+    closeDatePoll: ['id', 'closed'],
   };
   if (!Object.hasOwn(allowed, input.action))
     throw new HttpError(400, 'Choose a valid event info action.');
@@ -272,6 +277,8 @@ export async function mutateInfo(context: Context, input: any) {
   const budgetAction = input.action.startsWith('budget');
   if (budgetAction && !context.admin)
     throw new HttpError(403, 'Only the organizer can edit the event budget.');
+  const pollAdmin = input.action === 'createDatePoll' || input.action === 'closeDatePoll';
+  if (pollAdmin && !context.admin) throw new HttpError(403, 'Only the organizer can create or close date polls.');
   const { state, revision } = await load(context);
   if (input.action === 'preview') {
     checkRevision(input.revision, revision);
@@ -337,7 +344,35 @@ export async function mutateInfo(context: Context, input: any) {
     }
     budget.history.push({ id, action: input.action, at, actor: context.actor, name: context.name, before, after });
     budget.history = budget.history.slice(-100);
-    context.budgetWrite = true;
+    context.organizerWrite = true;
+  }
+  if (input.action.endsWith('DatePoll')) {
+    const polls = state.datePolls ||= [];
+    const poll = polls.find(row => row.id === input.id);
+    try {
+      if (input.action === 'createDatePoll') {
+        if (polls.length >= 8) throw new Error('This project supports eight date polls, including closed polls. Reopen an existing poll if needed.');
+        polls.push({ id:crypto.randomUUID(), ...datePollProposal(input.poll), createdAt:at, createdBy:context.actor, createdName:context.name, closedAt:'', responses:[] });
+      } else {
+        if (!poll) throw new HttpError(404, 'Date poll not found in this project.');
+        if (input.action === 'closeDatePoll') {
+          if (typeof input.closed !== 'boolean') throw new Error('Choose whether to close or reopen the poll.');
+          poll.closedAt = input.closed ? poll.closedAt || at : '';
+        } else {
+          if (poll.closedAt) throw new HttpError(409, 'This poll is closed. Reload to review the saved responses.');
+          const answers = datePollAnswers(poll, input.answers);
+          if (answers.length && !poll.responses.some(row => row.actor === context.actor) && poll.responses.length >= 200)
+            throw new Error('This poll supports 200 recorded responses.');
+          poll.responses = poll.responses.filter(row => row.actor !== context.actor);
+          // Identity and timestamp come only from the authenticated context.
+          if (answers.length) poll.responses.push({ actor:context.actor, name:context.name, at, answers });
+        }
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(400, (error as Error).message);
+    }
+    context.organizerWrite = pollAdmin;
   }
   if (input.action === 'add' || input.action === 'edit') {
     const guest = normalizeGuest(input.guest),

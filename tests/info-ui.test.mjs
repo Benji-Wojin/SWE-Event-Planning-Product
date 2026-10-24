@@ -6,8 +6,8 @@ import {setImmediate} from 'node:timers/promises';
 import '../legacy/guests.js';
 
 const source=readFileSync('legacy/info-ui.js','utf8');
-async function harness(uploadsAvailable){
-  let snapshot={revision:1,uploadsAvailable,identity:{admin:true},guests:[],files:[]},poll;
+async function harness(uploadsAvailable,extra={}){
+  let snapshot={revision:1,uploadsAvailable,identity:{admin:true},guests:[],files:[],...extra},poll;
   const dialogs=[],toasts=[],requests=[];
   const host={isConnected:true,innerHTML:'',listeners:{},contains:()=>false,addEventListener(event,fn){this.listeners[event]=fn;},querySelector:()=>({innerHTML:''})};
   const window={GatherGuests,GatherMode:{projectId:'fictional-project'}};
@@ -42,4 +42,11 @@ test('storage capability changes update Files without requiring guest data revis
   assert.match(h.host.innerHTML,/data-info-upload/);assert.doesNotMatch(h.host.innerHTML,/File uploads are unavailable/);
   h.change({uploadsAvailable:false});await h.poll();
   assert.doesNotMatch(h.host.innerHTML,/data-info-upload/);assert.match(h.host.innerHTML,/File uploads are unavailable/);
+});
+test('date availability distinguishes missing responses, preserves poll zone and offers only own response controls',async()=>{
+  const poll={id:'date-poll',title:'Fictional dates',timeZone:'Asia/Tokyo',dates:['2028-03-02','2028-03-04'],createdAt:'2027-12-01T00:00:00Z',createdName:'Organizer',closedAt:'',responses:[{actor:'me',name:'Teammate',answers:[{date:'2028-03-02',availability:'available'}]}]};
+  const h=await harness(false,{identity:{admin:false,actor:'me'},datePolls:[poll]});h.click({'data-info-tab':'dates'});
+  assert.match(h.host.innerHTML,/Date availability/);assert.match(h.host.innerHTML,/Asia\/Tokyo/);assert.match(h.host.innerHTML,/1 can attend/);assert.match(h.host.innerHTML,/No response for this date/);assert.match(h.host.innerHTML,/Edit my availability/);
+  assert.doesNotMatch(h.host.innerHTML,/data-info-new-poll|data-info-poll-close/);assert.match(h.host.innerHTML,/No event date, activity time or task changes automatically/);
+  h.change({revision:2,datePolls:[{...poll,closedAt:'2028-01-01'}]});await h.poll();assert.doesNotMatch(h.host.innerHTML,/data-info-poll-vote/);assert.match(h.host.innerHTML,/Closed/);assert.equal(h.requests.every(row=>row.options.method==='GET'),true);
 });

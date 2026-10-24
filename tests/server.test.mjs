@@ -14,6 +14,7 @@ import {taskAssistantTests} from './task-assistant.cases.mjs';
 import {budgetTests} from './budget.cases.mjs';
 import {researchTests} from './research.cases.mjs';
 import {guestArrivalTests} from './guest-arrivals.cases.mjs';
+import {dateAvailabilityTests} from './date-availability.cases.mjs';
 
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle')
@@ -2235,4 +2236,17 @@ test('starter checklist integration',async t=>{
     owner();assert.equal((await workspace.GET(getRequest('/api/workspace?project=main'))).status,200);
     await starterChecklistTests({t,assert,sqlite:isolated,db:isolatedDb,owner,request,planApi,workspace,newTeamProject,joinPerson,asTeammate});
   }finally{globalThis.__gatherEnv.DB=previousDb;isolated.close();owner();}
+});
+
+test('team date availability integration',async t=>{
+  // Keep these projects out of the long-lived fixture's owner project cap.
+  const isolated=new DatabaseSync(':memory:');
+  for(const name of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort())isolated.exec(readFileSync('drizzle/'+name,'utf8'));
+  const isolatedDb={prepare(sql){let args=[];return {bind(...values){args=values;return this;},async first(){return isolated.prepare(sql).get(...args)||null;},async all(){return {results:isolated.prepare(sql).all(...args)};},async run(){return {meta:{changes:Number(isolated.prepare(sql).run(...args).changes)}};}};}};
+  const previous=globalThis.__gatherEnv.DB;
+  globalThis.__gatherEnv.DB=isolatedDb;
+  try {
+    owner();assert.equal((await workspace.GET(getRequest('/api/workspace?project=main'))).status,200);
+    await dateAvailabilityTests({t,sqlite:isolated,owner,infoRead,infoWrite,env:globalThis.__gatherEnv});
+  } finally {globalThis.__gatherEnv.DB=previous;isolated.close();owner();}
 });

@@ -7,6 +7,7 @@
     toast,
     saveLock,
     isDialogOpen,
+    getWorkspace,
   }) {
     let state = null,
       host = null,
@@ -41,6 +42,16 @@
       h(record.updatedName) +
       ' · ' +
       h(new Date(record.updatedAt).toLocaleDateString());
+    const availability = { available:'Can attend', maybe:'Maybe', unavailable:'Cannot attend' };
+    const dateLabel = date => new Date(date+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric',timeZone:'UTC'});
+    function datePollMarkup() {
+      const polls=state.datePolls||[];
+      return `<div class="page-heading"><h1>Date availability</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${state.identity.admin?'<button class="btn btn-primary" data-info-new-poll>Propose dates</button>':''}</div></div><div class="filter-tabs" role="group" aria-label="Event info views"><button class="filter-tab" aria-pressed="false" data-info-tab="guests">Guest list</button><button class="filter-tab" aria-pressed="false" data-info-tab="files">Files</button><button class="filter-tab active" aria-pressed="true" data-info-tab="dates">Date availability</button></div><p class="notice">Project-team planning only. Your name and availability responses are visible to project members. This is not a guest RSVP, booking or commitment. No event date, activity time or task changes automatically, and no messages are sent.</p><p class="muted">Only the organizer proposes dates and closes or reopens polls. Each person can change only their own response. Recorded responses may include former project members; missing responses are not a “cannot attend”.</p><div class="availability-polls">${polls.map(poll=>`<section class="panel"><div class="panel-heading"><h2>${h(poll.title)}</h2><span class="chip">${poll.closedAt?'Closed':'Open'}</span></div><p>Dates in ${h(poll.timeZone)} · ${poll.responses.length} recorded response${poll.responses.length===1?'':'s'}</p><p class="muted">Proposed by ${h(poll.createdName)} · ${h(new Date(poll.createdAt).toLocaleDateString())}. Date options stay fixed; propose another poll if they need to change.</p><ul class="availability-dates">${poll.dates.map(date=>{
+        const answers=poll.responses.map(response=>({name:response.name,answer:response.answers.find(answer=>answer.date===date)?.availability||''}));
+        const key=poll.id+'-'+date;
+        return `<li><strong>${h(dateLabel(date))}</strong><p>${Object.entries(availability).map(([value,label])=>`${answers.filter(row=>row.answer===value).length} ${h(label.toLowerCase())}`).join(' · ')}</p><details data-info-responses="${h(key)}"><summary data-info-poll-summary="${h(key)}">Recorded responses for ${h(dateLabel(date))}</summary>${answers.length?`<ul>${answers.map(row=>`<li>${h(row.name)} · ${h(availability[row.answer]||'No response for this date')}</li>`).join('')}</ul>`:'<p class="muted">No responses recorded.</p>'}</details></li>`;
+      }).join('')}</ul><div class="inline">${!poll.closedAt?`<button class="btn btn-secondary" data-info-poll-vote="${h(poll.id)}">${poll.responses.some(row=>row.actor===state.identity.actor)?'Edit':'Record'} my availability<span class="sr-only"> for ${h(poll.title)}</span></button>`:''}${state.identity.admin?`<button class="text-button" data-info-poll-close="${h(poll.id)}">${poll.closedAt?'Reopen':'Close'} poll<span class="sr-only"> ${h(poll.title)}</span></button>`:''}</div></section>`).join('')||'<section class="panel"><h2>No date options yet</h2><p>The organizer can propose dates for the team to compare before agreeing when to meet.</p></section>'}</div>`;
+    }
     async function request(data, extra) {
       const response = await fetch(endpoint(extra), {
         method: data ? 'POST' : 'GET',
@@ -162,9 +173,12 @@
           ? [active.selectionStart, active.selectionEnd]
           : null;
       const summary = G.arrivalSummary(state.guests);
-      host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived && state.uploadsAvailable === true ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
+      const expanded=new Set([...(host.querySelectorAll?.('details[data-info-responses][open]')||[])].map(el=>el.dataset.infoResponses));
+      if(tab==='dates') host.innerHTML=datePollMarkup();
+      else host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived && state.uploadsAvailable === true ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
         ['guests', 'Guest list'],
         ['files', 'Files'],
+        ['dates', 'Date availability'],
       ]
         .map(
           ([key, label]) =>
@@ -173,8 +187,9 @@
         .join(
           '',
         )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent. Arrival records are manual, separate from RSVP responses, and are not a live headcount or a release/safeguarding system.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<p class="info-arrival-summary" role="status">Active guest list: <strong>${summary.arrived} arrival record${summary.arrived === 1 ? '' : 's'}</strong> · ${summary.attending} RSVP attending · ${summary.total} guest record${summary.total === 1 ? '' : 's'}. Totals exclude archived guests and do not change with filters.</p><div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select><select data-info-arrival-filter aria-label="Filter arrival records"><option value="" ${!arrival ? 'selected' : ''}>All arrival records</option><option value="waiting" ${arrival === 'waiting' ? 'selected' : ''}>No arrival recorded</option><option value="arrived" ${arrival === 'arrived' ? 'selected' : ''}>Arrival recorded</option></select></div>` : ''}<div data-info-list>${list()}</div></section>`;
+      for(const el of host.querySelectorAll?.('details[data-info-responses]')||[])el.open=expanded.has(el.dataset.infoResponses);
       if (focus) {
-        const next = [...host.querySelectorAll('button,input,select')].find(
+        const next = [...host.querySelectorAll('button,input,select,summary')].find(
           (element) => element.getAttribute(focus.name) === focus.value,
         );
         next?.focus({ preventScroll: true });
@@ -215,6 +230,44 @@
       render();
       closeDialog();
       toast(message);
+    }
+    function pollForm(title,contents,onSave,message) {
+      const revision=state.revision,requestId=crypto.randomUUID();
+      openDialog(title,`<form id="datePollForm">${contents}<p class="notice">Shared with this project’s members only. No event settings or tasks change.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Save</button><button class="text-button" type="button" data-poll-reload>Reload saved polls</button></div></form>`,'',false,'info');
+      const form=document.getElementById('datePollForm');
+      form.addEventListener('submit',event=>{
+        // Disabled controls are omitted by native FormData. Capture first;
+        // submit's save lock then protects exactly these reviewed values.
+        const data=new FormData(form);
+        return submit(form,event,()=>save({...onSave(data),revision,requestId},message));
+      });
+      form.querySelector('[data-poll-reload]').addEventListener('click',()=>{if(form.dataset.saving)return;closeDialog();void load();});
+      return form;
+    }
+    function newPollDialog() {
+      if(!state.identity.admin)return;
+      const zone=getWorkspace?.()?.event?.timeZone||Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const option=index=>`<label class="field" for="poll-option-${index}">Proposed date ${index}<input id="poll-option-${index}" name="date" type="date" ${index<=2?'required':''}></label>`;
+      const form=pollForm('Propose event dates',`<label class="field">Poll title<input name="title" required maxlength="160"></label><label class="field section-gap">Dates are in this time zone<input name="timeZone" value="${h(zone)}" required maxlength="100"></label><p class="muted">Choose 2–12 different dates. Leave extra rows blank. These options will stay fixed so saved responses keep their meaning.</p><div data-poll-options class="form-grid">${option(1)+option(2)}</div><button class="text-button section-gap" type="button" data-poll-add-date>Add another date</button>`,data=>({action:'createDatePoll',poll:{title:data.get('title'),timeZone:data.get('timeZone'),dates:data.getAll('date').filter(Boolean)}}),'Date options saved. No event date was changed.');
+      let count=2;
+      const add=form.querySelector('[data-poll-add-date]');
+      add.addEventListener('click',()=>{
+        if(form.dataset.saving||count>=12)return;
+        const box=document.createElement('div');box.innerHTML=option(++count);
+        const label=box.firstElementChild;form.querySelector('[data-poll-options]').append(label);
+        label.querySelector('input').focus();add.hidden=count>=12;
+      });
+    }
+    function pollVoteDialog(id) {
+      const poll=(state.datePolls||[]).find(row=>row.id===id);
+      if(!poll||poll.closedAt)return;
+      const own=poll.responses.find(row=>row.actor===state.identity.actor);
+      pollForm('Your date availability',`<h3>${h(poll.title)}</h3><p>Calendar dates in ${h(poll.timeZone)}. Your name and choices will be visible to the project team.</p>${poll.dates.map(date=>`<label class="field section-gap">${h(dateLabel(date))}<select name="${h(date)}"><option value="">No response for this date</option>${Object.entries(availability).map(([value,label])=>`<option value="${h(value)}" ${own?.answers.some(answer=>answer.date===date&&answer.availability===value)?'selected':''}>${h(label)}</option>`).join('')}</select></label>`).join('')}<p class="muted">Saving replaces only your answers. Choose “No response” for every date to clear your response.</p>`,data=>({action:'respondDatePoll',id,answers:poll.dates.filter(date=>data.get(date)).map(date=>({date,availability:data.get(date)}))}),'Your availability was saved.');
+    }
+    function pollCloseDialog(id) {
+      const poll=(state.datePolls||[]).find(row=>row.id===id);
+      if(!poll||!state.identity.admin)return;
+      pollForm(poll.closedAt?'Reopen date poll':'Close date poll',`<h3>${h(poll.title)}</h3><p>${poll.closedAt?'Members will be able to edit their own availability again.':'Members will no longer be able to edit availability in this poll. Saved responses are kept.'} This does not select a date. Agree the date with your team, then update Project settings separately.</p>`,()=>({action:'closeDatePoll',id,closed:!poll.closedAt}),poll.closedAt?'Date poll reopened.':'Date poll closed. Responses kept.');
     }
     function arrivalDialog(id) {
       const guest = state.guests.find((g) => g.id === id && !g.archivedAt);
@@ -444,6 +497,9 @@
         if (el.hasAttribute('data-info-import')) importDialog();
         if (el.hasAttribute('data-info-upload')) uploadDialog();
         if (el.dataset.infoArchiveFile) fileArchive(el.dataset.infoArchiveFile);
+        if (el.hasAttribute('data-info-new-poll')) newPollDialog();
+        if (el.dataset.infoPollVote) pollVoteDialog(el.dataset.infoPollVote);
+        if (el.dataset.infoPollClose) pollCloseDialog(el.dataset.infoPollClose);
       });
       host.addEventListener('input', (event) => {
         if (event.target.hasAttribute('data-info-search')) {

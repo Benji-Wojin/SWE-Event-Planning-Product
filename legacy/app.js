@@ -180,7 +180,7 @@
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const schedule = GatherScheduleUI.create({h,options,person,statusBadge});
-  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden});
+  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState()});
   const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState()});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
