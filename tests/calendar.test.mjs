@@ -96,3 +96,30 @@ test('per-task date labels do not clone the full workspace', () => {
   store.completeSetup({timeZone:zone});
   assert.equal(store.getTimeZone(),zone);
 });
+
+test('overview countdown counts event calendar days across viewer DST and year boundaries', () => {
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf('  function overview(s) {');
+  const prefix=source.slice(start,source.indexOf('    const suggestions=',start));
+  const original=process.env.TZ;
+  const cases=[
+    ['2026-10-24T04:00:00Z','Asia/Tokyo','2026-12-04',41],
+    ['2026-10-31T13:00:00Z','Asia/Tokyo','2026-11-02',2],
+    ['2026-03-07T13:00:00Z','Asia/Tokyo','2026-03-09',2],
+    ['2028-02-28T12:00:00Z','UTC','2028-03-01',2],
+    ['2026-12-31T12:00:00Z','UTC','2027-01-01',1],
+    ['2026-10-24T04:00:00Z','America/Los_Angeles','2026-10-23',0],
+    ['2026-10-24T04:00:00Z','Asia/Tokyo','2026-10-23',0],
+    ['2026-10-24T04:00:00Z','UTC','',null],
+  ];
+  try {
+    for(const viewer of ['America/Los_Angeles','Europe/London','Asia/Tokyo','UTC']){
+      process.env.TZ=viewer;
+      for(const [instant,eventZone,eventDate,expected] of cases){
+        const context=vm.createContext({attention:()=>[],completed:()=>[],pending:()=>[],dateKey:()=>GatherCalendar.dayKey(instant,eventZone)});
+        vm.runInContext(prefix+'return days;} globalThis.countdown=overview;',context);
+        assert.equal(context.countdown({event:{date:eventDate},tasks:[]}),expected,`${viewer}: ${eventZone} ${eventDate}`);
+      }
+    }
+  } finally {if(original===undefined)delete process.env.TZ;else process.env.TZ=original;}
+});

@@ -147,10 +147,13 @@
   function overview(s) {
     const needs=attention(s), done=completed(s), emails=pending(s);
     const progress=Math.round(done.length/Math.max(s.tasks.length,1)*100);
-    const days=s.event.date?Math.max(0,Math.ceil((new Date(s.event.date+'T00:00:00')-new Date(dateKey()+'T00:00:00'))/86400000)):null;
+    const today=dateKey();
+    // Calendar keys are already event-local. UTC midnight avoids viewer DST
+    // turning one calendar day into 23 or 25 elapsed hours.
+    const days=s.event.date?Math.max(0,(Date.parse(s.event.date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=dateKey()?` · ${days} days until event`:''}`,`${window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton()}`)+setupNote+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${addButton()}`)+setupNote+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
