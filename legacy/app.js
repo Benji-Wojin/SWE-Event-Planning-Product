@@ -188,11 +188,24 @@
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',addButton())+`
-      ${ui.tab==='mine'?recovery.nextUpPanel(s):''}
+      ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table"><thead><tr><th><span class="sr-only">Completion</span></th><th scope="col">TASK</th><th scope="col">OWNER</th><th scope="col">STATUS</th><th scope="col">DUE</th><th scope="col">LATEST UPDATE</th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
+  }
+  function acceptanceCandidates(tasks) {
+    return tasks.filter(task=>task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
+  }
+  function acceptanceDialog() {
+    const tasks=acceptanceCandidates(filteredTasks(store.getState()));
+    if(!tasks.length){toast('No unaccepted open tasks in this view.');return;}
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from the current view are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites. Open any task first if you need to clarify its scope.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}"><span><strong>${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(store.getState().event.timeZone)}</span>`:''}<span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+  }
+  function syncAcceptanceSelection(form) {
+    const count=$$('input[name="acceptTask"]:checked',form).length;
+    $('#acceptanceCount',form).textContent=`${count} ${count===1?'task':'tasks'} selected.`;
+    $('#acceptanceSubmit',form).disabled=count===0;
   }
   function inboxView(s) {
     const messages=s.messages.filter(m=>!m.ignoredAt);
@@ -573,7 +586,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','task','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','task','review-acceptance','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -622,6 +635,11 @@
       }
       if(action==='ignore-message'){store.ignoreMessage(id,ui.actor);ui.messageId='';render();toast('Set aside. The plan was not changed.');}
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Responsibility accepted.');}
+      if(action==='review-acceptance'&&!window.GatherAccessLost)acceptanceDialog();
+      if(action==='acceptance-select'){
+        const form=$('#acceptTasksForm');
+        if(form){$$('input[name="acceptTask"]',form).forEach(input=>input.checked=id==='all');syncAcceptanceSelection(form);}
+      }
       if(action==='report-task')responseDialog(id);
       if(action==='resume-task'){el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}}
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
@@ -664,9 +682,14 @@
     event.preventDefault();
     if(ui.pendingSave||form.dataset.saving==='true')return;
     const data=Object.fromEntries(new FormData(form));
+    if(form.id==='acceptTasksForm')data.selections=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
     $('.form-error',form)?.remove();
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
+      if(form.id==='acceptTasksForm'){
+        if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
+        store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);
+      }
       if(form.id==='newTaskForm'){
         let taskData=data;
         if(form.dataset.scheduled==='true'){const {start,end,location,...fields}=data;taskData={...fields,schedule:{start,end,location}};}
@@ -727,6 +750,7 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
+    if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
     if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
     if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
     if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
@@ -748,6 +772,8 @@
   });
   function renderTaskRows() {
     const s=store.getState(),tasks=filteredTasks(s);
+    const acceptance=$('[data-action="review-acceptance"]');
+    if(acceptance){const count=acceptanceCandidates(tasks).length;acceptance.hidden=!count;acceptance.textContent=`Review task acceptance (${count})`;}
     $('#taskRows').innerHTML=tasks.map(taskRow).join('');
     $('#taskEmpty').hidden=!!tasks.length;
     $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;

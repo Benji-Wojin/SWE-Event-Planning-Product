@@ -114,6 +114,7 @@ const arity: Record<string, number> = {
   refreshProposal: 2,
   ignoreMessage: 1,
   acceptTask: 1,
+  acceptTasks: 1,
   reportCompletion: 2,
   setCompletionEvidence: 2,
   verifyTask: 1,
@@ -133,12 +134,18 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
   )
     throw new HttpError(400, 'Unsupported workspace action.');
   const memberTaskCreation = method === 'addTask' && store.getState().event.membersCanCreateTasks === true;
-  if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
+  if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'acceptTasks', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
       'Only the organizer can make this change.',
     );
   const [a, b, c] = input.args;
+  if (method === 'acceptTasks') {
+    if (!Array.isArray(a) || !a.length || a.length > 100 || a.some(item => !item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['id', 'revision'].includes(key)) || typeof item.id !== 'string' || !item.id || !Number.isSafeInteger(item.revision) || item.revision < 1) || new Set(a.map(item => item.id)).size !== a.length)
+      throw new HttpError(400, 'Choose between 1 and 100 different tasks with their reviewed revisions.');
+    const owned = new Set(store.getState().tasks.filter((task: any) => task.owner === user.actorId).map((task: any) => task.id));
+    if (a.some(item => !owned.has(item.id))) throw new HttpError(403, 'Only the assigned owner can accept these commitments.');
+  }
   if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
@@ -214,6 +221,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'acceptTask':
         result = store.acceptTask(a, user.actorId);
+        break;
+      case 'acceptTasks':
+        result = store.acceptTasks(a, user.actorId);
         break;
       case 'reportCompletion':
         result = store.reportCompletion(a, b, user.actorId);

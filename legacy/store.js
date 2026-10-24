@@ -596,6 +596,23 @@
       if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
       return copy(task);
     }
+    function acceptTasks(selections, actor = 'jack') {
+      actorId(actor);
+      if(!Array.isArray(selections)||!selections.length||selections.length>100||selections.some(item=>!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','revision'].includes(key))||typeof item.id!=='string'||!item.id||!Number.isSafeInteger(item.revision)||item.revision<1)||new Set(selections.map(item=>item.id)).size!==selections.length)throw new Error('Choose between 1 and 100 different tasks with their reviewed revisions.');
+      const tasks=selections.map(item=>taskById(item.id));
+      for(const [index,task] of tasks.entries()){
+        if(task.owner!==actor)throw new Error('Only the assigned owner can accept these commitments.');
+        if(task.revision!==selections[index].revision)throw new Error('A selected task changed. Refresh and review your assignments before accepting.');
+        if(task.status==='done'||task.reportedAt||task.verifiedAt)throw new Error('A selected task has a completion report. Refresh and review your open assignments.');
+      }
+      const pending=tasks.filter(task=>!task.acceptedAt);
+      for(const task of pending){
+        task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';task.revision++;
+        entry(actor,`accepted responsibility for ${task.title}`,task.id,'accepted');
+      }
+      if(pending.length)save();
+      return tasks.map(copy);
+    }
     function archiveEvidence(task) {
       if(task.completionEvidence)task.completionEvidenceHistory=[copy(task.completionEvidence),...(task.completionEvidenceHistory||[])].slice(0,10);
     }
@@ -1090,7 +1107,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

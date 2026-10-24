@@ -210,6 +210,126 @@ async function setup() {
 }
 const isCommit = (project, sql, args) =>
   sql.startsWith('UPDATE workspaces SET data=') && args[1] === project;
+test('batch acceptance commits one reviewed owner-only selection with no partial invalid or stale save', async () => {
+  const { project, actor } = await setup();
+  const a = (
+    await save(project, organizer, 'addTask', [
+      { title: 'Corporate briefing', owner: actor },
+    ])
+  ).result;
+  const b = (
+    await save(project, organizer, 'addTask', [
+      { title: 'Room handoff', owner: actor },
+    ])
+  ).result;
+  const foreign = (
+    await save(project, organizer, 'addTask', [
+      { title: 'Organizer approval', owner: 'jack' },
+    ])
+  ).result;
+  const refs = [a, b].map((t) => ({ id: t.id, revision: t.revision }));
+  let before = stored(project);
+  for (const invalid of [[refs[0], refs[0]], Array(101).fill(refs[0])]) {
+    assert.equal(
+      (
+        await mutate(
+          project,
+          teammate,
+          'acceptTasks',
+          [invalid],
+          before.revision,
+        )
+      ).status,
+      400,
+    );
+    assert.deepEqual(stored(project), before);
+  }
+  assert.equal(
+    (
+      await mutate(
+        project,
+        teammate,
+        'acceptTasks',
+        [[refs[0], { id: foreign.id, revision: foreign.revision }]],
+        before.revision,
+      )
+    ).status,
+    403,
+  );
+  assert.deepEqual(stored(project), before);
+  assert.equal(
+    (await mutate(project, organizer, 'acceptTasks', [refs], before.revision))
+      .status,
+    403,
+  );
+  assert.deepEqual(stored(project), before);
+  await save(project, organizer, 'updateTask', [
+    b.id,
+    { title: 'Revised room handoff' },
+  ]);
+  before = stored(project);
+  assert.equal(
+    (await mutate(project, teammate, 'acceptTasks', [refs], before.revision))
+      .status,
+    400,
+  );
+  assert.deepEqual(stored(project), before);
+  const current = await read(project, teammate),
+    fresh = current.state.tasks
+      .filter((t) => [a.id, b.id].includes(t.id))
+      .map((t) => ({ id: t.id, revision: t.revision }));
+  const result = await save(project, teammate, 'acceptTasks', [fresh]);
+  assert.equal(result.revision, current.revision + 1);
+  for (const task of result.result) {
+    assert.equal(task.acceptedBy, actor);
+    assert.ok(task.acceptedAt);
+    assert.equal(task.status, 'todo');
+    assert.equal(task.reportedAt, '');
+  }
+  const stable = stored(project);
+  assert.equal(
+    (await mutate(project, teammate, 'acceptTasks', [fresh], current.revision))
+      .status,
+    409,
+  );
+  assert.deepEqual(stored(project), stable);
+});
+test('membership revoked during a batch acceptance commit leaves every selected task untouched', async () => {
+  const { project, actor } = await setup(),
+    refs = [];
+  for (const title of ['Welcome guests', 'Prepare room']) {
+    const task = (
+      await save(project, organizer, 'addTask', [{ title, owner: actor }])
+    ).result;
+    refs.push({ id: task.id, revision: task.revision });
+  }
+  const baseline = stored(project);
+  let intercepted = false;
+  beforeRun = async (sql, args) => {
+    if (!isCommit(project, sql, args) || intercepted) return;
+    intercepted = true;
+    sqlite
+      .prepare(
+        'UPDATE project_members SET revoked_at=?,revision=revision+1 WHERE project_id=? AND user_id=?',
+      )
+      .run('fictional-revocation', project, teammate.userId);
+  };
+  let response;
+  try {
+    response = await mutate(
+      project,
+      teammate,
+      'acceptTasks',
+      [refs],
+      baseline.revision,
+    );
+  } finally {
+    beforeRun = undefined;
+  }
+  assert.ok(intercepted);
+  assert.equal(response.status, 409);
+  assert.deepEqual(stored(project), baseline);
+});
 async function bounded(promise) {
   let timer;
   try {
