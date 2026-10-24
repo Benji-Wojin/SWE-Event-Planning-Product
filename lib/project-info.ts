@@ -258,6 +258,7 @@ export async function mutateInfo(context: Context, input: any) {
     add: ['guest'],
     edit: ['id', 'guest'],
     archiveGuest: ['id', 'archived'],
+    arrival: ['id', 'arrived'],
     archiveFile: ['id', 'archived'],
     preview: ['csv'],
     import: ['csv', 'filename'],
@@ -368,6 +369,18 @@ export async function mutateInfo(context: Context, input: any) {
         createdBy: context.actor,
         archivedAt: '',
       });
+    }
+  }
+  if (input.action === 'arrival') {
+    if (typeof input.id !== 'string' || typeof input.arrived !== 'boolean')
+      throw new HttpError(400, 'Choose a guest and whether to record or clear their arrival.');
+    const guest = state.guests.find((g) => g.id === input.id && !g.archivedAt);
+    if (!guest) throw new HttpError(404, 'Guest not found in the active list.');
+    // Repeated desired-state requests preserve the original arrival attribution.
+    // The normal receipt, revision and commit-time access guards still apply.
+    if (!!guest.arrival?.at !== input.arrived) {
+      guest.arrival = input.arrived ? { at, actor: context.actor, name: context.name } : null;
+      Object.assign(guest, audit);
     }
   }
   if (input.action === 'import') {

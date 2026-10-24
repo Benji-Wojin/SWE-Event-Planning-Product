@@ -157,6 +157,16 @@
       invalid: rows.filter((r) => r.status === 'invalid').length,
     };
   }
+  // Arrival is an organizer/team record, independent of the guest's RSVP.
+  // Archived records retain their history but never contribute to active totals.
+  function arrivalSummary(records = []) {
+    const active = records.filter((guest) => !guest.archivedAt);
+    return {
+      total: active.length,
+      arrived: active.filter((guest) => !!guest.arrival?.at).length,
+      attending: active.filter((guest) => guest.attendance === 'attending').length,
+    };
+  }
   root.GatherGuests = {
     fields,
     types,
@@ -164,5 +174,6 @@
     normalize,
     parseCSV,
     preview,
+    arrivalSummary,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

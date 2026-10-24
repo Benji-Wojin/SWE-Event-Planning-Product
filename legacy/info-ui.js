@@ -13,6 +13,7 @@
       tab = 'guests',
       query = '',
       type = '',
+      arrival = '',
       archived = false,
       timer,
       loadTicket = 0;
@@ -108,6 +109,7 @@
         (g) =>
           Boolean(g.archivedAt) === archived &&
           (!type || g.type === type) &&
+          (!arrival || (arrival === 'arrived') === !!g.arrival?.at) &&
           (!query ||
             [g.name, g.email, g.group, g.phone]
               .join(' ')
@@ -137,9 +139,9 @@
       return (
         `<div class="info-count muted">${guests.length} ${guests.length === 1 ? 'guest' : 'guests'}</div>` +
         (guests.length
-          ? `<div class="info-table-wrap"><table class="info-table"><thead><tr><th>Name / contact</th><th>Type</th><th>Group</th><th>Attendance</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${guests.map((g) => `<tr><td><strong>${h(g.name)}</strong><span>${h(g.email || g.phone || 'No contact details')}</span></td><td>${h(g.type)}</td><td>${h(g.group || '—')}</td><td>${h(g.attendance === 'unknown' ? 'Not recorded' : g.attendance)}</td><td><button class="text-button" data-info-guest="${h(g.id)}">${archived ? 'View' : 'Edit'}</button></td></tr>`).join('')}</tbody></table></div>`
+          ? `<div class="info-table-wrap"><table class="info-table"><thead><tr><th>Name / contact</th><th>Type</th><th>Group</th><th>RSVP response</th><th>Arrival record</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${guests.map((g) => `<tr><td><strong>${h(g.name)}</strong><span>${h(g.email || g.phone || 'No contact details')}</span></td><td>${h(g.type)}</td><td>${h(g.group || '—')}</td><td>${h(g.attendance === 'unknown' ? 'Not recorded' : g.attendance)}</td><td>${g.arrival?.at ? `<strong>Arrival recorded</strong><span>${h(new Date(g.arrival.at).toLocaleString())} · ${h(g.arrival.name)}</span>` : 'No arrival recorded'}${!archived ? `<button class="text-button" data-info-arrival="${h(g.id)}" aria-label="${g.arrival?.at ? 'Review arrival for ' : 'Record arrival for '}${h(g.name)}">${g.arrival?.at ? 'Review / undo' : 'Record arrival'}</button>` : ''}</td><td><button class="text-button" data-info-guest="${h(g.id)}">${archived ? 'View' : 'Edit'}</button></td></tr>`).join('')}</tbody></table></div>`
           : '<p class="notice">' +
-            (query || type
+            (query || type || arrival
               ? 'No guests match these filters.'
               : archived
                 ? 'No archived guests.'
@@ -159,6 +161,7 @@
         focus && active.tagName === 'INPUT'
           ? [active.selectionStart, active.selectionEnd]
           : null;
+      const summary = G.arrivalSummary(state.guests);
       host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived && state.uploadsAvailable === true ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
         ['guests', 'Guest list'],
         ['files', 'Files'],
@@ -169,7 +172,7 @@
         )
         .join(
           '',
-        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select></div>` : ''}<div data-info-list>${list()}</div></section>`;
+        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent. Arrival records are manual, separate from RSVP responses, and are not a live headcount or a release/safeguarding system.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<p class="info-arrival-summary" role="status">Active guest list: <strong>${summary.arrived} arrival record${summary.arrived === 1 ? '' : 's'}</strong> · ${summary.attending} RSVP attending · ${summary.total} guest record${summary.total === 1 ? '' : 's'}. Totals exclude archived guests and do not change with filters.</p><div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select><select data-info-arrival-filter aria-label="Filter arrival records"><option value="" ${!arrival ? 'selected' : ''}>All arrival records</option><option value="waiting" ${arrival === 'waiting' ? 'selected' : ''}>No arrival recorded</option><option value="arrived" ${arrival === 'arrived' ? 'selected' : ''}>Arrival recorded</option></select></div>` : ''}<div data-info-list>${list()}</div></section>`;
       if (focus) {
         const next = [...host.querySelectorAll('button,input,select')].find(
           (element) => element.getAttribute(focus.name) === focus.value,
@@ -205,13 +208,34 @@
         }
       }
     }
-    async function save(data) {
+    async function save(data, message = 'Event info saved.') {
       ++loadTicket;
       state = await request(data);
       ++loadTicket;
       render();
       closeDialog();
-      toast('Event info saved.');
+      toast(message);
+    }
+    function arrivalDialog(id) {
+      const guest = state.guests.find((g) => g.id === id && !g.archivedAt);
+      if (!guest) return;
+      const arrived = !!guest.arrival?.at,
+        revision = state.revision,
+        requestId = crypto.randomUUID();
+      openDialog(
+        arrived ? 'Review guest arrival' : 'Record guest arrival',
+        `<form id="guestArrivalForm"><h3>${h(guest.name)}</h3><p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>Only record an arrival you have confirmed. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'This records arrival now, using your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit">${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Reload guest list</button></div></form>`,
+        '', false, 'info',
+      );
+      const form = document.getElementById('guestArrivalForm');
+      form.addEventListener('submit', (event) => submit(form, event, () => save({
+        action: 'arrival', id, arrived: !arrived, revision, requestId,
+      }, arrived ? 'Arrival record cleared. RSVP response unchanged.' : 'Arrival recorded. RSVP response unchanged.')));
+      form.querySelector('[data-arrival-reload]').addEventListener('click', () => {
+        if (form.dataset.saving) return;
+        closeDialog();
+        void load();
+      });
     }
     function guestDialog(id) {
       const guest = state.guests.find((g) => g.id === id),
@@ -241,7 +265,7 @@
           )
           .join(
             '',
-          )}<label class="field">Type<select name="type" ${inactive ? 'disabled' : ''}>${opts(G.types, value.type)}</select></label><label class="field">Attendance<select name="attendance" ${inactive ? 'disabled' : ''}>${opts(G.attendance, value.attendance)}</select></label><label class="field full-width">Notes<textarea name="notes" rows="3" maxlength="500" ${inactive ? 'disabled' : ''}>${h(value.notes)}</textarea><small>Visible to the project team.</small></label></div>${guest ? '<p class="muted">Updated by ' + stamp(guest) + '</p>' : ''}<div class="form-actions">${!inactive ? '<button class="btn btn-primary" type="submit">Save guest</button>' : ''}${guest && state.identity.admin ? '<button class="text-button" type="button" data-info-archive-guest="' + h(guest.id) + '">' + (inactive ? 'Restore guest' : 'Archive guest') + '</button>' : ''}</div></form>`,
+          )}<label class="field">Type<select name="type" ${inactive ? 'disabled' : ''}>${opts(G.types, value.type)}</select></label><label class="field">RSVP response<select name="attendance" ${inactive ? 'disabled' : ''}>${opts(G.attendance, value.attendance)}</select></label><label class="field full-width">Notes<textarea name="notes" rows="3" maxlength="500" ${inactive ? 'disabled' : ''}>${h(value.notes)}</textarea><small>Visible to the project team.</small></label></div>${guest ? '<p class="muted">Updated by ' + stamp(guest) + '</p>' : ''}<div class="form-actions">${!inactive ? '<button class="btn btn-primary" type="submit">Save guest</button>' : ''}${guest && state.identity.admin ? '<button class="text-button" type="button" data-info-archive-guest="' + h(guest.id) + '">' + (inactive ? 'Restore guest' : 'Archive guest') + '</button>' : ''}</div></form>`,
         '',
         false,
         'info',
@@ -416,6 +440,7 @@
         }
         if (el.hasAttribute('data-info-add')) guestDialog();
         if (el.dataset.infoGuest) guestDialog(el.dataset.infoGuest);
+        if (el.dataset.infoArrival) arrivalDialog(el.dataset.infoArrival);
         if (el.hasAttribute('data-info-import')) importDialog();
         if (el.hasAttribute('data-info-upload')) uploadDialog();
         if (el.dataset.infoArchiveFile) fileArchive(el.dataset.infoArchiveFile);
@@ -429,6 +454,10 @@
       host.addEventListener('change', (event) => {
         if (event.target.hasAttribute('data-info-type')) {
           type = event.target.value;
+          host.querySelector('[data-info-list]').innerHTML = list();
+        }
+        if (event.target.hasAttribute('data-info-arrival-filter')) {
+          arrival = event.target.value;
           host.querySelector('[data-info-list]').innerHTML = list();
         }
         if (event.target.hasAttribute('data-info-archived')) {

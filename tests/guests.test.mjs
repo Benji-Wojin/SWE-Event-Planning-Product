@@ -53,3 +53,19 @@ test('CSV rejects malformed structure and enforces byte and row limits', () => {
   assert.throws(() => G.preview('Name\n' + '字'.repeat(14000)));
   assert.equal(G.preview('Name,Notes\nA,=2+3').invalid, 0);
 });
+
+test('manual arrival totals exclude archived contacts and never infer arrival from an RSVP', () => {
+  const rows = [
+    {attendance:'attending'},
+    {attendance:'tentative',arrival:{at:'2026-10-23T19:00:00Z'}},
+    {attendance:'not attending',arrival:{at:'2026-10-23T19:01:00Z'}},
+    {attendance:'attending',arrival:{at:'2026-10-23T19:02:00Z'},archivedAt:'archived'},
+    {attendance:'unknown',arrival:null},
+  ];
+  const before = structuredClone(rows);
+  assert.deepEqual(G.arrivalSummary(rows), {total:4,arrived:2,attending:1});
+  assert.deepEqual(rows,before);
+  assert.deepEqual(G.arrivalSummary(), {total:0,arrived:0,attending:0});
+  assert.throws(()=>G.normalize({name:'A',arrival:{at:'caller-supplied'}}));
+  assert.throws(()=>G.preview('Name,Arrival\nA,true'));
+});
