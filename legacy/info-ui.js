@@ -96,6 +96,21 @@
       }
       node.textContent = error.message;
     }
+    const accessDenied = error => [401, 403, 404].includes(error.status);
+    function loadError(error) {
+      // A denial invalidates the cache too: remounting must not reveal it
+      // while the next request is pending. Ignore any older in-flight load.
+      const ownedDialog = isDialogOpen('info');
+      const restoreFocus = ownedDialog || host?.contains(document.activeElement);
+      ++loadTicket;
+      state = null;
+      if (accessDenied(error) && ownedDialog) closeDialog();
+      if (host?.isConnected) host.innerHTML =
+        '<h1>Event info</h1><p class="notice" role="alert">' +
+        h(error.message) +
+        '</p><button class="btn btn-secondary" data-info-refresh>Retry</button>';
+      if (restoreFocus && !isDialogOpen()) host?.querySelector('[data-info-refresh]')?.focus();
+    }
     async function submit(form, event, action) {
       event.preventDefault();
       event.stopPropagation();
@@ -107,7 +122,9 @@
       try {
         await action();
       } catch (e) {
-        error(form, e);
+        if (accessDenied(e)) {
+          loadError(e);
+        } else error(form, e);
       } finally {
         release();
       }
@@ -204,7 +221,12 @@
         const next = await request();
         if (ticket !== loadTicket || host !== target || !target?.isConnected)
           return;
-        if (!state || next.revision !== state.revision || next.uploadsAvailable !== state.uploadsAvailable || !quiet) {
+        const identityChanged = state && JSON.stringify(next.identity) !== JSON.stringify(state.identity);
+        if (identityChanged && isDialogOpen('info')) {
+          closeDialog();
+          toast('Your project identity changed. Reopen the editor to review the current values.');
+        }
+        if (!state || next.revision !== state.revision || next.uploadsAvailable !== state.uploadsAvailable || identityChanged || !quiet) {
           state = next;
           render();
         }
@@ -213,13 +235,9 @@
           ticket === loadTicket &&
           host === target &&
           target?.isConnected &&
-          (!quiet || e.status === 401 || e.status === 403)
+          (!quiet || accessDenied(e))
         ) {
-          if (e.status === 401 || e.status === 403) state = null;
-          target.innerHTML =
-            '<h1>Event info</h1><p class="notice" role="alert">' +
-            h(e.message) +
-            '</p><button class="btn btn-secondary" data-info-refresh>Retry</button>';
+          loadError(e);
         }
       }
     }
