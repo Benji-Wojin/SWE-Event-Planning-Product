@@ -7,7 +7,7 @@
   const ordered = tasks => tasks.filter(task=>task.schedule).slice().sort((a,b)=>a.schedule.start.localeCompare(b.schedule.start)||a.id.localeCompare(b.id));
   const scoped = (tasks,scope={}) => scope.mine ? tasks.filter(task=>!!scope.actor&&task.owner===scope.actor) : tasks;
   const resolved = task => task.status==='done'&&(!task.requiresVerification||task.verifiedAt);
-  const waitingVerification = task => task.requiresVerification&&task.reportedAt&&!task.verifiedAt;
+  const waitingVerification = task => task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt;
   const clockFormatters = new Map();
   function momentKey(now,timeZone) {
     if(!timeZone)return null;
@@ -24,8 +24,8 @@
   }
   // Clock cues describe the timetable, never infer actual progress or completion.
   function timing(tasks,timeZone,now=Date.now()) {
-    const local=momentKey(now,timeZone),current=[],next=[],labels=new Map();
-    if(!local)return {local,current,next,labels};
+    const local=momentKey(now,timeZone),current=[],next=[],followUp=[],labels=new Map();
+    if(!local)return {local,current,next,followUp,labels};
     let nextStart='';
     for(const task of ordered(tasks)) {
       if(resolved(task)||waitingVerification(task))continue;
@@ -33,11 +33,11 @@
       if(slot.start>local){
         if(!nextStart)nextStart=slot.start;
         if(slot.start===nextStart){next.push(task);labels.set(task.id,'Next');}
-      } else if(!slot.end)labels.set(task.id,'Start time reached · no end set');
+      } else if(!slot.end){followUp.push(task);labels.set(task.id,'Start time reached · no end set');}
       else if(slot.end>local){current.push(task);labels.set(task.id,'Scheduled now');}
-      else labels.set(task.id,'Past scheduled end');
+      else {followUp.push(task);labels.set(task.id,'Past scheduled end');}
     }
-    return {local,current,next,labels};
+    return {local,current,next,followUp,labels};
   }
 
   // Every schedule uses the same event-local zone. Compare wall times directly;
@@ -71,8 +71,8 @@
     function clock(state,now=Date.now(),scope={}) {
       const tasks=scoped(state.tasks,scope),live=timing(tasks,state.event.timeZone,now);
       if(!live.local||!tasks.some(task=>task.schedule))return {markup:'',labels:live.labels};
-      const group=(title,tasks,empty)=>`<div class="schedule-focus-group"><h3>${title}</h3>${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" data-action="task" data-id="${h(task.id)}"><strong>${h(task.title)}</strong><span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${person(task.owner)}${statusBadge(task.status)}</span></button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
-      return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}</div>`,labels:live.labels};
+      const group=(title,tasks,empty,followUp=false)=>`<div class="schedule-focus-group"><h3>${title}</h3>${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" data-action="task" data-id="${h(task.id)}"><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${person(task.owner)}${statusBadge(task.status)}</span></button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
+      return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',true)}</div>`:''}</div>`,labels:live.labels};
     }
     function view(state,organizer,now=Date.now(),scope={}) {
       const tasks=ordered(scoped(state.tasks,scope)),dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))],overlaps=ownerOverlaps(tasks);
