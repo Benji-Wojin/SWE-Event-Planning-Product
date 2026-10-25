@@ -493,8 +493,10 @@ export function WrittenDraftActions({
           type="button"
           variant="secondary"
           size="sm"
-          className="min-h-11 min-w-11"
-          disabled={locked || copying}
+          className="min-h-11 min-w-11 aria-disabled:opacity-50"
+          disabled={locked}
+          aria-disabled={locked || copying}
+          aria-busy={copying || undefined}
           onClick={() => void copyDraft()}
         >
           {copying ? 'Copying…' : 'Copy draft'}

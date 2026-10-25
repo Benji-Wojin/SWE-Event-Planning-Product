@@ -169,13 +169,20 @@ test('copy is explicit, uses only the written artifact and blocks duplicate pend
     assert.equal(calls.length, 1);
     assert.equal(calls[0], writtenDraftArtifact(work).text);
     tree = h.render();
-    assert.equal(button(tree, 'Copying…').props.disabled, true);
+    const busyCopy = button(tree, 'Copying…');
+    assert.equal(busyCopy.props.disabled, false);
+    assert.equal(busyCopy.props['aria-disabled'], true);
+    assert.equal(busyCopy.props['aria-busy'], true);
+    // Busy does not remove the initiating keyboard control from focus order.
+    assert.notEqual(busyCopy.props.tabIndex, -1);
     finish();
     await pending;
     await new Promise((r) => setImmediate(r));
     tree = h.render();
     assert.match(text(tree), /Draft copied/);
     assert.ok(!button(tree, 'Copy draft').props.disabled);
+    assert.equal(button(tree, 'Copy draft').props['aria-disabled'], false);
+    assert.equal(button(tree, 'Copy draft').props['aria-busy'], undefined);
   } finally {
     h.close();
     restore();
@@ -215,6 +222,8 @@ test('clipboard rejection or absence is honest and leaves download available', a
       const after = h.render();
       assert.match(text(after), /Copy is unavailable/);
       assert.doesNotMatch(text(after), /Draft copied/);
+      assert.equal(button(after, 'Copy draft').props['aria-disabled'], false);
+      assert.equal(button(after, 'Copy draft').props['aria-busy'], undefined);
       assert.equal(
         button(after, 'Download draft (.txt)').props.disabled,
         false,
