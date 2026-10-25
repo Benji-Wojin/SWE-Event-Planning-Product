@@ -3,6 +3,17 @@
   'use strict';
   const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const resolved = task => Boolean(task && task.status==='done' && (!task.requiresVerification || task.verifiedAt));
+  function emptyPlanMarkup({organizer=false,canCreate=false,planBuilder=false}={}) {
+    const title=organizer?'Start your event plan':canCreate?'No shared tasks yet':'The shared plan is still empty';
+    const copy=organizer
+      ?'No tasks have been added yet. '+(planBuilder?'Choose a starter checklist for your event or make an optional AI draft.':'Add the first task with the result you need, then choose an owner and dates as the plan takes shape.')
+      :canCreate?'Add a task for yourself or leave it unassigned for someone to claim. The organizer manages the event plan and schedule.'
+        :'The organizer can add the first tasks. When work appears, accept responsibility for your tasks, share progress and report what’s done.';
+    const hint=organizer&&planBuilder?'<p class="muted">Review tasks, owners and dates before adding them. Opening the planner does not call AI.</p>':'';
+    const actions=(organizer&&planBuilder?'<button class="btn btn-primary" data-action="draft-plan">Open plan builder</button>':'')
+      +(organizer||canCreate?'<button class="btn btn-secondary" data-action="add-task">Add task</button>':'<button class="btn btn-secondary" data-view="team">View people</button>');
+    return '<section class="panel empty-plan" aria-labelledby="emptyPlanHeading"><h2 class="section-title" id="emptyPlanHeading">'+title+'</h2><p>'+copy+'</p>'+hint+'<div class="form-actions">'+actions+'</div></section>';
+  }
   function readiness(task,tasks) {
     const index=new Map(tasks.map(t=>[t.id,t]));
     const links=task.dependencies || [],required=links.filter(l=>l.kind!=='related');
@@ -174,5 +185,5 @@
       unsaved:()=>!!frame&&(dirty||busy),
     };
   }
-  root.GatherPlanningUI={readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup};
+  root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup};
 })(globalThis);
