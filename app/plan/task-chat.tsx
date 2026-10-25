@@ -493,6 +493,7 @@ export function WrittenDraftActions({
           type="button"
           variant="secondary"
           size="sm"
+          className="min-h-11 min-w-11"
           disabled={locked || copying}
           onClick={() => void copyDraft()}
         >
@@ -502,6 +503,7 @@ export function WrittenDraftActions({
           type="button"
           variant="secondary"
           size="sm"
+          className="min-h-11 min-w-11"
           disabled={locked}
           onClick={downloadDraft}
         >

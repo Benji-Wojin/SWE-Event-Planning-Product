@@ -181,6 +181,24 @@ test('copy is explicit, uses only the written artifact and blocks duplicate pend
     restore();
   }
 });
+test('written draft actions retain large touch targets when enabled or locked', () => {
+  const restore = clipboard(async () => {}),
+    h = harness();
+  try {
+    for (const locked of [false, true]) {
+      const tree = h.render(work, locked);
+      for (const label of ['Copy draft', 'Download draft (.txt)']) {
+        const action = button(tree, label);
+        assert.match(action.props.className, /(?:^|\s)min-h-11(?:\s|$)/);
+        assert.match(action.props.className, /(?:^|\s)min-w-11(?:\s|$)/);
+        assert.equal(action.props.disabled, locked);
+      }
+    }
+  } finally {
+    h.close();
+    restore();
+  }
+});
 test('clipboard rejection or absence is honest and leaves download available', async () => {
   for (const writer of [
     undefined,
