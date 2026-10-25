@@ -97,6 +97,8 @@ The event schedule keeps unfinished activities in **Check progress** after their
 
 When activities are scheduled, **Timeline → Run sheet** opens a read-only snapshot of the current All activities or My activities view. It groups event-local times by date and shows activity names, locations, owners, status and entered owner-overlap warnings. Completion awaiting verification stays distinct from Done. It never changes tasks or infers completion from the clock.
 
+Run sheets label an inactive assigned person as **Inactive teammate** and a missing assigned member as **Assigned owner unavailable**, rather than calling either unassigned. A scoped warning calls out unresolved activities with either responsibility gap; completed, verified work keeps its historical owner label without an open-work warning. Confirm responsibility with the organizer. The snapshot does not reassign work or expose member identifiers or contact details.
+
 **Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
 
 ### Optional manual budget

@@ -60,6 +60,39 @@ test('run sheet escapes entered facts and is stable across viewer time zones',()
   }finally{if(before===undefined)delete process.env.TZ;else process.env.TZ=before;}
 });
 
+test('run sheets distinguish unassigned work from inactive or missing assigned owners',()=>{
+  const input=state();input.members[0].active=false;
+  input.tasks.push(activity('Missing owner','missing-member','2026-11-20T18:00','2026-11-20T18:15'));
+  const before=structuredClone(input),html=ui.runSheet(input,now);
+  assert.match(html,/Maya Chen · Inactive teammate/);
+  assert.match(html,/Assigned owner unavailable/);
+  assert.match(html,/3 activities have a missing or inactive assigned owner/);
+  assert.match(html,/Confirm responsibility with the organizer/);
+  assert.match(html,/>Unassigned<\/td>/);
+  assert.doesNotMatch(html,/missing-member|PRIVATE-EMAIL/);
+  assert.deepEqual(input,before);
+  const mine=ui.runSheet(input,now,{mine:true,actor:'missing-member'});
+  assert.match(mine,/My activities · Assigned owner unavailable/);
+  assert.match(mine,/1 activity has a missing or inactive assigned owner/);
+  assert.doesNotMatch(mine,/Maya Chen|Sound check/);
+});
+
+test('owner availability warnings cover only unresolved activities in the selected snapshot',()=>{
+  const input=state();input.members[0].active=false;
+  input.tasks=input.tasks.map(task=>({...task,status:'done'}));
+  let html=ui.runSheet(input,now);
+  assert.match(html,/Maya Chen · Inactive teammate/);
+  assert.doesNotMatch(html,/activities have a missing or inactive assigned owner/);
+  input.tasks[0].requiresVerification=true;
+  html=ui.runSheet(input,now);
+  assert.match(html,/1 activity has a missing or inactive assigned owner/);
+  assert.match(html,/Awaiting verification/);
+  input.tasks[0].verifiedAt='2026-11-20T22:05Z';
+  assert.doesNotMatch(ui.runSheet(input,now),/activity has a missing or inactive assigned owner/);
+  input.members[0].active=true;
+  assert.doesNotMatch(ui.runSheet(input,now),/Inactive teammate|Assigned owner unavailable/);
+});
+
 test('run-sheet controls preserve scope, open a snapshot, and print only the active run-sheet dialog',()=>{
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='run-sheet'");
