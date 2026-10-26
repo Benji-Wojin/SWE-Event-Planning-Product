@@ -388,7 +388,10 @@ test('linked creation target removal or renewed membership cannot save either ta
 });
 test('linked creation loses organizer authority even if old organizer remains a teammate',async()=>{
   const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate event delivery'}])).result;
-  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('linked-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
+  // Match the organizer snapshot's synthetic membership generation so the
+  // ordinary member-access predicate still passes after ownership is lost.
+  // Only the additional current-organizer predicate must reject this write.
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('linked-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
   const baseline=stored(project);let intercepted=false;
   beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
   try{

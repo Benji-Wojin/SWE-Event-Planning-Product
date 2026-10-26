@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import vm from 'node:vm';
+
+test('prepared outputs replace complete files atomically, preserving prior bytes on write failure',()=>{
+  const source=readFileSync('scripts/prepare.mjs','utf8'),start=source.indexOf('function writeFileSync(');
+  const wrapper=source.slice(start,source.indexOf("mkdirSync('public/gather-assets'",start));
+  for(const failure of ['', 'write', 'rename']){
+    const files=new Map([['public/asset.js','previous complete bytes']]),calls=[];
+    const context=vm.createContext({process:{pid:123},writePreparedFile(path,content){
+      assert.equal(files.get('public/asset.js'),'previous complete bytes');calls.push(['write',path]);
+      if(failure==='write')throw Error('write failed');files.set(path,content);
+    },renameSync(from,to){
+      assert.equal(files.get('public/asset.js'),'previous complete bytes');calls.push(['rename',from,to]);
+      if(failure==='rename')throw Error('rename failed');files.set(to,files.get(from));files.delete(from);
+    }});
+    vm.runInContext(wrapper,context);
+    if(failure){assert.throws(()=>context.writeFileSync('public/asset.js','new complete bytes'));assert.equal(files.get('public/asset.js'),'previous complete bytes');}
+    else{context.writeFileSync('public/asset.js','new complete bytes');assert.equal(files.get('public/asset.js'),'new complete bytes');assert.deepEqual(calls,[['write','public/asset.js.tmp-123'],['rename','public/asset.js.tmp-123','public/asset.js']]);}
+  }
+});
 
 test('workspace preloads code in parallel with fresh data, using matching content-addressed URLs',()=>{
   execFileSync(process.execPath,['scripts/prepare.mjs']);

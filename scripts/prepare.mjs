@@ -1,5 +1,12 @@
-import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync as writePreparedFile, renameSync, mkdirSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+// Concurrent preparation and readers must never see an empty or partial asset,
+// especially when its URL already promises immutable content-addressed bytes.
+function writeFileSync(path,content) {
+  const staging=path+'.tmp-'+process.pid;
+  writePreparedFile(staging,content);
+  renameSync(staging,path);
+}
 mkdirSync('public/gather-assets', { recursive: true });
 let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
