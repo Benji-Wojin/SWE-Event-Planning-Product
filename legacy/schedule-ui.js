@@ -88,6 +88,20 @@
   }
 
   function create({h,options,person,statusBadge}) {
+    function liveOwner(task,state) {
+      return task.owner&&!state.members?.some(member=>member.id===task.owner)
+        ? '<span class="person-chip">Assigned owner unavailable</span>' : person(task.owner);
+    }
+    // Use the same saved-fact predicates as Before event and the run sheet.
+    // A clock cue is never a readiness decision or an automatic status change.
+    function liveWarnings(task,state,byId) {
+      if(resolved(task))return '';
+      const labels=[];
+      if(state.members?.some(member=>member.id===task.owner&&member.active===false))labels.push('Assigned owner unavailable');
+      if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
+      if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
+      return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${label}</span>`).join('')}</span>`:'';
+    }
     function locationNotice(tasks,locations) {
       const count=tasks.filter(task=>locations.has(task.id)).length;
       return count?`<p class="schedule-overlap-summary">${count} ${count===1?'activity has a':'activities have'} potential location overlap. Matching location labels can include other teams outside this view. Confirm shared space with the organizer; this is not a booking check.</p>`:'';
@@ -102,17 +116,17 @@
       return '<p class="muted">Set the event time zone before adding activities.</p><button class="btn btn-secondary" data-action="event-context">Project settings</button>';
     }
     function clock(state,now=Date.now(),scope={}) {
-      const tasks=scoped(state.tasks,scope),live=timing(tasks,state.event.timeZone,now);
+      const tasks=scoped(state.tasks,scope),live=timing(tasks,state.event.timeZone,now),byId=new Map(state.tasks.map(task=>[task.id,task]));
       if(!live.local||!tasks.some(task=>task.schedule))return {markup:'',labels:live.labels};
-      const group=(title,tasks,empty,followUp=false)=>`<div class="schedule-focus-group"><h3>${title}</h3>${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" data-action="task" data-id="${h(task.id)}"><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${person(task.owner)}${statusBadge(task.status)}</span></button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
+      const group=(title,tasks,empty,followUp=false)=>`<div class="schedule-focus-group"><h3>${title}</h3>${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" data-action="task" data-id="${h(task.id)}"><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${liveOwner(task,state)}${statusBadge(task.status)}</span>${liveWarnings(task,state,byId)}</button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
       return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',true)}</div>`:''}</div>`,labels:live.labels};
     }
     function view(state,organizer,now=Date.now(),scope={}) {
       const tasks=ordered(scoped(state.tasks,scope)),dates=[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))],overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks);
-      const live=clock(state,now,scope),hasSchedule=state.tasks.some(task=>task.schedule);
+      const live=clock(state,now,scope),hasSchedule=state.tasks.some(task=>task.schedule),byId=new Map(state.tasks.map(task=>[task.id,task]));
       const filters=hasSchedule?`<div class="schedule-switch" role="group" aria-label="Activity scope"><button class="filter-tab ${scope.mine?'':'active'}" aria-pressed="${!scope.mine}" data-action="schedule-scope" data-id="all">All activities</button><button class="filter-tab ${scope.mine?'active':''}" aria-pressed="${!!scope.mine}" data-action="schedule-scope" data-id="mine">My activities</button></div>`:'';
       const empty=scope.mine&&hasSchedule?'<h2>No activities assigned to you</h2><button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':`<h2>No scheduled activities</h2>${organizer?(state.event.timeZone?'<p class="muted">Add an activity or schedule an existing task.</p>':needsZone()):'<p class="muted">The organizer can add the event schedule here.</p>'}`;
-      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${locationNotice(tasks,locations)}${tasks.length?dates.map(date=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<button class="schedule-row" data-action="task" data-id="${h(task.id)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}"${live.labels.has(task.id)?'':' hidden'}>${h(live.labels.get(task.id)||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span class="schedule-overlap-label">Owner overlap</span>':''}${locations.has(task.id)?'<span class="schedule-overlap-label">Potential location overlap</span>':''}</span><span class="schedule-owner">${person(task.owner)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span></button>`).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
+      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${locationNotice(tasks,locations)}${tasks.length?dates.map(date=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${tasks.filter(task=>task.schedule.start.startsWith(date)).map(task=>`<button class="schedule-row" data-action="task" data-id="${h(task.id)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}"${live.labels.has(task.id)?'':' hidden'}>${h(live.labels.get(task.id)||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span class="schedule-overlap-label">Owner overlap</span>':''}${locations.has(task.id)?'<span class="schedule-overlap-label">Potential location overlap</span>':''}</span><span class="schedule-owner">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}${liveWarnings(task,state,byId)}</span></button>`).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
     }
     function details(task,organizer,event,tasks=[]) {
       const current=task.schedule;

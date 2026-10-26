@@ -1665,6 +1665,10 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   const html=sheet.runSheet(removed.state);
   assert.match(html,/Maya Real · Inactive teammate/);
   assert.match(html,/2 activities have a missing or inactive assigned owner/);
+  for(const live of [sheet.clock(removed.state,'2026-11-21T01:05:00Z').markup,sheet.view(removed.state,false,'2026-11-21T01:05:00Z')]){
+    assert.match(live,/Assigned owner unavailable/);
+    assert.doesNotMatch(live,/PRIVATE-RUN-SHEET-NOTE|run-sheet-member@example.com/);
+  }
   assert.match(html,/Awaiting verification/);assert.match(html,/>Done<\/td>/);
   assert.doesNotMatch(html,/PRIVATE-RUN-SHEET-NOTE|run-sheet-member@example.com/);
   assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),persisted);
@@ -1675,6 +1679,7 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   assert.equal(restored.state.members.find(member=>member.id===actor).active,true);
   assert.deepEqual(restored.state.tasks,before.state.tasks);
   assert.doesNotMatch(sheet.runSheet(restored.state),/Inactive teammate|missing or inactive assigned owner/);
+  assert.doesNotMatch(sheet.view(restored.state,false,'2026-11-21T01:05:00Z'),/Assigned owner unavailable/);
   owner();
 });
 test('run-sheet acceptance follows explicit owner acceptance and renewed assignment through the real API',async()=>{
@@ -1698,6 +1703,8 @@ test('run-sheet acceptance follows explicit owner acceptance and renewed assignm
     let before=row(),html=sheet.runSheet(snap.state);
     assert.match(html,/1 activity has owner acceptance not recorded/);
     assert.match(html,/Maya Real<span>Acceptance not recorded<\/span>/);
+    assert.match(sheet.view(snap.state,false,'2026-11-20T09:15:00Z'),/Acceptance not recorded/);
+    assert.match(sheet.clock(snap.state,'2026-11-20T09:15:00Z').markup,/Acceptance not recorded/);
     assert.doesNotMatch(html,/PRIVATE-ACCEPTANCE-NOTE|run-sheet-acceptance@example.com/);
     assert.deepEqual(row(),before);
     const forbidden=await workspace.POST(request('/api/workspace?project='+id,{method:'acceptTask',args:[taskId],revision:snap.revision}));
@@ -1706,6 +1713,8 @@ test('run-sheet acceptance follows explicit owner acceptance and renewed assignm
     assert.equal(snap.state.tasks[0].acceptedBy,actor);assert.ok(snap.state.tasks[0].acceptedAt);
     assert.equal(snap.state.tasks[0].status,original.status);assert.deepEqual(snap.state.tasks[0].schedule,original.schedule);
     before=row();assert.doesNotMatch(sheet.runSheet(snap.state),/Acceptance not recorded|owner acceptance not recorded/);assert.deepEqual(row(),before);
+    assert.doesNotMatch(sheet.view(snap.state,false,'2026-11-20T09:15:00Z'),/Acceptance not recorded/);
+    assert.doesNotMatch(sheet.clock(snap.state,'2026-11-20T09:15:00Z').markup,/Acceptance not recorded/);
     owner();snap=await write('updateTask',[taskId,{owner:'jack'}]);
     assert.equal(snap.state.tasks[0].acceptedAt,'');assert.ok(sheet.runSheet(snap.state).includes(h(snap.state.members.find(member=>member.id==='jack').name)+'<span>Acceptance not recorded</span>'));
     snap=await write('acceptTask',[taskId]);
@@ -1738,7 +1747,8 @@ test('run-sheet required-work warnings follow real teammate reporting and organi
     snap=await write('addDependency',[activity.id,{taskId:prep.id,kind:'dependency'}]);
     const snapshot=()=>{
       const before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
-      const html=sheet.runSheet(snap.state,Date.now(),{mine:true,actor:'jack'});
+      const scope={mine:true,actor:'jack'},at='2026-11-21T01:15:00Z';
+      const html=sheet.runSheet(snap.state,Date.now(),scope)+sheet.view(snap.state,false,at,scope)+sheet.clock(snap.state,at,scope).markup;
       assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before);
       assert.doesNotMatch(html,/PRIVATE-PREREQUISITE|run-sheet-prerequisite@example.com/);return html;
     };

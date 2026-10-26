@@ -53,7 +53,7 @@ test('personal schedules retain completed/review work and only their own overlap
 test('focus cards expose safe owner, location and status with no extra actions',()=>{
   const item=task('id"<>','<Maya>','09:00','10:00',{title:'<img src=x onerror=alert(1)>',status:'blocked'});
   item.schedule.location='<script>alert(1)</script>';
-  const markup=schedule.clock({event,tasks:[item]},now).markup;
+  const markup=schedule.clock({event,members:[{id:item.owner}],tasks:[item]},now).markup;
   assert.match(markup,/&lt;Maya&gt;/);assert.match(markup,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(markup,/status-badge">blocked/);assert.match(markup,/data-id="id&quot;&lt;&gt;"/);
   assert.doesNotMatch(markup,/<img|<script|<form/);assert.deepEqual(ids(markup),['id&quot;&lt;&gt;']);

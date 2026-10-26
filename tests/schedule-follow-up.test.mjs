@@ -35,7 +35,7 @@ test('exact time boundaries move unresolved activities into follow-up without as
 test('follow-up shows truthful reasons and owner links, not automatic status controls or private notes',()=>{
   const item=task('id"<>','08:00','09:00',{title:'<img src=x onerror=alert(1)>',owner:'<Maya>',note:'HIDDEN_PRIVATE_NOTE'});
   item.schedule.location='<script>hall</script>';
-  const html=ui.clock({event,tasks:[item,task('unknown','09:00','')]},now).markup;
+  const html=ui.clock({event,members:[{id:item.owner},{id:'maya'}],tasks:[item,task('unknown','09:00','')]},now).markup;
   assert.match(html,/Check progress/);assert.match(html,/Check with the owner/);
   assert.match(html,/Past scheduled end/);assert.match(html,/Start time reached · no end set/);
   assert.match(html,/data-action="task" data-id="id&quot;&lt;&gt;"/);
