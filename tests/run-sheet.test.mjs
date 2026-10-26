@@ -93,6 +93,42 @@ test('owner availability warnings cover only unresolved activities in the select
   assert.doesNotMatch(ui.runSheet(input,now),/Inactive teammate|Assigned owner unavailable/);
 });
 
+test('run sheets expose pending responsibility without treating a named owner as acceptance',()=>{
+  const input=state(),before=structuredClone(input),html=ui.runSheet(input,now);
+  assert.match(html,/2 activities have owner acceptance not recorded/);
+  assert.equal((html.match(/<span>Acceptance not recorded<\/span>/g)||[]).length,2);
+  assert.match(html,/Assignment alone does not confirm responsibility/);
+  assert.match(html,/Maya Chen<span>Acceptance not recorded<\/span><\/td>/);
+  assert.match(html,/>Unassigned<\/td>/);
+  assert.doesNotMatch(html,/acceptedAt|acceptedBy|data-action/);
+  assert.deepEqual(input,before);
+  const mine=ui.runSheet(input,now,{mine:true,actor:'maya'});
+  assert.match(mine,/2 activities have owner acceptance not recorded/);
+});
+
+test('acceptance warnings follow review semantics and only the selected scheduled activities',()=>{
+  const input=state();input.members.push({id:'other',name:'Other owner'},{id:'inactive',name:'Former owner',active:false});
+  input.tasks=[
+    activity('Pending','maya','2026-11-20T17:00'),
+    activity('Accepted','maya','2026-11-20T17:15','',{acceptedAt:'2026-11-19T12:00Z'}),
+    activity('Reported','maya','2026-11-20T17:30','',{reportedAt:'2026-11-19T12:00Z',requiresVerification:true}),
+    activity('Done','maya','2026-11-20T17:45','',{status:'done'}),
+    activity('Needs review','maya','2026-11-20T18:00','',{status:'done',requiresVerification:true}),
+    activity('Inactive','inactive','2026-11-20T18:15'),
+    activity('Unavailable','missing','2026-11-20T18:30'),
+    activity('Unassigned','','2026-11-20T18:45'),
+    activity('Other pending','other','2026-11-20T19:00'),
+    {id:'prep',title:'Preparation acceptance',owner:'maya',status:'todo'},
+  ];
+  const html=ui.runSheet(input,now,{mine:true,actor:'maya'});
+  assert.match(html,/1 activity has owner acceptance not recorded/);
+  assert.equal((html.match(/<span>Acceptance not recorded<\/span>/g)||[]).length,1);
+  const review=GatherScheduleUI.reviewItems(input,now,{mine:true,actor:'maya'}).find(group=>group.key==='acceptance');
+  assert.deepEqual(review.tasks.map(task=>task.id),['Pending','prep']);
+  input.tasks[0].acceptedAt='2026-11-19T12:00Z';
+  assert.doesNotMatch(ui.runSheet(input,now,{mine:true,actor:'maya'}),/Acceptance not recorded|owner acceptance not recorded/);
+});
+
 test('run-sheet controls preserve scope, open a snapshot, and print only the active run-sheet dialog',()=>{
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='run-sheet'");

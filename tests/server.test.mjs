@@ -1677,6 +1677,46 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   assert.doesNotMatch(sheet.runSheet(restored.state),/Inactive teammate|missing or inactive assigned owner/);
   owner();
 });
+test('run-sheet acceptance follows explicit owner acceptance and renewed assignment through the real API',async()=>{
+  await import('../legacy/schedule-ui.js');
+  const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const sheet=GatherScheduleUI.create({h,options:()=>'',person:()=>'',statusBadge:()=>''});
+  const id=await newTeamProject('Fictional corporate run-sheet acceptance');
+  const email='run-sheet-acceptance@example.com',userId='run-sheet-acceptance';
+  await joinPerson(id,email,userId);
+  const actor=(await (await realRead(id)).json()).identity.actorId;owner();
+  const write=async(method,args)=>{
+    const current=await (await realRead(id)).json();
+    const response=await workspace.POST(request('/api/workspace?project='+id,{method,args,revision:current.revision}));
+    assert.equal(response.status,200);return response.json();
+  };
+  try{
+    await write('completeSetup',[{timeZone:'Europe/London'}]);
+    let snap=await write('addTask',[{title:'Fictional speaker arrival',owner:actor,schedule:{start:'2026-11-20T09:00',end:'2026-11-20T09:30',location:'Fictional welcome hall'},note:'PRIVATE-ACCEPTANCE-NOTE'}]);
+    const original=snap.state.tasks[0],taskId=original.id;
+    const row=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+    let before=row(),html=sheet.runSheet(snap.state);
+    assert.match(html,/1 activity has owner acceptance not recorded/);
+    assert.match(html,/Maya Real<span>Acceptance not recorded<\/span>/);
+    assert.doesNotMatch(html,/PRIVATE-ACCEPTANCE-NOTE|run-sheet-acceptance@example.com/);
+    assert.deepEqual(row(),before);
+    const forbidden=await workspace.POST(request('/api/workspace?project='+id,{method:'acceptTask',args:[taskId],revision:snap.revision}));
+    assert.equal(forbidden.status,400);assert.deepEqual(row(),before);
+    asTeammate(email,userId);snap=await write('acceptTask',[taskId]);
+    assert.equal(snap.state.tasks[0].acceptedBy,actor);assert.ok(snap.state.tasks[0].acceptedAt);
+    assert.equal(snap.state.tasks[0].status,original.status);assert.deepEqual(snap.state.tasks[0].schedule,original.schedule);
+    before=row();assert.doesNotMatch(sheet.runSheet(snap.state),/Acceptance not recorded|owner acceptance not recorded/);assert.deepEqual(row(),before);
+    owner();snap=await write('updateTask',[taskId,{owner:'jack'}]);
+    assert.equal(snap.state.tasks[0].acceptedAt,'');assert.ok(sheet.runSheet(snap.state).includes(h(snap.state.members.find(member=>member.id==='jack').name)+'<span>Acceptance not recorded</span>'));
+    snap=await write('acceptTask',[taskId]);
+    assert.equal(snap.state.tasks[0].acceptedBy,'jack');assert.doesNotMatch(sheet.runSheet(snap.state),/Acceptance not recorded|owner acceptance not recorded/);
+    assert.equal(snap.state.tasks[0].status,'todo');assert.deepEqual(snap.state.tasks[0].schedule,original.schedule);
+  }finally{
+    // This test owns its disposable project; do not consume a slot in the
+    // shared regression account or raise the product's project limits.
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();
+  }
+});
 test('membership removal at workspace commit prevents a write even with a freshly checked revision',async()=>{
   const id=await newTeamProject();await joinPerson(id);owner();let snap=await (await realRead(id)).json();
   snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Race claim'}],revision:snap.revision}))).json();asTeammate();

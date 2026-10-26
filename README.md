@@ -99,6 +99,8 @@ When activities are scheduled, **Timeline → Run sheet** opens a read-only snap
 
 Run sheets label an inactive assigned person as **Inactive teammate** and a missing assigned member as **Assigned owner unavailable**, rather than calling either unassigned. A scoped warning calls out unresolved activities with either responsibility gap; completed, verified work keeps its historical owner label without an open-work warning. Confirm responsibility with the organizer. The snapshot does not reassign work or expose member identifiers or contact details.
 
+Open activities assigned to active teammates show **Acceptance not recorded** when neither owner acceptance nor a completion report is recorded. A scoped count highlights the gap: assignment alone does not confirm responsibility. This uses the same saved-fact rule as Before the event, excludes completed/verification-pending work, and does not accept tasks for anyone. Reopen the snapshot after the owner responds; reassigning work clears the old acceptance and requires reconfirmation.
+
 **Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
 
 ### Optional manual budget
