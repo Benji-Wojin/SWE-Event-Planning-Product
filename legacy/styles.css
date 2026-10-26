@@ -708,3 +708,4 @@ form[aria-busy="true"]{cursor:progress}
 .reschedule-row legend {max-width:100%;font-weight:600;overflow-wrap:anywhere;}
 .reschedule-row .check-field {align-items:flex-start;margin-top:12px;}
 .reschedule-row .check-field span {min-width:0;overflow-wrap:anywhere;}
+.completion-evidence .notice p {white-space:pre-wrap;overflow-wrap:anywhere;}

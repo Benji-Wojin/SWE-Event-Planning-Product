@@ -137,8 +137,9 @@
         if(item===undefined||item===null)return true;
         try { const normalized=completionEvidence({note:item.note,links:item.links,fileIds:item.fileIds});return Object.keys(item).every(key=>['note','links','fileIds','at','actor'].includes(key))&&validTime(item.at)&&validOwner(item.actor)&&JSON.stringify(normalized)===JSON.stringify({note:item.note,links:item.links,fileIds:item.fileIds}); }catch{return false;}
       };
+      const validReview = item => item===undefined||item===null||!!item&&typeof item==='object'&&!Array.isArray(item)&&Object.keys(item).every(key=>['note','at','actor','reportedAt','reportedBy'].includes(key))&&strings(item,['note','at','actor','reportedAt','reportedBy'])&&!!item.note.trim()&&item.note.length<=3000&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(item.note)&&validTime(item.at)&&validTime(item.reportedAt)&&validOwner(item.actor);
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
-        list(value.tasks,task=>validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
+        list(value.tasks,task=>validReview(task.completionReview)&&validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
         (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
         list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
@@ -169,6 +170,7 @@
     state.tasks.forEach((task) => {
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
       task.schedule ??= null;
+      task.completionReview ??= null;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
       task.priority = ['auto', 'high', 'low'].includes(task.priority) ? task.priority : 'auto';
@@ -246,7 +248,7 @@
       state.tasks.unshift(task);
       task.priority = 'auto';
       task.schedule = null;
-      Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope});
+      Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope,completionReview:null});
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
@@ -263,6 +265,7 @@
       if (changed.includes('owner')) { task.nextUpAt=''; task.nextUpBy=''; task.ownerRespondedAt=''; task.followupSentAt=''; task.planReviewAfter=''; }
       if (changed.includes('note') && actor === next.owner) task.ownerRespondedAt = timestamp();
       changed.forEach((field) => { task[field] = next[field]; });
+      if(task.status==='done')task.completionReview=null;
       task.revision += 1;
       if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.followupAfter = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
       if (changed.includes('status') && task.status !== 'done') { task.verifiedAt = ''; task.verifiedBy = ''; task.reportedAt = ''; task.reportedBy = ''; }
@@ -323,6 +326,7 @@
       if(scope===task.scope)return false;
       const previous=task.scope,at=timestamp();
       task.scope=scope;
+      task.completionReview=null;
       for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
       task.comments.push({id:id('comment'),actor,at,text:'Required outcome changed. Review it and accept responsibility again.\nPrevious outcome: '+(previous||'Not recorded')+'\nNew outcome: '+(scope||'Not recorded')});
       return true;
@@ -591,6 +595,7 @@
       if (completionReport && !task.verifiedAt) {
         closeRecovery(task,'superseded',actor);
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
+        task.completionReview=null;
         task.verifiedAt = ''; task.verifiedBy = '';
       }
       if (completionReport && proposed.status === "done" && !task.verifiedAt && (!task.completedAt || !task.completionReportedBy)) {
@@ -688,11 +693,33 @@
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
+      task.completionReview=null;
       task.verifiedAt = ''; task.verifiedBy = '';
       task.blockerFingerprint = '';
       archiveEvidence(task);task.completionEvidence={...details,at:timestamp(),actor};task.completionEvidenceReviewAt='';
       if (task.status === 'done') captureCompletion(task, actor, task.reportedBy);
       entry(actor, `reported ${task.title} complete${task.requiresVerification ? '; awaiting organizer verification' : ''}`, task.id, 'reported'); save(); return copy(task);
+    }
+    function returnCompletion(taskId, note, actor = 'jack') {
+      actorId(actor);if(actor!=='jack')throw new Error('Only the organizer can return a completion report for changes.');
+      const task=taskById(taskId),reason=completionEvidence({note}).note;
+      if(!reason)throw new Error('Explain what needs changing before returning this completion report.');
+      if(task.status==='done'||!task.requiresVerification||!task.reportedAt||task.verifiedAt||Number.isNaN(Date.parse(task.reportedAt)))throw new Error('There is no pending completion report to return.');
+      const at=timestamp(),reportedAt=task.reportedAt,reportedBy=task.reportedBy;
+      // Preserve older reports which predate structured completion evidence.
+      if(!task.completionEvidence){
+        const marker=' [Earlier report excerpt; full note retained in the task conversation.]';
+        const displayNote=task.note.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'\ufffd');
+        const archivedNote=displayNote.length>3000?displayNote.slice(0,3000-marker.length)+marker:displayNote;
+        task.completionEvidence={...completionEvidence({note:archivedNote}),at:reportedAt,actor};
+      }
+      archiveEvidence(task);task.completionEvidence=null;task.completionEvidenceReviewAt='';
+      task.completionReview={note:reason,at,actor,reportedAt,reportedBy};
+      task.comments.push({id:id('comment'),actor,at,kind:'completion-returned',text:'Completion returned for changes.\n'+reason+'\nEarlier report by '+(reportedBy||'the task owner')+' at '+reportedAt+':\n'+task.note});
+      task.reportedAt='';task.reportedBy='';task.completionResult=null;task.revision++;
+      entry(actor,'requested changes to the completion of '+task.title,task.id,'completion-returned');
+      // A review decision is not an owner progress update or a completion.
+      save(true,false);return copy(task);
     }
     function verifyTask(taskId, actor = 'jack') {
       actorId(actor); if (actor !== 'jack') throw new Error('Only the organizer can verify completion in this demo.');
@@ -702,6 +729,7 @@
       const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };
       patchTask(task, { status: 'done' }, actor); Object.assign(task, report);
       task.verifiedAt = timestamp(); task.verifiedBy = actor; task.revision++;
+      task.completionReview=null;
       task.completionEvidenceReviewAt=task.completionEvidence?task.verifiedAt:'';
       captureCompletion(task, actor, task.reportedBy);
       entry(actor, `verified completion of ${task.title}`, task.id, 'verified'); save(); return copy(task);
@@ -1212,7 +1240,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

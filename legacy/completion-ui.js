@@ -82,15 +82,18 @@
     );
   }
   function section(task, canEdit) {
+    const review=task.status!=='done'&&!task.reportedAt?task.completionReview:null;
     if (
       task.status !== 'done' &&
       !task.reportedAt &&
-      !(task.completionEvidenceHistory || []).length
+      !(task.completionEvidenceHistory || []).length &&
+      !review
     )
       return '';
     const value = task.completionEvidence;
     return (
       '<section class="completion-evidence section-gap"><h3>Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
+      (review?'<section class="notice" aria-label="Completion changes requested"><h4>Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit a new completion report. Nothing was verified; earlier evidence remains below.</p></section>':'')+
       (value && task.verifiedAt && !task.completionEvidenceReviewAt
         ? '<p class="completion-amendment">This evidence was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'
         : '') +
@@ -103,7 +106,7 @@
           '<p class="muted">Recorded ' +
           h(new Date(value.at).toLocaleString()) +
           '</p></div>'
-        : '<p class="muted">No evidence added for the current completion.</p>') +
+        : review?'<p class="muted">No current completion report. Earlier evidence is retained below.</p>':'<p class="muted">No evidence added for the current completion.</p>') +
       (canEdit && (task.status === 'done' || task.reportedAt)
         ? '<details class="completion-edit"><summary>Add or edit completion evidence</summary><form id="completionEvidenceForm" data-id="' +
           h(task.id) +

@@ -439,6 +439,43 @@ for(const action of ['setTaskOutcome','resolveRecovery'])test(action+' outcome e
   const args=action==='setTaskOutcome'?[task.id,'Unauthorized changed outcome.']:[task.id,{action:'scope',scope:'Unauthorized smaller outcome.',note:'Fictional decision.',reviewAfter:'2027-01-09'}];
   try{assert.equal((await mutate(project,organizer,action,args,baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
+test('completion return is organizer-only, preserves evidence/outcome and permits owner resubmission before verification',async()=>{
+  const {project,actor}=await setup();
+  try{
+    const task=(await save(project,organizer,'addTask',[{title:'Fictional reviewed welcome plan',owner:actor,scope:'Route and greeter confirmed.',requiresVerification:true}])).result;
+    const report=(await save(project,teammate,'reportCompletion',[task.id,{note:'Route prepared.',links:['https://www.nasa.gov/']}])).result;
+    let baseline=stored(project);assert.equal((await mutate(project,teammate,'returnCompletion',[task.id,'Self approval.'])).status,403);assert.deepEqual(stored(project),baseline);
+    assert.equal((await mutate(project,organizer,'returnCompletion',[task.id,'Stale review.'],baseline.revision-1)).status,409);assert.deepEqual(stored(project),baseline);
+    const returned=(await save(project,organizer,'returnCompletion',[task.id,'Name the greeter before resubmitting.'])).result;
+    assert.equal(returned.status,'progress');assert.equal(returned.reportedAt,'');assert.equal(returned.verifiedAt,'');assert.equal(returned.scope,task.scope);assert.deepEqual(returned.completionEvidenceHistory[0],report.completionEvidence);assert.equal(returned.updatedAt,report.updatedAt);assert.equal(returned.updatedBy,report.updatedBy);assert.equal(returned.completionReview.actor,'jack');
+    baseline=stored(project);assert.equal((await mutate(project,organizer,'verifyTask',[task.id])).status,400);assert.deepEqual(stored(project),baseline);
+    await save(project,teammate,'updateTask',[task.id,{status:'progress',note:'Greeter review in progress.'}]);assert.ok((await read(project,teammate)).state.tasks.find(t=>t.id===task.id).completionReview);
+    const revised=(await save(project,teammate,'reportCompletion',[task.id,'Route and greeter confirmed.'])).result;assert.equal(revised.completionReview,null);assert.equal(revised.status,'progress');assert.equal(revised.scope,task.scope);
+    baseline=stored(project);assert.equal((await mutate(project,organizer,'returnCompletion',[task.id,'Old review cannot clear new report.'],baseline.revision-1)).status,409);assert.deepEqual(stored(project),baseline);
+    const verified=(await save(project,organizer,'verifyTask',[task.id])).result;assert.equal(verified.status,'done');assert.equal(verified.verifiedBy,'jack');assert.ok(verified.reportedBy);assert.equal(verified.completionEvidenceHistory.length,1);assert.ok(verified.comments.some(comment=>comment.kind==='completion-returned'));
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
+test('completion return loses organizer authority at commit even if old organizer retains member access',async()=>{
+  const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate report review',owner:actor,requiresVerification:true}])).result;
+  await save(project,teammate,'reportCompletion',[task.id,'Fictional work reported.']);
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('return-old-owner-'+project,project,organizer.userId,'jack','fictional',new Date().toISOString());
+  const baseline=stored(project);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  try{assert.equal((await mutate(project,organizer,'returnCompletion',[task.id,'Needs another check.'],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
+for(const winnerMethod of ['verifyTask','returnCompletion'])test('overlapping verify/return retains only the '+winnerMethod+' decision',async()=>{
+  const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Fictional event review race',owner:actor,requiresVerification:true}])).result;
+  await save(project,teammate,'reportCompletion',[task.id,'Fictional reported result.']);const baseline=stored(project);
+  let arrived=0,release,releaseLoser;const gate=new Promise(resolve=>release=resolve),winnerFinished=new Promise(resolve=>releaseLoser=resolve);
+  const actions=[{method:'verifyTask',args:[task.id]},{method:'returnCompletion',args:[task.id,'Review the missing result.']}];
+  beforeRun=async(sql,args)=>{if(!isCommit(project,sql,args))return;const method=JSON.parse(args[0]).activity[0].type==='verified'?'verifyTask':'returnCompletion';if(++arrived===2)release();await gate;if(method!==winnerMethod)await winnerFinished;};
+  try{
+    const responses=await bounded(Promise.all(actions.map(action=>mutate(project,organizer,action.method,action.args,baseline.revision).finally(()=>{if(action.method===winnerMethod)releaseLoser();}))));
+    assert.equal(arrived,2);assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);assert.equal(responses[actions.findIndex(action=>action.method===winnerMethod)].status,200);
+    const final=(await read(project)).state.tasks.find(t=>t.id===task.id);assert.equal(stored(project).revision,baseline.revision+1);
+    if(winnerMethod==='verifyTask'){assert.equal(final.status,'done');assert.ok(final.verifiedAt);assert.equal(final.completionReview,null);assert.ok(final.completionEvidence);}else{assert.equal(final.status,'progress');assert.equal(final.verifiedAt,'');assert.equal(final.reportedAt,'');assert.ok(final.completionReview);assert.equal(final.completionEvidenceHistory.length,1);assert.equal(final.completionEvidence,null);}
+  }finally{release();releaseLoser();beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
 async function bounded(promise) {
   let timer;
   try {
