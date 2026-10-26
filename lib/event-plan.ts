@@ -552,7 +552,7 @@ async function applyDraft(c: Context, input: any) {
   let items: ReviewedItem[];
   try {
     items = reviewedItems(input.items, data.draft);
-    if(c.purpose==='assistant' && items.some(item=>item.kind!=='preparation' || item.start || item.end || item.location || item.dependsOn.length || (c.memberAssistant && item.owner && item.owner!==c.user.actorId))) throw new Error('The task assistant adds unscheduled tasks only. Teammates may choose themselves or Unassigned.');
+    if(c.purpose==='assistant' && items.some(item=>item.kind!=='preparation' || item.start || item.end || item.location || (c.memberAssistant && item.owner && item.owner!==c.user.actorId))) throw new Error('The task assistant adds unscheduled tasks only. Teammates may choose themselves or Unassigned.');
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
@@ -573,7 +573,14 @@ async function applyDraft(c: Context, input: any) {
   const ids = new Map<string, string>(reusable);
   const createdIds: string[] = [];
   try {
-    for (const item of selected) {
+    // Create prerequisite proposals first so each new task can receive its
+    // reviewed links under the real creator's authority, including Unassigned
+    // teammate proposals. Reused shared tasks are never edited.
+    const createReviewed = (item: ReviewedItem): void => {
+      if(ids.has(item.id))return;
+      for(const prerequisite of item.dependsOn){
+        if(!ids.has(prerequisite))createReviewed(selected.find(other=>other.id===prerequisite)!);
+      }
       if (duplicates.has(item.id))
         throw new Error(
           'A task named “' +
@@ -592,6 +599,7 @@ async function applyDraft(c: Context, input: any) {
               : ''),
           dueDate: item.dueDate,
           status: 'todo',
+          dependencies:item.dependsOn.map(prerequisite=>({taskId:ids.get(prerequisite)!,kind:'dependency',reason:item.note||'Required output reviewed in the private plan.'})),
           ...(item.start
             ? {
                 schedule: {
@@ -605,15 +613,9 @@ async function applyDraft(c: Context, input: any) {
         c.memberAssistant ? c.user.actorId : 'jack',
       );
       ids.set(item.id, task.id);
-      createdIds.push(task.id);
-    }
-    for (const item of selected)
-      for (const prerequisite of item.dependsOn)
-        c.store.addDependency(
-          ids.get(item.id),
-          { taskId: ids.get(prerequisite), reason: item.note },
-          'jack',
-        );
+    };
+    for(const item of selected)createReviewed(item);
+    createdIds.push(...selected.map(item=>ids.get(item.id)!));
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }

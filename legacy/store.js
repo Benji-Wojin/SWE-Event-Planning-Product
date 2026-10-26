@@ -276,13 +276,21 @@
       actorId(actor);
       if (actor !== 'jack') {
         if (state.event.membersCanCreateTasks !== true) throw new Error('Only the organizer can add tasks.');
-        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','owner','dueDate','status'].includes(key))) throw new Error('Teammates can add a task name, context, category, due date and owner.');
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','owner','dueDate','status','dependencies'].includes(key))) throw new Error('Teammates can add a task name, context, category, due date, owner and reviewed links.');
         if (data.owner && data.owner !== actor) throw new Error('Assign the new task to yourself or leave it unassigned.');
         if (data.status !== undefined && data.status !== 'todo') throw new Error('New teammate tasks start as To do. Report progress after creating the task.');
       }
+      const links=data.dependencies===undefined?[]:data.dependencies;
+      if(!Array.isArray(links)||links.length>8||new Set(links.map(link=>link?.taskId)).size!==links.length||links.some(link=>!link||typeof link!=='object'||Array.isArray(link)||Object.keys(link).some(key=>!['taskId','kind','reason'].includes(key))||typeof link.taskId!=='string'||!['dependency','related'].includes(link.kind)||typeof link.reason!=='string'||!link.reason.trim()||link.reason.length>2000))throw new Error('Review up to eight different linked tasks and explain each relationship.');
+      for(const link of links)taskById(link.taskId);
+      if(links.length&&data.status==='done')throw new Error('New work with reviewed links must start incomplete.');
       const schedule = data.schedule === undefined ? null : scheduleFields(data.schedule, actor);
       const task = createTask(data, actor);
+      // Check all links before recording any of them. A legacy unavailable link
+      // must not let a coincident new ID introduce a cycle or partial creation.
+      if(links.some(link=>link.kind!=='related'&&dependsOn(link.taskId,task.id))){state.tasks.shift();throw new Error('These tasks would depend on each other. Choose different linked work.');}
       task.schedule = schedule;
+      for(const link of links)linkDependency(task,taskById(link.taskId),actor,false,'',link.kind,clean(link.reason,2000));
       entry(actor, `created ${task.title}`, task.id, "created");
       syncBlocker(task, actor);
       if(['progress','blocked'].includes(task.status)&&task.note)suggestHandoffs(task,task.note,actor,'note','');

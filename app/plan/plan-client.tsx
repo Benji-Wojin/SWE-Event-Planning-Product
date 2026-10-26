@@ -914,10 +914,11 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                           </div>
                         </div>
                       )}
-                      {!assistant && <fieldset className="space-y-2">
+                      <fieldset className="space-y-2">
                         <legend className="mb-2 text-sm font-medium">
                           Required before completion
                         </legend>
+                        <p className="text-sm text-muted-foreground">Keep only links whose results are needed to complete this task. Related work can run in parallel without a required link. Nothing is linked in the shared project until you add the reviewed items.</p>
                         {items
                           .filter((other) => other.id !== item.id)
                           .map((other) => (
@@ -926,6 +927,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                               className="flex items-start gap-2 text-sm"
                             >
                               <input
+                                id={'required-'+item.id+':'+other.id}
                                 type="checkbox"
                                 className="mt-1 size-4 shrink-0 accent-primary"
                                 checked={item.dependsOn.includes(other.id)}
@@ -949,7 +951,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                               </span>
                             </label>
                           ))}
-                      </fieldset>}
+                      </fieldset>
                     </div>
                   </details>
                 </CardContent>

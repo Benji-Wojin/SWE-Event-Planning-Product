@@ -68,8 +68,7 @@ export function validateTaskProposal(
         item.kind !== 'preparation' ||
         item.start ||
         item.end ||
-        item.location ||
-        item.dependsOn.length,
+        item.location,
     )
   )
     throw new Error('Invalid task proposal.');

@@ -53,6 +53,45 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       const latest=calls.at(-1);assert.equal(latest.tools,undefined);assert.match(latest.messages[0].content,/NO tools/);
       assert.doesNotMatch(JSON.stringify(latest),/fictional-assistant-key|owner@example.com/);
     });
+    await t.test('reviewed assistant prerequisites stay private, reject missing or cyclic choices and apply once in reviewed order',async()=>{
+      const id=await newTeamProject('Connected school preparation');
+      try{
+        output={items:[{...base,id:'briefing',title:'Prepare final volunteer briefing',note:'Needs the reviewed welcome plan.',dependsOn:['review']},{...base,id:'review',title:'Review the welcome plan'}],questions:[],assumptions:[]};
+        const response=await generate(id,[{role:'user',content:'Break welcome preparation into a review and then a final briefing.'}]);assert.equal(response.status,200);
+        const s=await response.json();assert.equal(s.status,'ready');assert.equal((await ws(id)).state.tasks.length,0);
+        const row=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before=row();
+        assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,owner:'jack',included:item.id!=='review'})))).status,400);assert.deepEqual(row(),before);
+        assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,owner:'jack',dependsOn:item.id==='review'?['briefing']:item.dependsOn})))).status,400);assert.deepEqual(row(),before);
+        assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,owner:'jack',dependsOn:item.id==='briefing'?['missing']:[]})))).status,400);assert.deepEqual(row(),before);
+        const reviewed=s.draft.items.map(item=>({...item,owner:'jack'}));
+        const saved=await apply(id,s,reviewed);assert.equal(saved.status,200);const result=await saved.json(),state=(await ws(id)).state;
+        assert.equal(state.tasks.length,2);const dependent=state.tasks.find(task=>task.title==='Prepare final volunteer briefing'),prerequisite=state.tasks.find(task=>task.title==='Review the welcome plan');
+        assert.deepEqual(result.receipt.taskIds,[dependent.id,prerequisite.id],'receipt follows reviewed order, not topological creation order');
+        assert.equal(dependent.dependencies[0].taskId,prerequisite.id);assert.equal(dependent.dependencies[0].kind,'dependency');
+        for(const task of state.tasks){assert.equal(task.status,'todo');assert.equal(task.acceptedAt,'');assert.equal(task.schedule,null);}
+        const stable=row();assert.equal((await apply(id,s,reviewed)).status,200);assert.deepEqual(row(),stable);
+        assert.match(calls.at(-1).messages[0].content,/specific output is required/);assert.equal(calls.at(-1).tools,undefined);
+      }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+    });
+    await t.test('enabled teammate can review a linked unassigned proposal using existing work without changing that work',async()=>{
+      const id=await newTeamProject('Connected teammate preparation');
+      try{
+        await joinPerson(id,'linked-assistant@example.com','linked-assistant');owner();let state=await ws(id);
+        let r=await workspace.POST(request('/api/workspace?project='+id,{method:'completeSetup',args:[{membersCanCreateTasks:true}],revision:state.revision}));assert.equal(r.status,200);state=await r.json();
+        r=await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Review the school welcome plan',owner:'jack',status:'progress',note:'PRIVATE-EXISTING-NOTE'}],revision:state.revision}));assert.equal(r.status,200);
+        const existing=(await r.json()).result;asTeammate('linked-assistant@example.com','linked-assistant');const me=(await ws(id)).identity.actorId;
+        output={items:[{...base,id:'briefing',title:'Prepare a shared welcome briefing',dependsOn:['review'],note:'Use the reviewed welcome plan.'},{...base,id:'review',title:existing.title}],questions:[],assumptions:[]};
+        r=await generate(id,[{role:'user',content:'Use the existing plan review as the prerequisite for a new shared briefing task.'}]);assert.equal(r.status,200);const s=await r.json();assert.equal(s.status,'ready');
+        const before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+        const reviewed=s.draft.items.map(item=>({...item,owner:'',included:item.id!=='review'}));
+        assert.equal((await apply(id,s,reviewed.map(item=>({...item,owner:'jack'})))).status,400);assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before);
+        r=await apply(id,s,reviewed);assert.equal(r.status,200);state=(await ws(id)).state;
+        assert.equal(state.tasks.length,2);const created=state.tasks.find(task=>task.id!==existing.id);
+        assert.equal(created.owner,'');assert.equal(created.updatedBy,me);assert.equal(created.comments[0].actor,me);assert.equal(created.status,'todo');
+        assert.equal(created.dependencies[0].taskId,existing.id);assert.deepEqual(state.tasks.find(task=>task.id===existing.id),existing);
+        assert.doesNotMatch(JSON.stringify(created),/PRIVATE-EXISTING-NOTE/);
+      }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+    });
     await t.test('assistant uses explicit consent, validates conversations and fails closed on invalid provider actions',async()=>{
       const id=await newTeamProject('Assistant validation fixture');const rows=[{role:'user',content:'Make a welcome task'}];
       const before=calls.length;

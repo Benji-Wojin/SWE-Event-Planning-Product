@@ -786,6 +786,18 @@ test('batch edits invalidate an uncertain generation retry and preserve the upda
   }
 });
 
+test('Ask Weft shows proposed prerequisites for human review and preserves an explicit removal on apply',async()=>{
+  const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Break this preparation into two steps.'}]);
+  initial.draft.items.push({...copy(item),id:'two',title:'Prepare final briefing',note:'Needs the reviewed programme.',dependsOn:['one']});
+  const app=harness(context=>{if(context.input?.action==='save')context.value={...context.saved,draft:{...context.saved.draft,items:context.input.items}};},initial,'project=p_example&mode=assistant');
+  try{
+    await app.start();assert.match(text(app.tree),/Required before completion/);assert.match(text(app.tree),/Related work can run in parallel/);
+    assert.equal(app.find('required-two:one').props.checked,true);
+    await app.check('required-two:one',false);await app.click('Add 2 selected items to project');
+    assert.equal(app.requests.at(-1).action,'apply');assert.deepEqual(app.requests.at(-1).items[1].dependsOn,[]);
+    assert.deepEqual(app.saved.draft.items[1].dependsOn,[]);
+  }finally{app.dispose();}
+});
 test('new task conversation confirms unsaved edits and hides the old draft without a server write', async () => {
   const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Prepare signs'}]);
   const app=harness(undefined,initial,'project=p_example&mode=assistant');
