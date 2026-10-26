@@ -430,6 +430,15 @@
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked,...(input.multiple?{selected:[...input.selectedOptions].map(option=>({value:option.value,text:option.textContent}))}:{})})));
   }
   function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
+  function taskOwnerPresentation(task,state,organizer) {
+    const owner=state.members.find(person=>person.id===task.owner);
+    const unavailable=!!task.owner&&(!owner||owner.active===false);
+    const name=!task.owner?'Unassigned':!owner?'Assigned owner unavailable':owner.name+(owner.active===false?' · Inactive teammate':'');
+    const unresolved=task.status!=='done'||task.requiresVerification&&!task.verifiedAt;
+    if(!unavailable||!unresolved)return {name,notice:''};
+    const canReview=organizer&&!window.GatherAccessLost;
+    return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
+  }
   function taskDialog(id,submittedForm='') {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
@@ -439,10 +448,11 @@
     const previousFocus=sameTask?document.activeElement:null;
     const scroll=sameTask?$('#dialog').scrollTop:0;
     ui.detailId=id;
-    const organizer=isOrganizer(), own=task.owner===ui.actor;
+    const organizer=isOrganizer(), own=task.owner===ui.actor,ownerInfo=taskOwnerPresentation(task,taskState,organizer);
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
-      <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(member(task.owner).name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+      <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+      ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${task.scope?`<section class="agreed-scope"><h3>Agreed outcome</h3><p>${h(task.scope)}</p></section>`:''}
@@ -638,6 +648,10 @@
       if(action==='before-event-review'&&!window.GatherAccessLost)openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),{mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor}),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
       if(action==='print-run-sheet'&&ui.dialogKind==='run-sheet'&&$('#eventRunSheet')&&!window.GatherAccessLost)window.print();
       if(action==='task')taskDialog(id);
+      if(action==='review-task-owner'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
+        const form=$('#taskDetailForm'),owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
+        if(details){details.open=true;owner.focus();}
+      }
       if(action==='quick-tour'){if(confirmDiscard($('#dialog'),$('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
       if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}

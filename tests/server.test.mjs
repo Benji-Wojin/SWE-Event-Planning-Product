@@ -1764,6 +1764,34 @@ test('run-sheet required-work warnings follow real teammate reporting and organi
     assert.equal(snap.state.tasks.find(task=>task.id===prep.id).verifiedBy,'jack');
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
 });
+test('organizer explicitly restores responsibility for an inactive owner without completing event work',async()=>{
+  const id=await newTeamProject('Fictional event ownership recovery');
+  const email='owner-recovery@example.com',userId='owner-recovery';
+  const write=async(method,args)=>{
+    const current=await (await realRead(id)).json();
+    const response=await workspace.POST(request('/api/workspace?project='+id,{method,args,revision:current.revision}));
+    assert.equal(response.status,200);return response.json();
+  };
+  try{
+    await joinPerson(id,email,userId);const actor=(await (await realRead(id)).json()).identity.actorId;owner();
+    await write('completeSetup',[{timeZone:'America/Los_Angeles'}]);
+    let snap=await write('addTask',[{title:'Fictional welcome handoff',owner:actor,status:'progress',note:'Fictional setup in progress.',schedule:{start:'2026-11-20T17:00',end:'2026-11-20T17:30',location:'Fictional school hall'}}]);
+    const activity=snap.state.tasks[0];
+    asTeammate(email,userId);await write('acceptTask',[activity.id]);snap=await write('setNextUp',[activity.id,{enabled:true}]);
+    assert.ok(snap.state.tasks[0].acceptedAt);assert.ok(snap.state.tasks[0].nextUpAt);owner();
+    const member=(await (await teamRead(id)).json()).members.find(member=>member.actorId===actor);
+    assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+    const removed=await (await realRead(id)).json();assert.equal(removed.state.members.find(member=>member.id===actor).active,false);
+    assert.equal(removed.state.tasks[0].owner,actor,'removal alone never reassigns work');
+    snap=await write('updateTask',[activity.id,{owner:'jack'}]);
+    const reassigned=snap.state.tasks[0];
+    assert.equal(reassigned.owner,'jack');assert.equal(reassigned.acceptedAt,'');assert.equal(reassigned.nextUpAt,'');
+    for(const key of ['status','title','note','schedule','dueDate','dependencies','completedAt'])assert.deepEqual(reassigned[key],activity[key],key+' must remain unchanged');
+    assert.equal(reassigned.status,'progress');
+    snap=await write('acceptTask',[activity.id]);assert.ok(snap.state.tasks[0].acceptedAt);assert.equal(snap.state.tasks[0].acceptedBy,'jack');
+    assert.equal(snap.state.tasks[0].status,'progress');assert.deepEqual(snap.state.tasks[0].schedule,activity.schedule);
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+});
 test('membership removal at workspace commit prevents a write even with a freshly checked revision',async()=>{
   const id=await newTeamProject();await joinPerson(id);owner();let snap=await (await realRead(id)).json();
   snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Race claim'}],revision:snap.revision}))).json();asTeammate();
