@@ -3,6 +3,7 @@
   const labels = { auto: 'Automatic', high: 'High', low: 'Low' };
   const resolved = task => Boolean(task && task.status === 'done' && (!task.requiresVerification || task.verifiedAt));
   const awaiting = task => Boolean(task.reportedAt && task.requiresVerification && !task.verifiedAt);
+  const changesRequested = task => task.status!=='done'&&!task.reportedAt&&Boolean(task.completionReview);
   const dayKey = (date,zone) => root.GatherCalendar.dayKey(date,zone);
   const dayNumber = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? Date.parse(value+'T00:00:00Z')/86400000 : NaN;
   const daysLeft = (task,now,zone) => dayNumber(task.dueDate)-dayNumber(dayKey(now,zone));
@@ -50,6 +51,7 @@
     const today=dayNumber(dayKey(now,zone)),days=daysLeft(task,now,zone),priority=Object.hasOwn(labels,task.priority)?task.priority:'auto';
     const factors=[];
     const add=(key,label,action,weight)=>factors.push({key,label,action,weight});
+    if(changesRequested(task))add('changes','Changes requested','Review the organizer’s request, then revise and resubmit',65);
     const risk=deadlineRisk(task,now,zone);
     if(task.hardDeadline&&days<=7)add('deadline','Fixed deadline'+(days<0?' missed':days===0?' today':' in '+days+' days'),'Review the event risk',risk-(task.essential?100:0));
     if(task.essential)add('essential','Essential for the event','Protect essential work',100);
@@ -83,7 +85,7 @@
       summary:[priority!=='auto'?labels[priority]+' priority':'',...factors.slice(0,3).map(f=>f.label)].filter(Boolean).join(' · ')};
   }
   function rank(tasks,now=new Date(),all=false,zone='UTC') {
-    return tasks.map(task=>({task,info:analyze(task,tasks,now,zone)})).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)))).sort((a,b)=>
+    return tasks.map(task=>({task,info:analyze(task,tasks,now,zone)})).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task)))).sort((a,b)=>
       (b.info?.score||0)-(a.info?.score||0)||(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id))).map(item=>item.task);
   }
   const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
@@ -99,5 +101,5 @@
     }
     return {text:task.scope?'Check whether the agreed outcome is still achievable.':'Agree on the smallest useful outcome, then a realistic next check-in.',targets:[]};
   }
-  root.GatherPriorities={analyze,rank,labels,decision,pendingRequest,actionable,unresolved,nextUp,suggestion,downstream};
+  root.GatherPriorities={analyze,rank,labels,decision,pendingRequest,actionable,unresolved,nextUp,suggestion,downstream,changesRequested};
 })(typeof window!=='undefined'?window:globalThis);
