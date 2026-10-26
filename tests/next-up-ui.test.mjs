@@ -62,3 +62,15 @@ test('reassignment advice excludes inactive teammates without erasing their hist
   s.members.push({id:'legacy',name:'Legacy active member'});
   assert.match(GatherPriorities.suggestion(current,s).text,/Consider Legacy/);
 });
+
+test('Overview next steps are personal, read-only and link to My tasks without accepting work',()=>{
+  const s=state([task('mine',{title:'Review the planning brief'}),task('other',{owner:'jules'}),task('waiting',{dependencies:[{taskId:'missing'}]})]);
+  const before=structuredClone(s),recovery=GatherRecoveryUI.create({store:{getState:()=>s},ui:{actor:'maya'},h,options:()=>'',dayLabel:h,member:id=>({name:id})});
+  const html=recovery.nextUpPanel(s,{overview:true});
+  assert.match(html,/aria-label="Your next steps"/);assert.match(html,/Your next steps/);
+  assert.match(html,/0\/3 committed/);assert.match(html,/Review a task to accept responsibility/);
+  assert.match(html,/data-action="task-filter" data-filter="mine"[^>]*>View my tasks/);
+  assert.match(html,/data-id="mine"/);assert.doesNotMatch(html,/data-id="other"|data-id="waiting"|<form|data-action="accept-task"/);
+  assert.deepEqual(s,before);
+  assert.doesNotMatch(recovery.nextUpPanel(s),/Your next steps|View my tasks|committed/);
+});

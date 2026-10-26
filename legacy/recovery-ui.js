@@ -11,11 +11,14 @@
       const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
       return '<div class="owner-load"><span>'+h(member(owner).name.split(' ')[0])+': '+next.length+'/3 next tasks · '+others.length+' other assignments</span>'+(next.length?'<details><summary>Current commitments</summary><ul>'+next.map(t=>'<li>'+h(t.title)+'</li>').join('')+'</ul></details>':'')+'</div>';
     }
-    function nextUpPanel(s) {
+    function nextUpPanel(s,{overview=false}={}) {
       const now=new Date(),active=P.nextUp(s.tasks,ui.actor,now,s.event.timeZone),owned=P.rank(s.tasks,now,true,s.event.timeZone).filter(t=>t.owner===ui.actor);
       const suggested=owned.filter(t=>!t.nextUpAt&&P.actionable(t,s.tasks)).slice(0,Math.max(0,3-active.length));
-      const empty=suggested.length?'Choose up to three tasks to work on next.':owned.length?'Nothing ready to start. Review your open tasks below.':'No open tasks assigned to you.';
-      return '<section class="panel next-up-panel section-gap"><div class="panel-heading"><h2 class="section-title">Next up <span class="muted">'+active.length+'/3</span></h2></div><div class="next-up-list">'+active.map(t=>'<article>'+taskLink(t)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length?'':'<p class="muted">'+empty+'</p>')+(suggested.length?'<details class="next-up-suggestions"'+(active.length?'':' open')+'><summary>Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t)+'<span class="muted">Review to commit</span></article>').join('')+'</details>':'')+'</div></section>';
+      const empty=suggested.length?'Choose up to three tasks to work on next.':owned.length?(overview?'Nothing ready to start. Open My tasks to review blockers, reports or requests.':'Nothing ready to start. Review your open tasks below.'):'No open tasks assigned to you.';
+      const heading=overview?'Your next steps':'Next up';
+      const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
+      const help=overview?'<p class="muted">Your commitments and suggested tasks only. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
+      return '<section class="panel next-up-panel section-gap"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+active.map(t=>'<article>'+taskLink(t)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length?'':'<p class="muted">'+empty+'</p>')+(suggested.length?'<details class="next-up-suggestions"'+(active.length?'':' open')+'><summary>Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t)+'<span class="muted">Review to commit</span></article>').join('')+'</details>':'')+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();

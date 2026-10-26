@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s) {');
 const overview=app.slice(start,app.indexOf('  function filteredTasks(s)',start));
-function render({organizer=true,canCreate=organizer,hosted=true,tasks=[]}={}){
+function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){
   const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};
   const before=structuredClone(state),requests=[];
   const context=vm.createContext({
@@ -18,7 +18,8 @@ function render({organizer=true,canCreate=organizer,hosted=true,tasks=[]}={}){
     empty:(title,copy)=>'<strong>'+title+'</strong><p>'+copy+'</p>',
     GatherInbox:{conversations:()=>[]},fetch:()=>{requests.push('fetch');throw Error('Rendering must be local');},
   });
-  vm.runInContext(readFileSync('legacy/planning-ui.js','utf8'),context);
+  for(const file of ['calendar','priorities','planning-ui','recovery-ui'])vm.runInContext(readFileSync('legacy/'+file+'.js','utf8'),context);
+  context.recovery=context.window.GatherRecoveryUI.create({store:context.store,ui:{actor},h:context.h,options:()=>'',dayLabel:context.dayLabel,member:id=>({name:id})});
   vm.runInContext(overview+'globalThis.renderOverview=overview;',context);
   const html=context.renderOverview(state);
   assert.deepEqual(state,before);assert.deepEqual(requests,[]);
@@ -67,6 +68,24 @@ test('adding work replaces the starting panel with the ordinary attention and re
   assert.match(html,/Needs attention/);assert.match(html,/Recently completed/);
 });
 
+test('populated Overview puts the signed-in planner’s personal next steps before project attention',()=>{
+  const tasks=[{id:'mine',title:'My preparation',owner:'maya',status:'todo'},{id:'other',title:'Other person’s private focus',owner:'jack',status:'todo'}];
+  for(const organizer of [true,false]){
+    const html=render({organizer,tasks});
+    assert.match(html,/Your next steps/);assert.match(html,/My preparation/);
+    assert.doesNotMatch(html,/Other person’s private focus/);
+    assert.ok(html.indexOf('Your next steps')<html.indexOf('<h2 class="section-title">Needs attention'));
+    assert.match(html,/data-action="task-filter" data-filter="mine"[^>]*>View my tasks/);
+  }
+  assert.doesNotMatch(render(),/Your next steps/);
+});
+
+test('personal Overview does not suggest blocked work, but makes the personal review route visible',()=>{
+  const html=render({organizer:false,tasks:[{id:'blocked',title:'Not ready to start',owner:'maya',status:'blocked'}]});
+  assert.match(html,/Nothing ready to start/);assert.match(html,/Open My tasks/);
+  assert.match(html,/View my tasks/);assert.doesNotMatch(html,/data-id="blocked"/);
+});
+
 test('plan-builder navigation still requires an explicit organizer action and preserves project scope',()=>{
   const handler=app.split('\n').find(line=>line.includes("if(action==='draft-plan'"));assert.ok(handler);
   for(const organizer of [true,false]){
@@ -75,4 +94,11 @@ test('plan-builder navigation still requires an explicit organizer action and pr
     vm.runInContext('(function(){'+handler+'})()',context);
     assert.equal(routes,organizer?1:0);assert.equal(location.href,organizer?'/plan?project=fictional':'unchanged');
   }
+});
+
+test('View my tasks uses the existing explicit local filter navigation and clears stale filters',()=>{
+  const handler=app.split('\n').find(line=>line.includes("if(action==='task-filter')"));assert.ok(handler);
+  let navigations=0;const ui={tab:'attention',owner:'jack',status:'done',search:'old search'};
+  vm.runInNewContext(handler,{action:'task-filter',el:{dataset:{filter:'mine'}},ui,navigate:view=>{assert.equal(view,'tasks');navigations++;}});
+  assert.deepEqual(ui,{tab:'mine',owner:'',status:'',search:''});assert.equal(navigations,1);
 });
