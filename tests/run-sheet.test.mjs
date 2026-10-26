@@ -129,6 +129,43 @@ test('acceptance warnings follow review semantics and only the selected schedule
   assert.doesNotMatch(ui.runSheet(input,now,{mine:true,actor:'maya'}),/Acceptance not recorded|owner acceptance not recorded/);
 });
 
+test('run sheets retain unfinished required work against the whole project without exporting prerequisite details',()=>{
+  const input=state();
+  input.tasks=[activity('Guest arrival','maya','2026-11-20T17:00','2026-11-20T17:30',{dependencies:[{taskId:'prep',kind:'dependency'},{taskId:'related',kind:'related'}]}),
+    {id:'prep',title:'PRIVATE-PREREQUISITE-TITLE',owner:'jack',status:'todo',note:'PRIVATE-PREREQUISITE-NOTE'},
+    {id:'related',title:'PRIVATE-RELATED-TITLE',owner:'jack',status:'todo'}];
+  const before=structuredClone(input),html=ui.runSheet(input,now,{mine:true,actor:'maya'});
+  assert.match(html,/1 activity has unfinished required work/);
+  assert.match(html,/<span>Required work not complete<\/span>/);
+  assert.match(html,/incomplete, awaiting verification or unavailable/);
+  assert.match(html,/does not certify event readiness/);
+  assert.doesNotMatch(html,/PRIVATE-PREREQUISITE|PRIVATE-RELATED|data-action/);
+  assert.deepEqual(input,before);
+  input.tasks[1].status='done';input.tasks[1].requiresVerification=true;
+  assert.match(ui.runSheet(input,now,{mine:true,actor:'maya'}),/Required work not complete/);
+  input.tasks[1].verifiedAt='2026-11-19T12:00Z';
+  assert.doesNotMatch(ui.runSheet(input,now,{mine:true,actor:'maya'}),/unfinished required work|Required work not complete/);
+});
+
+test('run-sheet prerequisite warnings are scoped, count activities once and preserve recorded status',()=>{
+  const input=state();
+  input.tasks=[
+    activity('My activity','maya','2026-11-20T17:00','',{status:'progress',dependencies:[{taskId:'missing-a'},{taskId:'missing-b'}]}),
+    activity('Other activity','other','2026-11-20T18:00','',{dependencies:[{taskId:'missing-a'}]}),
+    activity('Historical done','maya','2026-11-20T19:00','',{status:'done',dependencies:[{taskId:'missing-a'}]}),
+    activity('Review pending','maya','2026-11-20T20:00','',{status:'done',requiresVerification:true,dependencies:[{taskId:'missing-a'}]}),
+    {id:'prep',title:'Unscheduled work',owner:'maya',status:'todo',dependencies:[{taskId:'missing-a'}]},
+  ];
+  const html=ui.runSheet(input,now,{mine:true,actor:'maya'});
+  assert.match(html,/2 activities have unfinished required work/);
+  assert.equal((html.match(/<span>Required work not complete<\/span>/g)||[]).length,2);
+  assert.match(html,/>In progress<span>Required work not complete<\/span><\/td>/);
+  assert.match(html,/>Awaiting verification<span>Required work not complete<\/span><\/td>/);
+  assert.match(html,/>Done<\/td>/);assert.doesNotMatch(html,/Other activity|Unscheduled work|missing-a|missing-b/);
+  assert.match(ui.runSheet(input,now),/3 activities have unfinished required work/);
+  assert.doesNotMatch(ui.runSheet(input,now,{mine:true,actor:'unknown'}),/unfinished required work|Required work not complete/);
+});
+
 test('run-sheet controls preserve scope, open a snapshot, and print only the active run-sheet dialog',()=>{
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='run-sheet'");

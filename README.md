@@ -101,6 +101,8 @@ Run sheets label an inactive assigned person as **Inactive teammate** and a miss
 
 Open activities assigned to active teammates show **Acceptance not recorded** when neither owner acceptance nor a completion report is recorded. A scoped count highlights the gap: assignment alone does not confirm responsibility. This uses the same saved-fact rule as Before the event, excludes completed/verification-pending work, and does not accept tasks for anyone. Reopen the snapshot after the owner responds; reassigning work clears the old acceptance and requires reconfirmation.
 
+Unresolved activities with unfinished required links show **Required work not complete**, separately from their recorded status. Required tasks elsewhere in the project still count in My activities; incomplete, unverified and missing prerequisites remain unresolved, while Related links do not block work. Only the warning is included, not prerequisite names or notes. Completing required work removes the warning in a newly opened snapshot but never automatically completes the activity or certifies event readiness.
+
 **Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
 
 ### Optional manual budget

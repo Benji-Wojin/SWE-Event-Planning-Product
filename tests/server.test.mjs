@@ -1717,6 +1717,43 @@ test('run-sheet acceptance follows explicit owner acceptance and renewed assignm
     sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();
   }
 });
+test('run-sheet required-work warnings follow real teammate reporting and organizer verification',async()=>{
+  await import('../legacy/schedule-ui.js');
+  const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const sheet=GatherScheduleUI.create({h,options:()=>'',person:()=>'',statusBadge:()=>''});
+  const id=await newTeamProject('Fictional school event-day prerequisites');
+  const email='run-sheet-prerequisite@example.com',userId='run-sheet-prerequisite';
+  const write=async(method,args)=>{
+    const current=await (await realRead(id)).json();
+    const response=await workspace.POST(request('/api/workspace?project='+id,{method,args,revision:current.revision}));
+    assert.equal(response.status,200);return response.json();
+  };
+  try{
+    await joinPerson(id,email,userId);const actor=(await (await realRead(id)).json()).identity.actorId;owner();
+    await write('completeSetup',[{timeZone:'America/Los_Angeles'}]);
+    let snap=await write('addTask',[{title:'PRIVATE-PREREQUISITE-TITLE',owner:actor,requiresVerification:true,note:'PRIVATE-PREREQUISITE-NOTE'}]);
+    const prep=snap.state.tasks.find(task=>task.title==='PRIVATE-PREREQUISITE-TITLE');
+    snap=await write('addTask',[{title:'Fictional guest welcome',owner:'jack',schedule:{start:'2026-11-20T17:00',end:'2026-11-20T17:30',location:'Fictional welcome hall'}}]);
+    const activity=snap.state.tasks.find(task=>task.title==='Fictional guest welcome');
+    snap=await write('addDependency',[activity.id,{taskId:prep.id,kind:'dependency'}]);
+    const snapshot=()=>{
+      const before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+      const html=sheet.runSheet(snap.state,Date.now(),{mine:true,actor:'jack'});
+      assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before);
+      assert.doesNotMatch(html,/PRIVATE-PREREQUISITE|run-sheet-prerequisite@example.com/);return html;
+    };
+    assert.match(snapshot(),/1 activity has unfinished required work/);
+    let response=await workspace.POST(request('/api/workspace?project='+id,{method:'reportCompletion',args:[activity.id,'Cannot finish before the required check.'],revision:snap.revision}));assert.equal(response.status,400);
+    asTeammate(email,userId);snap=await write('reportCompletion',[prep.id,'Fictional required check completed; organizer review requested.']);
+    assert.equal(snap.state.tasks.find(task=>task.id===prep.id).status,'progress');assert.match(snapshot(),/Required work not complete/);
+    response=await workspace.POST(request('/api/workspace?project='+id,{method:'verifyTask',args:[prep.id],revision:snap.revision}));assert.equal(response.status,403);
+    owner();snap=await write('verifyTask',[prep.id]);
+    assert.doesNotMatch(snapshot(),/unfinished required work|Required work not complete/);
+    const unchanged=snap.state.tasks.find(task=>task.id===activity.id);
+    assert.equal(unchanged.status,'todo');assert.deepEqual(unchanged.schedule,activity.schedule);assert.equal(unchanged.acceptedAt,'');
+    assert.equal(snap.state.tasks.find(task=>task.id===prep.id).verifiedBy,'jack');
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+});
 test('membership removal at workspace commit prevents a write even with a freshly checked revision',async()=>{
   const id=await newTeamProject();await joinPerson(id);owner();let snap=await (await realRead(id)).json();
   snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Race claim'}],revision:snap.revision}))).json();asTeammate();
