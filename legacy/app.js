@@ -399,6 +399,7 @@
       ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
       ${manage&&task.status!=='done'?`<details class="dependency-add"><summary>Link an existing task</summary><form id="relationshipAddForm" data-id="${h(task.id)}"><label class="field">Task<select name="taskId" required>${options([['','Choose a task'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(l=>l.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link these tasks?<textarea name="reason" rows="2" maxlength="2000" required placeholder="Describe the shared context, or the exact output needed first."></textarea></label><button type="submit" class="btn btn-secondary btn-small">Save link</button></form></details>`:''}
       ${linkedTaskForm(task,state,isOrganizer())}
+      ${window.GatherMode&&canCreateTasks()&&!window.GatherAccessLost&&task.status!=='done'?`<div class="section-gap"><button class="btn btn-secondary btn-small" data-action="task-breakdown" data-id="${h(task.id)}">Plan smaller steps with Weft</button><p class="muted">Review a private request using only this task’s title. Notes are not copied, and nothing is sent or linked automatically.</p></div>`:''}
       ${task.status==='blocked'&&manage?`<details class="dependency-add"><summary>Name or link follow-up work</summary><form id="dependencyForm" data-id="${h(task.id)}"><label class="field">Existing task<select name="existingTask">${options([['','Name the follow-up'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(link=>link.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Follow-up task name<input name="newTitle" maxlength="180" placeholder="What needs to happen first?"></label><label class="check-field"><input name="additional" type="checkbox"> Add a separate blocker instead</label><p class="muted">An unused generic follow-up will be updated, not duplicated.</p><div class="form-actions"><button class="btn btn-secondary" type="submit">Save follow-up</button></div></form></details>`:''}
       ${dependents.length?`<h3>Linked from</h3><div class="dependency-targets">${dependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
     </section>`;
@@ -709,6 +710,12 @@
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
       if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open();return;}
       if(action==='ai-task-assistant'&&canCreateTasks()&&window.GatherMode){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();tour.close({restoreFocus:false});agentPopup.open();return;}
+      if(action==='task-breakdown'){
+        const task=store.getState().tasks.find(task=>task.id===id);
+        if(!window.GatherMode||!canCreateTasks()||window.GatherAccessLost||!task||task.status==='done')return;
+        if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
+        if(!$('#dialogBackdrop').hidden)closeDialog();tour.close({restoreFocus:false});agentPopup.open({title:task.title});return;
+      }
       if(action==='hide-ai-review'){planSidebar.hide();return;}
       if(action==='edit-memory')memoryEditDialog(id);
       if(action==='reload-private')loadPrivate();

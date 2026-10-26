@@ -8,6 +8,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection, selectNewPlanItems } from '@/lib/plan-selection';
 import {AskWeftPanel} from './ask-weft-panel';
+import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
   eventKinds,
   planCategories,
@@ -67,6 +68,8 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     starterRequest = useRef<any>(null),
     errorBox = useRef<HTMLParagraphElement>(null);
   const [chatDirty,setChatDirty]=useState(false);
+  const [chatSeed,setChatSeed]=useState('');
+  const [taskContext,setTaskContext]=useState<TaskBreakdownContext|null>(null);
   const [batchOwner,setBatchOwner]=useState('');
   const [suggestStarterDates,setSuggestStarterDates]=useState(false);
   const [researchBusy,setResearchBusy]=useState(false);
@@ -93,6 +96,18 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     demo = params.get('demo') === '1';
   const suggestions = params.get('mode') === 'suggestions';
   const assistant = params.get('mode') === 'assistant';
+  useEffect(()=>{
+    if(!embedded||!assistant)return;
+    const receive=(event:MessageEvent)=>{
+      const context=taskBreakdownContext(event,window.parent,window.location.origin);
+      if(!context)return;
+      setTaskContext(context);
+      window.parent.postMessage({type:'weft-task-breakdown-received',requestId:context.requestId},window.location.origin);
+    };
+    window.addEventListener('message',receive);
+    window.parent.postMessage({type:'weft-task-breakdown-ready'},window.location.origin);
+    return ()=>window.removeEventListener('message',receive);
+  },[embedded,assistant]);
   const projectParams = new URLSearchParams(query); projectParams.delete('mode');
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
@@ -368,9 +383,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={()=>{
+      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{
+        if(locked||pending.current)return;
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
-        request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatDirty(false);setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice('Start a new request. The earlier saved draft is not replaced until you send it.');
+        request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatSeed(seed);setTaskContext(null);setChatDirty(!!seed.trim());setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice(seed?'Review the new message before sending. The original task is unchanged; the earlier saved draft is not replaced until you send.':'Start a new request. The earlier saved draft is not replaced until you send it.');
       }}/> : <details open={!embedded || !data.draft} className={embedded ? 'sidebar-brief' : undefined}>
         <summary className={embedded ? 'cursor-pointer text-sm font-medium' : 'hidden'}>Review focus & event details</summary>
       <Card>

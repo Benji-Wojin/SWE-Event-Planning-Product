@@ -100,15 +100,16 @@ function nodes(node) {
       ? node.flatMap(nodes)
       : [node, ...nodes(node.props?.children)];
 }
-function harness(server, initial = fixture(), query = 'project=p_example') {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
+    document: globalThis.document,
     hooks: globalThis.__planHooks,
   };
   const state = [],
     timers = new Map(),
-    requests = [];
+    requests = [], listeners=new Map(), parentMessages=[];
   let index = 0,
     changed = true,
     effects = [],
@@ -149,6 +150,7 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
   };
   let saved = copy(initial);
   globalThis.__planHooks = hooks;
+  globalThis.document={getElementById:()=>null};
   globalThis.window = {
     setTimeout(callback) {
       const id = ++nextTimer;
@@ -158,8 +160,10 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
     clearTimeout(id) {
       timers.delete(id);
     },
-    addEventListener() {},
-    removeEventListener() {},
+    location:{origin:'https://weft.example'},
+    parent:{postMessage:(value,origin)=>parentMessages.push({value,origin})},
+    addEventListener(type,fn) {if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(fn);},
+    removeEventListener(type,fn) {listeners.get(type)?.delete(fn);},
     confirm: () => true,
   };
   globalThis.fetch = async (url, options = {}) => {
@@ -182,7 +186,7 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query });
+    tree = PlanReview({ query, embedded });
     const next = effects;
     effects = [];
     next.forEach((callback) => callback());
@@ -196,6 +200,11 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
   }
   return {
     requests,
+    parentMessages,
+    async message(data,extra={}){
+      for(const listener of listeners.get('message')||[])listener({data,source:window.parent,origin:window.location.origin,...extra});
+      await settle();
+    },
     timers,
     get tree() {
       return tree;
@@ -248,10 +257,26 @@ function harness(server, initial = fixture(), query = 'project=p_example') {
       for (const slot of state) slot?.cleanup?.();
       globalThis.fetch = previous.fetch;
       globalThis.window = previous.window;
+      globalThis.document = previous.document;
       globalThis.__planHooks = previous.hooks;
     },
   };
 }
+test('embedded task context is only an offer; cancel preserves edits and accepting seeds a new private message without a request',async()=>{
+  const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Existing private conversation'}]);
+  const app=harness(undefined,initial,'project=p_example&mode=assistant',true);
+  const chat=()=>nodes(app.tree).find(node=>typeof node.type==='function'&&node.props?.onSend).props;
+  try{
+    await app.start();const before=copy(app.saved),count=app.requests.length;
+    assert.ok(app.parentMessages.some(message=>message.value.type==='weft-task-breakdown-ready'));
+    const offer={type:'weft-task-breakdown',requestId:7,title:'Prepare fictional school welcome'};
+    await app.message(offer,{source:{}});await app.message(offer,{origin:'https://wrong.example'});assert.equal(chat().taskContextTitle,undefined);
+    await app.message(offer);assert.equal(chat().taskContextTitle,offer.title);assert.ok(app.parentMessages.some(message=>message.value.type==='weft-task-breakdown-received'&&message.value.requestId===7));assert.deepEqual(app.saved,before);
+    await app.chat('onDirty',true);window.confirm=()=>false;await app.chat('onNew','A reviewed task request');assert.equal(chat().initialMessage,'');assert.equal(chat().taskContextTitle,offer.title);assert.equal(chat().brief.description,initial.brief.description);
+    window.confirm=()=>true;await app.chat('onNew','A reviewed task request');assert.equal(chat().initialMessage,'A reviewed task request');assert.equal(chat().taskContextTitle,undefined);assert.equal(chat().brief.description,'');assert.equal(app.requests.length,count);assert.deepEqual(app.saved,before);assert.match(text(app.tree),/Review the new message before sending/);
+    window.confirm=()=>false;await app.chat('onNew');assert.equal(chat().initialMessage,'A reviewed task request','seed is treated as an unsent dirty message');
+  }finally{app.dispose();}
+});
 test('starter checklist is available with an empty brief and no AI configuration, without generating or applying',async()=>{
   const initial=fixture();initial.configured=false;initial.draft=null;initial.status='empty';initial.brief={...brief,description:''};
   const active=harness(context=>{

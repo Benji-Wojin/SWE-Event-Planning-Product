@@ -11,6 +11,19 @@ before(async()=>{
 });
 const nodes=n=>!n||typeof n!=='object'?[]:Array.isArray(n)?n.flatMap(nodes):[n,...nodes(n.props?.children)];
 const text=n=>n==null||typeof n==='boolean'?'':typeof n!=='object'?String(n):Array.isArray(n)?n.map(text).join(''):text(n.props?.children);
+test('task context prepares an editable private message only after a click; it never sends or replaces current text by itself',async()=>{
+  let message='Unsent current message',seeds=[],dismissed=0,sends=0;
+  globalThis.__taskChatHooks=initial=>[message??initial,value=>message=value];
+  const props={brief:{description:''},applied:false,locked:false,configured:true,failed:false,taskContextTitle:'Plan a fictional school dance <script>',onSend:async()=>{sends++;return true;},onDirty(){},onNew:value=>seeds.push(value),onDismissTaskContext:()=>dismissed++};
+  try{
+    let tree=TaskChat(props);assert.equal(message,'Unsent current message');assert.equal(sends,0);assert.match(text(tree),/Task notes are not copied/);assert.match(text(tree),/will not change or link the original task automatically/);
+    nodes(tree).find(n=>text(n)==='Prepare new message'&&n.type==='button').props.onClick();assert.equal(seeds.length,1);assert.ok(seeds[0].includes(JSON.stringify(props.taskContextTitle)));assert.equal(message,'Unsent current message');assert.equal(sends,0);
+    nodes(tree).find(n=>text(n)==='Keep current conversation'&&n.type==='button').props.onClick();assert.equal(dismissed,1);assert.equal(message,'Unsent current message');
+    tree=TaskChat({...props,locked:true});assert.equal(nodes(tree).find(n=>text(n)==='Prepare new message'&&n.type==='button').props.disabled,true);
+    message=null;tree=TaskChat({...props,initialMessage:seeds[0]});assert.equal(nodes(tree).find(n=>n.type==='textarea').props.value,seeds[0]);assert.equal(sends,0);
+    nodes(tree).find(n=>text(n)==='New conversation'&&n.type==='button').props.onClick({type:'click'});assert.equal(seeds.at(-1),undefined,'React event is not treated as seed text');
+  }finally{delete globalThis.__taskChatHooks;}
+});
 test('chat asks only the current clarification and preserves unsent input on transport rejection',async()=>{
   let message='',sent=[],dirty=[];
   globalThis.__taskChatHooks=()=>[message,value=>{message=value;}];

@@ -9,6 +9,7 @@ import { researchIntent } from '@/lib/research-intent';
 import { ResearchMessages } from './research-messages';
 import type { ResearchController } from './use-research';
 import { writtenDraftArtifact } from '@/lib/written-draft';
+import { taskBreakdownRequest } from '@/lib/task-breakdown';
 const chatStarters = [
   'Plan my next three steps',
   'Write a welcoming announcement',
@@ -31,6 +32,9 @@ export function TaskChat({
   research,
   replyAt,
   proposalCount = 0,
+  initialMessage = '',
+  taskContextTitle,
+  onDismissTaskContext,
 }: {
   brief: PlanBrief;
   question?: string;
@@ -42,15 +46,21 @@ export function TaskChat({
   failed: boolean;
   onSend: (brief: PlanBrief) => Promise<boolean>;
   onDirty: (value: boolean) => void;
-  onNew: () => void;
+  onNew: (seed?: string) => void;
+  initialMessage?: string;
+  taskContextTitle?: string;
+  onDismissTaskContext?: () => void;
   research?: ResearchController;
   replyAt?: string;
   proposalCount?: number;
 }) {
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(initialMessage);
   const sending = useRef(false);
   const threadBox = useRef<HTMLDivElement>(null),
     followLatest = useRef(true);
+  useEffect(()=>{
+    if(initialMessage)document.getElementById('task-chat-message')?.focus();
+  },[initialMessage]);
   useEffect(() => {
     const element = threadBox.current;
     if (element && followLatest.current)
@@ -212,6 +222,15 @@ export function TaskChat({
           visible for 24 hours, then cleared on next access.
         </p>
       </details>
+      {taskContextTitle && <section className="rounded-lg border p-4 text-sm" aria-label="Task breakdown request">
+        <h2 className="font-medium">Plan smaller steps</h2>
+        <p className="my-2 break-words">{taskContextTitle}</p>
+        <p className="text-muted-foreground">Use only this title to prepare a new private message. Task notes are not copied. Review and edit it before Send; proposals will not change or link the original task automatically.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={locked} onClick={()=>onNew(taskBreakdownRequest(taskContextTitle))}>Prepare new message</Button>
+          <Button type="button" variant="ghost" onClick={()=>onDismissTaskContext?.()}>Keep current conversation</Button>
+        </div>
+      </section>}
       <div
         className="task-chat-thread"
         ref={threadBox}
@@ -396,7 +415,7 @@ export function TaskChat({
             type="button"
             variant="ghost"
             disabled={locked}
-            onClick={onNew}
+            onClick={()=>onNew()}
           >
             New conversation
           </Button>

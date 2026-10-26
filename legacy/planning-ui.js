@@ -166,14 +166,20 @@
     };
   }
   function createAgentPopup({getUrl,onApplied}) {
-    let dialog,frame,dirty=false,busy=false;
+    let dialog,frame,dirty=false,busy=false,contextRequest=0,pendingContext=null;
+    const offerContext=()=>{if(pendingContext&&frame?.contentWindow)frame.contentWindow.postMessage(pendingContext,location.origin);};
     window.addEventListener('message',event=>{
+      if(frame&&event.origin===location.origin&&event.source===frame.contentWindow){
+        if(event.data?.type==='weft-task-breakdown-ready')offerContext();
+        if(event.data?.type==='weft-task-breakdown-received'&&event.data.requestId===pendingContext?.requestId)pendingContext=null;
+      }
       const message=sidebarMessage(event,frame,location.origin);if(!message)return;
       if(message.event==='state'){dirty=message.dirty;busy=message.busy;}
       if(message.event==='applied')onApplied();
     });
     return {
-      open(){
+      open(context){
+        if(context&&typeof context.title==='string'&&context.title.trim()&&context.title.length<=180)pendingContext={type:'weft-task-breakdown',requestId:++contextRequest,title:context.title};
         if(!dialog){
           dialog=document.createElement('dialog');dialog.className='weft-agent-popup';dialog.setAttribute('aria-labelledby','weftAgentTitle');
           const header=document.createElement('header'),title=document.createElement('h2'),close=document.createElement('button');
@@ -181,6 +187,7 @@
           header.append(title,close);frame=document.createElement('iframe');frame.title='Ask Weft — conversation and research';frame.src=getUrl();dialog.append(header,frame);document.body.append(dialog);
         }
         if(!dialog.open)dialog.showModal();
+        offerContext();
       },
       unsaved:()=>!!frame&&(dirty||busy),
     };
