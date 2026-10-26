@@ -205,8 +205,9 @@ async function save(
   revision: number,
   id: string,
   hash: string,
+  fileId?: string,
 ) {
-  state.receipts.push({ id, hash, actor: context.actor });
+  state.receipts.push({ id, hash, actor: context.actor, ...(fileId ? {fileId} : {}) });
   state.receipts = state.receipts.slice(-100);
   if (new TextEncoder().encode(JSON.stringify(state)).length > 850000)
     throw new HttpError(
@@ -536,7 +537,8 @@ export async function uploadInfo(
     });
   if (retried(state, upload.requestId, context.actor, hash)) {
     await assertProjectAccess(context.authorization);
-    return infoSnapshot(context, state, revision);
+    const receipt=state.receipts.find(row=>row.id===upload.requestId&&row.actor===context.actor);
+    return {...infoSnapshot(context, state, revision), uploadedFileId:receipt?.fileId || null};
   }
   checkRevision(upload.revision, revision);
   const id = crypto.randomUUID(),
@@ -581,7 +583,7 @@ export async function uploadInfo(
       archivedAt: '',
     });
     saving = true;
-    return await save(context, state, revision, upload.requestId, hash);
+    return {...await save(context, state, revision, upload.requestId, hash, id), uploadedFileId:id};
   } catch (error) {
     // A database error can occur after commit. Never delete possibly committed bytes.
     let current: Awaited<ReturnType<typeof load>> | undefined;
@@ -604,7 +606,7 @@ export async function uploadInfo(
       throw error;
     });
     if (current?.state.files.some((file) => file.id === id))
-      return infoSnapshot(context, current.state, current.revision);
+      return {...infoSnapshot(context, current.state, current.revision), uploadedFileId:id};
     if (!saving || error instanceof HttpError) {
       try {
         await bucket.delete(key);
@@ -619,7 +621,7 @@ export async function uploadInfo(
       current &&
       retried(current.state, upload.requestId, context.actor, hash)
     )
-      return infoSnapshot(context, current.state, current.revision);
+      return {...infoSnapshot(context, current.state, current.revision), uploadedFileId:current.state.receipts.find(row=>row.id===upload.requestId&&row.actor===context.actor)?.fileId || null};
     throw error;
   }
 }

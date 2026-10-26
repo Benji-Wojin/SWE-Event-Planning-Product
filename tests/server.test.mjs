@@ -1280,11 +1280,11 @@ test('uploads are encrypted, authenticated attachments with idempotent retries',
   owner();let state=await (await infoRead()).json();const id=crypto.randomUUID(),revision=state.revision;
   const payload='Private file content '+ 'x'.repeat(1024*1024);
   let response=await infoApi.POST(uploadRequest(revision,'attendee-list.txt',payload,'',id));assert.equal(response.status,200);
-  state=await response.json();const file=state.files.at(-1);assert.equal(file.key,undefined);assert.equal(file.size,Buffer.byteLength(payload));
+  state=await response.json();const file=state.files.at(-1);assert.equal(state.uploadedFileId,file.id);assert.equal(file.key,undefined);assert.equal(file.size,Buffer.byteLength(payload));
   const object=uploadedObjects.get('project-files/'+file.id);assert.ok(object);assert.ok(!Buffer.from(object).includes(Buffer.from('Private file content')));
   response=await infoRead('?file='+file.id);assert.equal(response.status,200);assert.equal(await response.text(),payload);
   assert.match(response.headers.get('content-disposition'),/^attachment/);assert.equal(response.headers.get('x-content-type-options'),'nosniff');assert.match(response.headers.get('cache-control'),/no-store/);
-  const replay=await infoApi.POST(uploadRequest(revision,'attendee-list.txt',payload,'',id));assert.equal(replay.status,200);assert.equal((await replay.json()).files.length,state.files.length);
+  const replay=await infoApi.POST(uploadRequest(revision,'attendee-list.txt',payload,'',id));assert.equal(replay.status,200);const replayed=await replay.json();assert.equal(replayed.files.length,state.files.length);assert.equal(replayed.uploadedFileId,file.id);
   assert.equal((await infoRead('?demo=1&as=jack&file='+file.id)).status,404);
   globalThis.__gatherUser=null;assert.equal((await infoRead('?file='+file.id)).status,401);owner();
   state=await (await infoWrite({action:'archiveFile',id:file.id,archived:true,revision:state.revision,requestId:crypto.randomUUID()})).json();assert.equal((await infoRead('?file='+file.id)).status,404);
@@ -1300,12 +1300,22 @@ test('uploads reject unsupported, empty and oversized actual bodies',async()=>{
   }
   assert.equal((await (await infoRead()).json()).revision,state.revision);
 });
+test('upload receipt identifies its own file after another same-name upload',async()=>{
+  const context=infoContext('upload-exact-id'),state=await infoCore.readInfo(context);
+  const input={bytes:new TextEncoder().encode('First fictional file').buffer,name:'same.txt',revision:state.revision,requestId:crypto.randomUUID()};
+  const first=await infoCore.uploadInfo(context,input);
+  const second=await infoCore.uploadInfo(context,{...input,bytes:new TextEncoder().encode('Second fictional file').buffer,revision:first.revision,requestId:crypto.randomUUID()});
+  const replay=await infoCore.uploadInfo(context,input);
+  assert.notEqual(first.uploadedFileId,second.uploadedFileId);assert.equal(replay.uploadedFileId,first.uploadedFileId);
+  assert.equal(replay.files.length,2);assert.equal(await (await infoCore.downloadInfo(context,replay.uploadedFileId)).text(),'First fictional file');
+});
 test('simultaneous identical upload retries keep exactly one winning object',async()=>{
   const context=infoContext('upload-race'),state=await infoCore.readInfo(context),id=crypto.randomUUID();
   const input={bytes:new TextEncoder().encode('Simultaneous retry').buffer,name:'retry.txt',revision:state.revision,requestId:id};
   const before=uploadedObjects.size;
   const results=await Promise.all([infoCore.uploadInfo(context,input),infoCore.uploadInfo(context,input)]);
   assert.equal(results[0].files.length,1);assert.equal(results[1].files.length,1);assert.equal(results[0].files[0].id,results[1].files[0].id);
+  assert.equal(results[0].uploadedFileId,results[0].files[0].id);assert.equal(results[1].uploadedFileId,results[0].files[0].id);
   assert.equal(uploadedObjects.size,before+1);assert.equal(await (await infoCore.downloadInfo(context,results[0].files[0].id)).text(),'Simultaneous retry');
 });
 test('upload metadata committed before a transport error never loses its bytes',async()=>{
@@ -1314,7 +1324,7 @@ test('upload metadata committed before a transport error never loses its bytes',
   globalThis.__gatherEnv.DB={...db,prepare(sql){const statement=db.prepare(sql),run=statement.run;statement.run=async()=>{const result=await run();if(!failed&&sql.startsWith('UPDATE project_info')){failed=true;throw new Error('Response lost after commit');}return result;};return statement;}};
   try{
     const result=await infoCore.uploadInfo(context,{bytes:new TextEncoder().encode('Retained content').buffer,name:'keep.txt',revision:state.revision,requestId:crypto.randomUUID()});
-    assert.equal(result.files.length,1);assert.equal(await (await infoCore.downloadInfo(context,result.files[0].id)).text(),'Retained content');
+    assert.equal(result.files.length,1);assert.equal(result.uploadedFileId,result.files[0].id);assert.equal(await (await infoCore.downloadInfo(context,result.files[0].id)).text(),'Retained content');
   }finally{globalThis.__gatherEnv.DB=db;}
 });
 test('demo reset isolates guest records and files without touching real event info',async()=>{

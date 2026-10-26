@@ -38,7 +38,7 @@
       if(typeof value!=='string'||value.length>2048||/[\s\\\u0000-\u001f\u007f]/.test(value))throw new Error('Use a public HTTPS link without credentials.');
       let url;try{url=new URL(value);}catch{throw new Error('Use a valid HTTPS link.');}
       const host=url.hostname.toLowerCase().replace(/\.$/,'');
-      if(url.protocol!=='https:'||url.username||url.password||url.port||!host.includes('.')||/^[\d.]+$/.test(host)||host.includes(':')||/(^|\.)(localhost|local|internal|lan|home|test|invalid|example)$/.test(host)||[...url.searchParams.keys()].some(key=>/token|secret|password|credential|authorization|session|confirmation|booking|api.?key/i.test(key)))throw new Error('Keep private booking codes and credential links in Private details, not shared completion evidence.');
+      if(url.protocol!=='https:'||url.username||url.password||url.port||!host.includes('.')||/^[\d.]+$/.test(host)||host.includes(':')||/(^|\.)(localhost|local|internal|lan|home|test|invalid|example)$/.test(host)||[...url.searchParams.keys()].some(key=>/token|secret|password|credential|authorization|session|confirmation|booking|api.?key/i.test(key)))throw new Error('Keep private booking codes and credential links in Private details, not shared submissions.');
       return url.href;
     });
     if(fileIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,160}$/.test(id)))throw new Error('Choose a shared file from this project.');
@@ -677,11 +677,11 @@
     }
     function setCompletionEvidence(taskId, input, actor='jack') {
       actorId(actor);const task=taskById(taskId),details=completionEvidence(input);
-      if(actor!=='jack'&&task.owner!==actor)throw new Error('Only the assigned owner or organizer can edit completion evidence.');
-      if(task.status!=='done'&&!task.reportedAt)throw new Error('Report completion before adding completion evidence.');
+      if(actor!=='jack'&&task.owner!==actor)throw new Error('Only the assigned owner or organizer can edit this submission.');
+      if(task.status!=='done'&&!task.reportedAt)throw new Error('Report completion before editing a submission.');
       archiveEvidence(task);task.completionEvidence={...details,at:timestamp(),actor};task.completionEvidenceReviewAt='';task.revision++;
       task.updatedAt=timestamp();task.updatedBy=actor;
-      entry(actor,'updated shared completion evidence',task.id,'completion-evidence');save();return copy(task);
+      entry(actor,'updated the completion submission',task.id,'completion-evidence');save();return copy(task);
     }
     function reportCompletion(taskId, input, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);

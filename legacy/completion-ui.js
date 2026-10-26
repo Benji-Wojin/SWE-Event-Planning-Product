@@ -23,9 +23,9 @@
   }
   function fields(value = {}) {
     return (
-      '<details class="completion-fields"><summary>Links &amp; shared files <span class="muted">optional</span></summary><p class="muted">Everyone in this project can see this evidence. Keep booking codes, private confirmations and credentials in Private details.</p><label class="field">Supporting links<textarea name="completionLinks" rows="2" maxlength="10300" placeholder="One public HTTPS link per line">' +
+      '<section class="completion-fields submission-attachments" aria-label="Attachments optional"><h4>Add a file or link <span class="muted">optional</span></h4><p class="muted">Shared with your project team. Leave this blank if your note is enough.</p><label class="field">File<input name="completionUpload" type="file" accept=".pdf,.txt,.csv,.png,.jpg,.jpeg,.docx,.xlsx"></label><p class="muted">Up to 4 MB · PDF, text, CSV, image, Word or Excel. Uploaded only when you submit; files are not malware-scanned.</p><span class="submission-or">or</span><label class="field">Link<textarea name="completionLinks" rows="2" maxlength="10300" placeholder="https://">' +
       h((value.links || []).join('\n')) +
-      '</textarea></label><p class="muted">Up to 5 links. Weft does not open or verify them automatically.</p><label class="field">Existing shared files<select name="completionFileIds" multiple size="3">' +
+      '</textarea></label><p class="muted">Use a public HTTPS link. Keep passwords and private booking details out.</p><select name="completionFileIds" multiple hidden aria-label="Attached project files">' +
       (value.fileIds || [])
         .map(
           (id) =>
@@ -36,7 +36,7 @@
             '</option>',
         )
         .join('') +
-      '</select></label><button type="button" class="btn btn-secondary btn-small" data-load-completion-files>Choose project files</button><p class="muted" data-completion-file-status>Upload files in Event info first. Up to 5 files; choose only material safe for the whole team.</p></details>'
+      '</select><div data-submission-files>'+(value.fileIds||[]).map(id=>'<p class="submission-file"><span>Attached file</span><button type="button" class="text-button" data-remove-submission-file="'+h(id)+'">Remove file</button></p>').join('')+'</div><p class="muted" role="status" data-submission-status></p></section>'
     );
   }
   function collect(form, note) {
@@ -50,6 +50,47 @@
         ...(form.elements.completionFileIds?.selectedOptions || []),
       ].map((option) => option.value),
     };
+  }
+  const uploadAttempts = new WeakMap();
+  async function prepare(form, details, file) {
+    if (!file || !file.size && !file.name) return details;
+    if (!file.size || file.size > 4 * 1024 * 1024 || !/\.(pdf|txt|csv|png|jpe?g|docx|xlsx)$/i.test(file.name))
+      throw new Error('Choose a non-empty PDF, TXT, CSV, image, Word or Excel file up to 4 MB.');
+    if (!root.GatherMode) throw new Error('File uploads are unavailable in this offline demo. You can submit a note or link.');
+    const url = endpoint(), status = form.querySelector('[data-submission-status]');
+    let attempt = uploadAttempts.get(file);
+    if (details.fileIds.length >= 5 && !details.fileIds.includes(attempt?.fileId)) throw new Error('Remove a file before attaching another. Up to 5 files per submission.');
+    if (attempt && attempt.url !== url) throw new Error('The project changed. Choose the file again.');
+    if (!attempt) {
+      let response,info;
+      try {response=await fetch(url,{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(15000)});info=await response.json();}
+      catch {throw new Error('File uploads could not be reached. Your completion has not been submitted. Try again.');}
+      if (!response.ok || !info.uploadsAvailable) throw new Error('File uploads are unavailable. Your completion has not been submitted.');
+      attempt = {url,revision:info.revision,requestId:crypto.randomUUID(),fileId:null};
+      uploadAttempts.set(file, attempt);
+    }
+    if (!attempt.fileId) {
+      if(status)status.textContent='Uploading your file…';
+      const body=new FormData();body.set('file',file);body.set('revision',attempt.revision);body.set('requestId',attempt.requestId);
+      let response,info;
+      try {
+        response=await fetch(url+'&upload=1',{method:'POST',credentials:'same-origin',headers:{'X-Gather-Request':'1'},body,signal:AbortSignal.timeout(20000)});
+        info=await response.json();
+      } catch {
+        throw new Error('The upload could not be confirmed. Your completion was not submitted. Retry with this same file to check the saved upload.');
+      }
+      if(!response.ok){
+        // Explicit rejection is safe to retry from a fresh revision; ambiguous transport failures retain the receipt.
+        if(response.status===400||response.status===409)uploadAttempts.delete(file);
+        throw new Error(info.error||'The file could not be uploaded. Your completion was not submitted.');
+      }
+      if(!info.uploadedFileId||!info.files?.some(row=>row.id===info.uploadedFileId&&!row.archivedAt))
+        throw new Error('The uploaded file could not be identified. Your completion was not submitted. Check Event info before trying again.');
+      attempt.fileId=info.uploadedFileId;
+    }
+    form.dataset.completionUploaded='true';
+    if(status)status.textContent='File uploaded. Saving your completion…';
+    return {...details,fileIds:[...new Set([...details.fileIds,attempt.fileId])]};
   }
   function links(value) {
     return (
@@ -93,9 +134,9 @@
     const value = task.completionEvidence;
     return (
       '<section class="completion-evidence section-gap"><h3>Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
-      (review?'<section class="notice" aria-label="Completion changes requested"><h4>Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit a new completion report. Nothing was verified; earlier evidence remains below.</p></section>':'')+
+      (review?'<section class="notice" aria-label="Completion changes requested"><h4>Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit again. Nothing was verified; earlier submissions remain below.</p></section>':'')+
       (value && task.verifiedAt && !task.completionEvidenceReviewAt
-        ? '<p class="completion-amendment">This evidence was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'
+        ? '<p class="completion-amendment">This submission was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'
         : '') +
       '' +
       (value
@@ -106,18 +147,18 @@
           '<p class="muted">Recorded ' +
           h(new Date(value.at).toLocaleString()) +
           '</p></div>'
-        : review?'<p class="muted">No current completion report. Earlier evidence is retained below.</p>':'<p class="muted">No evidence added for the current completion.</p>') +
+        : review?'<p class="muted">No current completion report. Earlier submissions are retained below.</p>':'<p class="muted">No file or link attached.</p>') +
       (canEdit && (task.status === 'done' || task.reportedAt)
-        ? '<details class="completion-edit"><summary>Add or edit completion evidence</summary><form id="completionEvidenceForm" data-id="' +
+        ? '<details class="completion-edit"><summary>Edit submission</summary><form id="completionEvidenceForm" data-id="' +
           h(task.id) +
           '"><label class="field">Completion note <span class="muted">optional</span><textarea name="completionNote" rows="3" maxlength="3000">' +
           h(value?.note || task.completionResult?.text || '') +
           '</textarea></label>' +
           fields(value || {}) +
-          '<button class="btn btn-secondary" type="submit">Save completion evidence</button></form></details>'
+          '<button class="btn btn-secondary" type="submit">Save submission</button></form></details>'
         : '') +
       ((task.completionEvidenceHistory || []).length
-        ? '<details class="completion-history"><summary>Earlier evidence · ' +
+        ? '<details class="completion-history"><summary>Earlier submissions · ' +
           task.completionEvidenceHistory.length +
           '</summary><p class="muted">Earlier records may describe a previous completion. Shared files may have been archived.</p>' +
           task.completionEvidenceHistory
@@ -138,71 +179,15 @@
     );
   }
   function mount(host) {
-    for (const button of host.querySelectorAll('[data-load-completion-files]'))
-      button.onclick = async () => {
-        const form = button.closest('form'),
-          select = form.elements.completionFileIds,
-          status = form.querySelector('[data-completion-file-status]');
-        button.disabled = true;
-        status.textContent = 'Loading shared files…';
-        try {
-          const response = await fetch(endpoint(), {
-              credentials: 'same-origin',
-              cache: 'no-store',
-              signal: AbortSignal.timeout(15000),
-            }),
-            data = await response.json();
-          if (!response.ok)
-            throw new Error('Shared files could not be loaded.');
-          if (!select.isConnected) return;
-          const selected = new Set(
-              [...select.selectedOptions].map((option) => option.value),
-            ),
-            defaults = new Set(
-              [...select.options]
-                .filter((option) => option.defaultSelected)
-                .map((option) => option.value),
-            );
-          const files = data.files.filter((file) => !file.archivedAt);
-          const missing = [...new Set([...selected, ...defaults])].filter(
-            (id) => !files.some((file) => file.id === id),
-          );
-          select.innerHTML =
-            files
-              .map(
-                (file) =>
-                  '<option value="' +
-                  h(file.id) +
-                  '" ' +
-                  (defaults.has(file.id) ? 'selected' : '') +
-                  '>' +
-                  h(file.name) +
-                  '</option>',
-              )
-              .join('') +
-            missing
-              .map(
-                (id) =>
-                  '<option value="' +
-                  h(id) +
-                  '" ' +
-                  (defaults.has(id) ? 'selected' : '') +
-                  '>Unavailable file · remove before saving</option>',
-              )
-              .join('');
-          for (const option of select.options)
-            option.selected = selected.has(option.value);
-          status.textContent = files.length
-            ? 'Select up to 5 shared files. Hold Command or Ctrl to select more than one.'
-            : 'No active shared files. Upload one in Event info first.';
-        } catch (error) {
-          if (status.isConnected)
-            status.textContent =
-              error.message || 'Files could not be loaded. Try again.';
-        } finally {
-          if (button.isConnected) button.disabled = false;
-        }
+    for(const button of host.querySelectorAll('[data-remove-submission-file]')){
+      // Sibling-form saves restore dirty selections after markup is rebuilt from the saved task.
+      const selected=[...button.closest('form').elements.completionFileIds.options].some(row=>row.value===button.dataset.removeSubmissionFile&&row.selected);
+      if(!selected){button.closest('.submission-file')?.remove();continue;}
+      button.onclick=()=>{
+      const form=button.closest('form'),option=[...form.elements.completionFileIds.options].find(row=>row.value===button.dataset.removeSubmissionFile);
+      if(option)option.selected=false;button.closest('.submission-file')?.remove();
       };
+    }
     for (const button of host.querySelectorAll('[data-check-completion-files]'))
       button.onclick = async () => {
         button.disabled = true;
@@ -271,5 +256,5 @@
     document.body.append(el);
     feedbackTimer = setTimeout(() => el.remove(), 6000);
   }
-  root.GatherCompletionUI = { fields, collect, section, mount, celebrate };
+  root.GatherCompletionUI = { fields, collect, prepare, section, mount, celebrate };
 })(typeof window !== 'undefined' ? window : globalThis);

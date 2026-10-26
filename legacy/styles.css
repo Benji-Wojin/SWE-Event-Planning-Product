@@ -709,3 +709,9 @@ form[aria-busy="true"]{cursor:progress}
 .reschedule-row .check-field {align-items:flex-start;margin-top:12px;}
 .reschedule-row .check-field span {min-width:0;overflow-wrap:anywhere;}
 .completion-evidence .notice p {white-space:pre-wrap;overflow-wrap:anywhere;}
+.submission-attachments{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--warm)}
+.submission-attachments h4{margin:0 0 8px;font-size:15px}.submission-attachments h4 .muted{font-weight:400;margin-left:5px}
+.submission-attachments input[type=file]{width:100%;min-width:0;padding:12px;background:var(--white);border:1px dashed var(--line);border-radius:8px}
+.submission-or{display:block;text-align:center;color:var(--muted);font-size:12px;margin:14px 0}
+.submission-file{display:flex;align-items:center;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
+.submission-attachments [data-submission-status]:empty{display:none}
