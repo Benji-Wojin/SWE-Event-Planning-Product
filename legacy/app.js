@@ -705,6 +705,7 @@
         if(form){$$('input[name="acceptTask"]',form).forEach(input=>input.checked=id==='all');syncAcceptanceSelection(form);}
       }
       if(action==='report-task')responseDialog(id);
+      if(action==='prepare-completion')recovery.prepareCompletion(el.closest('#responseForm'));
       if(action==='resume-task'){el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}}
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);

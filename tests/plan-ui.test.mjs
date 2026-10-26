@@ -669,7 +669,7 @@ test('semantic duplicate choices are visible, preserve links, and are saved befo
   }
 });
 test('editing a reused semantic suggestion invalidates the choice without losing the item', async () => {
-  for (const edit of ['note', 'checkbox']) {
+  for (const edit of ['note', 'scope', 'checkbox']) {
     const initial = fixture();
     initial.existingTasks = [{ id: 'existing', title: 'Finalize activities', start: '' }];
     initial.draft.duplicateSuggestions = [{
@@ -681,6 +681,7 @@ test('editing a reused semantic suggestion invalidates the choice without losing
       await app.start();
       await app.click('Use existing: Finalize activities');
       if (edit === 'note') await app.edit('note-one', 'An expanded scope');
+      else if(edit==='scope')await app.edit('scope-one','A different required outcome.');
       else await app.check('include-one', true);
       assert.equal(app.find('include-one').props.checked, true);
       assert.doesNotMatch(text(app.tree), /Using existing task:/);
@@ -688,6 +689,20 @@ test('editing a reused semantic suggestion invalidates the choice without losing
       assert.equal(!!add.props.disabled, edit === 'checkbox');
     } finally { app.dispose(); }
   }
+});
+test('proposed outcomes are visible, editable and preserved through save/reload/apply independently of instructions',async()=>{
+  const initial=fixture();initial.draft.items[0].scope='A reviewed programme is recorded.';
+  const app=harness(context=>{
+    if(context.input?.action==='save')context.value={...context.saved,revision:context.saved.revision+1,draft:{...context.saved.draft,items:context.input.items}};
+  },initial);
+  try{
+    await app.start();assert.match(text(app.tree),/Proposed Done when:/);assert.match(text(app.tree),/not evidence that the work is complete/);
+    await app.edit('scope-one','Named leads approve the programme and record unresolved decisions.');
+    assert.equal(app.find('note-one').props.value,item.note);await app.click('Save draft');
+    assert.equal(app.requests.at(-1).items[0].scope,'Named leads approve the programme and record unresolved decisions.');
+    await app.click('Reload saved draft');assert.equal(app.find('scope-one').props.value,'Named leads approve the programme and record unresolved decisions.');
+    await app.click('Add 1 selected items to project');assert.equal(app.requests.at(-1).action,'apply');assert.equal(app.requests.at(-1).items[0].scope,'Named leads approve the programme and record unresolved decisions.');assert.equal(app.requests.at(-1).items[0].note,item.note);
+  } finally {app.dispose();}
 });
 test('draft reload asks before discarding local edits, and unattended reads never call generate', async () => {
   const app = harness();

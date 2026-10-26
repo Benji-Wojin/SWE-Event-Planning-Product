@@ -180,6 +180,27 @@ export async function eventPlanTests({
     return snap;
   }
   try {
+    await t.test('reviewed AI outcomes save separately from instructions and apply as incomplete unaccepted shared tasks',async()=>{
+      const project=await setup(),generated=output();generated.items[0].scope='The organizer records the approval decision and outstanding conditions.';provider(generated);
+      try {
+      let snap=await ready(project);assert.equal(snap.draft.items[0].scope,generated.items[0].scope);
+      snap.draft.items[0].scope='The responsible organizer records the reviewed decision and unresolved conditions.';
+      assert.equal((await post(project,save(snap))).status,200);snap=await read(project);
+      assert.equal((await post(project,approval(snap))).status,200);const state=(await (await realRead(project)).json()).state;
+      const task=state.tasks.find(task=>task.title===baseItem.title);assert.equal(task.scope,snap.draft.items[0].scope);assert.equal(task.note,baseItem.note);assert.equal(task.status,'todo');assert.equal(task.acceptedAt,'');assert.equal(task.verifiedAt,'');
+      } finally {sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+    });
+    await t.test('invalid outcome edits cannot save or partially apply, while absent legacy outcomes remain unknown',async()=>{
+      const project=await setup(),snap=await ready(project),before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),draftBefore=row(project).payload;
+      try {
+      assert.ok(snap.draft.items.every(item=>item.scope===''));
+      for(const scope of [null,{},'x'.repeat(3001),'bad\u0000outcome']){
+        const items=structuredClone(snap.draft.items);items[0].scope=scope;
+        assert.equal((await post(project,save(snap,{items}))).status,400);assert.equal(row(project).payload,draftBefore);
+        assert.equal((await post(project,approval(snap,{items}))).status,400);assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),before);
+      }
+      } finally {sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+    });
     await t.test('contextual suggestions have their own saved review, disclosed context and shared quota',async()=>{
       const project=await setup();
       const plan=await ready(project),planBefore=structuredClone(plan.draft);

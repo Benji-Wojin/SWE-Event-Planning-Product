@@ -2,7 +2,7 @@
 export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,workspace,newTeamProject,joinPerson,asTeammate}) {
   const originalFetch=globalThis.fetch,originalKey=globalThis.__gatherEnv.GROQ_API_KEY;
   globalThis.__gatherEnv.GROQ_API_KEY='fictional-assistant-key';
-  const base={id:'welcome',kind:'preparation',title:'Prepare welcome signs',category:'Venue',note:'Prepare signs for the check-in desk.',dueDate:'',start:'',end:'',location:'',dependsOn:[],existingTaskIndex:null};
+  const base={id:'welcome',kind:'preparation',title:'Prepare welcome signs',category:'Venue',note:'Prepare signs for the check-in desk.',scope:'The reviewed welcome signs show the agreed check-in route.',dueDate:'',start:'',end:'',location:'',dependsOn:[],existingTaskIndex:null};
   let output={items:[base],questions:[],assumptions:[]},calls=[];
   const response=()=>Response.json({id:'fixture',model:'openai/gpt-oss-20b',choices:[{index:0,finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(output)}}]});
   globalThis.fetch=async(url,options)=>{assert.equal(String(url),'https://api.groq.com/openai/v1/chat/completions');const body=JSON.parse(options.body);assert.equal(body.model,'openai/gpt-oss-20b');assert.equal(body.tools,undefined);calls.push(body);return response();};
@@ -49,7 +49,7 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,start:'2030-11-20T09:00',kind:'activity',dueDate:''})))).status,400);
       r=await apply(id,s);assert.equal(r.status,200);const savedResult=await r.json();assert.equal(savedResult.receipt.taskIds.length,1);
       assert.equal((await apply(id,s)).status,200);assert.equal((await ws(id)).state.tasks.length,1);
-      assert.equal((await ws(id)).state.tasks[0].status,'todo');
+      assert.equal((await ws(id)).state.tasks[0].status,'todo');assert.equal((await ws(id)).state.tasks[0].scope,base.scope);
       const latest=calls.at(-1);assert.equal(latest.tools,undefined);assert.match(latest.messages[0].content,/NO tools/);
       assert.doesNotMatch(JSON.stringify(latest),/fictional-assistant-key|owner@example.com/);
     });
@@ -135,7 +135,7 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       assert.deepEqual(s.members.map(m=>m.id),[me]);assert.equal(s.status,'ready');
       assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,owner:'jack'})))).status,400);
       assert.equal((await apply(id,s,s.draft.items.map(item=>({...item,owner:me})))).status,200);
-      state=await ws(id);assert.equal(state.state.tasks[0].owner,me);assert.equal(state.state.tasks[0].updatedBy,me);
+      state=await ws(id);assert.equal(state.state.tasks[0].owner,me);assert.equal(state.state.tasks[0].updatedBy,me);assert.equal(state.state.tasks[0].scope,base.scope);
       owner();assert.equal((await read(id)).draft,null);
       state=await ws(id);await workspace.POST(request('/api/workspace?project='+id,{method:'completeSetup',args:[{membersCanCreateTasks:false}],revision:state.revision}));
       member();assert.equal((await planApi.GET(new Request('https://gather.example'+path(id)))).status,403);

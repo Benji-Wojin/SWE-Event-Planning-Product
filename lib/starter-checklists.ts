@@ -71,6 +71,39 @@ const checklists: Record<string, Entry[]> = {
   other: [shared.purpose, shared.venue, shared.budget, shared.needs, shared.programme, shared.roles, shared.cleanup, shared.feedback],
 };
 
+// Proposed results for human review, not evidence of approval or completion.
+const outcomes: Record<string,string> = {
+  purpose:'The team has recorded the intended audience, purpose and useful result, with open decisions identified.',
+  venue:'The space, access route and setup/handback arrangements have been checked with the venue contact; outstanding confirmations are recorded.',
+  budget:'A working spending limit and approval owner are recorded, with unknown costs clearly identified.',
+  roles:'Delivery roles and backups are recorded and each person’s availability has been checked; remaining gaps are explicit.',
+  programme:'A reviewed running order records activities, transitions, durations and buffers without presenting tentative times as confirmed.',
+  needs:'Access and dietary needs have been checked through the organizer’s appropriate process, with follow-up owners and no sensitive individual details in shared notes.',
+  contingency:'The team has agreed a practical fallback for the actual event risks and named who decides and communicates a change.',
+  cleanup:'Area cleanup, equipment returns and venue handback responsibilities have been agreed with the people doing them.',
+  feedback:'Concrete lessons and outstanding follow-ups are recorded with owners for the next steps.',
+  approval:'The responsible school organizer has confirmed the applicable approval route and supervision arrangements, with outstanding decisions recorded.',
+  arrival:'The responsible organizer has reviewed arrival, check-in, release and exception handoffs under the school’s agreed process.',
+  av:'The actual equipment and delivery transitions have been rehearsed; unresolved issues have owners and a practical backup is agreed.',
+  communications:'The responsible organizer has reviewed the attendee/family information draft and identified any unconfirmed details before sharing.',
+  briefing:'The delivery team has reviewed the running order, named roles and handoffs; anyone still needing the briefing is recorded.',
+  decisions:'Stakeholder decisions, authorized approval owners and remaining sign-offs are recorded without treating proposals as commitments.',
+  vendors:'Supplier needs, scope assumptions and approval routes have been reviewed; no booking or commitment is implied by an unchecked quote.',
+  speakers:'Session goals and facilitator/speaker requirements are agreed, with outstanding confirmations and material deadlines recorded.',
+  followup:'Decisions actually made and post-event actions are recorded with owners and a reviewed sharing boundary.',
+  travel:'The group has reviewed travel and arrival arrangements, clearly separating options from confirmed bookings and keeping booking codes private.',
+  choices:'The group has agreed the trip priorities and recorded who is joining, destination/date choices and unresolved decisions.',
+  itinerary:'A reviewed itinerary includes transfers, breaks and buffers, with availability still needing confirmation made explicit.',
+  meeting:'The group has agreed meeting points and a contact route for separation or delay, sharing only necessary details.',
+  shape:'The people planning the occasion have agreed what matters, the intended scale and the choices still open.',
+  place:'The setting, access and arrival arrangements have been checked with the people responsible for the space; unconfirmed availability is explicit.',
+  food:'Food preferences, responsibilities, timing and cost assumptions are agreed, with unresolved choices kept explicit and sensitive details private.',
+  invites:'The guest-information draft has been reviewed for agreed date, place, arrival and reply details; nothing is sent by this task.',
+  activities:'The group has agreed suitable activities and named who handles the practical jobs, leaving unnecessary work out.',
+  memories:'Chosen personal touches have appropriate permission and preparation owners, with any remaining decisions recorded.',
+  day:'The people helping have reviewed arrivals, main moments and cleanup responsibilities, leaving time for the celebration.',
+};
+
 type PreparationDates = { eventDate: string; endDate: string; today: string };
 // Product-authored lead times, not venue requirements or organizational policy.
 const leadDays: Record<string, number> = {
@@ -101,7 +134,7 @@ export function starterChecklist(kind: string, dates?: PreparationDates): PlanOu
     return proposed;
   };
   const items = checklists[kind].map(([id, title, category, note, dependsOn]) => ({
-    id, title, category, note, kind: 'preparation', dueDate: due(id, title), start: '', end: '', location: '', dependsOn: [...(dependsOn || [])], existingTaskIndex: null,
+    id, title, category, note, scope: outcomes[id], kind: 'preparation', dueDate: due(id, title), start: '', end: '', location: '', dependsOn: [...(dependsOn || [])], existingTaskIndex: null,
   } satisfies PlanItem));
   return {
     items,

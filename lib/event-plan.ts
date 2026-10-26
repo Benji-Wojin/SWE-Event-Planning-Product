@@ -277,7 +277,7 @@ async function createStarter(c: Context, input: any) {
   const {matches} = planSelection(reviewed, existingPlanTasks(c));
   const draft = {
     ...output,
-    source:'starter', starterVersion:input.suggestDates ? 2 : 1,
+    source:'starter', starterVersion:input.suggestDates ? 4 : 3,
     ...(input.suggestDates ? {starterDates:{eventDate:c.state.event.date,endDate:brief.endDate || c.state.event.date}} : {}),
     items:reviewed.map(item=>({...item, included:matches.get(item.id)!.length===0})),
     duplicateSuggestions:duplicateSuggestions(reviewed,existingPlanTasks(c).slice(0,200)),
@@ -359,7 +359,7 @@ async function generate(c: Context, input: any) {
   } catch {
     throw new HttpError(
       413,
-      'This brief and project context exceed the free-plan request budget. Shorten the brief or continue planning manually. Your saved draft is unchanged.',
+      'This request is too large for Weft’s AI request-size budget. No Groq request was sent or AI allowance used. Your saved draft is unchanged. Shorten the brief or continue planning manually.',
     );
   }
   const now = Date.now(),
@@ -592,6 +592,7 @@ async function applyDraft(c: Context, input: any) {
           title: item.title,
           category: item.category,
           owner: item.owner,
+          scope: item.scope || '',
           note:
             item.note +
             (!item.start && item.location

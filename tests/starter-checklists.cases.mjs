@@ -21,10 +21,12 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
     });
     await t.test('explicit selection and assignment apply once through the existing atomic review flow',async()=>{
       const project=await setup(),snap=await ready(project),items=snap.draft.items.map((item,index)=>({...item,included:index===0,owner:index===0?'jack':''}));
+      assert.ok(items.every(item=>item.scope));items[0].scope='The team records the agreed audience and useful event result.';
       const approval={action:'apply',revision:snap.revision,workspaceRevision:snap.workspaceRevision,generation:snap.draft.generation,items,confirm:true};
       const applied=await post(project,approval);assert.equal(applied.status,200,await applied.clone().text());
       const result=await applied.json(),state=JSON.parse(ws(project).data);
       assert.equal(result.receipt.taskIds.length,1);assert.equal(state.tasks.length,1);assert.equal(state.tasks[0].owner,'jack');assert.equal(state.tasks[0].status,'todo');
+      assert.equal(state.tasks[0].scope,items[0].scope);assert.equal(state.tasks[0].note,items[0].note);assert.equal(state.tasks[0].acceptedAt,'');
       const again=await post(project,approval);assert.equal(again.status,200);assert.equal(JSON.parse(ws(project).data).tasks.length,1);
       const next=await ready(project);assert.equal(next.draft.items[0].included,false,'exact existing work is not preselected');
       assert.equal(JSON.parse(ws(project).data).tasks.length,1);
@@ -39,7 +41,7 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       assert.equal(updated.status,200);
       const start=await read(project),before=ws(project),body=input(start,{suggestDates:true,brief:{...brief,kind:'corporate',endDate:'2100-03-16'}});
       const response=await post(project,body);assert.equal(response.status,200,await response.clone().text());const snap=await response.json();
-      assert.deepEqual(ws(project),before);assert.equal(snap.draft.starterVersion,2);
+      assert.deepEqual(ws(project),before);assert.equal(snap.draft.starterVersion,4);
       assert.deepEqual(snap.draft.starterDates,{eventDate:'2100-03-14',endDate:'2100-03-16'});
       assert.equal(snap.draft.items.find(i=>i.id==='av').dueDate,'2100-03-12');
       assert.equal(snap.draft.items.find(i=>i.id==='followup').dueDate,'2100-03-17');

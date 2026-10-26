@@ -14,6 +14,8 @@ test('every supported event kind has a bounded editable starter with unknown dat
     for(const item of plan.items){
       for(const field of ['dueDate','start','end','location'])assert.equal(item[field],'');
       assert.equal(item.owner,undefined);assert.equal(item.existingTaskIndex,null);
+      assert.equal(typeof item.scope,'string');assert.ok(item.scope.trim().length>30&&item.scope.length<=3000);
+      assert.doesNotMatch(item.scope,/https?:\/\/|@|password|\u0000/i);
       assert.doesNotMatch(item.note,/https?:\/\/|@|confirmed booking:|password/i);
     }
     assert.ok(plan.assumptions.some(s=>s.includes('not AI-generated')));
@@ -31,8 +33,9 @@ test('formal events get deeper delivery checks while celebrations stay proportio
   assert.match(titles(starterChecklist('anniversary')),/personal touches/);
 });
 test('starter outputs are fresh copies and prototype keys cannot select a checklist',()=>{
-  const plan=starterChecklist('school');plan.items[0].title='Changed';plan.items.find(i=>i.dependsOn.length).dependsOn.push('made-up');
+  const plan=starterChecklist('school');plan.items[0].title='Changed';plan.items[0].scope='Changed outcome';plan.items.find(i=>i.dependsOn.length).dependsOn.push('made-up');
   const fresh=starterChecklist('school');assert.notEqual(fresh.items[0].title,'Changed');assert.doesNotThrow(()=>parsePlanItems(fresh.items));
+  assert.notEqual(fresh.items[0].scope,'Changed outcome');
   for(const bad of ['__proto__','constructor','unknown','School'])assert.throws(()=>starterChecklist(bad),/supported event type/);
 });
 test('optional starter dates are editable calendar-day suggestions with unset owners and activity times',()=>{

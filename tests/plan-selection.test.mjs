@@ -96,7 +96,7 @@ test('semantic hints fail closed for stale content, missing/foreign targets and 
   const paraphrase = { ...item, title: 'Secure venue booking', existingTaskIndex: 0 };
   const existing = [{ id: 'old', title: 'Book the venue', start: '' }];
   const suggestions = duplicateSuggestions([paraphrase], existing);
-  for (const patch of [{title:'Book a different venue'}, {note:'Additional room'}, {start:'2030-10-05T09:00'}, {location:'Other city'}, {kind:'activity'}, {dueDate:'2030-11-01'}]) {
+  for (const patch of [{title:'Book a different venue'}, {note:'Additional room'}, {scope:'A separate hall has been approved.'}, {start:'2030-10-05T09:00'}, {location:'Other city'}, {kind:'activity'}, {dueDate:'2030-11-01'}]) {
     const result = planSelection([{...paraphrase,...patch,duplicateChoice:'reuse'},dependent],existing,suggestions);
     assert.equal(result.reusable.size,0);
     assert.equal(result.invalidReuse.has('one'),true);
@@ -107,6 +107,13 @@ test('semantic hints fail closed for stale content, missing/foreign targets and 
   for (const index of [-1, 99, null, undefined]) assert.equal(duplicateSuggestions([{...paraphrase,existingTaskIndex:index}],existing).length,0);
   assert.equal(duplicateSuggestions([{...paraphrase,start:'2030-10-05T09:00'}],existing).length,0);
   assert.equal(planSelection([{...paraphrase,duplicateChoice:'reuse'}],existing,[]).invalidReuse.size,1);
+});
+test('blank outcomes retain legacy semantic identities, but meaningful outcome changes require a fresh reuse decision',()=>{
+  const proposal={...item,title:'Secure venue',existingTaskIndex:0},existing=[{id:'old',title:'Book venue',start:''}];
+  const suggestions=duplicateSuggestions([proposal],existing);
+  assert.equal(planSelection([{...proposal,scope:'  ',duplicateChoice:'reuse'}],existing,suggestions).reusable.get('one'),'old');
+  const changed={...proposal,scope:'Room and arrival access approved.',duplicateChoice:'reuse'};
+  assert.equal(planSelection([changed],existing,suggestions).invalidReuse.has('one'),true);
 });
 test('ambiguous existing matches never choose a task silently', () => {
   const result = planSelection(

@@ -12,7 +12,7 @@ export type DuplicateSuggestion = {
 // Bind suggestions to reviewed content, not just a mutable item ID. Any change
 // to meaning or timing invalidates the old AI suggestion and reuse decision.
 export function duplicateItemIdentity(item: ReviewedItem) {
-  return JSON.stringify([
+  const fields = [
     item.title.trim(),
     item.kind,
     item.note.trim(),
@@ -21,7 +21,11 @@ export function duplicateItemIdentity(item: ReviewedItem) {
     item.end,
     item.location.trim(),
     item.category,
-  ]);
+  ];
+  // Preserve legacy hint identities when no outcome was recorded. A meaningful
+  // outcome edit must invalidate an earlier semantic reuse decision.
+  if(item.scope?.trim())fields.push(item.scope.trim());
+  return JSON.stringify(fields);
 }
 export function duplicateSuggestions(
   items: ReviewedItem[],

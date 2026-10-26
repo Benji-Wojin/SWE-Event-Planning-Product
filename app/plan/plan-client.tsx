@@ -653,6 +653,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                         }
                       />}
                       {embedded && <p className="sidebar-item-note mt-2 text-xs text-muted-foreground">{item.note}</p>}
+                      {item.scope?.trim() && <p className="mt-2 break-words text-sm text-muted-foreground"><strong>Proposed Done when:</strong> {item.scope}</p>}
                     </div>
                   </div>
                   {!applied && possible.has(item.id) && (
@@ -869,6 +870,11 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                     </summary>
                     <div className="mt-4 space-y-4">
                       {embedded && <div className="space-y-2"><Label htmlFor={'title-' + item.id}>Task title</Label><Input id={'title-' + item.id} maxLength={180} value={item.title} onChange={e=>updateItem(item.id,{title:e.target.value})}/></div>}
+                      <div className="space-y-2">
+                        <Label htmlFor={'scope-' + item.id}>Done when (optional)</Label>
+                        <Textarea id={'scope-' + item.id} rows={2} maxLength={3000} value={item.scope || ''} onChange={e=>updateItem(item.id,{scope:e.target.value})} aria-describedby={'scope-help-' + item.id}/>
+                        <p id={'scope-help-' + item.id} className="text-sm text-muted-foreground">Review the proposed result before adding it. This becomes the shared task’s agreed outcome, not evidence that the work is complete. Leave blank if it is not agreed yet.</p>
+                      </div>
                       <div className="space-y-2">
                         <Label htmlFor={'note-' + item.id}>
                           What needs to be done

@@ -40,7 +40,7 @@
     }
     function responseMarkup(task,awaiting,completionBlocked=false) {
       const overdue=task.dueDate&&task.dueDate<dateKey();
-      return '<section class="task-report section-gap"><h3>'+(overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"><label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed','Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Need someone else']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label><label class="field"><span class="sr-only">What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. Supporting links and shared files are optional; a note is not independent verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt&&!awaiting?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
+      return '<section class="task-report section-gap"><h3>'+(overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'">'+(!awaiting&&!completionBlocked?'<button type="button" class="btn btn-secondary" data-action="prepare-completion">Report complete &amp; add evidence</button><p class="muted">Record what was done, with optional supporting links or shared files. Nothing is submitted until you confirm.</p>':'')+'<label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed','Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Need someone else']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label><label class="field"><span data-response-note-label>What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. Supporting links and shared files are optional; a note is not independent verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt&&!awaiting?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
     }
     function priorityMarkup(task,organizer) {
       const info=P.analyze(task,state().tasks,new Date(),state().event.timeZone),value=task.priority||'auto';
@@ -52,6 +52,15 @@
       form.elements.proposedDate.disabled=!date;
       form.elements.proposedDate.min=dateKey();
       const evidence=form.querySelector('[data-completion-only]');if(evidence){evidence.hidden=form.elements.response.value!=='completed';for(const input of evidence.querySelectorAll('input,select,textarea,button'))input.disabled=evidence.hidden;}
+      const completing=form.elements.response.value==='completed',label=form.querySelector('[data-response-note-label]'),submit=form.querySelector('button[type="submit"]');
+      if(label)label.textContent=completing?'Completion note · what was done?':'What happened or what do you need?';
+      if(submit)submit.textContent=completing?'Submit completion report':'Save update';
+    }
+    function prepareCompletion(form) {
+      if(!form||![...form.elements.response.options].some(option=>option.value==='completed'))return false;
+      form.elements.response.value='completed';syncResponse(form);
+      const fields=form.querySelector('.completion-fields');if(fields)fields.open=true;
+      form.elements.note.focus();return true;
     }
     function syncDecision(form) {
       const action=form.elements.action.value;
@@ -60,7 +69,7 @@
       form.elements.dueDate.min=dateKey();form.elements.reviewAfter.min=tomorrow();
       form.querySelector('[data-owner-load]').innerHTML=ownerLoad(form.elements.owner.value);
     }
-    return {nextUpPanel,responseMarkup,recoveryMarkup,priorityMarkup,ownerLoad,syncResponse,syncDecision};
+    return {nextUpPanel,responseMarkup,recoveryMarkup,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
   }
   root.GatherRecoveryUI={create};
 })(typeof window!=='undefined'?window:globalThis);
