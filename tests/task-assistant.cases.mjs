@@ -78,12 +78,12 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       try{
         const {build}=await import('esbuild'),bundle=await build({entryPoints:['lib/task-breakdown.ts'],bundle:true,platform:'node',format:'esm',write:false});
         const {taskBreakdownRequest}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64'));
-        let state=await ws(id);const created=await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Plan the fictional school welcome',owner:'jack',note:'PRIVATE-ORIGINAL-TASK-NOTE'}],revision:state.revision}));assert.equal(created.status,200);
+        let state=await ws(id);const created=await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Plan the fictional school welcome',owner:'jack',note:'PRIVATE-ORIGINAL-TASK-NOTE',scope:'SHARED-OUTCOME-NOT-AUTO-SENT'}],revision:state.revision}));assert.equal(created.status,200);
         const original=(await created.json()).result,before=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),callsBefore=calls.length;
         const prepared=taskBreakdownRequest(original.title);assert.equal(calls.length,callsBefore);assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before);
         output={items:[{...base,id:'briefing',title:'Write a fictional welcome briefing',dependsOn:['review']},{...base,id:'review',title:'Review the fictional welcome flow'}],questions:[],assumptions:[]};
         const response=await generate(id,[{role:'user',content:prepared}]);assert.equal(response.status,200);const s=await response.json();assert.equal(s.status,'ready');assert.equal(calls.length,callsBefore+1);
-        assert.doesNotMatch(JSON.stringify(calls.at(-1)),/PRIVATE-ORIGINAL-TASK-NOTE/);assert.ok(calls.at(-1).messages.some(message=>message.content.includes(original.title)));
+        assert.doesNotMatch(JSON.stringify(calls.at(-1)),/PRIVATE-ORIGINAL-TASK-NOTE|SHARED-OUTCOME-NOT-AUTO-SENT/);assert.ok(calls.at(-1).messages.some(message=>message.content.includes(original.title)));
         assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id),before,'generation does not edit shared work');
         const result=await apply(id,s);assert.equal(result.status,200);state=(await ws(id)).state;assert.equal(state.tasks.length,3);assert.deepEqual(state.tasks.find(task=>task.id===original.id),original);
         for(const task of state.tasks.filter(task=>task.id!==original.id)){assert.equal(task.status,'todo');assert.equal(task.acceptedAt,'');assert.equal(task.schedule,null);assert.doesNotMatch(JSON.stringify(task),/PRIVATE-ORIGINAL-TASK-NOTE/);}

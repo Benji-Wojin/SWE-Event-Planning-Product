@@ -25,6 +25,10 @@
     Object.keys(value).every(key => ['start','end','location'].includes(key)) && validLocalTime(value.start) &&
     typeof value.end === 'string' && (value.end === '' || validLocalTime(value.end) && value.end > value.start) &&
     typeof value.location === 'string' && value.location.length <= 240;
+  function taskOutcome(value) {
+    if(typeof value!=='string'||value.length>3000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value))throw new Error('Describe the required outcome in 3,000 characters or fewer.');
+    return value.trim();
+  }
 
   function completionEvidence(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key=>!['note','links','fileIds'].includes(key))) throw new Error('Unsupported completion detail.');
@@ -236,12 +240,13 @@
     }
     function createTask(data, actor) {
       const fields = taskFields(data);
+      const scope = data.scope===undefined?'':taskOutcome(data.scope);
       const at = timestamp();
       const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
       task.priority = 'auto';
       task.schedule = null;
-      Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope:''});
+      Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope});
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
     }
@@ -276,7 +281,7 @@
       actorId(actor);
       if (actor !== 'jack') {
         if (state.event.membersCanCreateTasks !== true) throw new Error('Only the organizer can add tasks.');
-        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','owner','dueDate','status','dependencies'].includes(key))) throw new Error('Teammates can add a task name, context, category, due date, owner and reviewed links.');
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','scope','owner','dueDate','status','dependencies'].includes(key))) throw new Error('Teammates can add a task name, context, outcome, category, due date, owner and reviewed links.');
         if (data.owner && data.owner !== actor) throw new Error('Assign the new task to yourself or leave it unassigned.');
         if (data.status !== undefined && data.status !== 'todo') throw new Error('New teammate tasks start as To do. Report progress after creating the task.');
       }
@@ -313,6 +318,25 @@
       // Changing the timetable is not progress, a completion report, or a dependency result.
       save(true, false);
       return copy(task);
+    }
+    function replaceTaskOutcome(task, scope, actor) {
+      if(scope===task.scope)return false;
+      const previous=task.scope,at=timestamp();
+      task.scope=scope;
+      for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
+      task.comments.push({id:id('comment'),actor,at,text:'Required outcome changed. Review it and accept responsibility again.\nPrevious outcome: '+(previous||'Not recorded')+'\nNew outcome: '+(scope||'Not recorded')});
+      return true;
+    }
+    function setTaskOutcome(taskId, value, actor = 'jack') {
+      actorId(actor);
+      if(actor!=='jack')throw new Error('Only the organizer can change an existing task outcome.');
+      const task=taskById(taskId),scope=taskOutcome(value);
+      if(task.status==='done'||task.reportedAt)throw new Error('Review the completion report or reopen the task before changing its required outcome.');
+      if(!replaceTaskOutcome(task,scope,actor))return copy(task);
+      task.revision++;
+      entry(actor,'clarified the required outcome for '+task.title,task.id,'task-outcome');
+      // An outcome change is not progress, a completion report or an owner response.
+      save(true,false);return copy(task);
     }
     function setTaskPriority(taskId, input, actor = 'jack') {
       actorId(actor);
@@ -384,7 +408,7 @@
       if (!data.requestId&&task.recoveryRequests.some(r=>r.status==='pending')) throw new Error('Review the current request before changing the plan.');
       if (task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt) throw new Error('This task is complete or awaiting verification.');
       if (request&&(request.originalDueDate!==task.dueDate||request.originalOwner!==task.owner))throw new Error('The task changed after this request. Ask the owner to confirm it again.');
-      const note=clean(data.note,3000),reviewAfter=clean(data.reviewAfter,20),scope=clean(data.scope,3000);
+      const note=clean(data.note,3000),reviewAfter=clean(data.reviewAfter,20),scope=data.action==='scope'?taskOutcome(data.scope):clean(data.scope,3000);
       if (!note) throw new Error('Add a short decision for the owner.');
       if (!reviewAfter||!validDate(reviewAfter))throw new Error('Choose a valid next check-in date.');
       let patch=null;
@@ -403,7 +427,7 @@
       if (patch) taskFields(patch,task);
       if (request)Object.assign(request,{status:'resolved',resolvedAt:timestamp(),resolvedBy:actor,decision:data.action,decisionNote:note});
       if (patch) {const progress={updatedAt:task.updatedAt,updatedBy:task.updatedBy};patchTask(task,patch,actor,data.confirmHardDeadline===true);Object.assign(task,progress);}
-      if (data.action==='scope')task.scope=scope;
+      if (data.action==='scope')replaceTaskOutcome(task,scope,actor);
       task.planReviewAfter=reviewAfter;task.followupAfter=reviewAfter;task.followupSentAt=timestamp();task.revision++;
       const text=`Plan agreed: ${data.action==='date'?'Due '+patch.dueDate:data.action==='reassign'?'Reassigned to '+state.members.find(m=>m.id===patch.owner).name:data.action==='scope'?'Required outcome: '+scope:'Keep the current plan'}. ${note}\nNext check-in: ${reviewAfter}.`;
       task.comments.push({id:id('comment'),actor,text,at:timestamp(),kind:'plan-decision'});
@@ -1188,7 +1212,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

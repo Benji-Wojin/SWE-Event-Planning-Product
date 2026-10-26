@@ -101,6 +101,7 @@ const arity: Record<string, number> = {
   resolveRecovery: 2,
   setTaskPriority: 2,
   setTaskSchedule: 2,
+  setTaskOutcome: 2,
   resolveHandoff: 3,
   addDependency: 2,
   addLinkedTask: 2,
@@ -183,6 +184,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'setTaskSchedule':
         result = store.setTaskSchedule(a, b, user.actorId);
+        break;
+      case 'setTaskOutcome':
+        result = store.setTaskOutcome(a, b, user.actorId);
         break;
       case 'resolveHandoff':
         result = store.resolveHandoff(a, b, c, user.actorId);
@@ -299,7 +303,7 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks'].includes(input.method) || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'setTaskOutcome'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

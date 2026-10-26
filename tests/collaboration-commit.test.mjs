@@ -406,6 +406,39 @@ test('assignment loses organizer authority even if old organizer remains a teamm
   beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
   try{assert.equal((await mutate(project,organizer,'assignTasks',[{owner:'jack',tasks:[{id:task.id,revision:task.revision}]}],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
 });
+test('task outcomes are persistent shared requirements, organizer-edited and unchanged by member reporting',async()=>{
+  const {project,actor}=await setup();
+  try{
+    const created=(await save(project,organizer,'addTask',[{title:'Fictional school welcome',owner:actor,scope:'A reviewed welcome route and named greeter.',note:'Initial context',requiresVerification:true,schedule:{start:'2027-01-08T17:00',end:'2027-01-08T17:30',location:'Fictional hall'}}])).result;
+    assert.equal(created.scope,'A reviewed welcome route and named greeter.');
+    await save(project,teammate,'acceptTask',[created.id]);await save(project,teammate,'setNextUp',[created.id,{enabled:true}]);
+    let baseline=stored(project);
+    for(const [method,args,status] of [['setTaskOutcome',[created.id,'Forged requirement'],403],['updateTask',[created.id,{scope:'Forged generic patch'}],403],['setTaskOutcome',[created.id,'Forged actor','jack'],400]]){
+      assert.equal((await mutate(project,teammate,method,args)).status,status);assert.deepEqual(stored(project),baseline);
+    }
+    await save(project,teammate,'updateTask',[created.id,{status:'progress',note:'Drafting the route.'}]);
+    const before=(await read(project)).state.tasks.find(task=>task.id===created.id);assert.equal(before.scope,created.scope);baseline=stored(project);
+    assert.equal((await mutate(project,organizer,'setTaskOutcome',[created.id,'Stale review'],baseline.revision-1)).status,409);assert.deepEqual(stored(project),baseline);
+    for(const value of [null,{},'x'.repeat(3001)]){assert.equal((await mutate(project,organizer,'setTaskOutcome',[created.id,value])).status,400);assert.deepEqual(stored(project),baseline);}
+    const changed=(await save(project,organizer,'setTaskOutcome',[created.id,'Organizer-approved route, named greeter and accessible entrance.'])).result;
+    assert.equal(changed.acceptedAt,'');assert.equal(changed.nextUpAt,'');assert.equal(changed.scope,'Organizer-approved route, named greeter and accessible entrance.');
+    for(const key of ['status','note','owner','dueDate','schedule','dependencies','updatedAt','updatedBy'])assert.deepEqual(changed[key],before[key],key);
+    assert.match(changed.comments.at(-1).text,/Previous outcome: A reviewed welcome route/);
+    await save(project,teammate,'acceptTask',[created.id]);await save(project,teammate,'reportCompletion',[created.id,'Reviewed route and greeter recorded.']);
+    baseline=stored(project);assert.equal((await mutate(project,organizer,'setTaskOutcome',[created.id,'Replace pending work'])).status,400);assert.deepEqual(stored(project),baseline);
+    await save(project,organizer,'verifyTask',[created.id]);baseline=stored(project);assert.equal((await mutate(project,organizer,'setTaskOutcome',[created.id,'Rewrite history'])).status,400);assert.deepEqual(stored(project),baseline);
+    assert.equal((await read(project,teammate)).state.tasks.find(task=>task.id===created.id).scope,changed.scope);
+    await save(project,organizer,'completeSetup',[{membersCanCreateTasks:true}]);const memberTask=(await save(project,teammate,'addTask',[{title:'Fictional guest signs',owner:actor,scope:'Guests can identify the entrance.'}])).result;assert.equal(memberTask.scope,'Guests can identify the entrance.');assert.equal(memberTask.status,'todo');
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
+for(const action of ['setTaskOutcome','resolveRecovery'])test(action+' outcome edit loses organizer authority at commit even if old organizer retains member access',async()=>{
+  const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate handoff criteria',scope:'Original required result.',owner:'jack'}])).result;
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('outcome-old-owner-'+project,project,organizer.userId,'jack','fictional',new Date().toISOString());
+  const baseline=stored(project);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  const args=action==='setTaskOutcome'?[task.id,'Unauthorized changed outcome.']:[task.id,{action:'scope',scope:'Unauthorized smaller outcome.',note:'Fictional decision.',reviewAfter:'2027-01-09'}];
+  try{assert.equal((await mutate(project,organizer,action,args,baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
 async function bounded(promise) {
   let timer;
   try {
