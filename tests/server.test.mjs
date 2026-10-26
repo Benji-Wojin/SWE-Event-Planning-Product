@@ -1764,6 +1764,34 @@ test('run-sheet required-work warnings follow real teammate reporting and organi
     assert.equal(snap.state.tasks.find(task=>task.id===prep.id).verifiedBy,'jack');
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
 });
+test('linked task creation is atomic, scoped, permission-gated and revision-checked through the real API',async()=>{
+  const id=await newTeamProject('Fictional task breakdown');
+  const email='linked-task-member@example.com',userId='linked-task-member';
+  const read=async()=>{const response=await realRead(id);assert.equal(response.status,200);return response.json();};
+  const send=async(method,args,revision)=>(await workspace.POST(request('/api/workspace?project='+id,{method,args,revision:revision??(await read()).revision})));
+  const data=extra=>({title:'Fictional welcome signs',note:'Approved shared route only.',owner:'',kind:'related',reason:'Supports guest arrival in parallel.',...extra});
+  try{
+    await joinPerson(id,email,userId);const actor=(await read()).identity.actorId;owner();
+    let response=await send('addTask',[{title:'Fictional event welcome',owner:actor,status:'progress',note:'PRIVATE-PARENT-NOTE'}]);assert.equal(response.status,200);
+    const parent=(await response.json()).result;
+    response=await send('addLinkedTask',[parent.id,data({owner:actor})]);assert.equal(response.status,200);
+    let snap=await response.json();const child=snap.result;
+    assert.equal(child.status,'todo');assert.equal(child.owner,actor);assert.equal(child.acceptedAt,'');assert.equal(child.schedule,null);assert.equal(child.dueDate,'');
+    assert.doesNotMatch(JSON.stringify(child),/PRIVATE-PARENT-NOTE/);assert.equal(snap.state.tasks.find(task=>task.id===parent.id).status,'progress');
+    const row=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+    let before=row();response=await send('addLinkedTask',[parent.id,data({title:'Wrong revision'})],snap.revision-1);assert.equal(response.status,409);assert.deepEqual(row(),before);
+    asTeammate(email,userId);response=await send('addLinkedTask',[parent.id,data({title:'Disabled member creation'})]);assert.equal(response.status,403);assert.deepEqual(row(),before);
+    owner();assert.equal((await send('completeSetup',[{membersCanCreateTasks:true}])).status,200);asTeammate(email,userId);
+    before=row();response=await send('addLinkedTask',[parent.id,data({title:'Assign someone else',owner:'jack'})]);assert.equal(response.status,400);assert.deepEqual(row(),before);
+    response=await send('addLinkedTask',[parent.id,data({title:'Fictional briefing notes',owner:actor,kind:'dependency',reason:'The final notes are needed first.'})]);assert.equal(response.status,200);
+    snap=await response.json();assert.equal(snap.result.owner,actor);assert.equal(snap.state.tasks.find(task=>task.id===parent.id).status,'progress');
+    before=row();response=await send('reportCompletion',[parent.id,'Not all work done.']);assert.equal(response.status,400);assert.deepEqual(row(),before);
+    owner();response=await send('addTask',[{title:'Organizer-only work',owner:'jack'}]);assert.equal(response.status,200);const other=(await response.json()).result;
+    asTeammate(email,userId);before=row();response=await send('addLinkedTask',[other.id,data({title:'Other owner parent'})]);assert.equal(response.status,403);assert.deepEqual(row(),before);
+    owner();assert.equal((await send('completeSetup',[{membersCanCreateTasks:false}])).status,200);asTeammate(email,userId);
+    before=row();response=await send('addLinkedTask',[parent.id,data({title:'Disabled again'})]);assert.equal(response.status,403);assert.deepEqual(row(),before);
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+});
 test('organizer explicitly restores responsibility for an inactive owner without completing event work',async()=>{
   const id=await newTeamProject('Fictional event ownership recovery');
   const email='owner-recovery@example.com',userId='owner-recovery';

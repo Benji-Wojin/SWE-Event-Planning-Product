@@ -103,6 +103,7 @@ const arity: Record<string, number> = {
   setTaskSchedule: 2,
   resolveHandoff: 3,
   addDependency: 2,
+  addLinkedTask: 2,
   setDependencyKind: 2,
   removeDependency: 2,
   resumeTask: 1,
@@ -136,7 +137,7 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     input.args.length !== arity[method]
   )
     throw new HttpError(400, 'Unsupported workspace action.');
-  const memberTaskCreation = method === 'addTask' && store.getState().event.membersCanCreateTasks === true;
+  const memberTaskCreation = ['addTask','addLinkedTask'].includes(method) && store.getState().event.membersCanCreateTasks === true;
   if (user.role !== 'admin' && !memberTaskCreation && !['setNextUp', 'requestRecovery', 'claimTask', 'acceptTask', 'acceptTasks', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addComment', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method))
     throw new HttpError(
       403,
@@ -149,7 +150,7 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     const owned = new Set(store.getState().tasks.filter((task: any) => task.owner === user.actorId).map((task: any) => task.id));
     if (a.some(item => !owned.has(item.id))) throw new HttpError(403, 'Only the assigned owner can accept these commitments.');
   }
-  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
+  if (user.role !== 'admin' && ['setNextUp', 'requestRecovery', 'acceptTask', 'reportCompletion', 'setCompletionEvidence', 'updateTask', 'addDependency', 'addLinkedTask', 'setDependencyKind', 'removeDependency', 'resumeTask', 'resolveHandoff'].includes(method)) {
     const task = store.getState().tasks.find((task: any) => task.id === a);
     if (!task || task.owner !== user.actorId) throw new HttpError(403, 'Only the assigned owner can report on this task.');
     if (method === 'resolveHandoff' && c?.action === 'create' && c.owner && c.owner !== user.actorId)
@@ -188,6 +189,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'addDependency':
         result = store.addDependency(a, b, user.actorId);
+        break;
+      case 'addLinkedTask':
+        result = store.addLinkedTask(a, b, user.actorId);
         break;
       case 'setDependencyKind':
         result = store.setDependencyKind(a, b, user.actorId);
@@ -287,14 +291,15 @@ export async function mutateWorkspace(
   // The destination must still be a real active project member at commit,
   // not a legacy example or a removed/reinvited membership generation.
   let assignment: { actor: string; revision: number } | undefined;
-  if (input.method === 'assignTasks' && input.args[0].owner !== 'jack') {
-    const actor = input.args[0].owner;
+  const destinationOwner=input.method==='assignTasks'?input.args[0].owner:input.method==='addLinkedTask'?input.args[1].owner:'';
+  if (destinationOwner && destinationOwner !== 'jack') {
+    const actor = destinationOwner;
     const membership = await env.DB.prepare("SELECT revision FROM project_members WHERE project_id=? AND actor_id=? AND revoked_at=''")
       .bind(projectId, actor).first<{ revision: number }>();
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks'].includes(input.method);
+  const organizerOnly = ['rescheduleEvent', 'assignTasks'].includes(input.method) || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

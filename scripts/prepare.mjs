@@ -71,7 +71,7 @@ const mutations = [
   'setTaskPriority',
   'setTaskSchedule',
   'resolveHandoff',
-    'addDependency', 'setDependencyKind', 'removeDependency', 'resumeTask',
+  'addDependency', 'addLinkedTask', 'setDependencyKind', 'removeDependency', 'resumeTask',
   'claimTask',
   'resetDemo',
   'addTask',

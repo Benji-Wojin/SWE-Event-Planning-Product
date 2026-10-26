@@ -375,6 +375,27 @@ test('assignment target removal or renewed membership at commit cannot partially
     try{assert.equal((await mutate(project,organizer,'assignTasks',[{owner:actor,tasks:[{id:task.id,revision:task.revision}]}],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
   }
 });
+test('linked creation target removal or renewed membership cannot save either task or link',async()=>{
+  for(const renewed of [false,true]){
+    const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'School dance delivery'}])).result;
+    const baseline=stored(project);let intercepted=false;
+    beforeRun=(sql,args)=>{if(!isCommit(project,sql,args)||intercepted)return;intercepted=true;sqlite.prepare('UPDATE project_members SET revoked_at=?,revision=revision+1 WHERE project_id=? AND actor_id=?').run(renewed?'':'removed',project,actor);};
+    try{
+      const response=await mutate(project,organizer,'addLinkedTask',[task.id,{title:'Prepare welcome signs',note:'Fictional shared instructions.',owner:actor,kind:'related',reason:'Supports guest arrival.'}],baseline.revision);
+      assert.equal(response.status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);
+    }finally{beforeRun=undefined;}
+  }
+});
+test('linked creation loses organizer authority even if old organizer remains a teammate',async()=>{
+  const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate event delivery'}])).result;
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('linked-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
+  const baseline=stored(project);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  try{
+    const response=await mutate(project,organizer,'addLinkedTask',[task.id,{title:'Prepare briefing',note:'Fictional shared instructions.',owner:'jack',kind:'dependency',reason:'Needed before delivery.'}],baseline.revision);
+    assert.equal(response.status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);
+  }finally{beforeRun=undefined;}
+});
 test('assignment loses organizer authority even if old organizer remains a teammate',async()=>{
   const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate handoff'}])).result;
   sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('batch-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
