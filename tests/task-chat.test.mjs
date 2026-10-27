@@ -21,7 +21,7 @@ test('task context prepares an editable private message only after a click; it n
     nodes(tree).find(n=>text(n)==='Keep current conversation'&&n.type==='button').props.onClick();assert.equal(dismissed,1);assert.equal(message,'Unsent current message');
     tree=TaskChat({...props,locked:true});assert.equal(nodes(tree).find(n=>text(n)==='Prepare new message'&&n.type==='button').props.disabled,true);
     message=null;tree=TaskChat({...props,initialMessage:seeds[0]});assert.equal(nodes(tree).find(n=>n.type==='textarea').props.value,seeds[0]);assert.equal(sends,0);
-    nodes(tree).find(n=>text(n)==='New conversation'&&n.type==='button').props.onClick({type:'click'});assert.equal(seeds.at(-1),undefined,'React event is not treated as seed text');
+    nodes(tree).find(n=>text(n)==='New chat'&&n.type==='button').props.onClick({type:'click'});assert.equal(seeds.at(-1),undefined,'React event is not treated as seed text');
   }finally{delete globalThis.__taskChatHooks;}
 });
 test('chat asks only the current clarification and preserves unsent input on transport rejection',async()=>{
@@ -36,7 +36,46 @@ test('chat asks only the current clarification and preserves unsent input on tra
     assert.deepEqual(JSON.parse(sent[0].description),[{role:'user',content:'Create signs task'},{role:'assistant',content:'Where should signs go?'},{role:'user',content:'At check-in'}]);
     props.onSend=async()=>true;tree=TaskChat(props);await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
     assert.equal(message,'');assert.equal(dirty.at(-1),false);
-    props.brief.description=sent[0].description;tree=TaskChat(props);assert.doesNotMatch(text(tree),/one quick question/);
+    props.brief.description=sent[0].description;props.question=undefined;tree=TaskChat(props);assert.doesNotMatch(text(tree),/one quick question/);
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('proposal responses stay between user turns and remain available to corrections',async()=>{
+  let message='Give me three, not one',sent;
+  globalThis.__taskChatHooks=()=>[message,value=>message=value];
+  try{
+    const tree=TaskChat({brief:{description:JSON.stringify([{role:'user',content:'Plan three small steps'}])},proposalCount:1,proposalTitles:['Review the welcome route'],applied:false,locked:false,configured:true,failed:false,onSend:async value=>{sent=value;return true;},onDirty(){},onNew(){}});
+    assert.match(text(tree),/Review the welcome route/);
+    await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+    const rows=JSON.parse(sent.description);assert.deepEqual(rows.map(r=>r.role),['user','assistant','user']);assert.match(rows[1].content,/Review the welcome route/);assert.equal(rows[2].content,'Give me three, not one');
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('failed requests do not show an old answer or append the failed message twice',async()=>{
+  let sent;
+  globalThis.__taskChatHooks=()=>['Make it shorter',()=>{}];
+  try{
+    const rows=[{role:'user',content:'Write a welcome'},{role:'assistant',content:'Welcome everyone.'},{role:'user',content:'Make it shorter'}];
+    const tree=TaskChat({brief:{description:JSON.stringify(rows)},reply:'STALE-REPLY',work:{kind:'written_draft',title:'OLD-WORK',content:'STALE-REPLY'},applied:false,locked:false,configured:true,failed:true,onSend:async value=>{sent=value;return false;},onDirty(){},onNew(){}});
+    assert.doesNotMatch(text(tree),/STALE-REPLY|OLD-WORK/);
+    await nodes(tree).find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+    assert.deepEqual(JSON.parse(sent.description),rows);
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('ordinary replies render plainly without written-draft controls',()=>{
+  globalThis.__taskChatHooks=()=>['',()=>{}];
+  try{
+    const tree=TaskChat({brief:{description:JSON.stringify([{role:'user',content:'hello'}])},reply:'Hi! What would you like help with?',work:{kind:'reply',title:'Greeting',content:'Hi! What would you like help with?'},applied:false,locked:false,configured:true,failed:false,onSend:async()=>true,onDirty(){},onNew(){}});
+    assert.match(text(tree),/Hi! What would you like help with/);assert.doesNotMatch(text(tree),/Greeting|capability limit|Download draft|Your planning partner/);
+  }finally{delete globalThis.__taskChatHooks;}
+});
+test('successful explicit retry clears only the retried text and blocks duplicate retry clicks',async()=>{
+  let message='Make it shorter',dirty=true,calls=0,resolve;
+  globalThis.__taskChatHooks=()=>[message,value=>message=value];
+  const props={brief:{description:JSON.stringify([{role:'user',content:'Make it shorter'}])},applied:false,locked:false,configured:true,failed:true,onSend:async()=>{calls++;return new Promise(r=>resolve=r);},onDirty:value=>dirty=value,onNew(){}};
+  try{
+    let tree=TaskChat(props),retry=nodes(tree).find(n=>n.type==='button'&&text(n)==='Retry last message');
+    retry.props.onClick();retry.props.onClick();assert.equal(calls,1);resolve(true);await new Promise(r=>setImmediate(r));assert.equal(message,'');assert.equal(dirty,false);
+    message='A different unsent message';dirty=true;tree=TaskChat(props);retry=nodes(tree).find(n=>n.type==='button'&&text(n)==='Retry last message');retry.props.onClick();resolve(true);await new Promise(r=>setImmediate(r));assert.equal(message,'A different unsent message');assert.equal(dirty,true);
+    message='Make it shorter';tree=TaskChat(props);retry=nodes(tree).find(n=>n.type==='button'&&text(n)==='Retry last message');retry.props.onClick();nodes(tree).find(n=>n.type==='textarea').props.onChange({target:{value:'Changed during retry'}});resolve(true);await new Promise(r=>setImmediate(r));assert.equal(message,'Changed during retry');
   }finally{delete globalThis.__taskChatHooks;}
 });
 test('written-draft followups share a bounded excerpt and disclose capability limits',async()=>{

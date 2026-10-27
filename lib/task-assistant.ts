@@ -11,7 +11,6 @@ import { taskConversation } from './task-conversation';
 
 export function validateTaskProposal(
   value: unknown,
-  clarified: boolean,
 ): PlanOutput {
   if (
     !value ||
@@ -31,12 +30,12 @@ export function validateTaskProposal(
       work.title === '' &&
       work.content === ''
     )
-      return validateTaskProposal(proposal, clarified);
+      return validateTaskProposal(proposal);
     if (
       typeof work !== 'object' ||
       Array.isArray(work) ||
       Object.keys(work).sort().join(',') !== 'content,kind,title' ||
-      !['written_draft', 'cannot_execute'].includes(work.kind) ||
+      !['reply', 'written_draft', 'cannot_execute'].includes(work.kind) ||
       typeof work.title !== 'string' ||
       !work.title.trim() ||
       work.title.length > 180 ||
@@ -61,7 +60,6 @@ export function validateTaskProposal(
   if (
     result.items.length > 5 ||
     result.questions.length > 1 ||
-    (clarified && result.questions.length) ||
     (result.questions.length && result.items.length) ||
     result.items.some(
       (item) =>
@@ -72,6 +70,8 @@ export function validateTaskProposal(
     )
   )
     throw new Error('Invalid task proposal.');
+  if (!result.items.length && !result.questions.length && !result.work)
+    throw new Error('Empty assistant response.');
   return result;
 }
 export async function generateTaskProposal(
@@ -79,9 +79,6 @@ export async function generateTaskProposal(
   apiKey: string,
 ): Promise<PlanOutput> {
   const conversation = taskConversation(context.brief.description);
-  const clarified = conversation.some(
-    (message) => message.role === 'assistant',
-  );
   const body = planRequestBody(context);
   const outputSchema = body.response_format.json_schema.schema;
   try {
@@ -132,7 +129,7 @@ export async function generateTaskProposal(
             try {
               return {
                 success: true,
-                value: validateTaskProposal(value, clarified),
+                value: validateTaskProposal(value),
               };
             } catch {
               return {
@@ -150,7 +147,7 @@ export async function generateTaskProposal(
     });
     if (result.finishReason !== 'stop' || result.toolCalls.length)
       throw new Error('Incomplete task proposal.');
-    return validateTaskProposal(result.output, clarified);
+    return validateTaskProposal(result.output);
   } catch (error) {
     if (error instanceof PlanProviderError) throw error;
     if (APICallError.isInstance(error))

@@ -15,6 +15,23 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
   const generate=async(id,rows,extra={})=>{const s=await read(id);return post(id,{action:'generate',revision:s.revision,workspaceRevision:s.workspaceRevision,requestId:crypto.randomUUID(),brief:brief(rows),consent:true,consentVersion:'groq-plan-v1',...extra});};
   const apply=(id,s,items=s.draft.items,extra={})=>post(id,{action:'apply',revision:s.revision,workspaceRevision:s.workspaceRevision,generation:s.draft.generation,items,confirm:true,...extra});
   try {
+    await t.test('conversational followups return private replies rather than empty or unrelated task output',async()=>{
+      const id=await newTeamProject('Conversational followups fixture');
+      try{
+      const rows=[{role:'user',content:'Hello'}];
+      const before=(await ws(id)).state;
+      for(const [message,answer] of [['Hello','Hi! What would you like help with?'],['Is this a real chat?','Yes, you can ask follow-up questions about planning.'],['Can we discuss a smaller next step?','Start by identifying the one decision holding up your task.']]){
+        if(rows.length>1)rows.push({role:'user',content:message});
+        output={items:[],questions:[],assumptions:[],work:{kind:'reply',title:'Reply',content:answer}};cool(id);
+        const r=await generate(id,rows);assert.equal(r.status,200);const s=await r.json();assert.equal(s.status,'ready');assert.equal(s.draft.work.kind,'reply');assert.equal(s.draft.work.content,answer);
+        assert.equal((await apply(id,s)).status,400);rows.push({role:'assistant',content:answer});
+      }
+      assert.deepEqual((await ws(id)).state,before);assert.match(calls.at(-1).messages[0].content,/Reply directly to the latest user message/);assert.equal(calls.at(-1).tools,undefined);
+      cool(id);output={items:[],questions:[],assumptions:[],work:{kind:'none',title:'',content:''}};
+      const r=await generate(id,[{role:'user',content:'Please answer'}]);assert.equal((await r.json()).status,'error');
+      assert.deepEqual((await ws(id)).state,before);
+      }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
+    });
     await t.test('written work stays private and incomplete; external execution uses fixed truthful limits',async()=>{
       const id=await newTeamProject('Written work fixture');
       output={items:[],questions:[],assumptions:[],work:{kind:'written_draft',title:'Welcome announcement',content:'Welcome to our event. Please arrive at [time to confirm].'}};
@@ -30,7 +47,7 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       cool(id);output={items:[],questions:[],assumptions:[],work:{kind:'executed',title:'Done',content:'Invalid execution claim.'}};
       s=await (await generate(id,[{role:'user',content:'Do the work.'}])).json();assert.equal(s.status,'error');
     });
-    await t.test('assistant clarifies once, stores private proposals and requires human review to apply exactly once',async()=>{
+    await t.test('assistant clarifies one request, stores private proposals and requires human review to apply exactly once',async()=>{
       const id=await newTeamProject('Fictional assistant event');
       const rows=[{role:'user',content:'Create a task for the signs.'}];
       output={items:[],questions:['Where should the signs go?'],assumptions:[]};
@@ -120,7 +137,7 @@ export async function taskAssistantTests({t,assert,sqlite,owner,request,planApi,
       cool(id);output={items:[],questions:['First?','Second?'],assumptions:[]};
       r=await generate(id,rows);assert.equal((await r.json()).status,'error');
       cool(id);output={items:[],questions:['Another?'],assumptions:[]};
-      r=await generate(id,[...rows,{role:'assistant',content:'Which?'},{role:'user',content:'Welcome desk.'}]);assert.equal((await r.json()).status,'error');
+      r=await generate(id,[...rows,{role:'assistant',content:'Hello, I can help.'},{role:'user',content:'Write the invitation.'}]);const followup=await r.json();assert.equal(followup.status,'ready');assert.equal(followup.draft.questions[0],'Another?','a greeting is not a prior clarification');
       assert.equal((await ws(id)).state.tasks.length,0);
     });
     await t.test('enabled teammates can review only their own assistant draft, create self/unassigned tasks, and lose access when disabled',async()=>{

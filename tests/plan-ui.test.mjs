@@ -737,6 +737,15 @@ test('task assistant retries the same request but uses a fresh request for an ed
     assert.equal(calls[2].brief.description,second.description);
   } finally {app.dispose();}
 });
+test('assistant does not acknowledge a failed provider result as a delivered message',async()=>{
+  const initial=fixture();initial.brief.description='';initial.draft=null;
+  const app=harness(context=>context.input?.action==='generate' ? Response.json({...context.saved,brief:context.input.brief,status:'error',issue:'The AI reply failed. Try again.'}) : undefined,initial,'project=p_example&mode=assistant');
+  try{
+    await app.start();
+    const outgoing={...initial.brief,description:JSON.stringify([{role:'user',content:'Please reply to this'}])};
+    assert.equal(await app.chat('onSend',outgoing),false);assert.match(text(app.tree),/The AI reply failed/);
+  }finally{app.dispose();}
+});
 test('batch selection changes only inclusion, preserves draft edits, and never calls save or apply',async()=>{
   const initial=fixture();initial.draft.items=[copy(item),{...copy(item),id:'two',title:'Check venue',included:false},
     {...copy(item),id:'repeat',title:'Check venue',included:false}];

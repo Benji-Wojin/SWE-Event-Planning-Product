@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { taskConversation, type TaskMessage } from '@/lib/task-conversation';
+import { taskConversation, taskFollowup, type TaskMessage } from '@/lib/task-conversation';
 import type { PlanBrief, PlanOutput } from '@/lib/plan-generation';
 import { researchIntent } from '@/lib/research-intent';
 import { ResearchMessages } from './research-messages';
@@ -14,7 +14,6 @@ const chatStarters = [
   'Plan my next three steps',
   'Write a welcoming announcement',
   'Draft a day-of checklist',
-  'Find outdoor event ideas in Seattle',
 ];
 
 export function TaskChat({
@@ -32,6 +31,7 @@ export function TaskChat({
   research,
   replyAt,
   proposalCount = 0,
+  proposalTitles = [],
   initialMessage = '',
   taskContextTitle,
   onDismissTaskContext,
@@ -53,8 +53,11 @@ export function TaskChat({
   research?: ResearchController;
   replyAt?: string;
   proposalCount?: number;
+  proposalTitles?: string[];
 }) {
   const [message, setMessage] = useState(initialMessage);
+  const currentInput = useRef(message);
+  currentInput.current = message;
   const sending = useRef(false);
   const threadBox = useRef<HTMLDivElement>(null),
     followLatest = useRef(true);
@@ -68,6 +71,8 @@ export function TaskChat({
   }, [
     brief.description,
     work?.content,
+    replyAt,
+    proposalCount,
     question,
     research?.data?.requestId,
     research?.busy,
@@ -82,26 +87,14 @@ export function TaskChat({
     } catch {
       /* An invalid conversation can be replaced by a new request. */
     }
-  const asking =
-    !!question && !history.some((row) => row.role === 'assistant') && !applied;
-  const answer = asking ? question : reply;
-  const excerptMarker =
-    ' [Earlier draft excerpt; ask for a new draft to replace it.]';
-  const nextRows = () => [
-    ...(applied ? [] : history),
-    ...(!applied && answer
-      ? [
-          {
-            role: 'assistant' as const,
-            content:
-              answer.length > 1800
-                ? answer.slice(0, 1800 - excerptMarker.length) + excerptMarker
-                : answer,
-          },
-        ]
-      : []),
-    { role: 'user' as const, content: message.trim() },
-  ];
+  const asking = !!question && !applied && !failed;
+  const proposalReply = proposalCount > 0
+    ? `Here ${proposalCount === 1 ? 'is a suggested task' : 'are ' + proposalCount + ' suggested tasks'} to review:\n${proposalTitles.map(title=>'• ' + title).join('\n')}\nNothing has been added yet.`
+    : '';
+  const answer = failed || applied ? undefined : asking ? question : reply || proposalReply;
+  // The saved failed request already contains the unsent last message. Replace
+  // that attempt on edit/retry instead of appending it twice as a new turn.
+  const followup = taskFollowup(applied ? [] : failed ? history.slice(0,-1) : history, answer, message);
   async function send(event: React.FormEvent) {
     event.preventDefault();
     if (locked || sending.current || !message.trim() || clarify) return;
@@ -113,8 +106,8 @@ export function TaskChat({
         message.length > 1200)
     )
       return;
-    const description = web ? '' : JSON.stringify(nextRows());
-    if (!web && (description.length > 4000 || nextRows().length > 8)) return;
+    const description = web ? '' : followup.description;
+    if (!web && (description.length > 4000 || followup.rows.length > 8)) return;
     sending.current = true;
     followLatest.current = true;
     try {
@@ -123,8 +116,26 @@ export function TaskChat({
           ? research!.search(message.trim())
           : onSend({ ...brief, description }))
       ) {
-        setMessage('');
-        onDirty(false);
+        if (currentInput.current === message) {
+          setMessage('');
+          onDirty(false);
+        }
+      }
+    } finally {
+      sending.current = false;
+    }
+  }
+  async function retryLast() {
+    if (locked || sending.current) return;
+    const retriedText = history.at(-1)?.content;
+    sending.current = true;
+    followLatest.current = true;
+    try {
+      if (await onSend(brief)) {
+        if (currentInput.current.trim() === retriedText) {
+          setMessage('');
+          onDirty(false);
+        }
       }
     } finally {
       sending.current = false;
@@ -132,7 +143,7 @@ export function TaskChat({
   }
   const overLimit = web
     ? message.length > 1200
-    : JSON.stringify(nextRows()).length > 4000 || nextRows().length > 8;
+    : followup.description.length > 4000 || followup.rows.length > 8;
   const hasResearch = !!research?.data?.query;
   const researchFirst =
     hasResearch &&
@@ -157,18 +168,13 @@ export function TaskChat({
           <p>{question}</p>
         </article>
       )}
-      {work && (
+      {work && !failed && (
         <article
           className="task-chat-message task-chat-assistant weft-work"
           aria-label="Weft response"
         >
-          <span>
-            ✦ Weft ·{' '}
-            {work.kind === 'written_draft'
-              ? 'private written draft'
-              : 'capability limit'}
-          </span>
-          <h2>{work.title}</h2>
+          <span>Weft</span>
+          {work.kind !== 'reply' && <h2>{work.title}</h2>}
           <p>{work.content}</p>
           {work.kind === 'written_draft' && (
             <>
@@ -184,12 +190,8 @@ export function TaskChat({
       )}
       {!work && !asking && !failed && !applied && proposalCount > 0 && (
         <article className="task-chat-message task-chat-assistant">
-          <span>✦ Weft · task suggestions</span>
-          <p>
-            I’ve prepared {proposalCount} task{' '}
-            {proposalCount === 1 ? 'suggestion' : 'suggestions'} for your review
-            below. Nothing has been added yet.
-          </p>
+          <span>Weft</span>
+          <p>{proposalReply}</p>
         </article>
       )}
       {!researchFirst && <ResearchMessages data={research?.data || null} />}
@@ -197,17 +199,13 @@ export function TaskChat({
   );
   return (
     <section className="task-chat" aria-label="Ask Weft conversation">
-      <div className="chat-presence">
-        <span className="chat-avatar" aria-hidden="true">
-          ✦
-        </span>
-        <div>
-          <strong>Your planning partner</strong>
-          <span>Plan, write, or ask me to find something.</span>
-        </div>
+      <div className="chat-toolbar">
+        <span>Private conversation</span>
+        {(history.length > 0 || message) && <Button type="button" variant="ghost" disabled={locked} onClick={()=>onNew()}>New chat</Button>}
       </div>
       <details className="chat-capabilities text-xs text-muted-foreground">
-        <summary>What I can actually do</summary>
+        <summary>About this chat</summary>
+        <p>Send shares recent conversation, event details, shared task names and saved event feedback with Groq. No emails, guest lists, files or private bookings. Each message uses an AI attempt.</p>
         <p>
           I can propose tasks and prepare written drafts from the context shared
           here. Ask me to find something or search the web for cited research
@@ -216,7 +214,7 @@ export function TaskChat({
           complete. A draft isn’t proof a task is finished.
         </p>
         <p>
-          Planning uses a bounded conversation; only the latest web result is
+          Replies use the most recent messages within a fixed context budget; older messages may be left out. Start a new chat for a new topic. Only the latest web result is
           restored after reload. Web results stay separate from planning context
           unless you explicitly copy them into a new message. Research is
           visible for 24 hours, then cleared on next access.
@@ -246,9 +244,8 @@ export function TaskChat({
       >
         {history.length === 0 && !work && !hasResearch && (
           <div className="chat-empty">
-            <span aria-hidden="true">✦</span>
-            <h2>What can we take off your mind?</h2>
-            <p>We’ll find the next step together.</p>
+            <h2>How can I help?</h2>
+            <p>Ask a question, plan a task, or write a draft.</p>
             <div className="chat-starters" aria-label="Example requests">
               {chatStarters.map((prompt) => (
                 <button
@@ -312,6 +309,7 @@ export function TaskChat({
             }
           }}
           onChange={(event) => {
+            currentInput.current = event.target.value;
             setMessage(event.target.value);
             onDirty(!!event.target.value.trim());
           }}
@@ -328,21 +326,13 @@ export function TaskChat({
             this message; I won’t infer them from your project or send this
             vague request.
           </p>
-        ) : (
-          <details className="text-xs text-muted-foreground">
-            <summary>What Send shares</summary>
-            <p>
-              Send shares this conversation, event details, shared task names
-              and saved event feedback with Groq. No emails, guest lists, files
-              or private bookings. Each message uses an AI attempt.
-            </p>
-          </details>
-        )}
+        ) : <p className="chat-privacy-note">Recent chat and event context are sent to Groq.</p>}
+        {!web && followup.trimmed && <p className="chat-context-note" role="status">Using recent messages only. Restate any earlier details you still need.</p>}
         {overLimit && (
           <p role="status" className="text-sm">
             {web
               ? 'Keep a web request to 1200 characters.'
-              : 'This conversation is full. Start a new conversation to continue.'}
+              : 'Shorten this message to continue.'}
           </p>
         )}
         {web && !research?.data?.configured ? (
@@ -405,19 +395,9 @@ export function TaskChat({
             type="button"
             variant="outline"
             disabled={locked || !configured}
-            onClick={() => void onSend(brief)}
+            onClick={() => void retryLast()}
           >
             Retry last message
-          </Button>
-        )}
-        {(history.length > 0 || message) && (
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={locked}
-            onClick={()=>onNew()}
-          >
-            New conversation
           </Button>
         )}
       </form>

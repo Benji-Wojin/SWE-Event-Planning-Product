@@ -283,7 +283,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       }
       const result = await api(query, request.current);
       accept(result);
-      accepted=true;
+      accepted=result.status !== 'error' && result.status !== 'interrupted';
       request.current = null;
     });
     return accepted;
@@ -383,7 +383,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           </a>}
         </div>
       )}
-      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{
+      {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} proposalTitles={data.draft?.items?.map((item:ReviewedItem)=>item.title)||[]} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{
         if(locked||pending.current)return;
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
         request.current=null;setChatStartingNew(true);setChatReset(value=>value+1);setChatSeed(seed);setTaskContext(null);setChatDirty(!!seed.trim());setBrief(emptyBrief);setItems([]);setInitial(editable(emptyBrief,[]));setError('');setNotice(seed?'Review the new message before sending. The original task is unchanged; the earlier saved draft is not replaced until you send.':'Start a new request. The earlier saved draft is not replaced until you send it.');
