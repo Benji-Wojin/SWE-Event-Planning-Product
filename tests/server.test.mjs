@@ -123,7 +123,8 @@ before(async () => {
           b.onLoad({ filter: /.*/, namespace: 'test' }, (a) => ({
             contents:
               a.path === 'gmail-policy' ? 'export function requireGmailEnabled() {}' :
-              a.path === 'release-policy' ? 'export const GMAIL_ENABLED = true;' :
+              // Preserve unreleased feature regressions; real release gates are tested separately.
+              a.path === 'release-policy' ? 'export const GMAIL_ENABLED = true; export const ASK_WEFT_ENABLED = true;' :
               a.path === 'env'
                 ? 'export const env=globalThis.__gatherEnv;'
                 : 'export async function getChatGPTUser(){return globalThis.__gatherUser;}',

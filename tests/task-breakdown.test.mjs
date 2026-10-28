@@ -36,14 +36,14 @@ test('popup offers title-only context through its exact frame handshake, without
   assert.doesNotMatch(JSON.stringify(sent),/PRIVATE-NOTE|DO-NOT-SHARE/);
 });
 
-test('task entry guards current capability, lost access, completion and unsaved task edits, with no writes',()=>{
+test('task entry cannot launch the coming-soon assistant in any role or state',()=>{
   const source=readFileSync('legacy/app.js','utf8'),begin=source.indexOf("      if(action==='task-breakdown')"),handler=source.slice(begin,source.indexOf("      if(action==='hide-ai-review'",begin));
   for(const mode of ['allowed','disabled','lost','done','missing','cancel','no-host']){
     const offers=[],task={id:'one',title:'Fictional broad task',note:'PRIVATE-NOTE',status:mode==='done'?'done':'todo'};let closed=0;
-    const context=vm.createContext({action:'task-breakdown',id:'one',store:{getState:()=>({tasks:mode==='missing'?[]:[task]})},window:{GatherMode:mode!=='no-host',GatherAccessLost:mode==='lost'},canCreateTasks:()=>mode!=='disabled',confirmDiscard:()=>mode!=='cancel',$:()=>({hidden:false}),closeDialog(){closed++;},tour:{close(){}},agentPopup:{open:value=>offers.push(value)}});
+    const context=vm.createContext({toast:message=>assert.match(message,/coming soon/),action:'task-breakdown',id:'one',store:{getState:()=>({tasks:mode==='missing'?[]:[task]})},window:{GatherMode:mode!=='no-host',GatherAccessLost:mode==='lost'},canCreateTasks:()=>mode!=='disabled',confirmDiscard:()=>mode!=='cancel',$:()=>({hidden:false}),closeDialog(){closed++;},tour:{close(){}},agentPopup:{open:value=>offers.push(value)}});
     vm.runInContext('(function(){'+handler+'})()',context);
-    assert.equal(offers.length,mode==='allowed'?1:0);assert.equal(closed,mode==='allowed'?1:0);if(offers.length)assert.equal(JSON.stringify(offers[0]),JSON.stringify({title:task.title}));
+    assert.equal(offers.length,0);assert.equal(closed,0);
   }
   assert.doesNotMatch(handler,/store\.(?:add|update|save)|fetch\(|task\.note|task\.comments|task\.scope/);
-  assert.match(source,/Plan smaller steps with Weft/);assert.match(source,/Notes are not copied, and nothing is sent or linked automatically/);
+  assert.match(source,/Plan smaller steps · Coming soon/);assert.match(source,/You can still add and link smaller tasks manually/);
 });

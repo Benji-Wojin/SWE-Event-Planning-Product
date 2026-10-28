@@ -208,11 +208,10 @@ export function Welcome({ beta = false }: { beta?: boolean }) {
           <span className="welcome-eyebrow">
             A thought partner, not an autopilot
           </span>
-          <h3>A little help getting unstuck.</h3>
+          <h3>Ask Weft · Coming soon.</h3>
           <p>
-            Ask Weft for written drafts or task proposals. Review before adding
-            anything. AI is optional; it does not send messages, make purchases
-            or complete tasks for you.
+            We’re improving Ask Weft before making it available. AI is optional;
+            it does not send messages, make purchases or complete tasks for you.
           </p>
         </aside>
       </section>

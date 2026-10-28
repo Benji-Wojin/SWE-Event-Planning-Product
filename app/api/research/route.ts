@@ -2,8 +2,10 @@ import { administrator, body, json, principal, safe } from '@/lib/security';
 import { projectUser } from '@/lib/project-access';
 import { demoPersona, loadDemo } from '@/lib/demo';
 import { weftResearch } from '@/lib/weft-research';
+import { requireAskWeftEnabled } from '@/lib/ask-weft-policy';
 export const dynamic = 'force-dynamic';
 async function handle(request: Request, generate: boolean) {
+  requireAskWeftEnabled();
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
   const authorization = demo

@@ -48,12 +48,12 @@ test('shared dialog handoff preserves its opener and applies modal focus after d
   assert.deepEqual(actions,['tour-dismiss','show','modal-focus']);assert.equal(ui.lastFocus,opener);assert.equal(elements['#appShell'].inert,true);
 });
 
-test('Ask Weft dismisses the tour only after existing permissions and discard checks pass',()=>{
+test('Ask Weft cannot open while the release marks it coming soon',()=>{
   const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf("      if(action==='ai-task-assistant'");
   const fragment=source.slice(start,source.indexOf('\n',start));let allowed=true,discard=true;const calls=[];
   const context=vm.createContext({action:'ai-task-assistant',canCreateTasks:()=>allowed,window:{GatherMode:{}},confirmDiscard:()=>discard,
-    $:()=>({hidden:true}),closeDialog(){throw Error('No dialog open');},tour:{close(options){assert.equal(options.restoreFocus,false);calls.push('tour-dismiss');}},agentPopup:{open(){calls.push('assistant-open');}}});
+    toast:message=>assert.match(message,/coming soon/),$:()=>({hidden:true}),closeDialog(){throw Error('No dialog open');},tour:{close(options){assert.equal(options.restoreFocus,false);calls.push('tour-dismiss');}},agentPopup:{open(){calls.push('assistant-open');}}});
   const run=()=>vm.runInContext('(function(){'+fragment+'})();',context);
   allowed=false;run();assert.deepEqual(calls,[]);allowed=true;discard=false;run();assert.deepEqual(calls,[]);
-  discard=true;run();assert.deepEqual(calls,['tour-dismiss','assistant-open']);
+  discard=true;run();assert.deepEqual(calls,[]);
 });

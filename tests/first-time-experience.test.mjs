@@ -52,7 +52,7 @@ test('expanded workspace tour is role-aware, dismissible and navigation-only', (
     const copy = [box.innerHTML];
     while (!/data-tour="next"[^>]*>Done/.test(box.innerHTML)) { box.onclick({ target: { closest: () => ({ dataset: { tour: 'next' } }) } }); copy.push(box.innerHTML); assert.ok(copy.length < 10); }
     assert.ok(navigations.includes('timeline')); assert.ok(navigations.includes('info'));
-    assert.equal(copy.some(text => text.includes('Conversation in Ask Weft')), organizer);
+    assert.equal(copy.some(text => text.includes('Ask Weft is coming soon')), organizer);
     assert.ok(copy.some(text => text.includes('recorded manually')));
     listeners.keydown({ key: 'Escape', preventDefault() {}, stopImmediatePropagation() {} });
     assert.equal(removed, true); assert.ok(remembered > 0);

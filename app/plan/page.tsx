@@ -2,6 +2,7 @@ import { requireChatGPTUser } from '@/app/chatgpt-auth';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { PlanReview } from './plan-client';
 import {SuggestionFeed} from './suggestion-feed';
+import { ASK_WEFT_ENABLED } from '@/lib/release-policy';
 
 export const dynamic = 'force-dynamic';
 export default async function Plan({
@@ -16,6 +17,13 @@ export default async function Plan({
       ? 'demo=1&as=' + encodeURIComponent(params.as || 'jack')
       : 'project=' + encodeURIComponent(params.project || 'main')) + (assistant ? '&mode=assistant' : suggestions ? '&mode=suggestions' : '');
   await requireChatGPTUser('/plan?' + query);
+  if (assistant && !ASK_WEFT_ENABLED) return (
+    <main id={params.embed === '1' ? 'embeddedPlan' : undefined} className="mx-auto w-full max-w-4xl px-5 py-8">
+      <h1 className="mb-2 text-3xl font-semibold">Ask Weft</h1>
+      <p className="mb-4 text-muted-foreground">Coming soon. We’re improving this feature before making it available.</p>
+      <a href={params.demo === '1' ? '/demo?as=' + encodeURIComponent(params.as || 'jack') : '/project?project=' + encodeURIComponent(params.project || 'main')} target="_top">Back to your project</a>
+    </main>
+  );
   if ((suggestions || assistant) && params.embed === '1') return (
     <main id="embeddedPlan" className="plan-sidebar-shell">
       {suggestions?<SuggestionFeed query={query}/>:<PlanReview query={query} embedded />}
