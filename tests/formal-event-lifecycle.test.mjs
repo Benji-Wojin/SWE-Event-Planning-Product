@@ -193,11 +193,18 @@ for (const kind of ['school', 'corporate']) test(kind + ' journey: reviewed star
   assert.doesNotMatch(returnedSheet, /PRIVATE_|Required work not complete|Acceptance not recorded/);
   member(kind);
   await write('reportCompletion', [briefing.id, 'Fictional final handoff confirmed.']);
+  snap = await read();
+  const recordedNote = snap.state.tasks.find(task => task.id === briefing.id);
+  assert.equal(recordedNote.noteUpdatedBy, actor);
+  assert.equal(recordedNote.noteUpdatedAt, recordedNote.reportedAt);
   owner();
   await write('verifyTask', [briefing.id]);
 
   member(kind);
   snap = await read();
+  const verifiedBriefing = snap.state.tasks.find(task => task.id === briefing.id);
+  assert.equal(verifiedBriefing.noteUpdatedBy, actor, 'verification does not take authorship of the owner note');
+  assert.equal(verifiedBriefing.noteUpdatedAt, recordedNote.noteUpdatedAt);
   const beforeReview = raw();
   const finalSheet = schedule.runSheet(snap.state, Date.parse('2100-03-15T20:00:00Z'), { mine: true, actor });
   assert.ok(finalSheet.includes(h(briefing.title)), 'completed activity remains in the run sheet');

@@ -80,7 +80,7 @@
       ];
       const tasks = specs.map(([taskId, title, category, owner, status, due, note, age]) => ({
         id: taskId, title, category, owner, status, dueDate: day(due), note,
-        updatedAt: ago(age), updatedBy: owner || "jack", completedAt: status === "done" ? ago(age) : "",
+        updatedAt: ago(age), updatedBy: owner || "jack", noteUpdatedAt: ago(age), noteUpdatedBy: owner || "jack", noteCommentCount: 0, completedAt: status === "done" ? ago(age) : "",
         completedBy: status === "done" ? owner : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [],
       }));
       tasks.find((task) => task.id === "bus").comments.push({ id: "comment-bus-1", actor: "jules", text: "I am waiting for Northstar to confirm availability. I will keep the update here.", at: ago(3) });
@@ -138,8 +138,11 @@
         try { const normalized=completionEvidence({note:item.note,links:item.links,fileIds:item.fileIds});return Object.keys(item).every(key=>['note','links','fileIds','at','actor'].includes(key))&&validTime(item.at)&&validOwner(item.actor)&&JSON.stringify(normalized)===JSON.stringify({note:item.note,links:item.links,fileIds:item.fileIds}); }catch{return false;}
       };
       const validReview = item => item===undefined||item===null||!!item&&typeof item==='object'&&!Array.isArray(item)&&Object.keys(item).every(key=>['note','at','actor','reportedAt','reportedBy'].includes(key))&&strings(item,['note','at','actor','reportedAt','reportedBy'])&&!!item.note.trim()&&item.note.length<=3000&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(item.note)&&validTime(item.at)&&validTime(item.reportedAt)&&validOwner(item.actor);
+      const validNoteAttribution = task => (task.noteUpdatedAt === undefined && task.noteUpdatedBy === undefined ||
+        strings(task, ['noteUpdatedAt', 'noteUpdatedBy']) && (task.noteUpdatedAt === '' && task.noteUpdatedBy === '' || !!task.noteUpdatedBy && validOwner(task.noteUpdatedBy) && validTime(task.noteUpdatedAt))) &&
+        (task.noteCommentCount == null || Number.isInteger(task.noteCommentCount) && task.noteCommentCount >= 0 && Array.isArray(task.comments) && task.noteCommentCount <= task.comments.length);
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
-        list(value.tasks,task=>validReview(task.completionReview)&&validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
+        list(value.tasks,task=>validNoteAttribution(task)&&validReview(task.completionReview)&&validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
         (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
         list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
@@ -170,6 +173,11 @@
     state.tasks.forEach((task) => {
       task.revision = Number.isInteger(task.revision) && task.revision > 0 ? task.revision : 1;
       task.schedule ??= null;
+      // Last task edit is not proof of who recorded an older note. Do not infer
+      // authorship from assignment, verification, or mutable display names.
+      task.noteUpdatedAt ??= '';
+      task.noteUpdatedBy ??= '';
+      task.noteCommentCount ??= null;
       task.completionReview ??= null;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
       task.requiresVerification = Boolean(task.requiresVerification);
@@ -244,13 +252,18 @@
       const fields = taskFields(data);
       const scope = data.scope===undefined?'':taskOutcome(data.scope);
       const at = timestamp();
-      const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
+      const task = { id: id("task"), ...fields, revision: 1, acceptedAt: '', acceptedBy: '', reportedAt: '', reportedBy: '', verifiedAt: '', verifiedBy: '', followupAfter: '', updatedAt: at, updatedBy: actor, noteUpdatedAt: fields.note ? at : '', noteUpdatedBy: fields.note ? actor : '', noteCommentCount: 0, completedAt: fields.status === "done" ? at : "", completedBy: fields.status === "done" ? actor : "", completionReportedBy: "", completionReportSourceId: "", sourceMessageId: "", memoryId: "", suggestionId: "", comments: [], dependencies: [], handoffs: [], blockerFingerprint: '' };
       state.tasks.unshift(task);
       task.priority = 'auto';
       task.schedule = null;
       Object.assign(task,{essential:false,hardDeadline:false,originalDueDate:task.dueDate,deadlineHistory:[],recoveryRequests:[],nextUpAt:'',nextUpBy:'',planReviewAfter:'',followupSentAt:'',ownerRespondedAt:'',scope,completionReview:null});
       if (task.status === 'done') captureCompletion(task, actor);
       return task;
+    }
+    function recordNoteAttribution(task, actor, at=timestamp()) {
+      task.noteUpdatedAt = task.note ? at : '';
+      task.noteUpdatedBy = task.note ? actor : '';
+      task.noteCommentCount = task.comments.length;
     }
     function patchTask(task, patch, actor, confirmHardDeadline=false) {
       const next = taskFields(patch, task);
@@ -265,6 +278,7 @@
       if (changed.includes('owner')) { task.nextUpAt=''; task.nextUpBy=''; task.ownerRespondedAt=''; task.followupSentAt=''; task.planReviewAfter=''; }
       if (changed.includes('note') && actor === next.owner) task.ownerRespondedAt = timestamp();
       changed.forEach((field) => { task[field] = next[field]; });
+      if (changed.includes('note')) recordNoteAttribution(task, actor);
       if(task.status==='done')task.completionReview=null;
       task.revision += 1;
       if (changed.includes('owner')) { task.acceptedAt = ''; task.acceptedBy = ''; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.followupAfter = ''; if (task.status !== 'done') { task.reportedAt = ''; task.reportedBy = ''; } }
@@ -456,6 +470,7 @@
       const ownerReport=task.owner===actor&&Object.keys(patch).every(field=>['status','note'].includes(field))&&['progress','blocked'].includes(patch.status)&&clean(patch.note);
       if(ownerReport&&!changed.length&&!supersedesReport){task.ownerRespondedAt=timestamp();task.updatedAt=timestamp();task.updatedBy=actor;task.revision++;changed.push('note');}
       if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
+      if (ownerReport) recordNoteAttribution(task, actor, task.updatedAt);
       // Status/assignment edits must not turn an old context note into a blocker.
       const blockerReport = patch.note !== undefined && (changed.includes('note') ||
         patch.status === 'blocked' && Object.keys(patch).every(field => ['status','note'].includes(field)));
@@ -693,6 +708,7 @@
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
+      recordNoteAttribution(task, actor, task.reportedAt);
       task.completionReview=null;
       task.verifiedAt = ''; task.verifiedBy = '';
       task.blockerFingerprint = '';

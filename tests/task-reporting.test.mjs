@@ -202,6 +202,102 @@ test('verified work retains its reporter in task details and linked results with
   assert.match(html,/&lt;img src=x onerror=alert\(1\)> reported complete/);assert.doesNotMatch(html,/<img src=x/);
 });
 
+test('verification, metadata edits, comments and evidence edits do not take authorship of the saved note',()=>{
+  const store=create();store.updateTask('dietary',{requiresVerification:true});
+  store.reportCompletion('dietary','All meal preferences confirmed.','maya');
+  const report=getTask(store),stamp={at:report.noteUpdatedAt,actor:report.noteUpdatedBy};
+  assert.equal(stamp.actor,'maya');assert.equal(stamp.at,report.reportedAt);
+  store.verifyTask('dietary','jack');
+  store.addComment('dietary','Organizer follow-up comment.','jack');
+  store.setCompletionEvidence('dietary',{note:'Additional organizer evidence.'},'jack');
+  store.updateTask('dietary',{dueDate:'2100-01-01'},'jack');
+  const current=getTask(store);
+  assert.equal(current.updatedBy,'jack');
+  assert.equal(current.noteUpdatedBy,stamp.actor);assert.equal(current.noteUpdatedAt,stamp.at);
+  const html=taskDialogHtml('jack','dietary',undefined,store);
+  assert.match(html,/Recorded by Maya Singh/);assert.match(html,/Maya Singh reported complete · verified by Jack Morgan/);
+  assert.doesNotMatch(html,/Updated by Jack Morgan/);
+  const raw=store.exportState(),reloaded=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem(){}}});
+  assert.equal(getTask(reloaded).noteUpdatedBy,'maya');
+  assert.equal(getTask(reloaded).noteUpdatedAt,stamp.at);
+});
+
+test('new notes have server-selected recording attribution and clearing a note clears its attribution',()=>{
+  const store=create();
+  const created=store.addTask({title:'New note',owner:'maya',note:'Organizer instructions.',noteUpdatedBy:'dev',noteUpdatedAt:'2000-01-01'},'jack');
+  assert.equal(created.noteUpdatedBy,'jack');assert.equal(created.noteUpdatedAt,created.updatedAt);
+  store.updateTask(created.id,{status:'progress',note:'Owner progress. noteUpdatedBy is not a client authority.'},'maya');
+  let task=store.getState().tasks.find(t=>t.id===created.id);assert.equal(task.noteUpdatedBy,'maya');
+  store.updateTask(created.id,{note:'Revised organizer instructions.',noteUpdatedBy:'dev',noteUpdatedAt:'2000-01-01'},'jack');
+  task=store.getState().tasks.find(t=>t.id===created.id);assert.equal(task.noteUpdatedBy,'jack');assert.notEqual(task.noteUpdatedAt,'2000-01-01');
+  store.updateTask(created.id,{note:''},'jack');task=store.getState().tasks.find(t=>t.id===created.id);
+  assert.equal(task.noteUpdatedBy,'');assert.equal(task.noteUpdatedAt,'');
+});
+
+test('repeating the same progress or completion note records the current submitting owner',()=>{
+  const RealDate=Date;let now=RealDate.parse('2026-11-01T12:00:00Z');
+  globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
+  try {
+    const store=create();store.updateTask('dietary',{status:'progress',note:'Same reviewed text.'},'maya');
+    const first=getTask(store);now+=60000;
+    store.updateTask('dietary',{status:'progress',note:'Same reviewed text.'},'maya');
+    assert.notEqual(getTask(store).noteUpdatedAt,first.noteUpdatedAt);
+    store.updateTask('dietary',{requiresVerification:true});now+=60000;
+    store.reportCompletion('dietary','Same reviewed text.','maya');
+    assert.equal(getTask(store).noteUpdatedAt,getTask(store).reportedAt);
+    assert.equal(getTask(store).noteUpdatedBy,'maya');
+  } finally {globalThis.Date=RealDate;}
+});
+
+test('older notes retain their text without inventing an author from the last editor or current owner',()=>{
+  const store=create(),data=JSON.parse(store.exportState());
+  for(const task of data.tasks){delete task.noteUpdatedAt;delete task.noteUpdatedBy;}
+  const task=data.tasks.find(t=>t.id==='dietary');task.updatedBy='jack';task.owner='dev';
+  let raw=JSON.stringify(data);const restored=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem:(_key,value)=>{raw=value;}}});
+  assert.equal(restored.getState().persistence,'saved');
+  assert.equal(getTask(restored).note,task.note);assert.equal(getTask(restored).noteUpdatedBy,'');assert.equal(getTask(restored).noteUpdatedAt,'');
+  assert.match(taskDialogHtml('jack','dietary',undefined,restored),/Author not recorded for this saved note/);
+  assert.doesNotMatch(taskDialogHtml('jack','dietary',undefined,restored),/Recorded by (?:Jack Morgan|Dev Kim)/);
+});
+
+test('malformed saved note attribution fails closed without overwriting stored bytes',()=>{
+  for(const patch of [{noteUpdatedAt:undefined},{noteUpdatedBy:'absent'},{noteUpdatedAt:'invalid'},{noteUpdatedBy:''},{noteUpdatedAt:2},{noteCommentCount:-1},{noteCommentCount:1.5},{noteCommentCount:1000}]) {
+    const data=JSON.parse(create().exportState());Object.assign(data.tasks.find(t=>t.id==='dietary'),patch);
+    const raw=JSON.stringify(data);let writes=0;
+    const restored=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem(){writes++;}}});
+    assert.equal(restored.getState().persistence,'unavailable');assert.equal(writes,0);
+  }
+});
+
+test('task-list latest comment and dialog saved note use their own recording attribution',()=>{
+  const store=create();store.updateTask('dietary',{status:'progress',note:'Maya progress note.'},'maya');
+  store.addComment('dietary','Jack follow-up comment.','jack');
+  const source=readFileSync('legacy/app.js','utf8'),context=vm.createContext({store,relative:value=>value});
+  vm.runInContext(source.slice(source.indexOf('  const noteUpdate ='),source.indexOf('  const commitment ='))+'globalThis.latest=latestUpdateRecord;globalThis.describe=updateAttribution;',context);
+  const task=getTask(store),record=context.latest(task);
+  assert.equal(record.text,'Jack follow-up comment.');assert.equal(record.actor,'jack');assert.match(context.describe(record),/Recorded by Jack Morgan/);
+  const html=taskDialogHtml('jack','dietary',undefined,store);assert.match(html,/Maya progress note/);assert.match(html,/Recorded by Maya Singh/);
+});
+
+test('same-millisecond comment and note ordering uses the recorded comment boundary, including reload',()=>{
+  const RealDate=Date,now=RealDate.parse('2026-11-01T12:00:00Z');
+  globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
+  try {
+    const store=create(),source=readFileSync('legacy/app.js','utf8'),context=vm.createContext({store,relative:value=>value});
+    vm.runInContext(source.slice(source.indexOf('  const noteUpdate ='),source.indexOf('  const commitment ='))+'globalThis.latest=latestUpdateRecord;',context);
+    store.addComment('dietary','Earlier organizer comment.','jack');
+    store.updateTask('dietary',{status:'progress',note:'Later owner note.'},'maya');
+    assert.equal(context.latest(getTask(store)).text,'Later owner note.');
+    assert.equal(context.latest(getTask(store)).actor,'maya');
+    store.addComment('dietary','Newest organizer comment.','jack');
+    assert.equal(context.latest(getTask(store)).text,'Newest organizer comment.');
+    let raw=store.exportState();const restored=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem:(_key,value)=>{raw=value;}}});
+    assert.equal(context.latest(getTask(restored)).text,'Newest organizer comment.');
+    restored.updateTask('dietary',{status:'progress',note:'Final owner note.'},'maya');
+    assert.equal(context.latest(getTask(restored)).text,'Final owner note.');
+  } finally {globalThis.Date=RealDate;}
+});
+
 test('pending completion hides redundant acceptance while preserving updates and restoring acceptance after withdrawal',()=>{
   const store=create();store.updateTask('dietary',{requiresVerification:true});
   assert.match(taskDialogHtml('maya','dietary',undefined,store),/Accept responsibility/);

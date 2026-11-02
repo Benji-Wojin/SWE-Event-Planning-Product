@@ -118,8 +118,15 @@
     if(task.reportedAt&&reporter)return `${reporter} reported complete`;
     return `Marked done by ${member(task.completedBy).name}`;
   };
+  const noteUpdate = task => ({text:task.note,actor:task.noteUpdatedBy||'',at:task.noteUpdatedAt||''});
+  const updateAttribution = update => !update.text ? 'No update recorded.' : !update.actor||!update.at ? 'Author not recorded for this saved note.' : `Recorded by ${store.getState().members.find(person=>person.id===update.actor)?.name||'an unavailable member'} · ${relative(update.at)}`;
+  const latestUpdateRecord = task => {
+    const last=task.comments.at(-1),note=noteUpdate(task);
+    const laterComment=last&&(note.at?Date.parse(last.at)>Date.parse(note.at)||last.at===note.at&&Number.isInteger(task.noteCommentCount)&&task.comments.length>task.noteCommentCount:last.at===task.updatedAt);
+    return laterComment?{text:last.text,actor:last.actor,at:last.at}:note;
+  };
   const commitment = task => task.verifiedAt ? `Verified by ${member(task.verifiedBy).name}` : task.reportedAt ? `Reported complete by ${task.reportedBy}${task.requiresVerification?' · needs verification':''}` : GatherPriorities.changesRequested(task) ? 'Changes requested · review and resubmit' : task.acceptedAt ? `${task.acceptedSourceId?'Acceptance reported by':'Accepted by'} ${member(task.acceptedBy).name.split(' ')[0]}` : task.status==='done' ? 'Completed record' : task.owner ? 'Waiting for owner acceptance' : 'No owner yet';
-  const latestUpdate = task => {const last=task.comments.at(-1);return last&&last.at===task.updatedAt?last.text:task.note;};
+  const latestUpdate = task => latestUpdateRecord(task).text;
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
   const addButton = () => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
@@ -133,7 +140,7 @@
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}${(task.dependencies||[]).length?`<button class="task-link-summary" data-action="map-focus" data-id="${h(task.id)}">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td><td>${due(task)}</td>
-      <td><div class="task-meta">${h(member(task.updatedBy).name.split(' ')[0])} · ${relative(task.updatedAt)}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
+      <td><div class="task-meta">${h(updateAttribution(latestUpdateRecord(task)))}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
       <td><button class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${h(task.id)}" aria-label="${decision?'Review plan for':'Open'} ${h(task.title)}">${decision?'Review plan':icon('arrow')}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
@@ -466,7 +473,7 @@
       ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
-      <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">Updated by ${h(member(task.updatedBy).name)} · ${relative(task.updatedAt)}</span></section>
+      <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
       ${window.GatherCompletionUI?.section(task,own||organizer)||''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}" ${completionBlocked?'disabled':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" data-id="${h(id)}" class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
