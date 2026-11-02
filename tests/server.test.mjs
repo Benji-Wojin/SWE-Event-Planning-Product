@@ -1783,19 +1783,27 @@ test('linked task creation is atomic, scoped, permission-gated and revision-chec
   const data=extra=>({title:'Fictional welcome signs',note:'Approved shared route only.',owner:'',kind:'related',reason:'Supports guest arrival in parallel.',...extra});
   try{
     await joinPerson(id,email,userId);const actor=(await read()).identity.actorId;owner();
-    let response=await send('addTask',[{title:'Fictional event welcome',owner:actor,status:'progress',note:'PRIVATE-PARENT-NOTE'}]);assert.equal(response.status,200);
+    let response=await send('addTask',[{title:'Fictional event welcome',owner:actor,status:'progress',note:'PRIVATE-PARENT-NOTE',scope:'PARENT-OUTCOME'}]);assert.equal(response.status,200);
     const parent=(await response.json()).result;
-    response=await send('addLinkedTask',[parent.id,data({owner:actor})]);assert.equal(response.status,200);
+    response=await send('addLinkedTask',[parent.id,data({owner:actor,scope:'Signs installed on the approved accessible route.'})]);assert.equal(response.status,200);
     let snap=await response.json();const child=snap.result;
     assert.equal(child.status,'todo');assert.equal(child.owner,actor);assert.equal(child.acceptedAt,'');assert.equal(child.schedule,null);assert.equal(child.dueDate,'');
+    assert.equal(child.scope,'Signs installed on the approved accessible route.');assert.equal(child.note,'Approved shared route only.');
+    assert.equal((await read()).state.tasks.find(task=>task.id===child.id).scope,child.scope);
+    assert.equal(snap.state.tasks.find(task=>task.id===parent.id).scope,'PARENT-OUTCOME');
     assert.doesNotMatch(JSON.stringify(child),/PRIVATE-PARENT-NOTE/);assert.equal(snap.state.tasks.find(task=>task.id===parent.id).status,'progress');
     const row=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
     let before=row();response=await send('addLinkedTask',[parent.id,data({title:'Wrong revision'})],snap.revision-1);assert.equal(response.status,409);assert.deepEqual(row(),before);
     asTeammate(email,userId);response=await send('addLinkedTask',[parent.id,data({title:'Disabled member creation'})]);assert.equal(response.status,403);assert.deepEqual(row(),before);
     owner();assert.equal((await send('completeSetup',[{membersCanCreateTasks:true}])).status,200);asTeammate(email,userId);
+    for(const scope of [null,42,'x'.repeat(3001),'unsafe\u0000result']){
+      before=row();response=await send('addLinkedTask',[parent.id,data({title:'Invalid child outcome',scope})]);assert.equal(response.status,400);assert.deepEqual(row(),before);
+    }
     before=row();response=await send('addLinkedTask',[parent.id,data({title:'Assign someone else',owner:'jack'})]);assert.equal(response.status,400);assert.deepEqual(row(),before);
-    response=await send('addLinkedTask',[parent.id,data({title:'Fictional briefing notes',owner:actor,kind:'dependency',reason:'The final notes are needed first.'})]);assert.equal(response.status,200);
-    snap=await response.json();assert.equal(snap.result.owner,actor);assert.equal(snap.state.tasks.find(task=>task.id===parent.id).status,'progress');
+    response=await send('addLinkedTask',[parent.id,data({title:'Fictional briefing notes',owner:actor,scope:'Final notes approved for the briefing.',kind:'dependency',reason:'The final notes are needed first.'})]);assert.equal(response.status,200);
+    snap=await response.json();assert.equal(snap.result.owner,actor);assert.equal(snap.result.scope,'Final notes approved for the briefing.');assert.equal(snap.state.tasks.find(task=>task.id===parent.id).status,'progress');
+    assert.equal(snap.state.tasks.find(task=>task.id===parent.id).scope,'PARENT-OUTCOME');
+    before=row();response=await send('updateTask',[parent.id,{scope:'Forged parent outcome'}]);assert.equal(response.status,403);assert.deepEqual(row(),before);
     before=row();response=await send('reportCompletion',[parent.id,'Not all work done.']);assert.equal(response.status,400);assert.deepEqual(row(),before);
     owner();response=await send('addTask',[{title:'Organizer-only work',owner:'jack'}]);assert.equal(response.status,200);const other=(await response.json()).result;
     asTeammate(email,userId);before=row();response=await send('addLinkedTask',[other.id,data({title:'Other owner parent'})]);assert.equal(response.status,403);assert.deepEqual(row(),before);

@@ -1100,18 +1100,19 @@
     function addLinkedTask(taskId, data, actor = 'jack') {
       const task=taskById(taskId);canManageDependencies(task,actor);
       if(actor!=='jack'&&state.event.membersCanCreateTasks!==true)throw new Error('Only the organizer can create linked tasks.');
-      if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['title','note','owner','kind','reason'].includes(key))||
+      if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['title','note','scope','owner','kind','reason'].includes(key))||
         typeof data.title!=='string'||!data.title.trim()||data.title.length>180||typeof data.note!=='string'||data.note.length>3000||
         typeof data.owner!=='string'||!['related','dependency'].includes(data.kind)||typeof data.reason!=='string'||!data.reason.trim()||data.reason.length>2000)
         throw new Error('Name the linked task, choose a relationship and explain why it is useful.');
       if(actor!=='jack'&&data.owner&&data.owner!==actor)throw new Error('Only the organizer can assign another teammate.');
+      const scope=data.scope===undefined?'':taskOutcome(data.scope);
       const fields=taskFields({title:data.title,note:data.note,owner:data.owner,category:task.category,status:'todo',dueDate:''});
       const titleKey=value=>value.normalize('NFKC').trim().toLowerCase().replace(/\s+/gu,' ');
       if(state.tasks.some(other=>task.dependencies.some(link=>link.taskId===other.id)&&titleKey(other.title)===titleKey(fields.title)&&other.status!=='done'))
         throw new Error('An open task with this name is already linked. Review that task instead.');
       // Validate everything before creating either record. The new task cannot
       // have links or form a cycle; persist task and relationship together once.
-      const child=createTask(fields,actor);
+      const child=createTask({...fields,scope},actor);
       linkDependency(task,child,actor,false,'',data.kind,clean(data.reason,2000));
       entry(actor,`created and linked ${child.title}`,child.id,'linked-task-created');
       save();return copy(child);
