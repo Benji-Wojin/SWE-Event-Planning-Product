@@ -10,7 +10,8 @@ import '../legacy/schedule-ui.js';
 import '../legacy/wrap-up.js';
 
 // Real route handlers and release policy, fictional identities and in-memory
-// SQLite. This proves an API/model/rendering journey, not hosted/browser QA.
+// SQLite. Formal and informal fixtures prove API/model/rendering journeys,
+// not hosted authentication, browser usability or live provider quality.
 const sqlite = new DatabaseSync(':memory:');
 for (const name of readdirSync('drizzle').filter(n => n.endsWith('.sql')).sort()) {
   sqlite.exec(readFileSync('drizzle/' + name, 'utf8'));
@@ -230,4 +231,69 @@ for (const kind of ['school', 'corporate']) test(kind + ' journey: reviewed star
   member(kind);
   assert.equal((await api.workspace.GET(request('/api/workspace?project=' + separate))).status, 404, 'joining one event grants no access to another');
   assert.equal(externalCalls, 0, 'no AI request, invitation email or other external effect');
+});
+
+for(const [kind,activityId] of [['offsite','programme'],['trip','itinerary'],['party','activities'],['anniversary','day'],['other','programme']])
+test(kind+' journey: reviewed whole starter → linked result → verified activity → honest wrap-up',async()=>{
+  owner();
+  assert.equal(api.policy.ASK_WEFT_ENABLED,false);assert.equal(api.policy.GMAIL_ENABLED,false);
+  const project=(await json(await api.projects.POST(request('/api/projects',{
+    requestId:crypto.randomUUID(),event:{name:'Fictional '+kind+' gathering',date:'2100-03-14',timeZone:'America/Los_Angeles'},
+  })),201)).id;
+  const path='/api/workspace?project='+project;
+  const read=async()=>json(await api.workspace.GET(request(path)));
+  const raw=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
+  const write=async(method,args)=>{const snap=await read();return json(await api.workspace.POST(request(path,{method,args,revision:snap.revision})));};
+  const reject=async(method,args,status)=>{
+    const snap=await read(),saved=raw();
+    assert.equal((await api.workspace.POST(request(path,{method,args,revision:snap.revision}))).status,status);
+    assert.deepEqual(raw(),saved);
+  };
+  const invitation=await json(await api.team.POST(request('/api/team?project='+project,{action:'invite',email:kind+'-helper@example.com',requestId:crypto.randomUUID()})));
+  const token=new URL(invitation.invitations[0].link,origin).searchParams.get('invite');
+  member(kind);await json(await api.join.POST(request('/api/join',{token})));const actor=(await read()).identity.actorId;owner();
+
+  const planPath='/api/plan?project='+project,initial=await json(await api.plan.GET(request(planPath))),beforeDraft=raw();
+  const draft=await json(await api.plan.POST(request(planPath,{action:'starter',revision:initial.revision,workspaceRevision:initial.workspaceRevision,requestId:crypto.randomUUID(),replace:false,
+    brief:{kind,description:'Fictional informal gathering',endDate:'',startTime:'',endTime:''}})));
+  assert.deepEqual(raw(),beforeDraft);assert.equal(draft.draft.source,'starter');
+  assert.ok(draft.draft.items.every(item=>item.scope&&item.dueDate===''&&item.start===''&&item.end===''));
+  const activityItem=draft.draft.items.find(item=>item.id===activityId);assert.ok(activityItem);
+  const items=draft.draft.items.map(item=>({...item,included:true,owner:item.id===activityId?actor:'jack'}));
+  const approval={action:'apply',revision:draft.revision,workspaceRevision:draft.workspaceRevision,generation:draft.draft.generation,items,confirm:true};
+  await json(await api.plan.POST(request(planPath,approval)));await json(await api.plan.POST(request(planPath,approval)));
+  let snap=await read();assert.equal(snap.state.tasks.length,items.length,'retrying full approval cannot duplicate the starter');
+  assert.ok(snap.state.tasks.every(task=>task.status==='todo'&&!task.acceptedAt&&!task.reportedAt&&!task.schedule&&!task.dueDate));
+  for(const item of items){
+    const saved=snap.state.tasks.find(task=>task.title===item.title);assert.ok(saved);
+    assert.equal(saved.owner,item.owner);assert.equal(saved.scope,item.scope);assert.equal(saved.note,item.note);
+  }
+  const activity=snap.state.tasks.find(task=>task.title===activityItem.title);assert.ok(activity);assert.equal(activity.scope,activityItem.scope);
+  await write('updateTask',[activity.id,{requiresVerification:true}]);
+  await write('setTaskSchedule',[activity.id,{start:'2100-03-14T18:00',end:'2100-03-14T19:00',location:'Fictional shared space'}]);
+  const child=(await write('addLinkedTask',[activity.id,{title:'Check the agreed '+kind+' handoff',note:'Review the shared plan with the people helping.',scope:'The named helper confirms the agreed handoff and records any outstanding detail.',owner:actor,kind:'dependency',reason:'The activity needs this reviewed handoff first.'}])).result;
+  await write('updateTask',[child.id,{requiresVerification:true}]);
+  member(kind);await write('acceptTask',[activity.id]);await write('acceptTask',[child.id]);
+  await reject('reportCompletion',[activity.id,'Too early.'],400);
+  await write('reportCompletion',[child.id,'Fictional handoff reviewed and confirmed.']);
+  await reject('reportCompletion',[activity.id,'Handoff still unverified.'],400);
+  await reject('verifyTask',[child.id],403);owner();await write('verifyTask',[child.id]);
+  member(kind);await write('reportCompletion',[activity.id,'PRIVATE_RESULT: fictional activity delivered against the agreed outcome.']);
+  snap=await read();const scope={mine:true,actor},saved=raw();
+  const pending=schedule.clock(snap.state,Date.parse('2100-03-15T20:00Z'),scope);
+  assert.match(pending.markup,/Completion awaiting verification · 1/);assert.equal(pending.labels.has(activity.id),false);
+  assert.doesNotMatch(pending.markup,/PRIVATE_RESULT|Check progress/);
+  const pendingSheet=schedule.runSheet(snap.state,Date.parse('2100-03-15T20:00Z'),scope);
+  assert.match(pendingSheet,/Awaiting verification/);assert.doesNotMatch(pendingSheet,/PRIVATE_RESULT/);
+  assert.deepEqual(raw(),saved,'reading a result never verifies or completes it');
+  owner();await write('verifyTask',[activity.id]);member(kind);snap=await read();
+  const completed=snap.state.tasks.find(task=>task.id===activity.id),linked=snap.state.tasks.find(task=>task.id===child.id);
+  assert.equal(completed.scope,activity.scope);assert.equal(linked.scope,child.scope);assert.equal(completed.noteUpdatedBy,actor);assert.equal(completed.verifiedBy,'jack');
+  assert.equal(completed.schedule.start,'2100-03-14T18:00');assert.equal(completed.status,'done');
+  assert.doesNotMatch(schedule.clock(snap.state,Date.parse('2100-03-15T20:00Z'),scope).markup,/Completion awaiting verification|Check progress/);
+  const groups=GatherWrapUp.groups(snap.state);
+  assert.equal(groups.find(group=>group.key==='completed').tasks.length,2);
+  assert.equal(groups.find(group=>group.key==='open').tasks.length,items.length-1,'all other starter work stays explicitly open');
+  assert.deepEqual(GatherWrapUp.groups(snap.state,scope).find(group=>group.key==='completed').tasks.map(task=>task.id).sort(),[activity.id,child.id].sort());
+  assert.equal(externalCalls,0);
 });
