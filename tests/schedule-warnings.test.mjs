@@ -49,7 +49,9 @@ test('warnings preserve required versus related semantics, selected scope and co
   for(const html of render(input,{mine:true,actor:'maya'}))assert.doesNotMatch(html,/Required work not complete|Acceptance not recorded/);
   input.tasks[0].requiresVerification=true;
   assert.match(ui.view(input,false,now,{mine:true,actor:'maya'}),/Awaiting verification[\s\S]*Required work not complete/);
-  assert.doesNotMatch(ui.clock(input,now,{mine:true,actor:'maya'}).markup,/data-id="Mine"/);
+  const clock=ui.clock(input,now,{mine:true,actor:'maya'});
+  assert.match(clock.markup,/Completion awaiting verification · 1[\s\S]*data-id="Mine"[\s\S]*Required work not complete/);
+  assert.equal(clock.labels.has('Mine'),false,'verification review must not become a timetable progress cue');
 });
 
 test('live warnings follow explicit saved acceptance, reporting, verification and reassignment',()=>{
