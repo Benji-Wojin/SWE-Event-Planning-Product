@@ -38,7 +38,18 @@
   };
   const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name] || icons.grid}"/></svg>`;
   const fillIcons = root => $$('[data-icon]', root).forEach(el => el.innerHTML = icon(el.dataset.icon));
-  const focusable = root => $$('a[href],button,input,select,textarea,summary,[tabindex]',root).filter(el=>el.tabIndex>=0&&!el.matches(':disabled')&&el.getClientRects().length&&!el.closest('[hidden],[inert]'));
+  function hiddenByClosedDisclosure(el) {
+    // Closed details can retain layout rectangles in some browsers. Only its
+    // first direct summary (and that summary's descendants) stays interactive.
+    for(let parent=el.parentElement;parent;parent=parent.parentElement){
+      if(parent.tagName==='DETAILS'&&!parent.open){
+        const summary=[...parent.children].find(child=>child.tagName==='SUMMARY');
+        if(!summary?.contains(el))return true;
+      }
+    }
+    return false;
+  }
+  const focusable = root => $$('a[href],button,input,select,textarea,summary,[tabindex]',root).filter(el=>el.tabIndex>=0&&!el.matches(':disabled')&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
   function skipToContent() {
     const root=$('#viewRoot');
     if(ui.pendingSave||window.GatherAccessLost||!root||root.closest('[hidden],[inert]')||!$('#dialogBackdrop').hidden||$('#sidebar').classList.contains('open'))return false;
@@ -55,7 +66,7 @@
     const target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
       el.tagName===previous.tagName&&['action','id','view','filter'].every(key=>el.dataset[key]===previous.dataset[key])&&
       (previous.dataset.id||el.textContent===previous.textContent));
-    if(!target||!root.contains(target)||target.closest('[hidden],[inert]'))return false;
+    if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
   }
   function saveLock(root,submitter) {
