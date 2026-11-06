@@ -215,6 +215,19 @@ for (const kind of ['school', 'corporate']) test(kind + ' journey: reviewed star
   assert.deepEqual(groups.find(group => group.key === 'completed').tasks.map(task => task.id), [briefing.id]);
   assert.deepEqual(groups.find(group => group.key === 'open').tasks.map(task => task.id), [cleanup.id]);
   assert.deepEqual(raw(), beforeReview, 'rendering event-day and wrap-up views never completes cleanup');
+  await write('setCompletionEvidence', [briefing.id, {note:'PRIVATE_AMENDMENT: fictional handoff detail changed.'}]);
+  snap = await read();
+  const amendedBriefing = snap.state.tasks.find(task => task.id === briefing.id);
+  assert.equal(amendedBriefing.verifiedAt, verifiedBriefing.verifiedAt);
+  assert.equal(amendedBriefing.status, 'done');
+  assert.equal(amendedBriefing.completionEvidenceReviewAt, '');
+  const amendmentSnapshot = raw(), reviewScope = {mine:true,actor};
+  assert.deepEqual(GatherScheduleUI.reviewItems(snap.state, Date.now(), reviewScope).find(group => group.key === 'evidence-amendments').tasks.map(task => task.id), [briefing.id]);
+  for (const html of [schedule.clock(snap.state, Date.now(), reviewScope).markup, schedule.preparationReview(snap.state, Date.now(), reviewScope), schedule.runSheet(snap.state, Date.now(), reviewScope)]) {
+    assert.match(html, /Evidence amended after verification/);
+    assert.doesNotMatch(html, /PRIVATE_AMENDMENT/);
+  }
+  assert.deepEqual(raw(), amendmentSnapshot, 'amendment attention does not reverify, reopen or modify the saved task');
   await write('acceptTask', [cleanup.id]);
   await write('reportCompletion', [cleanup.id, 'Fictional venue handback recorded.']);
   owner();
