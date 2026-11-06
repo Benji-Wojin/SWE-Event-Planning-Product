@@ -96,6 +96,7 @@ const mutations = [
   'reportCompletion',
   'returnCompletion',
   'setCompletionEvidence',
+  'reviewCompletionEvidence',
   'verifyTask',
   'recordFollowup',
   'updateEvent',

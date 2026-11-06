@@ -123,6 +123,7 @@ const arity: Record<string, number> = {
   reportCompletion: 2,
   returnCompletion: 2,
   setCompletionEvidence: 2,
+  reviewCompletionEvidence: 2,
   verifyTask: 1,
   recordFollowup: 2,
   updateEvent: 1,
@@ -255,6 +256,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
       case 'verifyTask':
         result = store.verifyTask(a, user.actorId);
         break;
+      case 'reviewCompletionEvidence':
+        result = store.reviewCompletionEvidence(a, b, user.actorId);
+        break;
       case 'recordFollowup':
         result = store.recordFollowup(a, b, user.actorId);
         break;
@@ -307,7 +311,7 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'setTaskOutcome', 'returnCompletion'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

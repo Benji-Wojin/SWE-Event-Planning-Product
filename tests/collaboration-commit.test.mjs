@@ -476,6 +476,53 @@ for(const winnerMethod of ['verifyTask','returnCompletion'])test('overlapping ve
     if(winnerMethod==='verifyTask'){assert.equal(final.status,'done');assert.ok(final.verifiedAt);assert.equal(final.completionReview,null);assert.ok(final.completionEvidence);}else{assert.equal(final.status,'progress');assert.equal(final.verifiedAt,'');assert.equal(final.reportedAt,'');assert.ok(final.completionReview);assert.equal(final.completionEvidenceHistory.length,1);assert.equal(final.completionEvidence,null);}
   }finally{release();releaseLoser();beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
+async function amendmentFixture(){
+  const {project,actor}=await setup();
+  const task=(await save(project,organizer,'addTask',[{title:'Fictional reviewed handoff',owner:actor,requiresVerification:true}])).result;
+  await save(project,teammate,'reportCompletion',[task.id,'Original fictional report.']);
+  const verified=(await save(project,organizer,'verifyTask',[task.id])).result;
+  const amended=(await save(project,teammate,'setCompletionEvidence',[task.id,{note:'Fictional amended report.'}])).result;
+  return {project,actor,task:amended,verified};
+}
+test('amendment acknowledgment is organizer-only, binds both revisions and persists without rewriting verification',async()=>{
+  const {project,task,verified}=await amendmentFixture();
+  const snap=await read(project),baseline=stored(project);
+  assert.equal((await mutate(project,teammate,'reviewCompletionEvidence',[task.id,task.revision],snap.revision)).status,403);assert.deepEqual(stored(project),baseline);
+  assert.equal((await mutate(project,organizer,'reviewCompletionEvidence',[task.id,task.revision,'jack'],snap.revision)).status,400);assert.deepEqual(stored(project),baseline);
+  await save(project,teammate,'setCompletionEvidence',[task.id,{note:'Newer fictional amendment.'}]);
+  const newer=stored(project);
+  assert.equal((await mutate(project,organizer,'reviewCompletionEvidence',[task.id,task.revision],snap.revision)).status,409);assert.deepEqual(stored(project),newer);
+  assert.equal((await mutate(project,organizer,'reviewCompletionEvidence',[task.id,task.revision])).status,400);assert.deepEqual(stored(project),newer);
+  const latest=(await read(project)).state.tasks.find(t=>t.id===task.id);
+  const acknowledged=(await save(project,organizer,'reviewCompletionEvidence',[task.id,latest.revision])).result;
+  assert.equal(acknowledged.completionEvidenceReviewAt,verified.verifiedAt);
+  for(const key of ['status','verifiedAt','verifiedBy','reportedAt','completedAt','completedBy','note','updatedAt','updatedBy','completionEvidence'])assert.deepEqual(acknowledged[key],latest[key],key);
+  assert.equal(acknowledged.comments.at(-1).kind,'completion-evidence-reviewed');assert.equal(acknowledged.comments.at(-1).actor,'jack');
+  const reloaded=(await read(project,teammate)).state.tasks.find(t=>t.id===task.id);assert.equal(reloaded.completionEvidenceReviewAt,verified.verifiedAt);
+  await save(project,teammate,'setCompletionEvidence',[task.id,{note:'Another fictional amendment.'}]);
+  assert.equal((await read(project)).state.tasks.find(t=>t.id===task.id).completionEvidenceReviewAt,'');
+});
+test('amendment acknowledgment rechecks organizer authority at commit even with retained member access',async()=>{
+  const {project,task}=await amendmentFixture();
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('amend-old-owner-'+project,project,organizer.userId,'jack','fictional',new Date().toISOString());
+  const baseline=stored(project);let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  try{assert.equal((await mutate(project,organizer,'reviewCompletionEvidence',[task.id,task.revision],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
+});
+for(const winner of ['reviewCompletionEvidence','setCompletionEvidence'])test('overlapping amendment review/edit retains only '+winner,async()=>{
+  const {project,task}=await amendmentFixture(),baseline=stored(project);
+  let arrived=0,release,finish;const gate=new Promise(resolve=>release=resolve),winnerDone=new Promise(resolve=>finish=resolve);
+  const actions=[{method:'reviewCompletionEvidence',user:organizer,args:[task.id,task.revision]},{method:'setCompletionEvidence',user:teammate,args:[task.id,{note:'Concurrent fictional amendment.'}]}];
+  beforeRun=async(sql,args)=>{if(!isCommit(project,sql,args))return;const method=JSON.parse(args[0]).activity[0].type==='completion-evidence-reviewed'?'reviewCompletionEvidence':'setCompletionEvidence';if(++arrived===2)release();await gate;if(method!==winner)await winnerDone;};
+  try{
+    const responses=await bounded(Promise.all(actions.map(action=>mutate(project,action.user,action.method,action.args,baseline.revision).finally(()=>{if(action.method===winner)finish();}))));
+    assert.equal(arrived,2);assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);assert.equal(responses[actions.findIndex(a=>a.method===winner)].status,200);
+    const final=(await read(project)).state.tasks.find(t=>t.id===task.id);
+    assert.equal(stored(project).revision,baseline.revision+1);assert.equal(final.verifiedAt,task.verifiedAt);assert.equal(final.status,'done');
+    assert.equal(final.completionEvidenceReviewAt,winner==='reviewCompletionEvidence'?task.verifiedAt:'');
+    assert.equal(final.completionEvidence.note,winner==='reviewCompletionEvidence'?task.completionEvidence.note:'Concurrent fictional amendment.');
+  }finally{release();finish();beforeRun=undefined;}
+});
 async function bounded(promise) {
   let timer;
   try {

@@ -122,7 +122,7 @@
         : '')
     );
   }
-  function section(task, canEdit) {
+  function section(task, canEdit, organizer=false) {
     const review=task.status!=='done'&&!task.reportedAt?task.completionReview:null;
     if (
       task.status !== 'done' &&
@@ -135,7 +135,7 @@
     return (
       '<section class="completion-evidence section-gap"><h3>Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
       (review?'<section class="notice" aria-label="Completion changes requested"><h4>Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit again. Nothing was verified; earlier submissions remain below.</p></section>':'')+
-      (value && task.verifiedAt && !task.completionEvidenceReviewAt
+      (value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
         ? '<p class="completion-amendment">This submission was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'
         : '') +
       '' +
@@ -148,6 +148,9 @@
           h(new Date(value.at).toLocaleString()) +
           '</p></div>'
         : review?'<p class="muted">No current completion report. Earlier submissions are retained below.</p>':'<p class="muted">No file or link attached.</p>') +
+      (organizer && task.status==='done' && value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
+        ? '<div class="completion-amendment-review"><p class="muted">Record review of this submission only. This does not reverify the task or check whether linked files are available.</p><button type="button" class="btn btn-secondary" data-action="review-completion-evidence" data-id="'+h(task.id)+'" data-revision="'+h(task.revision)+'">I reviewed this amendment</button></div>'
+        : '') +
       (canEdit && (task.status === 'done' || task.reportedAt)
         ? '<details class="completion-edit"><summary>Edit submission</summary><form id="completionEvidenceForm" data-id="' +
           h(task.id) +

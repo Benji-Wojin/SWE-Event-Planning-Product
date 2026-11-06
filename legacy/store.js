@@ -698,6 +698,21 @@
       task.updatedAt=timestamp();task.updatedBy=actor;
       entry(actor,'updated the completion submission',task.id,'completion-evidence');save();return copy(task);
     }
+    function reviewCompletionEvidence(taskId, expectedRevision, actor='jack') {
+      actorId(actor);if(actor!=='jack')throw new Error('Only the organizer can acknowledge a completion amendment.');
+      const task=taskById(taskId);
+      if(!Number.isSafeInteger(expectedRevision)||expectedRevision<1||task.revision!==expectedRevision)throw new Error('This task changed. Reopen it and review the current submission before acknowledging it.');
+      if(task.status!=='done'||!task.verifiedAt||!task.completionEvidence)throw new Error('There is no verified completion submission to review.');
+      if(task.completionEvidenceReviewAt===task.verifiedAt)return copy(task);
+      const at=timestamp();
+      // This field associates the current submission with the existing task
+      // verification. The comment/activity record the later review time; this
+      // acknowledgment never creates or changes verification of the work.
+      task.completionEvidenceReviewAt=task.verifiedAt;task.revision++;
+      task.comments.push({id:id('comment'),actor,at,kind:'completion-evidence-reviewed',text:'Reviewed the amended completion submission from task revision '+expectedRevision+' (recorded '+task.completionEvidence.at+'). Original task verification is unchanged.'});
+      entry(actor,'reviewed the amended completion submission; original task verification unchanged',task.id,'completion-evidence-reviewed');
+      save(true,false);return copy(task);
+    }
     function reportCompletion(taskId, input, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       const details=typeof input==='string'?completionEvidence({note:input}):completionEvidence(input),note=details.note;
@@ -1257,7 +1272,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, reviewCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };
