@@ -43,7 +43,10 @@ export function FirstProjectIntro({ onCreate }: { onCreate: () => void }) {
         ))}
       </ol>
       <div className="first-project-action">
-        <Button onClick={onCreate}>
+        <Button
+          className="h-auto min-h-11 max-w-full whitespace-normal px-5 py-2"
+          onClick={onCreate}
+        >
           Create my first project <span aria-hidden="true">↗</span>
         </Button>
         <p>

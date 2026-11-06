@@ -40,6 +40,15 @@ test('first-project introduction offers optional AI and no automatic invitations
   assert.match(setup, /Creating it does not call AI or send invitations/);
   assert.match(readFileSync('components/welcome.css', 'utf8'), /prefers-reduced-motion:reduce/);
 });
+test('first-project action keeps native button semantics and a wrapping 44px minimum target', () => {
+  const html = renderToStaticMarkup(createElement(FirstProjectIntro, { onCreate() {} }));
+  const action = html.match(/<button\b[^>]*>Create my first project[\s\S]*?<\/button>/)?.[0];
+  assert.ok(action, 'The primary action must remain a native button');
+  assert.match(action, /type="button"/);
+  for (const token of ['h-auto', 'min-h-11', 'max-w-full', 'whitespace-normal']) {
+    assert.ok(action.match(/class="([^"]*)"/)?.[1].split(/\s+/).includes(token), `Missing responsive target class: ${token}`);
+  }
+});
 test('expanded workspace tour is role-aware, dismissible and navigation-only', () => {
   for (const organizer of [true, false]) {
     let box, remembered = 0, removed = false;
