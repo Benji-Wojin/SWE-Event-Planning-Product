@@ -14,6 +14,7 @@ import {taskConversation} from './task-conversation';
 import {starterChecklist} from './starter-checklists';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
+import { firstTaskAfterSave } from './onboarding-milestones';
 import { duplicateSuggestions, planSelection } from './plan-selection';
 import {
   generateEventPlan,
@@ -572,6 +573,7 @@ async function applyDraft(c: Context, input: any) {
     );
   const ids = new Map<string, string>(reusable);
   const createdIds: string[] = [];
+  let addedTask = false;
   try {
     // Create prerequisite proposals first so each new task can receive its
     // reviewed links under the real creator's authority, including Unassigned
@@ -613,6 +615,7 @@ async function applyDraft(c: Context, input: any) {
         },
         c.memberAssistant ? c.user.actorId : 'jack',
       );
+      addedTask = true;
       ids.set(item.id, task.id);
     };
     for(const item of selected)createReviewed(item);
@@ -660,6 +663,7 @@ async function applyDraft(c: Context, input: any) {
       c.row.revision + 1,
       marker,
     ),
+    ...(!c.demo && addedTask ? [firstTaskAfterSave(c.user.userId)] : []),
   ]);
   if (result[0].meta.changes !== 1) {
     const latest = await decode(await read(c.id));

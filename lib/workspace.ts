@@ -5,6 +5,7 @@ import '@/legacy/store.js';
 import { HttpError, principal } from './security';
 import { accessArgs, projectWriteAccess, projectUser } from './project-access';
 import {completionFiles} from './completion-files';
+import { firstTaskAfterSave } from './onboarding-milestones';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
@@ -133,8 +134,9 @@ const arity: Record<string, number> = {
   dismissSuggestion: 1,
 };
 export function applyWorkspaceAction(store: any, user: { actorId: string; role: string }, input: any) {
-  const method = String(input.method);
+  const method = input.method;
   if (
+    typeof method !== 'string' ||
     !Object.hasOwn(arity, method) ||
     !Array.isArray(input.args) ||
     input.args.length !== arity[method]
@@ -299,7 +301,19 @@ export async function mutateWorkspace(
   if (input.revision !== row.revision)
     throw new HttpError(409, 'The plan changed in another tab. Reload this page, review the latest plan, and retry.');
   const files=await completionFiles(projectId,input,authorized);
+  // Count user-directed creation, not automatically generated blocker tasks
+  // that can be a side effect of editing or reporting on existing work.
+  const createsTask = ['addTask', 'addLinkedTask', 'addDependency', 'acceptSuggestion'].includes(input.method) ||
+    input.method === 'resolveHandoff' && input.args?.[2]?.action === 'create';
+  // A reviewed message can add or update a task. Count only when the
+  // primary result is new, not a blocker task spun off from an update.
+  const previousMessageTaskIds = input.method === 'applyMessage'
+    ? new Set(store.getState().tasks.map((task: { id: string }) => task.id))
+    : null;
+  const taskCount = createsTask ? store.getTaskCount() : 0;
   const result = applyWorkspaceAction(store, user, input);
+  const addedTask = createsTask && store.getTaskCount() > taskCount ||
+    previousMessageTaskIds !== null && typeof result?.id === 'string' && !previousMessageTaskIds.has(result.id);
   // The destination must still be a real active project member at commit,
   // not a legacy example or a removed/reinvited membership generation.
   let assignment: { actor: string; revision: number } | undefined;
@@ -318,11 +332,13 @@ export async function mutateWorkspace(
       413,
       'This pilot workspace is full. Export your plan before adding more content.',
     );
-  const write = await env.DB.prepare(
+  const save = env.DB.prepare(
     `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${organizerOnly?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${assignment?" AND EXISTS (SELECT 1 FROM project_members WHERE project_id=? AND actor_id=? AND revision=? AND revoked_at='')":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
-    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]))
-    .run();
+    .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]));
+  const write = addedTask
+    ? (await env.DB.batch([save, firstTaskAfterSave(user.userId)]))[0]
+    : await save.run();
   if (write.meta.changes !== 1)
     throw new HttpError(
       409,

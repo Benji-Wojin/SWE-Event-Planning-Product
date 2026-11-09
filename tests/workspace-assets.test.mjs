@@ -54,7 +54,8 @@ test('workspace preloads code in parallel with fresh data, using matching conten
 test('long-lived caching is limited to fingerprinted public code, with compatible unversioned fallbacks',()=>{
   const config=readFileSync('next.config.ts','utf8');
   assert.match(config,/source: '\/gather-assets\/versioned\/:path\*',[\s\S]*?max-age=31536000, immutable/);
-  assert.equal((config.match(/Cache-Control/g)||[]).length,1);
+  assert.equal((config.match(/immutable/g)||[]).length,1);
+  assert.match(config,/source: '\/admin\/onboarding',[\s\S]*?Cache-Control', value: 'private, no-store'/);
   assert.equal(readFileSync('public/gather-assets/hosted-store.js','utf8'),readFileSync('legacy/hosted-store.js','utf8'));
   assert.match(readFileSync('lib/security.ts','utf8'),/no-store/);
 });

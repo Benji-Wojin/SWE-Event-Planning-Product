@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
         { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
       ],
     }, {
+      source: '/admin/onboarding',
+      headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
+    }, {
       source: '/gather-assets/versioned/:path*',
       headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
     }];

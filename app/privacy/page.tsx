@@ -17,7 +17,7 @@ export default function PrivacyPage() {
       <article className="space-y-8 text-sm leading-7 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_a]:underline [&_a]:underline-offset-4 [&_p+p]:mt-3 [&_li]:mt-2">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Privacy policy</h1>
-          <p className="mt-3 text-muted-foreground">Effective October 14, 2026</p>
+          <p className="mt-3 text-muted-foreground">Effective November 9, 2026</p>
           <p>Weft is an event-planning service operated by Benji Wojin. This policy covers Weft at weftplan.com. For privacy questions, support, or data requests, email <a className="break-all" href="mailto:support@weftplan.com">support@weftplan.com</a>.</p>
         </div>
         <section aria-labelledby="data-collected">
@@ -27,6 +27,7 @@ export default function PrivacyPage() {
             <li><strong>Project information:</strong> event details, tasks, assignments, updates, comments, invitations, guest information, uploaded files, and other information you or your team add. Only add other people’s information when you have permission to do so.</li>
             <li><strong>Optional Gmail information:</strong> the connected address, authorization tokens, message and thread identifiers, labels, sender, subject, message text, dates, and generated suggestions, as described below.</li>
             <li><strong>Service information:</strong> sign-in cookies, browser preferences, support messages, feedback, and technical request/error information used to operate, troubleshoot, and protect the service. Hosting providers may process IP addresses and request metadata.</li>
+            <li><strong>Onboarding milestones:</strong> Weft uses the timestamp of your first project and records when you first add a task. The app owner can see these milestones by Weft account code to improve onboarding. This dashboard does not include your email, name, project details, or task contents. It does not use third-party analytics or tracking cookies.</li>
           </ul>
         </section>
         <section aria-labelledby="gmail">
@@ -56,7 +57,7 @@ export default function PrivacyPage() {
           <h2 id="retention">Retention, disconnecting, and deletion</h2>
           <p>Account and project records, uploaded files, imported messages, and approved updates remain stored until removed through an available app control or a verified deletion request. They do not automatically expire when an event ends. Hiding, dismissing, or archiving an item is not a promise of permanent deletion.</p>
           <p>In this release, <a href="/settings">Account settings</a> lets you remove previous Gmail import and sender connections. New mailbox checks are already disabled. Removing connections does not delete previously imported messages, summaries, or shared updates, and does not affect Resend invitations. In the separate Gmail-enabled version, import and sender disconnect controls operate independently. An operation already in flight may still finish. These controls do not revoke Google’s app-wide permission grant. You can remove Weft’s access in your <a href="https://myaccount.google.com/connections">Google account connections</a>; revocation there can affect both reading and sending, even when connected separately. Revoking access at Google does not itself delete data already stored by Weft.</p>
-          <p>To request access, correction, or deletion of your Weft account, imported Gmail data, or other personal information, email <a className="break-all" href="mailto:support@weftplan.com?subject=Weft%20privacy%20request">support@weftplan.com</a> from your account’s address and identify what you want removed. Guest-list participants can also contact this address. Do not send passwords or identity documents. Requests are handled manually; Weft may ask for information needed to verify your identity and authority over shared records.</p>
+          <p>To request access, correction, or deletion of your Weft account, onboarding milestones, imported Gmail data, or other personal information, email <a className="break-all" href="mailto:support@weftplan.com?subject=Weft%20privacy%20request">support@weftplan.com</a> from your account’s address and identify what you want removed. Guest-list participants can also contact this address. Do not send passwords or identity documents. Requests are handled manually; Weft may ask for information needed to verify your identity and authority over shared records.</p>
           <p>Deletion is not instantaneous. We will explain the outcome and any information that must be retained for security, legal obligations, or another person’s rights. Provider backups and required operational records may persist under provider retention practices. Deleting Weft data does not delete the original email in Gmail or copies others have already received.</p>
         </section>
         <section aria-labelledby="changes">

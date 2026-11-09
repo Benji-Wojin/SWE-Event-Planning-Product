@@ -29,6 +29,10 @@ export const members = sqliteTable('members', {
   name: text('name').notNull(),
   role: text('role').notNull(),
 });
+export const onboardingFirstTasks = sqliteTable('onboarding_first_tasks', {
+  userId: text('user_id').primaryKey().references(() => members.userId, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+});
 export const projectMembers = sqliteTable('project_members', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
