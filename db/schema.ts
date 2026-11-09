@@ -4,6 +4,7 @@ import {
   integer,
   index,
   uniqueIndex,
+  primaryKey,
 } from 'drizzle-orm/sqlite-core';
 export const betaReports = sqliteTable('beta_reports', {
   id: text('id').primaryKey(),
@@ -33,6 +34,17 @@ export const onboardingFirstTasks = sqliteTable('onboarding_first_tasks', {
   userId: text('user_id').primaryKey().references(() => members.userId, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 });
+export const productActivityDaily = sqliteTable('product_activity_daily', {
+  userId: text('user_id').notNull().references(() => members.userId, { onDelete: 'cascade' }),
+  day: text('day').notNull(),
+  appOpens: integer('app_opens').notNull().default(0),
+  lastOpenSlot: integer('last_open_slot').notNull().default(-1),
+  tasksCreated: integer('tasks_created').notNull().default(0),
+  tasksCompleted: integer('tasks_completed').notNull().default(0),
+}, table => [
+  primaryKey({ columns: [table.userId, table.day] }),
+  index('product_activity_day').on(table.day),
+]);
 export const projectMembers = sqliteTable('project_members', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),

@@ -6,6 +6,60 @@ const timestamp = new Intl.DateTimeFormat('en-US', {
   dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC',
 });
 
+function Activity({ data }: { data: Dashboard['activity'] }) {
+  const today = data.days[0];
+  const stats = [
+    ['Active today', today.active], ['Active in 7 days', data.weeklyActive],
+    ['App opens today', today.opens], ['Tasks created today', today.created],
+    ['Tasks completed today', today.completed],
+  ] as const;
+  return (
+    <section aria-labelledby="product-activity" className="space-y-4">
+      <h2 id="product-activity" className="text-lg font-semibold">Product activity</h2>
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {stats.map(([label, count]) => (
+          <div key={label} className="rounded-xl border bg-card p-3">
+            <dt className="text-sm text-muted-foreground">{label}</dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums">{count.toLocaleString('en-US')}</dd>
+          </div>
+        ))}
+      </dl>
+      <details className="rounded-xl border bg-card p-3">
+        <summary className="cursor-pointer py-2 text-sm font-medium">Daily breakdown · last 14 days (UTC)</summary>
+        <table className="mt-2 w-full table-fixed text-left text-xs sm:text-sm">
+          <caption className="sr-only">Daily activity totals, newest first</caption>
+          <thead className="border-b">
+            <tr>
+              <th scope="col" className="w-[24%] px-1 py-2">Date</th>
+              <th scope="col" className="px-1 py-2">Active users</th>
+              <th scope="col" className="px-1 py-2">App opens</th>
+              <th scope="col" className="px-1 py-2">Tasks created</th>
+              <th scope="col" className="px-1 py-2">Tasks completed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.days.map(day => (
+              <tr key={day.day} className="border-b last:border-b-0">
+                <th scope="row" className="px-1 py-2 font-normal"><time dateTime={day.day}>{day.day}</time></th>
+                <td className="px-1 py-2 tabular-nums">{day.active}</td>
+                <td className="px-1 py-2 tabular-nums">{day.opens}</td>
+                <td className="px-1 py-2 tabular-nums">{day.created}</td>
+                <td className="px-1 py-2 tabular-nums">{day.completed}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+      <p className="text-sm leading-relaxed text-muted-foreground">
+        Active users are unique accounts with a counted open, task creation, or task completion in the period.
+        An open counts at most once per account in each 30-minute UTC window on Projects or a workspace.
+        Task totals count saved additions and existing tasks moved to Done, after verification when required.
+        A reopened task can be completed again. Demo and app-owner activity are excluded; historical activity is not backfilled.
+      </p>
+    </section>
+  );
+}
+
 function Milestone({ at }: { at: string | null }) {
   if (!at) return <span className="text-muted-foreground">Not recorded</span>;
   return (
@@ -26,6 +80,8 @@ export function OnboardingDashboard({ data }: { data: Dashboard }) {
   ] as const;
   return (
     <div className="space-y-6">
+      <Activity data={data.activity} />
+      <h2 className="border-t pt-6 text-lg font-semibold">Onboarding milestones</h2>
       <p className="text-sm leading-relaxed text-muted-foreground">
         See which accounts reached the two first-use milestones. The steps are
         independent, and totals exclude the app owner and demo activity.

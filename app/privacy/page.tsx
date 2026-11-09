@@ -28,6 +28,7 @@ export default function PrivacyPage() {
             <li><strong>Optional Gmail information:</strong> the connected address, authorization tokens, message and thread identifiers, labels, sender, subject, message text, dates, and generated suggestions, as described below.</li>
             <li><strong>Service information:</strong> sign-in cookies, browser preferences, support messages, feedback, and technical request/error information used to operate, troubleshoot, and protect the service. Hosting providers may process IP addresses and request metadata.</li>
             <li><strong>Onboarding milestones:</strong> Weft uses the timestamp of your first project and records when you first add a task. The app owner can see these milestones by Weft account code to improve onboarding. This dashboard does not include your email, name, project details, or task contents. It does not use third-party analytics or tracking cookies.</li>
+            <li><strong>Product usage:</strong> Weft keeps daily per-account counts of app opens on Projects and workspace screens, tasks created, and tasks completed, to understand how the service is used. The app owner sees aggregate usage totals. These counts do not store page paths, project or task identifiers, or their contents, and do not use third-party analytics or tracking cookies.</li>
           </ul>
         </section>
         <section aria-labelledby="gmail">

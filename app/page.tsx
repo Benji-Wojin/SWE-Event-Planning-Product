@@ -5,6 +5,7 @@ import { ProjectsClient } from './projects-client';
 import { redirect } from 'next/navigation';
 import { hasBetaAccess, privateBetaEnabled } from '@/lib/beta-access';
 import { PrivateBeta } from '@/components/private-beta';
+import { AppOpen } from '@/components/app-open';
 export const dynamic = 'force-dynamic';
 export default async function Home({ searchParams }: { searchParams: Promise<{ message?: string }> }) {
   const params = await searchParams;
@@ -17,5 +18,5 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ m
     if (error instanceof HttpError && error.status === 403) redirect('/signup');
     throw error;
   }
-  return <ProjectsClient />;
+  return <><AppOpen /><ProjectsClient /></>;
 }

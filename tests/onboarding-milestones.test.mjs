@@ -37,7 +37,7 @@ async function makeProject(user, name, requestId = crypto.randomUUID()) {
     requestId, event: { name, date: '2100-03-14', timeZone: 'America/Los_Angeles' },
   })), 201)).id);
 }
-async function starter(user, project) {
+async function starter(user, project, taskCount = 1) {
   return run(user, async () => {
     const context = await body(await api.readPlan(request(plan(project))));
     const draft = await body(await api.writePlan(request(plan(project), {
@@ -45,11 +45,12 @@ async function starter(user, project) {
       requestId: crypto.randomUUID(), suggestDates: false, replace: false,
       brief: { kind: 'school', description: 'Fictional event', endDate: '', startTime: '', endTime: '' },
     })));
-    const id = draft.draft.items.find(x => !x.dependsOn.length).id;
+    const ids = draft.draft.items.filter(x => !x.dependsOn.length).slice(0, taskCount).map(x => x.id);
+    assert.equal(ids.length, taskCount);
     return {
       action: 'apply', revision: draft.revision, workspaceRevision: draft.workspaceRevision,
       generation: draft.draft.generation, confirm: true,
-      items: draft.draft.items.map(item => ({ ...item, included: item.id === id })),
+      items: draft.draft.items.map(item => ({ ...item, included: ids.includes(item.id) })),
     };
   });
 }
@@ -61,6 +62,7 @@ before(async () => {
       export { principal, registerAccount } from './lib/security';
       export { model } from './lib/workspace';
       export { readOnboardingMilestones } from './lib/onboarding-milestones';
+      export { POST as openApp } from './app/api/activity/route';
       export { default as OnboardingPage } from './app/admin/onboarding/page';
       export { POST as createProject } from './app/api/projects/route';
       export { GET as readWorkspace, POST as writeWorkspace } from './app/api/workspace/route';
@@ -99,14 +101,14 @@ before(async () => {
     },
   };
   const migrations = await readMigrations();
-  await migrateDatabase(client, { migrations: migrations.slice(0, -1), apply: true });
+  await migrateDatabase(client, { migrations: migrations.slice(0, -2), apply: true });
   for (const account of [owner, alice, bob, carol, dylan]) await run(account, api.registerAccount);
   historicProject = await makeProject(carol, 'Private historic project');
   await db.prepare('UPDATE projects SET created_at=? WHERE id=?').bind('2025-05-01T12:00:00.000Z', historicProject).run();
   const legacy = api.model(await db.prepare('SELECT data FROM workspaces WHERE id=?').bind(historicProject).first('data'));
   legacy.addTask({ title: 'Private historic task', owner: 'jack' });
   await db.prepare('UPDATE workspaces SET data=? WHERE id=?').bind(legacy.exportState(), historicProject).run();
-  assert.deepEqual((await migrateDatabase(client, { migrations, apply: true })).applied, ['0010_onboarding_first_tasks.sql']);
+  assert.deepEqual((await migrateDatabase(client, { migrations, apply: true })).applied, ['0010_onboarding_first_tasks.sql', '0011_product_activity_daily.sql']);
   assert.equal(await db.prepare('SELECT COUNT(*) AS total FROM onboarding_first_tasks').first('total'), 0);
 });
 
@@ -129,10 +131,36 @@ test('owner sees historical projects and unknown historical task progress; other
   await assert.rejects(run(null, () => api.OnboardingPage({ searchParams: Promise.resolve({}) })), /Redirect: .*return_to=%2Fadmin%2Fonboarding/);
   const html = renderToStaticMarkup(await run(owner, () => api.OnboardingPage({ searchParams: Promise.resolve({}) })));
   assert.match(html, /Progress by account/);
+  assert.match(html, /Product activity/);
   assert.match(html, /Not recorded/);
   assert.ok(html.includes(await memberCode(carol)));
   assert.doesNotMatch(html, /@example\.com|Fictional carol|provider-carol|Private historic (project|task)/);
   assert.equal((await read(carol, historicProject)).state.tasks.length, 1);
+});
+
+test('app opens are authenticated, same-origin and counted once per account/window; active users are unique', async () => {
+  const post = (user, input = {}) => run(user, () => api.openApp(request('/api/activity', input)));
+  assert.equal((await post(null)).status, 401);
+  assert.equal((await post(alice, { userId: bob.userId })).status, 400);
+  assert.equal((await run(alice, () => api.openApp(new Request(origin + '/api/activity', {
+    method: 'POST', headers: { Origin: 'https://other.example', 'X-Gather-Request': '1', 'Content-Type': 'application/json' }, body: '{}',
+  })))).status, 403);
+  await body(await post(owner));
+  assert.equal((await dashboard()).activity.days[0].active, 0);
+  const responses = await Promise.all([post(alice), post(alice)]);
+  for (const response of responses) {
+    assert.match(response.headers.get('cache-control'), /no-store/);
+    assert.deepEqual(await body(response), { ok: true });
+  }
+  let activity = (await dashboard()).activity;
+  assert.equal(activity.days.length, 14);
+  assert.deepEqual([activity.days[0].active, activity.days[0].opens, activity.weeklyActive], [1, 1, 1]);
+  await db.prepare("UPDATE product_activity_daily SET last_open_slot=last_open_slot-1 WHERE user_id=? AND day=date('now')").bind(alice.userId).run();
+  await body(await post(alice));
+  await db.prepare("INSERT INTO product_activity_daily(user_id,day,app_opens) VALUES (?,date('now','-1 day'),1),(?,date('now','-1 day'),1),(?,date('now','-8 days'),1)")
+    .bind(alice.userId, bob.userId, carol.userId).run();
+  activity = (await dashboard()).activity;
+  assert.deepEqual([activity.days[0].active, activity.days[0].opens, activity.days[1].active, activity.weeklyActive], [1, 2, 2, 2]);
 });
 
 test('successful manual creation moves one account through both milestones, without crediting the assignee or retries', async () => {
@@ -160,6 +188,7 @@ test('successful manual creation moves one account through both milestones, with
   assert.deepEqual(await record(alice), first);
   assert.equal(await record(bob), null);
   assert.deepEqual((await dashboard()).totals, { accounts: 4, projects: 2, tasks: 1, both: 1 });
+  assert.equal((await dashboard()).activity.days[0].created, 2);
 });
 
 test('a zero-row save and an aborted milestone write do not leave task or tracking changes', async () => {
@@ -171,33 +200,54 @@ test('a zero-row save and an aborted milestone write do not leave task or tracki
   assert.equal(await record(dylan), null);
   const latest = await read(dylan, project);
   assert.equal(latest.state.tasks.length, 0);
+  const dayBefore = (await dashboard()).activity.days[0];
   await client.execute("CREATE TRIGGER reject_fixture_marker BEFORE INSERT ON onboarding_first_tasks BEGIN SELECT RAISE(ABORT,'fixture only'); END");
   try {
     assert.equal((await change(dylan, project, { ...task, revision: latest.revision })).status, 500);
     assert.equal(await record(dylan), null);
     assert.deepEqual(await read(dylan, project), latest);
+    assert.deepEqual((await dashboard()).activity.days[0], dayBefore);
   } finally { await client.execute('DROP TRIGGER reject_fixture_marker'); }
 });
 
 test('a reviewed starter only counts when it commits a new task, and the owner is excluded', async () => {
   const project = await makeProject(bob, 'Reviewed starter fixture');
-  const apply = await starter(bob, project);
+  const apply = await starter(bob, project, 2);
   assert.equal(await record(bob), null);
   const approve = input => run(bob, () => api.writePlan(request(plan(project), input)));
   assert.equal((await approve({ ...apply, confirm: false })).status, 400);
   assert.equal(await record(bob), null);
   const saved = await body(await approve(apply));
-  assert.equal(saved.receipt.taskIds.length, 1);
-  assert.equal((await read(bob, project)).state.tasks.length, 1);
+  assert.equal(saved.receipt.taskIds.length, 2);
+  assert.equal((await read(bob, project)).state.tasks.length, 2);
   const first = await record(bob);
   assert.ok(first);
   await body(await approve(apply));
   assert.deepEqual(await record(bob), first);
+  assert.equal((await dashboard()).activity.days[0].created, 4);
   const ownProject = await makeProject(owner, 'Owner testing excluded');
   const { revision } = await read(owner, ownProject);
   await body(await change(owner, ownProject, { method: 'addTask', args: [{ title: 'Test task' }], revision }));
   assert.equal(await record(owner), null);
   assert.deepEqual((await dashboard()).totals, { accounts: 4, projects: 4, tasks: 2, both: 2 });
+});
+
+test('completion counts actual transitions, waits for required verification, and ignores retries', async () => {
+  const project = await makeProject(alice, 'Completion verification fixture');
+  const write = async (method, args, revision) =>
+    body(await change(alice, project, { method, args, revision }));
+  const original = await read(alice, project);
+  const created = await write('addTask', [{ title: 'Fictional task', owner: 'jack', requiresVerification: true }], original.revision);
+  const taskId = created.result.id;
+  const reported = await write('reportCompletion', [taskId, 'Fictional evidence'], created.revision);
+  assert.equal(reported.result.status, 'progress');
+  assert.equal((await dashboard()).activity.days[0].completed, 0);
+  const verified = await write('verifyTask', [taskId], reported.revision);
+  assert.equal(verified.result.status, 'done');
+  assert.equal((await dashboard()).activity.days[0].completed, 1);
+  assert.equal((await change(alice, project, { method: 'verifyTask', args: [taskId], revision: reported.revision })).status, 409);
+  await write('verifyTask', [taskId], verified.revision);
+  assert.equal((await dashboard()).activity.days[0].completed, 1);
 });
 
 test('a losing reviewed plan save cannot record a milestone; existing task edits do not count', async () => {

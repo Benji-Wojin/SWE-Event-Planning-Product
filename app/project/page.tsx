@@ -1,4 +1,5 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
+import { AppOpen } from '@/components/app-open';
 export const dynamic = 'force-dynamic';
 export default async function Project({ searchParams }: { searchParams: Promise<{ project?: string; message?: string }> }) {
   const params = await searchParams;
@@ -8,6 +9,6 @@ export default async function Project({ searchParams }: { searchParams: Promise<
 }
 async function SignedInProject({query,inbox}:{query:string;inbox:boolean}) {
   await requireChatGPTUser('/project?' + query);
-  return <iframe src={'/workspace.html?' + query + (inbox ? '#inbox' : '')} title="Weft planning workspace"
-    style={{ position:'fixed',inset:0,width:'100%',height:'100%',border:0 }} />;
+  return <><AppOpen /><iframe src={'/workspace.html?' + query + (inbox ? '#inbox' : '')} title="Weft planning workspace"
+    style={{ position:'fixed',inset:0,width:'100%',height:'100%',border:0 }} /></>;
 }

@@ -1,7 +1,8 @@
 import { env } from '@/lib/runtime';
 import { HttpError, isAppOwner, principal } from './security';
+import { readProductActivity } from './product-activity';
 
-/** Append immediately after the authoritative save inside the same write batch. */
+/** Append after the daily task write, which changes one row only after a successful save. */
 export function firstTaskAfterSave(userId: string) {
   return env.DB.prepare(`INSERT INTO onboarding_first_tasks (user_id,created_at)
     SELECT user_id,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM members
@@ -27,7 +28,7 @@ export async function readOnboardingMilestones(after?: string) {
   const cursor = typeof after === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(after) ? after : '';
   // One read snapshot for the full-cohort totals and a bounded page. No project or
   // task content, Google identity, email, or names are selected.
-  const { results } = await env.DB.prepare(`WITH milestones AS (
+  const [{ results }, activity] = await Promise.all([env.DB.prepare(`WITH milestones AS (
       SELECT m.actor_id AS account_code,
         (SELECT MIN(p.created_at) FROM projects p WHERE p.owner_id=m.user_id) AS first_project_at,
         t.created_at AS first_task_at
@@ -42,7 +43,7 @@ export async function readOnboardingMilestones(after?: string) {
       SELECT * FROM milestones WHERE account_code>? ORDER BY account_code LIMIT ?
     )
     SELECT totals.*, page.* FROM totals LEFT JOIN page ON 1 ORDER BY page.account_code`)
-    .bind(viewer.userId, cursor, pageSize + 1).all<MilestoneRow>();
+    .bind(viewer.userId, cursor, pageSize + 1).all<MilestoneRow>(), readProductActivity(viewer)]);
   const rows = results.flatMap(row => row.account_code ? [{
     accountCode: row.account_code,
     firstProjectAt: row.first_project_at,
@@ -51,6 +52,7 @@ export async function readOnboardingMilestones(after?: string) {
   const { accounts, projects, tasks, both } = results[0];
   return {
     totals: { accounts, projects, tasks, both },
+    activity,
     rows: rows.slice(0, pageSize),
     after: cursor,
     next: rows.length > pageSize ? rows[pageSize - 1].accountCode : '',

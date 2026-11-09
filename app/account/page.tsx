@@ -16,7 +16,7 @@ export default async function Account() {
       {member && (
         <section aria-label="Onboarding" className="mt-5 rounded-xl border bg-card p-5 text-sm">
           {isAppOwner(member) ? (
-            <Link prefetch={false} className="underline" href="/admin/onboarding">Onboarding dashboard</Link>
+            <Link prefetch={false} className="underline" href="/admin/onboarding">Usage analytics</Link>
           ) : (
             <>
               <p className="font-medium">Your Weft account code</p>

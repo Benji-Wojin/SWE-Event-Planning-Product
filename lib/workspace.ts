@@ -6,6 +6,7 @@ import { HttpError, principal } from './security';
 import { accessArgs, projectWriteAccess, projectUser } from './project-access';
 import {completionFiles} from './completion-files';
 import { firstTaskAfterSave } from './onboarding-milestones';
+import { taskActivityAfterSave } from './product-activity';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
@@ -303,17 +304,15 @@ export async function mutateWorkspace(
   const files=await completionFiles(projectId,input,authorized);
   // Count user-directed creation, not automatically generated blocker tasks
   // that can be a side effect of editing or reporting on existing work.
-  const createsTask = ['addTask', 'addLinkedTask', 'addDependency', 'acceptSuggestion'].includes(input.method) ||
+  const createsTask = ['addTask', 'addLinkedTask', 'addDependency', 'acceptSuggestion', 'applyMessage'].includes(input.method) ||
     input.method === 'resolveHandoff' && input.args?.[2]?.action === 'create';
-  // A reviewed message can add or update a task. Count only when the
-  // primary result is new, not a blocker task spun off from an update.
-  const previousMessageTaskIds = input.method === 'applyMessage'
-    ? new Set(store.getState().tasks.map((task: { id: string }) => task.id))
-    : null;
-  const taskCount = createsTask ? store.getTaskCount() : 0;
+  const completesTask = ['updateTask', 'reportCompletion', 'verifyTask', 'applyMessage'].includes(input.method);
+  const priorTasks: Map<string, boolean> | null = createsTask || completesTask ? store.taskCompletionStates() : null;
   const result = applyWorkspaceAction(store, user, input);
-  const addedTask = createsTask && store.getTaskCount() > taskCount ||
-    previousMessageTaskIds !== null && typeof result?.id === 'string' && !previousMessageTaskIds.has(result.id);
+  // Only the direct task returned by the action counts, not side-effect tasks.
+  const addedTask = createsTask && typeof result?.id === 'string' && !priorTasks?.has(result.id);
+  const completedTask = completesTask && result?.status === 'done' &&
+    (!result.requiresVerification || !!result.verifiedAt) && priorTasks?.get(result.id) === false;
   // The destination must still be a real active project member at commit,
   // not a legacy example or a removed/reinvited membership generation.
   let assignment: { actor: string; revision: number } | undefined;
@@ -336,8 +335,9 @@ export async function mutateWorkspace(
     `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${organizerOnly?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${assignment?" AND EXISTS (SELECT 1 FROM project_members WHERE project_id=? AND actor_id=? AND revision=? AND revoked_at='')":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
     .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]));
-  const write = addedTask
-    ? (await env.DB.batch([save, firstTaskAfterSave(user.userId)]))[0]
+  const write = addedTask || completedTask
+    ? (await env.DB.batch([save, taskActivityAfterSave(user.userId, Number(addedTask), Number(completedTask)),
+        ...(addedTask ? [firstTaskAfterSave(user.userId)] : [])]))[0]
     : await save.run();
   if (write.meta.changes !== 1)
     throw new HttpError(
