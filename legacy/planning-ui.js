@@ -11,7 +11,8 @@
         :'The organizer can add the first tasks. When work appears, accept responsibility for your tasks, share progress and report what’s done.';
     const hint=organizer&&planBuilder?'<p class="muted">Review tasks, owners and dates before adding them. Opening the planner does not call AI.</p>':'';
     const actions=(organizer&&planBuilder?'<button class="btn btn-primary" data-action="draft-plan">Open plan builder</button>':'')
-      +(organizer||canCreate?'<button class="btn btn-secondary" data-action="add-task">Add task</button>':'<button class="btn btn-secondary" data-view="team">View people</button>');
+      +(organizer||canCreate?'<button class="btn btn-secondary" data-action="add-task">Add task</button>':'<button class="btn btn-secondary" data-view="team">View people</button>')
+      +(organizer&&planBuilder?'<button class="btn btn-secondary" data-action="invite">Invite a teammate</button>':'');
     return '<section class="panel empty-plan" aria-labelledby="emptyPlanHeading"><h2 class="section-title" id="emptyPlanHeading">'+title+'</h2><p>'+copy+'</p>'+hint+'<div class="form-actions">'+actions+'</div></section>';
   }
   function readiness(task,tasks) {
@@ -24,12 +25,16 @@
   }
   function graph(tasks, visible=tasks, focusId='') {
     const index=new Map(tasks.map(t=>[t.id,t]));
+    const neighbors=new Map(tasks.map(t=>[t.id,new Set()]));
+    for(const task of tasks) for(const link of task.dependencies||[]){
+      if(!index.has(link.taskId)||link.taskId===task.id)continue;
+      neighbors.get(task.id).add(link.taskId);
+      neighbors.get(link.taskId).add(task.id);
+    }
     const selected=new Set((focusId?[index.get(focusId)].filter(Boolean):visible).slice(0,80).map(t=>t.id));
     const queue=[...selected];
     for(let i=0;i<queue.length&&selected.size<200;i++) {
-      const id=queue[i];
-      const neighbors=[...(index.get(id)?.dependencies||[]).map(l=>l.taskId),...tasks.filter(t=>(t.dependencies||[]).some(l=>l.taskId===id)).map(t=>t.id)];
-      for(const next of neighbors)if(index.has(next)&&!selected.has(next)&&selected.size<200){selected.add(next);queue.push(next);}
+      for(const next of neighbors.get(queue[i])||[])if(!selected.has(next)&&selected.size<200){selected.add(next);queue.push(next);}
     }
     const nodes=tasks.filter(t=>selected.has(t.id)),depth=new Map(),visiting=new Set(),cycles=new Set();
     function level(id) {
@@ -41,18 +46,55 @@
       visiting.delete(id);depth.set(id,value);return value;
     }
     nodes.forEach(t=>level(t.id));
-    const rows=new Map(),positions=new Map();
-    for(const t of nodes){const col=depth.get(t.id),row=rows.get(col)||0;rows.set(col,row+1);positions.set(t.id,{x:24+col*312,y:62+row*166});}
+    // Keep each connected group together and use the opposite columns as
+    // guides when ordering a column. Unlinked tasks go after the groups.
+    const positions=new Map(),visited=new Set(),groups=[],unlinked=[];
+    for(const task of nodes){
+      if(visited.has(task.id))continue;
+      const component=[task.id];visited.add(task.id);
+      for(let i=0;i<component.length;i++)for(const next of neighbors.get(component[i])){
+        if(selected.has(next)&&!visited.has(next)){visited.add(next);component.push(next);}
+      }
+      if(component.length===1)unlinked.push(task.id);
+      else groups.push(component);
+    }
+    let top=62;
+    for(const component of groups){
+      const columns=new Map(),ranks=new Map();
+      for(const id of component){
+        const col=depth.get(id),list=columns.get(col)||[];
+        ranks.set(id,list.length);list.push(id);columns.set(col,list);
+      }
+      const sorted=[...columns.keys()].sort((a,b)=>a-b);
+      for(const sweep of [sorted,[...sorted].reverse(),sorted]){
+        for(const col of sweep){
+          const column=columns.get(col),score=new Map();
+          for(const id of column){
+            const adjacent=[...neighbors.get(id)].filter(next=>ranks.has(next)&&depth.get(next)!==col);
+            score.set(id,adjacent.length?adjacent.reduce((sum,next)=>sum+ranks.get(next),0)/adjacent.length:ranks.get(id));
+          }
+          column.sort((a,b)=>score.get(a)-score.get(b)||ranks.get(a)-ranks.get(b));
+          column.forEach((id,row)=>ranks.set(id,row));
+        }
+      }
+      const height=Math.max(...[...columns.values()].map(column=>column.length));
+      for(const [col,column] of columns)column.forEach((id,row)=>{
+        positions.set(id,{x:24+col*312,y:top+(row+(height-column.length)/2)*166});
+      });
+      top+=height*166+20;
+    }
+    unlinked.forEach((id,i)=>positions.set(id,{x:24+(i%2)*312,y:top+Math.floor(i/2)*166}));
+    nodes.sort((a,b)=>positions.get(a.id).y-positions.get(b.id).y||positions.get(a.id).x-positions.get(b.id).x);
     const edges=nodes.flatMap(t=>(t.dependencies||[]).filter(l=>selected.has(l.taskId)).map(l=>({from:l.taskId,to:t.id,kind:l.kind==='related'?'related':'dependency'})));
-    return {nodes,edges,positions,width:Math.max(600,72+(Math.max(0,...depth.values())+1)*312),height:Math.max(260,80+Math.max(0,...rows.values())*166),truncated:visible.length>80||selected.size>=200,cycles:cycles.size>0};
+    return {nodes,edges,positions,width:Math.max(312,...[...positions.values()].map(p=>p.x+288)),height:Math.max(240,...[...positions.values()].map(p=>p.y+160)),truncated:!focusId&&visible.length>80||selected.size>=200,cycles:cycles.size>0};
   }
   function graphMarkup(tasks,visible,focusId='',members=[]) {
     const model=graph(tasks,visible,focusId),h=escape;
     if(!model.nodes.length)return '<p class="planning-empty">No tasks match. Clear search or filters to see the map.</p>';
     const lines=model.edges.map(edge=>{
       const a=model.positions.get(edge.from),b=model.positions.get(edge.to),related=edge.kind==='related';
-      const ax=a.x+264,ay=a.y+66,bx=b.x,by=b.y+66;
-      const path=related&&a.x===b.x?`M${ax},${ay} C${ax+35},${ay} ${ax+35},${by} ${ax},${by}`:`M${ax},${ay} C${ax+30},${ay} ${bx-30},${by} ${bx},${by}`;
+      const reverse=a.x>b.x,ax=a.x+(reverse?0:264),ay=a.y+66,bx=b.x+(reverse?264:0),by=b.y+66, bend=reverse?-30:30;
+      const path=a.x===b.x?`M${ax},${ay} C${ax+28},${ay} ${ax+28},${by} ${ax},${by}`:`M${ax},${ay} C${ax+bend},${ay} ${bx-bend},${by} ${bx},${by}`;
       return `<path d="${path}" class="map-edge ${related?'map-edge-related':''}" ${related?'':'marker-end="url(#task-map-arrow)"'}/>`;
     }).join('');
     const cards=model.nodes.map(task=>{

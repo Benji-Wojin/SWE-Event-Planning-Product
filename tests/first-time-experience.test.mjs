@@ -31,9 +31,9 @@ test('private-beta marketing preserves approval-only access, while signed-in den
   assert.match(denied, /This account does not have beta access yet/);
   assert.match(denied, /Use another account/); assert.doesNotMatch(denied, /Less chasing/);
 });
-test('first-project introduction offers optional AI and no automatic invitations or mutation', () => {
+test('first-project introduction explains the create, invite and add-task flow with no automatic actions', () => {
   const html = renderToStaticMarkup(createElement(FirstProjectIntro, { onCreate() {} }));
-  assert.match(html, /Create my first project/); assert.match(html, /optional AI draft/);
+  assert.match(html, /Create my first project/); assert.match(html, /Create your project[\s\S]*Invite a teammate[\s\S]*Add your first task/);
   assert.match(html, /Nothing is sent or added by AI automatically/);
   assert.match(html, /private booking details/); assert.match(html, /<ol/);
   const setup = readFileSync('app/setup/page.tsx', 'utf8');

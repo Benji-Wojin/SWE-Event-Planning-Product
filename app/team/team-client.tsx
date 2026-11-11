@@ -6,13 +6,13 @@ import { Label } from '@/components/ui/label';
 import type { TeamView } from '@/lib/team';
 import { GMAIL_ENABLED } from '@/lib/release-policy';
 import { accountRequest } from '@/lib/account-request';
-export function TeamClient({ projectId }: { projectId: string }) {
+export function TeamClient({ projectId, guided = false }: { projectId: string; guided?: boolean }) {
   const [team, setTeam] = useState<TeamView | null>(null),
     [error, setError] = useState(''),
     [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(''),
-    [emailDelivery, setEmailDelivery] = useState(true);
+    [emailDelivery, setEmailDelivery] = useState(!guided);
   const pending = useRef(false),
     requestId = useRef(''),
     readEpoch = useRef(0);
@@ -224,12 +224,14 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 removing Weft in your Google account can revoke both connections.
               </p>
             </details>
-          </details> : <section className="space-y-2 rounded-xl border bg-card p-5">
-            <h2 className="font-medium">Invitation emails</h2>
-            <p className="text-sm text-muted-foreground">{team.sender.connected ? 'Send invitations from ' + team.sender.email + '. No Gmail connection needed.' : 'Email delivery is unavailable. In-app invitations still work.'}</p>
-          </section>}
+          </details> : null}
           <section className="space-y-4 rounded-xl border bg-card p-5">
+            {guided && <p className="text-sm font-medium text-primary">Getting started · Invite a teammate</p>}
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
+            <p id="invite-help" className="text-sm text-muted-foreground">
+              Use the email they’ll sign in with. The invitation appears on their Projects page and expires in 7 days.
+              {!team.sender.connected && ' In-app invitations still work without email delivery.'}
+            </p>
             <form
               className="space-y-3"
               onSubmit={async (e) => {
@@ -247,7 +249,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                   setEmail('');
                   requestId.current = '';
                   if (!sendEmail) {
-                    setNotice('In-app invitation created. No email sent.');
+                    setNotice('In-app invitation created. No email sent. Ask your teammate to open Weft and accept it on their Projects page.');
                   } else if (invitation?.delivery.status === 'sent') {
                     setNotice('Invitation emailed. The email service accepted it; they can also accept in Weft.');
                   } else if (invitation?.delivery.status === 'sending') {
@@ -265,6 +267,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 <Input
                   id="invite-email"
                   type="email"
+                  aria-describedby="invite-help"
                   required
                   maxLength={254}
                   value={email}
@@ -285,10 +288,7 @@ export function TeamClient({ projectId }: { projectId: string }) {
                 Send an invitation email
               </label>}
             </form>
-            <p className="text-sm text-muted-foreground">
-              Appears on their Projects page. They can sign up with this email
-              if they do not have an account yet. Expires in 7 days.
-            </p>
+            {guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">People</h2>

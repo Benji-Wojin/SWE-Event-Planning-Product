@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -34,6 +34,8 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
   const [project, setProject] = useState<any>(null), [form, setForm] = useState<Details | null>(null);
   const [initial, setInitial] = useState(''), [error, setError] = useState('');
   const [conflict, setConflict] = useState(false), [busy, setBusy] = useState(false);
+  const [createdId, setCreatedId] = useState('');
+  const createdHeading = useRef<HTMLHeadingElement>(null);
   const pending = useRef(false), leaving = useRef(false), errorBox = useRef<HTMLParagraphElement>(null);
   const dirty = Boolean(form && JSON.stringify(form) !== initial);
   async function load() {
@@ -59,6 +61,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   useEffect(() => { if (error) errorBox.current?.focus(); }, [error]);
+  useEffect(() => { if (createdId) createdHeading.current?.focus(); }, [createdId]);
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form || !project || pending.current) return;
@@ -70,16 +73,19 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
         guestCount: Number(form.guestCount || 0), dietaryOutstanding: Number(form.dietaryOutstanding || 0),
         ...(changingScheduleZone ? {confirmScheduleTimeZone:true} : {}),
       };
-      let destination = backUrl;
       if (isNew) {
         requestId.current ||= crypto.randomUUID();
         const response = await fetch('/api/projects', {method:'POST', credentials:'same-origin',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},body:JSON.stringify({requestId:requestId.current,event:details})});
         const result: any = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not create the project. Your details are still here.');
-        destination = '/plan?project=' + encodeURIComponent(result.id);
+        if (typeof result.id !== 'string' || !result.id) throw new Error('Could not confirm the new project. Retry to check the same save.');
+        leaving.current = true;
+        setInitial(JSON.stringify(form));
+        setCreatedId(result.id);
+        return;
       } else await workspaceRequest(projectId!, { method:'completeSetup', args:[details], revision:project.revision });
       leaving.current = true;
-      window.location.assign(destination);
+      window.location.assign(backUrl);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save. Your details are still here.');
       setConflict((e as { status?: number }).status === 409);
@@ -88,6 +94,20 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
   }
   const update = <K extends keyof Details>(key: K, value: Details[K]) => setForm(current => current ? { ...current, [key]: value } : current);
   const errorMessage = error && <p ref={errorBox} tabIndex={-1} role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>;
+  if (createdId) {
+    const query = '?project=' + encodeURIComponent(createdId);
+    return <Card><CardContent className="space-y-4 px-5 sm:px-7">
+      <p className="text-sm font-medium text-primary">Project created · Next step</p>
+      <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">Bring someone into the plan</h2>
+      <p className="text-muted-foreground">Invite a teammate to {form?.name.trim()}. They can accept in Weft and help you keep track of what needs doing.</p>
+      <div className="flex flex-wrap gap-3">
+        <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>
+        <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>Open project</a>
+        <a className={buttonVariants({ variant: 'ghost' })} href={'/plan' + query}>Explore starter plans</a>
+      </div>
+      <p className="text-sm text-muted-foreground">Working solo? You can invite people later from your project.</p>
+    </CardContent></Card>;
+  }
   if (!form || !project) return <section aria-busy={busy}>
     {errorMessage || <p role="status" className="text-muted-foreground">Loading project…</p>}
     {error && <Button onClick={load} disabled={busy} variant="outline">Try again</Button>}
@@ -125,7 +145,9 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-outdoor">Outdoor event</Label><Switch id="setup-outdoor" checked={form.outdoor} onCheckedChange={checked => update('outdoor', checked)} /></div>
             <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-transportNeeded">Organized transport needed</Label><Switch id="setup-transportNeeded" checked={form.transportNeeded} onCheckedChange={checked => update('transportNeeded', checked)} /></div>
           </div>
-          <div className="border-t pt-6">
+          <details className="border-t pt-6" open={!isNew || undefined}>
+            <summary className="cursor-pointer text-sm font-medium">More event and team settings</summary>
+            <div className="mt-5 space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-2">
                 <Label htmlFor="setup-membersCanCreateTasks">Let teammates create tasks</Label>
@@ -133,16 +155,14 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
               </div>
               <Switch id="setup-membersCanCreateTasks" aria-describedby="task-creation-help" checked={form.membersCanCreateTasks} onCheckedChange={checked => update('membersCanCreateTasks', checked)} />
             </div>
-          </div>
-          <details className="border-t pt-5">
-            <summary className="cursor-pointer text-sm font-medium">Catering details (optional)</summary>
-            <div className="mt-5 grid gap-6 sm:grid-cols-2">
+            <div className="grid gap-6 sm:grid-cols-2">
               {textField('dietaryOutstanding', 'Dietary responses outstanding', 'number')}
               {textField('cateringDeadline', 'Catering cutoff', 'date')}
             </div>
+            </div>
           </details>
           <div className="border-t pt-5">
-            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: use a starter checklist, draft a plan with AI, or start with an empty project. Your other projects are unchanged.' : 'Changes only this project’s settings.'}</p>
+            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: invite a teammate, or open your project and add the first task.' : 'Changes only this project’s settings.'}</p>
             <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>
           </div>
         </fieldset>

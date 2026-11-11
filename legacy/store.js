@@ -451,6 +451,38 @@
       task.comments.push({id:id('comment'),actor,text,at:timestamp(),kind:'plan-decision'});
       entry(actor,text,task.id,'plan-decision');save();return copy(task);
     }
+    function deleteTask(taskId, expectedRevision, actor = 'jack') {
+      actorId(actor);
+      if (actor !== 'jack') throw new Error('Only the organizer can delete tasks.');
+      const task = taskById(taskId);
+      if (expectedRevision !== task.revision) throw new Error('This task changed. Reopen it and review before deleting.');
+      state.tasks = state.tasks.filter(item => item.id !== taskId);
+      state.drafts = state.drafts.filter(draft => draft.taskId !== taskId);
+      for (const remaining of state.tasks) {
+        const dependencies = remaining.dependencies.filter(link => link.taskId !== taskId);
+        let changed = false;
+        if (dependencies.length !== remaining.dependencies.length) {
+          remaining.dependencies = dependencies;
+          dependencyComment(remaining, `Removed link to deleted task “${task.title}”. This task’s status is unchanged.`, actor, taskId, 'dependency-removed');
+        }
+        for (const handoff of remaining.handoffs) {
+          if (handoff.status === 'superseded') continue;
+          if (handoff.taskId === taskId || handoff.resolvedTaskId === taskId) {
+            handoff.status = 'superseded';
+            changed = true;
+          } else if (handoff.matchIds?.includes(taskId)) {
+            handoff.matchIds = handoff.matchIds.filter(id => id !== taskId);
+            changed = true;
+          }
+        }
+        if (changed) remaining.revision++;
+      }
+      // Keep incoming email and past decisions. Never reapply an old proposal
+      // automatically or silently turn an update into a new task.
+      entry(actor, `deleted ${task.title}`, '', 'deleted');
+      save();
+      return { id: task.id };
+    }
     function updateTask(taskId, patch, actor = "jack") {
       actorId(actor);
       const task = taskById(taskId);
@@ -1272,7 +1304,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { rescheduleEvent, getState, taskCompletionStates: () => new Map(state.tasks.map(task => [task.id, task.status==='done'&&(!task.requiresVerification||!!task.verifiedAt)])), getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, reviewCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, taskCompletionStates: () => new Map(state.tasks.map(task => [task.id, task.status==='done'&&(!task.requiresVerification||!!task.verifiedAt)])), getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, deleteTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, reviewCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

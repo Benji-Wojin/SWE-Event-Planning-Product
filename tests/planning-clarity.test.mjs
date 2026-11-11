@@ -109,6 +109,34 @@ test('related links never gate readiness or force a required sequence',()=>{
   assert.match(graphMarkup(tasks,tasks),/map-edge-related/);
   tasks[0].owner='maya';assert.match(graphMarkup(tasks,tasks,'',[{id:'maya',name:'Maya Example'}]),/Maya Example/);
 });
+test('link map aligns paired tasks and separates unrelated groups even with interleaved input',()=>{
+  const tasks=[make('solo'),make('a'),make('b'),make('b-next',[link('b')]),make('a-next',[link('a')]),make('a-related',[link('a','related')])];
+  const {positions}=graph(tasks);
+  assert.ok(Math.abs(positions.get('a').y-positions.get('a-next').y)<166);
+  assert.equal(positions.get('b').y,positions.get('b-next').y);
+  assert.ok(positions.get('b').y>positions.get('a-related').y);
+  assert.ok(positions.get('solo').y>positions.get('b').y);
+  assert.deepEqual(graph(tasks).positions,positions);
+});
+test('deleting a task requires the organizer and exact revision, removes links, and preserves other tasks',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const task=store.addTask({title:'Fictional duplicate to delete',owner:'maya'});
+  const other=store.addTask({title:'Fictional dependent'});
+  store.addDependency(other.id,{taskId:task.id,reason:'Needs a decision',kind:'dependency'});
+  store.saveDraft(task.id,'Private fictional follow-up');
+  const before=store.getState(), current=before.tasks.find(t=>t.id===task.id);
+  assert.throws(()=>store.deleteTask(task.id,current.revision,'maya'),/Only the organizer/);
+  assert.throws(()=>store.deleteTask(task.id,current.revision+1),/task changed/);
+  assert.deepEqual(store.getState(),before);
+  assert.deepEqual(store.deleteTask(task.id,current.revision),{id:task.id});
+  const after=store.getState(), remaining=after.tasks.find(t=>t.id===other.id);
+  assert.ok(!after.tasks.some(t=>t.id===task.id));
+  assert.ok(!after.drafts.some(draft=>draft.taskId===task.id));
+  assert.equal(remaining.status,'todo');
+  assert.equal(remaining.dependencies.length,0);
+  assert.match(remaining.comments.at(-1).text,/deleted task/);
+  assert.ok(after.activity.some(entry=>entry.type==='deleted'&&entry.taskId===''));
+});
 test('readiness accounts for verification, unavailable links and explicit resume',()=>{
   const approval={...make('approval',[],'done'),requiresVerification:true};
   const task=make('finish',[link('approval')],'blocked');

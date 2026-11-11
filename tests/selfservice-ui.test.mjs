@@ -135,6 +135,26 @@ test('in-app invite is available without email delivery and no Gmail setup is of
     delete globalThis.__selfserviceState;
   }
 });
+test('guided invite defaults to in-app delivery even with a connected sender', async () => {
+  const previous = globalThis.fetch;
+  const team = { name:'QA event', projectId:'p_test', owner:{name:'Owner',email:'qa@example.com'},
+    members:[], invitations:[], sender:{configured:true,connected:true,email:'invites@weft.example'} };
+  try {
+    const {tree,state}=render(TeamClient,{projectId:'p_test',guided:true},[team,'','person@example.com',false,'']);
+    assert.equal(tree.find(n=>n.type==='input'&&n.props.type==='checkbox').props.checked,false);
+    globalThis.fetch=async (_url,options)=>{
+      const input=JSON.parse(options.body);
+      assert.equal(input.action,'invite');
+      assert.equal(input.senderEmail,undefined);
+      return Response.json(team);
+    };
+    await tree.find(n=>n.type==='form').props.onSubmit({preventDefault(){}});
+    assert.match(state[4],/accept it on their Projects page/);
+  } finally {
+    globalThis.fetch=previous;
+    delete globalThis.__selfserviceState;
+  }
+});
 test('inviting sends email by default and reports the durable delivery result', async () => {
   const previous = globalThis.fetch;
   const team = { name: 'QA event', projectId: 'p_test', owner: {name:'Owner',email:'qa@example.com'},

@@ -210,6 +210,22 @@ async function setup() {
 }
 const isCommit = (project, sql, args) =>
   sql.startsWith('UPDATE workspaces SET data=') && args[1] === project;
+test('task deletion is project-owner-only and cannot delete from a stale review', async () => {
+  const {project,actor}=await setup();
+  const task=(await save(project,organizer,'addTask',[{title:'Fictional duplicate',owner:actor}])).result;
+  const dependent=(await save(project,organizer,'addTask',[{title:'Fictional check'}])).result;
+  await save(project,organizer,'addDependency',[dependent.id,{taskId:task.id,kind:'dependency',reason:'Check follows the duplicate.'}]);
+  const {revision}=await read(project), before=stored(project);
+  assert.equal((await mutate(project,teammate,'deleteTask',[task.id,task.revision],revision)).status,403);
+  assert.equal((await mutate(project,organizer,'deleteTask',[task.id,task.revision],revision-1)).status,409);
+  assert.equal((await mutate(project,organizer,'deleteTask',[task.id,task.revision+1],revision)).status,400);
+  assert.deepEqual(stored(project),before);
+  const response=await mutate(project,organizer,'deleteTask',[task.id,task.revision],revision);
+  assert.equal(response.status,200,await response.clone().text());
+  const next=await read(project,teammate);
+  assert.equal(next.revision,revision+1);
+  assert.deepEqual(next.state.tasks.map(t=>[t.id,t.status,t.dependencies.length]),[[dependent.id,'todo',0]]);
+});
 test('event reschedule uses real project guards, stale CAS and commit-time organizer authority',async()=>{
   const {project,actor}=await setup();
   await save(project,organizer,'completeSetup',[{date:'2026-10-30'}]);

@@ -59,8 +59,8 @@
       return (
         money(value.known) +
         (value.unknown
-          ? `<small>${value.unknown} amount${value.unknown === 1 ? '' : 's'} not recorded · partial total</small>`
-          : '<small>All included amounts recorded</small>')
+          ? `<small>Partial · ${value.unknown} missing</small>`
+          : '')
       );
     }
     function render() {
@@ -89,22 +89,11 @@
           (row) => Boolean(row.archivedAt) === archived,
         ),
         workspace = getWorkspace();
-      host.innerHTML = `<div class="page-heading"><h1>Budget <span class="chip">Optional</span></h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-budget-refresh>Refresh</button>${admin ? '<button class="btn btn-secondary" data-budget-settings>' + (budget.enabled ? 'Budget settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">A manual record shared with project members. No payments, approvals, bookings or task completions are executed. Do not enter card numbers, bank details or private booking references.</p>${
+      const targetNote = budget.target === null ? 'No target set' : totals.remaining === null ? 'Remaining budget unknown' : totals.remaining === 0 ? 'On target' : totals.remaining > 0 ? `${money(totals.remaining)} below target` : `${money(-totals.remaining)} over target`;
+      host.innerHTML = `<div class="page-heading"><h1>Budget</h1><div class="header-actions">${admin ? '<button class="btn ' + (budget.enabled ? 'btn-secondary' : 'btn-primary') + '" data-budget-settings>' + (budget.enabled ? 'Settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">Shared with your project. Weft tracks amounts you enter and never moves money.</p>${
         !budget.enabled
           ? `<section class="panel"><h2>${budget.items.length ? 'Budget tracking is off' : 'Keep costs in view, when you need to'}</h2><p>${budget.items.length ? 'Saved costs are preserved. The organizer can enable tracking again in Budget settings.' : 'Track estimates, commitments and payments you record yourself. Skip this page if your event does not need a budget.'}</p>${!admin ? '<p class="muted">Only the organizer can enable or edit this tracker.</p>' : ''}</section>`
-          : `<div class="budget-totals">${[
-              ['estimate', 'Estimates'],
-              ['committed', 'Committed'],
-              ['paid', 'Payments recorded'],
-              ['forecast', 'Expected total'],
-            ]
-              .map(
-                ([key, label]) =>
-                  `<section class="panel"><h2>${label}</h2><strong>${subtotal(totals[key])}</strong></section>`,
-              )
-              .join(
-                '',
-              )}</div><section class="panel section-gap"><h2>Target ${money(budget.target)}</h2><p>${budget.target === null ? 'No target set.' : totals.remaining === null ? 'Remaining budget is unknown until every expected cost is recorded.' : totals.remaining >= 0 ? `${money(totals.remaining)} below target` : `${money(-totals.remaining)} over target`}</p><details data-budget-details="totals"><summary>How totals work</summary><p>Estimates, commitments and recorded payments are separate—not added together. Expected total uses each cost’s commitment if recorded, otherwise its estimate, and never less than its recorded payment. Cancelled costs contribute only recorded payments. Archived costs still count. Blank is unknown; enter 0 only when zero is known. No currency conversions.</p></details></section><section class="panel section-gap"><div class="toolbar"><h2>${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
+          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${subtotal(totals.forecast)}</strong></section><section class="panel"><h2>Paid so far</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2>${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
               rows.length
                 ? `<ul class="budget-items">${rows
                     .map((row) => {
@@ -114,23 +103,22 @@
                         owner = workspace.members.find(
                           (member) => member.id === row.owner,
                         );
-                      return `<li><div class="budget-item-heading"><h3>${h(row.title)}</h3><span class="chip">${row.status === 'cancelled' ? 'Cancelled' : 'Active'}</span>${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
+                      const metadata=[owner?.name || (row.owner ? 'Former / unavailable member' : ''),row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
+                      return `<li><div class="budget-item-heading"><h3>${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
                         ['estimate', 'Estimate'],
                         ['committed', 'Committed'],
-                        ['paid', 'Payment recorded'],
+                        ['paid', 'Paid'],
                       ]
                         .map(
                           ([key, label]) =>
                             `<div><dt>${label}</dt><dd>${money(row[key])}</dd></div>`,
                         )
-                        .join(
-                          '',
-                        )}</dl><p class="muted">${h(owner?.name || (row.owner ? 'Former / unavailable member' : 'No owner'))}${row.dueDate ? ' · Due ' + h(row.dueDate) : ''}</p>${task ? `<button class="text-button" data-action="task" data-id="${h(task.id)}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : '<p class="muted">No task linked</p>'}<p class="budget-audit muted">Updated by ${h(row.updatedName)} · ${h(new Date(row.updatedAt).toLocaleString())}</p></li>`;
+                        .join('')}</dl>${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button class="text-button" data-action="task" data-id="${h(task.id)}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
                     })
                     .join('')}</ul>`
                 : `<p class="notice">${archived ? 'No archived costs.' : 'No costs yet. Add a quote, deposit or other expected expense.'}</p>`
             }</section>`
-      }<section class="panel section-gap"><details data-budget-details="history"><summary>Recent budget changes (${budget.history.length})</summary><p class="muted">Latest 100 changes. This is a planning record, not a bank statement.</p><ol class="budget-history">${
+      }<section class="panel section-gap budget-reference">${budget.enabled ? `<details data-budget-details="totals"><summary>How totals work</summary><p>Estimates ${subtotal(totals.estimate)} · Commitments ${subtotal(totals.committed)}</p><p>Expected total uses each committed amount or, if blank, its estimate. It is never less than what’s recorded as paid. Cancelled costs contribute only recorded payments. Archived costs still count. Blank is unknown, not zero.</p></details>` : ''}<details data-budget-details="history"><summary>Recent budget changes (${budget.history.length})</summary><p class="muted">Latest 100 changes. This is a planning record, not a bank statement.</p><ol class="budget-history">${
         budget.history
           .slice()
           .reverse()

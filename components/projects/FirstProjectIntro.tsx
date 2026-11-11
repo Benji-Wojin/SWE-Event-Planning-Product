@@ -2,16 +2,16 @@ import { Button } from '@/components/ui/button';
 
 const firstSteps = [
   {
-    title: 'Give the idea a home',
-    copy: 'Create a private project for your event. A name is enough to start; dates and location can come later.',
+    title: 'Create your project',
+    copy: 'Give your event a name. The date, location and other details can come later.',
   },
   {
-    title: 'Find the next few steps',
-    copy: 'Add tasks yourself, or choose an optional AI draft. You review every proposal before it becomes part of the plan.',
+    title: 'Invite a teammate',
+    copy: 'Invite someone using the email they sign in with. They can accept from their Projects page.',
   },
   {
-    title: 'Bring your people in',
-    copy: 'Invite your team, give work clear owners and keep everyone connected through updates and a shared schedule.',
+    title: 'Add your first task',
+    copy: 'Pick one thing that needs doing and give it an owner. Start from scratch or use a starter checklist.',
   },
 ];
 

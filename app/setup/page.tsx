@@ -27,7 +27,7 @@ async function SignedInSetup({projectId}:{projectId?:string}) {
     </header>
     {!projectId && <p className="mb-3 text-xs font-medium uppercase tracking-widest text-primary">Your first step · Give your event a home</p>}
     <h1 className="mb-4 text-3xl font-semibold">{projectId ? 'Project settings' : 'What are you bringing people together for?'}</h1>
-    {!projectId && <div className="mb-7 space-y-3 text-sm leading-7 text-muted-foreground"><p>Start with a name. Add what you know, leave optional details for later, and come back whenever things change.</p><p className="rounded-lg border bg-muted px-4 py-3"><strong className="text-foreground">What happens next?</strong> You can build a task list yourself or review an optional AI draft. Your project stays private until you invite your team. Creating it does not call AI or send invitations.</p></div>}
+    {!projectId && <p className="mb-7 text-sm leading-7 text-muted-foreground">Start with a name. Add what you know now, then invite someone to help or open your private project and add the first task. Creating it does not call AI or send invitations.</p>}
     <ProjectSetup projectId={projectId} />
   </main>;
 }
