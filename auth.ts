@@ -1,5 +1,6 @@
 import { getServerSession, type NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
+import { SIGN_IN_PATH } from '@/lib/auth-paths';
 
 export type WeftUser = {
   userId: string;
@@ -49,7 +50,7 @@ export function safeRelativeReturnPath(value: unknown): string {
     const url = new URL(value, 'https://app.local');
     const decodedPath = decodeURIComponent(url.pathname).replace(/\/+$/, '');
     if (url.origin !== 'https://app.local' ||
-      ['/signin-with-chatgpt', '/signout-with-chatgpt', '/callback'].includes(decodedPath) ||
+      [SIGN_IN_PATH, '/signin-with-chatgpt', '/signout-with-chatgpt', '/callback'].includes(decodedPath) ||
       decodedPath === '/api/auth' || decodedPath.startsWith('/api/auth/')) return '/';
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
@@ -90,7 +91,7 @@ export function getAuthOptions(): NextAuthOptions {
       checks: ['pkce', 'state'],
     })],
     session: { strategy: 'jwt', maxAge: 7 * 24 * 60 * 60 },
-    pages: { signIn: '/signin-with-chatgpt', error: '/signin-with-chatgpt' },
+    pages: { signIn: SIGN_IN_PATH, error: SIGN_IN_PATH },
     callbacks: {
       async signIn({ account, profile }) {
         return account?.provider === 'google' && Boolean(googleIdentity(profile));

@@ -4,10 +4,8 @@
 import { useEffect, useState } from 'react';
 import { accountRequest } from '@/lib/account-request';
 import { PrivacyLinks } from '@/components/privacy-links';
-export function AccountClient() {
+export function AccountClient({name,email}:{name:string;email:string}) {
   const [account, setAccount] = useState<{
-      name: string;
-      email: string;
       organizer: boolean;
     } | null>(null),
     [error, setError] = useState('');
@@ -18,29 +16,19 @@ export function AccountClient() {
   }, []);
   return (
     <section className="space-y-5 rounded-xl border bg-card p-5">
+      <div>
+        <p className="break-words text-lg font-medium">{name}</p>
+        <dl className="mt-3 text-sm">
+          <dt className="font-medium">Connected Google email</dt>
+          <dd className="mt-1 break-all text-muted-foreground">{email}</dd>
+        </dl>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        This is the address you use to sign in. Project access is managed by each organizer.
+      </p>
       {error && <p role="alert">{error}</p>}
-      {!account && !error && (
-        <output className="block">Loading account…</output>
-      )}
-      {account && (
-        <>
-          <div>
-            <p className="break-words text-lg font-medium">{account.name}</p>
-            <p className="break-all text-sm text-muted-foreground">
-              {account.email}
-            </p>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Signed in with Google. Project access is managed by each organizer.
-          </p>
-          {account.organizer && (
-            <div>
-              <a className="underline" href="/settings">
-                Account settings
-              </a>
-            </div>
-          )}
-        </>
+      {account?.organizer && (
+        <div><a className="underline" href="/settings">Account settings</a></div>
       )}
       <div>
         <a href="/signout-with-chatgpt?return_to=%2F" className="underline">

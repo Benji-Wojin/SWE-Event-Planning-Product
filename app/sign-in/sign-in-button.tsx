@@ -19,8 +19,10 @@ export function SignInButton({ returnTo }: { returnTo: string }) {
     }
   }
   return <>
-    <button type="button" disabled={busy} onClick={() => void beginSignIn()} className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60">
-      {busy ? 'Connecting…' : 'Continue with Google'}
+    <button type="button" disabled={busy} aria-busy={busy} onClick={() => void beginSignIn()}
+      className="flex min-h-11 w-full items-center justify-center gap-2.5 rounded-md border border-[#747775] bg-white px-3 py-2 text-sm font-medium text-[#1f1f1f] hover:bg-[#f2f2f2] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring disabled:opacity-60">
+      <span aria-hidden="true" className="size-5 shrink-0 bg-[url('/google-signin-mark.svg')] bg-contain bg-no-repeat" />
+      <span>{busy ? 'Connecting…' : 'Continue with Google'}</span>
     </button>
     {error && <p role="alert" className="mt-3 text-sm text-destructive">Couldn’t connect. Please try again.</p>}
   </>;

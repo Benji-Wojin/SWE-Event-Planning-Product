@@ -24,7 +24,7 @@ test('public landing introduces the product with real paths and an explicitly fi
 test('private-beta marketing preserves approval-only access, while signed-in denial stays clear', () => {
   const html = renderToStaticMarkup(createElement(PrivateBeta));
   assert.match(html, /Private beta/); assert.match(html, /approved beta testers/);
-  assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2F"/);
+  assert.match(html, /href="\/sign-in\?return_to=%2F"/);
   assert.doesNotMatch(html, /href="\/signup"|href="\/setup"/);
   assert.match(html, /mailto:support@weftplan.com\?subject=Weft%20beta%20access/);
   const denied = renderToStaticMarkup(createElement(PrivateBeta, { signedIn: true }));

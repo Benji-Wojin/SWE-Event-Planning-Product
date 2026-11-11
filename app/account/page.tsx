@@ -5,14 +5,14 @@ import { HttpError, isAppOwner, principal } from '@/lib/security';
 import Link from 'next/link';
 export const dynamic = 'force-dynamic';
 export default async function Account() {
-  await requireChatGPTUser('/account');
+  const identity = await requireChatGPTUser('/account');
   const member = await principal().catch((error: unknown) => {
     if (error instanceof HttpError && error.status === 403) return null;
     throw error;
   });
   return (
     <AccountLayout title="Account">
-      <AccountClient />
+      <AccountClient name={identity.displayName} email={identity.email} />
       {member && (
         <section aria-label="Onboarding" className="mt-5 rounded-xl border bg-card p-5 text-sm">
           {isAppOwner(member) ? (

@@ -5,7 +5,7 @@
   const projectId = params.get('project') ?? 'main';
   const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
   const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
-  const signIn = '/signin-with-chatgpt?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
+  const signIn = '/sign-in?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
   let boot = document.getElementById('workspaceBoot');
   const shell = document.getElementById('appShell');
   // An already-open document may load the newer script during a release.

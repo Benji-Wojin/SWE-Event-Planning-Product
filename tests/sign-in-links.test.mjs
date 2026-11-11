@@ -5,18 +5,19 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
-let links,button;
+let links,button,account;
 before(async()=>{
   const directory=mkdtempSync(join(tmpdir(),'weft-signin-links-'));
-  await build({entryPoints:{links:'lib/workspace-return.ts',button:'app/signin-with-chatgpt/sign-in-button.tsx'},outdir:directory,bundle:true,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'sign-in-test',setup(b){
+  await build({entryPoints:{links:'lib/workspace-return.ts',button:'app/sign-in/sign-in-button.tsx',account:'app/account/account-client.tsx'},outdir:directory,bundle:true,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'sign-in-test',setup(b){
     b.onResolve({filter:/^(react(?:\/jsx-runtime)?|next-auth\/react)$/},args=>({path:args.path,namespace:'mock'}));
     b.onLoad({filter:/.*/,namespace:'mock'},args=>({loader:'js',contents:{
-      react:'export const useState = value => [value, () => {}];',
+      react:'export const useState = value => [value, () => {}]; export function useEffect(){}',
       'react/jsx-runtime':'export const Fragment="fragment"; export const jsx=(type,props)=>({type,props}); export const jsxs=jsx;',
       'next-auth/react':'export async function signIn(provider,options){globalThis.__signInLink={provider,options};}',
     }[args.path]}));
   }}]});
   links=await import(pathToFileURL(join(directory,'links.js')));button=await import(pathToFileURL(join(directory,'button.js')));
+  account=await import(pathToFileURL(join(directory,'account.js')));
 });
 test('workspace return paths retain project or demo identity and recognized section',()=>{
   for(const section of ['overview','tasks','inbox','updates','team','info','timeline','memory','details'])
@@ -35,8 +36,19 @@ test('actual sign-in button passes section callback to the existing Google SDK f
   try {
     globalThis.window={location:{hash:'#timeline'}};
     const rendered=button.SignInButton({returnTo:'/project?project=p_test'});
+    const [logo,label]=rendered.props.children[0].props.children;
+    assert.equal(logo.props['aria-hidden'],'true');
+    assert.match(logo.props.className,/google-signin-mark\.svg/);
+    assert.equal(label.props.children,'Continue with Google');
     rendered.props.children[0].props.onClick();
     await Promise.resolve();
     assert.deepEqual(globalThis.__signInLink,{provider:'google',options:{callbackUrl:'/project?project=p_test#timeline'}});
   } finally {globalThis.window=prior;delete globalThis.__signInLink;}
+});
+test('the authenticated identity’s connected email is labeled on the initial account render',()=>{
+  const output=account.AccountClient({name:'Fictional Planner',email:'planner@example.test'});
+  const walk=node=>Array.isArray(node)?node.flatMap(walk):node&&typeof node==='object'?[node,...walk(node.props.children)]:[];
+  const nodes=walk(output);
+  assert.equal(nodes.find(node=>node.type==='dt').props.children,'Connected Google email');
+  assert.equal(nodes.find(node=>node.type==='dd').props.children,'planner@example.test');
 });

@@ -38,7 +38,7 @@ test('privacy and support links are reachable from public and connected-account 
   const links = await readFile('components/privacy-links.tsx', 'utf8');
   assert.match(links, /href="mailto:support@weftplan\.com"/);
   assert.doesNotMatch(links, /gathertemporary@gmail\.com/);
-  for (const file of ['components/welcome.tsx', 'app/signup/page.tsx', 'app/signin-with-chatgpt/page.tsx', 'app/settings/settings-client.tsx', 'app/account/account-client.tsx']) {
+  for (const file of ['components/welcome.tsx', 'app/signup/page.tsx', 'app/sign-in/page.tsx', 'app/settings/settings-client.tsx', 'app/account/account-client.tsx']) {
     assert.match(await readFile(file, 'utf8'), /<PrivacyLinks\s*\/>/, file);
   }
 });

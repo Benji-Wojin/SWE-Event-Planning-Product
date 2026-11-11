@@ -21,7 +21,7 @@ const steps = [
 ];
 
 export function Welcome({ beta = false }: { beta?: boolean }) {
-  const entry = beta ? '/signin-with-chatgpt?return_to=%2F' : '/signup';
+  const entry = beta ? '/sign-in?return_to=%2F' : '/signup';
   return (
     <main className="weft-welcome">
       <a className="welcome-skip" href="#welcome-main">
@@ -41,7 +41,7 @@ export function Welcome({ beta = false }: { beta?: boolean }) {
           <ThemeToggle />
           <a
             className="welcome-signin"
-            href={beta ? entry : '/signin-with-chatgpt'}
+            href={beta ? entry : '/sign-in'}
           >
             {beta ? 'Tester sign in' : 'Sign in'}
           </a>

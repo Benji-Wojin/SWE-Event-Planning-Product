@@ -578,7 +578,7 @@ test('browser OAuth failures have private recovery pages while API callers retai
   response = await gmailApi.GET(new Request(url, { headers: { Accept: 'text/html' } }));
   assert.equal(response.status, 401);
   html = await response.text();
-  assert.match(html, /href="\/signin-with-chatgpt\?return_to=%2Fsettings"/);
+  assert.match(html, /href="\/sign-in\?return_to=%2Fsettings"/);
   assert.doesNotMatch(html, /DO-NOT-REFLECT|expired-fixture/);
   response = await gmailApi.GET(new Request('https://gather.example/api/gmail/status', { headers: { Accept: 'text/html' } }));
   assert.equal(response.status, 401);

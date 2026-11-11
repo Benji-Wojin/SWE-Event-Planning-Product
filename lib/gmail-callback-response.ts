@@ -7,7 +7,7 @@ const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => ({
 export function gmailCallbackError(message: string, status: number, recoveryPath: string, kind: 'import' | 'sender' = 'import') {
   const signedOut = status === 401;
   const href = signedOut
-    ? '/signin-with-chatgpt?return_to=' + encodeURIComponent(recoveryPath)
+    ? '/sign-in?return_to=' + encodeURIComponent(recoveryPath)
     : recoveryPath;
   return new Response(`<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

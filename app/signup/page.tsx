@@ -5,7 +5,8 @@ import {
 } from '@/auth';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { PrivacyLinks } from '@/components/privacy-links';
-import { SignInButton } from '../signin-with-chatgpt/sign-in-button';
+import { SignInButton } from '../sign-in/sign-in-button';
+import { SIGN_IN_PATH } from '@/lib/auth-paths';
 import { CreateAccountButton } from './signup-client';
 import { hasBetaAccess, privateBetaEnabled } from '@/lib/beta-access';
 import { PrivateBeta } from '@/components/private-beta';
@@ -71,7 +72,7 @@ export default async function SignUpPage({
             <a
               className="underline"
               href={
-                '/signin-with-chatgpt?return_to=' +
+                SIGN_IN_PATH+'?return_to=' +
                 encodeURIComponent(destination)
               }
             >

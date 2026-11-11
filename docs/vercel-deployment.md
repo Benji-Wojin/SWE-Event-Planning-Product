@@ -76,7 +76,7 @@ For example, the sign-in callback would be `https://app.example.com/api/auth/cal
 4. Connect the organizer's import mailbox and, separately, authorize invitation sending. These can use the same Gmail address or different addresses; Weft keeps separate consent flows and encrypted connections. Disconnecting either feature in Weft removes only its stored connection. Removing Weft's access at Google can revoke both grants. Existing Sites OAuth grants are not imported by this runbook; reconnect on the new deployment. Google consent is distinct from Weft's project-selection and Groq-processing consent.
 5. Invite only an approved test recipient, using their Google sign-in email. If Deployment Protection is enabled, authorize that tester at the Vercel layer separately. A Weft invitation cannot bypass platform protection.
 
-The legacy `/signin-with-chatgpt` and `/signout-with-chatgpt` URLs remain compatibility aliases for the Google flow. Logout requires a confirmation click and a CSRF-protected POST; visiting its URL does not log the user out.
+Weft’s sign-in page is `/sign-in`. The legacy `/signin-with-chatgpt` address redirects there, preserving safe return links. The Google OAuth callback is unchanged. The existing `/signout-with-chatgpt` URL requires confirmation and a CSRF-protected POST; visiting it does not log the user out.
 
 ## Initialize an isolated database
 

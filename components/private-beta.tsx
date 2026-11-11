@@ -24,7 +24,7 @@ export function PrivateBeta({ signedIn = false }: { signedIn?: boolean }) {
           href={
             signedIn
               ? '/signout-with-chatgpt?return_to=%2Fbeta'
-              : '/signin-with-chatgpt?return_to=%2F'
+              : '/sign-in?return_to=%2F'
           }
         >
           {signedIn ? 'Use another account' : 'Tester sign in'}

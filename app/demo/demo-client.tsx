@@ -112,7 +112,7 @@ export function DemoWorkspace({ actor }: { actor: string }) {
       </section>
       <div className="demo-message" role="status" hidden={!notice}>{notice}</div>
       <details className="demo-walkthrough"><summary>Demo instructions</summary><ol><li>Open Jules and Jack in separate tabs. In Jules’s view, open “Confirm final bus count” and report it complete.</li><li>In Jack’s view, open the task under “Needs verification” and verify it. Both views show the same saved result.</li><li>As Jack, assign “Confirm wayfinding signs” to Dev. Open Dev’s view to accept it. Switch to Maya to show her different task list.</li><li>Compare Jack’s sample booking details with the teammate view. Restart the demo as Jack when you’re ready to present again.</li></ol></details>
-      {!snapshot ? <div className="demo-loading"><p>{syncState}</p><Button variant="outline" onClick={() => void refresh()}>Retry connection</Button><a href="/signin-with-chatgpt?return_to=%2Fdemo" target="_top">Sign in again</a></div> : <div className="demo-workspace">
+      {!snapshot ? <div className="demo-loading"><p>{syncState}</p><Button variant="outline" onClick={() => void refresh()}>Retry connection</Button><a href="/sign-in?return_to=%2Fdemo" target="_top">Sign in again</a></div> : <div className="demo-workspace">
         <section className="demo-work-panel">
           <div className="demo-panel-heading"><div><span className={'demo-avatar small ' + actor}>{profile.initials}</span><h3>{profile.name.split(' ')[0]}’s workspace</h3></div><span className="demo-role">{admin ? 'Organizer access' : 'Teammate access'}</span></div>
           <Tabs value={tab} onValueChange={value => setTab(String(value))}>

@@ -6,13 +6,14 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
-let auth, compatibility, route;
+let auth, compatibility, route, legacySignIn;
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'weft-auth-test-'));
   await build({
     entryPoints: {
       auth: 'auth.ts', compatibility: 'app/chatgpt-auth.ts',
       route: 'app/api/auth/[...nextauth]/route.ts',
+      legacySignIn: 'app/signin-with-chatgpt/page.tsx',
     },
     outdir: directory, bundle: true, platform: 'node', format: 'esm',
     plugins: [{ name: 'auth-test-runtime', setup(b) {
@@ -41,7 +42,7 @@ before(async () => {
       }[args.path] }));
     } }],
   });
-  [auth, compatibility, route] = await Promise.all(['auth', 'compatibility', 'route'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
+  [auth, compatibility, route, legacySignIn] = await Promise.all(['auth', 'compatibility', 'route', 'legacySignIn'].map(name => import(pathToFileURL(join(directory, name + '.js')))));
 });
 
 beforeEach(() => {
@@ -146,8 +147,22 @@ test('return paths reject open redirects, control characters and auth loops', ()
     assert.equal(auth.safeRelativeReturnPath(value), '/', String(value));
   }
   assert.equal(auth.safeRelativeReturnPath('/project?project=test#tasks'), '/project?project=test#tasks');
-  assert.equal(compatibility.chatGPTSignInPath('/project?project=test'), '/signin-with-chatgpt?return_to=%2Fproject%3Fproject%3Dtest');
+  assert.equal(compatibility.chatGPTSignInPath('/project?project=test'), '/sign-in?return_to=%2Fproject%3Fproject%3Dtest');
+  assert.equal(auth.safeRelativeReturnPath('/sign-in?return_to=/project'),'/');
+  assert.equal(auth.safeRelativeReturnPath('/%73ign-in/'),'/');
+  assert.deepEqual(auth.getAuthOptions().pages,{signIn:'/sign-in',error:'/sign-in'});
   assert.equal(compatibility.chatGPTSignOutPath('//evil.example'), '/signout-with-chatgpt?return_to=%2F');
+});
+
+test('legacy sign-in bookmarks redirect to the new Weft route with only safe return state',async()=>{
+  const visit=params=>legacySignIn.default({searchParams:Promise.resolve(params)});
+  await assert.rejects(visit({}),error=>error.path==='/sign-in');
+  await assert.rejects(visit({return_to:'/project?project=main#timeline',error:'AccessDenied',extra:'ignore'}),error=>
+    error.path==='/sign-in?return_to=%2Fproject%3Fproject%3Dmain%23timeline&error=1');
+  await assert.rejects(visit({callbackUrl:'https://evil.example'}),error=>
+    error.path==='/sign-in?callbackUrl=https%3A%2F%2Fweft.example%2F');
+  await assert.rejects(visit({return_to:'/sign-in',callbackUrl:'https://evil.example'}),error=>
+    error.path==='/sign-in?return_to=%2F');
 });
 
 test('OAuth redirects ignore supplied base URLs and use only configured origin', async () => {
