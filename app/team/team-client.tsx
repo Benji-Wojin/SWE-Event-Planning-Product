@@ -229,7 +229,7 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
             {guided && <p className="text-sm font-medium text-primary">Getting started · Invite a teammate</p>}
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <p id="invite-help" className="text-sm text-muted-foreground">
-              Use the email they’ll sign in with. The invitation appears on their Projects page and expires in 7 days.
+              Use the email they’ll sign in with. Once they have access to Weft, they can accept the invitation from Projects. It expires in 7 days.
               {!team.sender.connected && ' In-app invitations still work without email delivery.'}
             </p>
             <form
@@ -249,7 +249,7 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
                   setEmail('');
                   requestId.current = '';
                   if (!sendEmail) {
-                    setNotice('In-app invitation created. No email sent. Ask your teammate to open Weft and accept it on their Projects page.');
+                    setNotice('In-app invitation created. No email sent. Once your teammate has access to Weft, they can accept it on their Projects page.');
                   } else if (invitation?.delivery.status === 'sent') {
                     setNotice('Invitation emailed. The email service accepted it; they can also accept in Weft.');
                   } else if (invitation?.delivery.status === 'sending') {
@@ -285,7 +285,7 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
               {team.sender.connected && <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={emailDelivery} disabled={busy}
                   onChange={e => setEmailDelivery(e.target.checked)} />
-                Send an invitation email
+                Send an invitation email from {team.sender.email}
               </label>}
             </form>
             {guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}

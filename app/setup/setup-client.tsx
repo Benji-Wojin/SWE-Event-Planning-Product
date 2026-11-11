@@ -99,7 +99,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
     return <Card><CardContent className="space-y-4 px-5 sm:px-7">
       <p className="text-sm font-medium text-primary">Project created · Next step</p>
       <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">Bring someone into the plan</h2>
-      <p className="text-muted-foreground">Invite a teammate to {form?.name.trim()}. They can accept in Weft and help you keep track of what needs doing.</p>
+      <p className="text-muted-foreground">Invite a teammate to {form?.name.trim()}. Once they have access to Weft, they can join and help you keep track of what needs doing.</p>
       <div className="flex flex-wrap gap-3">
         <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>
         <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>Open project</a>

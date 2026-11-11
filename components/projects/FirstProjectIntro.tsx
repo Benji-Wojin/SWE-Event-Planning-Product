@@ -7,7 +7,7 @@ const firstSteps = [
   },
   {
     title: 'Invite a teammate',
-    copy: 'Invite someone using the email they sign in with. They can accept from their Projects page.',
+    copy: 'Invite someone using the email they sign in with. Once they have access to Weft, they can accept from Projects.',
   },
   {
     title: 'Add your first task',
