@@ -52,7 +52,7 @@
     const signal=message.suggested?.signal;
     let label='Review update',next='Review the proposed changes before updating the task.';
     if(message.ignoredAt){label='Set aside';next='No changes applied from this email.';}
-    else if(message.appliedTaskId){label='Accepted';next='This update is saved. Open the task for its current status.';}
+    else if(message.appliedTaskId){label='Accepted';next=taskFor(message,state.tasks)?'This update is saved. Open the task for its current status.':'This update is saved in history. Its task is no longer available.';}
     else if(outdated){label='Refresh needed';next='Refresh the suggestion to use the updated email checks before reviewing changes.';}
     else if(historical){label='Older update';next='A newer email exists. Check the source history before applying this update.';}
     else if(stale){label='Task changed';next='Refresh the comparison before deciding what to apply.';}
