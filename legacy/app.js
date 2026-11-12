@@ -251,10 +251,13 @@
   function acceptanceCandidates(tasks) {
     return tasks.filter(task=>task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
   }
-  function acceptanceDialog() {
-    const tasks=acceptanceCandidates(filteredTasks(store.getState()));
+  function acceptanceDialog(fromEventReview=false) {
+    if(window.GatherAccessLost)return;
+    const state=store.getState();
+    const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
     if(!tasks.length){toast('No unaccepted open tasks in this view.');return;}
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from the current view are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites. Open any task first if you need to clarify its scope.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}"><span><strong>${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(store.getState().event.timeZone)}</span>`:''}<span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    const source=fromEventReview?'this event review':'the current view';
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites. Open any task first if you need to clarify its scope.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}"><span><strong>${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}</span>`:task.eventActivity===true?'<span>Planned activity · start time not set</span>':''}<span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
@@ -679,7 +682,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -747,6 +750,7 @@
       if(action==='ignore-message'){store.ignoreMessage(id,ui.actor);ui.messageId='';render();toast('Set aside. The plan was not changed.');}
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Responsibility accepted.');}
       if(action==='review-acceptance'&&!window.GatherAccessLost)acceptanceDialog();
+      if(action==='review-event-acceptance'&&ui.dialogKind==='before-event-review')acceptanceDialog(true);
       if(action==='review-assignments')assignmentDialog();
       if(action==='review-event-assignments'&&ui.dialogKind==='before-event-review'&&['unassigned','owner-unavailable'].includes(id))assignmentDialog(id);
       if(action==='assignment-select'){
@@ -835,7 +839,10 @@
       }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
-        store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);focusAfterAcceptance();
+        store.acceptTasks(data.selections,ui.actor);
+        if(form.dataset.returnTo==='event-review'){render();beforeEventReview();}
+        else{closeDialog();render();focusAfterAcceptance();}
+        toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);
       }
       if(form.id==='newTaskForm'){
         const activity=form.dataset.scheduled==='true';

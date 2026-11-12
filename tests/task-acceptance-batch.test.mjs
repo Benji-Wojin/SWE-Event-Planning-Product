@@ -192,6 +192,7 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
       owner: 'maya',
       status: 'blocked',
       dueDate: '',
+      eventActivity: true,
     },
     { id: 'other', owner: 'dev', status: 'todo' },
     { id: 'accepted', owner: 'maya', acceptedAt: 'date', status: 'todo' },
@@ -202,6 +203,11 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   let markup;
   const context = vm.createContext({
     ui: { actor: 'maya' },
+    window: {GatherAccessLost:false},
+    eventReviewScope: () => ({mine:false,actor:'maya'}),
+    schedule: {reviewAcceptanceTasks:(_state,scope)=>{
+      assert.equal(scope.actor,'maya');return tasks.filter(task=>task.id==='a');
+    }},
     store: { getState: () => ({ event: { timeZone: 'UTC' }, tasks }) },
     filteredTasks: (s) => s.tasks,
     h: (value) =>
@@ -230,6 +236,11 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   assert.match(markup, /Nothing is selected for you/);
   assert.match(markup, /id="acceptanceSubmit"[^>]*disabled/);
   assert.match(markup, /does not mark work complete/);
+  vm.runInContext('acceptanceDialog(true);',context);
+  assert.match(markup,/data-return-to="event-review"/);
+  assert.match(markup,/Planned activity · start time not set/);
+  assert.match(markup,/data-action="before-event-review">Back to event review/);
+  assert.doesNotMatch(markup,/value="other"| checked/);
   assert.equal(
     vm.runInContext(
       'acceptanceCandidates(Array.from({length:101},(_,i)=>({id:String(i),owner:"maya",status:"todo"}))).length',
@@ -276,7 +287,7 @@ test('prepared hosted UI awaits one registered batch action without actor parame
     proxy = readFileSync('legacy/hosted-store.js', 'utf8');
   assert.match(
     hosted,
-    /await store\.acceptTasks\(data\.selections,ui\.actor\);closeDialog/,
+    /await store\.acceptTasks\(data\.selections,ui\.actor\);\s*if\(form\.dataset\.returnTo==='event-review'\)\{render\(\);beforeEventReview\(\);\}/,
   );
   assert.match(proxy, /'acceptTasks'/);
   assert.match(proxy, /acceptTasks: 1/);

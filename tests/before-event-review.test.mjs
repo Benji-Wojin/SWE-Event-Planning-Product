@@ -118,6 +118,23 @@ test('the event review routes only actionable owner gaps to assignment and never
   assert.equal(actions(ui.preparationReview(s,now)).length,0);
 });
 
+test('review offers acceptance only for the current active owner, including when all tasks are shown',()=>{
+  const s=state([task('mine',{owner:'maya',eventActivity:true}),
+    task('other',{owner:'jack',schedule:slot()}),task('unowned',{owner:''}),
+    task('reported',{owner:'maya',reportedAt:now,requiresVerification:true}),
+    task('accepted',{owner:'maya',acceptedAt:now}),task('completed',{owner:'maya',status:'done'}),
+    task('inactive',{owner:'old'})]);
+  for(const mine of [false,true]){
+    const scope={mine,actor:'maya'};
+    assert.deepEqual(ui.reviewAcceptanceTasks(s,scope).map(task=>task.id),['mine']);
+    const html=ui.preparationReview(s,now,scope);
+    assert.match(html,/data-action="review-event-acceptance">Review my assignments \(1\)/);
+  }
+  assert.deepEqual(ui.reviewAcceptanceTasks(s,{}),[]);
+  assert.deepEqual(ui.reviewAcceptanceTasks(s,{actor:'old'}),[]);
+  assert.doesNotMatch(ui.preparationReview(s,now,{actor:'old'}),/data-action="review-event-acceptance"/);
+});
+
 test('real store changes recompute the review only from recorded acceptance and completion',()=>{
   const store=GatherStore.createStore({storage:null});store.completeSetup(event);
   const item=store.addTask({title:'Check school hall',owner:'maya',requiresVerification:true});
