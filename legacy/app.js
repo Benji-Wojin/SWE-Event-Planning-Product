@@ -195,7 +195,11 @@
   };
   const member = id => store.getState().members.find(p=>p.id===id) || {id:'',name:'Unassigned',initials:'?',role:'Choose an owner',color:'#e5e8e2'};
   const avatar = (id, small=false) => {const p=member(id);const color=({peach:'#efc9b5',lavender:'#ded3ee',mint:'#c6dfd0',sand:'#f1dfb3'})[p.color]||'#e5e8e2';return `<span class="avatar ${small?'avatar-small':''}" style="--avatar-bg:${color};--avatar-ink:#233b2e" title="${h(p.name)}">${h(p.initials)}</span>`;};
-  const person = id => `<span class="person-chip">${avatar(id,true)}<span>${h(member(id).name.split(' ')[0])}</span></span>`;
+  const person = (id,showFullNameOnPhone=false) => {
+    const name=member(id).name;
+    const short=h(name.split(' ')[0]);
+    return `<span class="person-chip">${avatar(id,true)}${showFullNameOnPhone?`<span class="task-owner-short">${short}</span><span class="task-owner-full">${h(name)}</span>`:`<span>${short}</span>`}</span>`;
+  };
   const statusBadge = status => `<span class="status-badge status-${h(status)}">${h(statuses[status])}</span>`;
   const due = task => `<span class="${task.status!=='done' && task.dueDate && task.dueDate<dateKey()?'due-overdue':''}">${task.dueDate===dateKey()?'Today':dayLabel(task.dueDate)}</span>`;
   const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone);
@@ -222,17 +226,23 @@
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
   const addButton = () => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
+  const completionNeedsReview = task => task.status!=='done'&&(task.requiresVerification||dependencyInfo(task).open.length>0);
 
   function taskRow(task) {
-    const done = task.status==='done';
+    const done=task.status==='done',organizer=isOrganizer(),inspect=!organizer||completionNeedsReview(task);
+    const id=h(task.id),title=h(task.title),update=latestUpdateRecord(task);
+    const ownerLabel=task.owner?member(task.owner).name:'Unassigned';
+    const mobileLabel=label=>`<span class="task-card-label" aria-hidden="true">${label}</span>`;
     let decision=null;
-    if(ui.tab==='attention'&&isOrganizer()) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
-    return `<tr${task.id===guideTaskId?' class="guide-first-task-row"':''}><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification||dependencyInfo(task).open.length?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
-      <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
-      <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
-      <td>${statusBadge(task.status)}${(task.dependencies||[]).length?`<button class="task-link-summary" data-action="map-focus" data-id="${h(task.id)}">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td><td>${due(task)}</td>
-      <td><div class="task-meta">${h(updateAttribution(latestUpdateRecord(task)))}</div><div class="task-note-preview" title="${h(latestUpdate(task))}">${h(latestUpdate(task) || 'No progress note yet')}</div></td>
-      <td><button class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${h(task.id)}" aria-label="${decision?'Review plan for':'Open'} ${h(task.title)}">${decision?'Review plan':icon('arrow')}</button></td></tr>`;
+    if(ui.tab==='attention'&&organizer) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
+    return `<tr role="row"${task.id===guideTaskId?' class="guide-first-task-row"':''}>
+      <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
+      <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
+      <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${!task.owner&&!done?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
+      <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
+      <td role="cell" class="task-cell-due" headers="tasks-due">${mobileLabel('Due')}${due(task)}</td>
+      <td role="cell" class="task-cell-update" headers="tasks-update">${mobileLabel('Latest update')}<div class="task-meta">${h(updateAttribution(update))}</div><div class="task-note-preview" title="${h(update.text)}">${h(update.text || 'No progress note yet')}</div></td>
+      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" aria-label="${decision?'Review plan for':'Open task:'} ${title}">${decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,taskIds,compact=false) {
@@ -298,8 +308,8 @@
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
-      <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
-      <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table"><thead><tr><th><span class="sr-only">Completion</span></th><th scope="col">TASK</th><th scope="col">OWNER</th><th scope="col">STATUS</th><th scope="col">DUE</th><th scope="col">LATEST UPDATE</th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
+      <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
+      <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
   function guideTaskPanel(s,away=false) {
     const task=guideTaskId&&s.tasks.find(item=>item.id===guideTaskId);
@@ -324,7 +334,7 @@
       guideTaskNeedsReveal=true;
       render();
     }else guideTaskNeedsReveal=false;
-    const control=focusCompletion&&ui.view==='tasks'&&$$('#taskRows [data-action="toggle-task"]').find(button=>button.dataset.id===guideTaskId);
+    const control=focusCompletion&&ui.view==='tasks'&&$$('#taskRows .task-cell-completion button').find(button=>button.dataset.id===guideTaskId);
     const target=control||$(ui.view==='tasks'?'#guideTaskSaved':'#guideTaskRevealHeading');
     target?.focus({preventScroll:true});
     target?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
@@ -1346,7 +1356,7 @@
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
       if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}
       if(action==='map-focus'){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();ui.taskView='map';ui.mapFocus=id;ui.search='';ui.owner='';ui.status='';ui.tab='all';navigate('tasks');return;}
-      if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!isOrganizer()||((t.requiresVerification||dependencyInfo(t).open.length)&&t.status!=='done')){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();if(t.status==='done')toast('Task reopened. Its history is preserved.');else window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
+      if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!t||!isOrganizer()||completionNeedsReview(t)){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();if(t.status==='done')toast('Task reopened. Its history is preserved.');else window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
       if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
       if(action==='claim'){store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}

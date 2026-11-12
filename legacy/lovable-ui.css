@@ -198,6 +198,7 @@ button.stat-card:hover { background: var(--warm); box-shadow: none; }
 .task-table tbody tr:hover { background: var(--paper); }
 .task-name-button { font-size: 1rem; color: var(--ink); }
 .task-table .task-meta { white-space: normal; }
+.task-table .task-card-label, .task-table .task-card-open, .task-table .task-owner-full { display: none; }
 .category-label, .completion-note, .commitment-note { color: var(--muted); font-size: .8125rem; }
 .dialog { border-color: var(--line); border-radius: 8px; box-shadow: var(--shadow); }
 .dialog-backdrop { background: rgb(20 30 45 / .32); backdrop-filter: blur(2px); }
@@ -264,20 +265,37 @@ button.stat-card:hover { background: var(--warm); box-shadow: none; }
   .topbar { padding: 12px 20px; }
   .page-wrap { padding: 24px 20px 40px; }
   .toast { left: 50%; }
+  .task-filter-toolbar > .inline { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; }
+  .task-filter-toolbar .select-input { width: 100%; min-width: 0; min-height: 44px; text-overflow: ellipsis; }
   .task-table, .task-table tbody { display: block; }
   .task-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  .task-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); }
-  .task-table tr:last-child { border-bottom: 0; }
-  .task-table td { display: block; width: auto; min-width: 0 !important; max-width: none; padding: 0 !important; border: 0; white-space: normal !important; }
-  .task-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 1; padding-right: 36px !important; }
-  .task-table td:first-child { grid-column: 2; grid-row: 1; justify-self: end; z-index: 1; }
-  .task-table td:nth-child(3)::before { content: 'Owner'; }
-  .task-table td:nth-child(4)::before { content: 'Status'; }
-  .task-table td:nth-child(5)::before { content: 'Due'; }
-  .task-table td:nth-child(6)::before { content: 'Latest update'; }
-  .task-table td::before { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 4px; }
-  .task-table td:last-child { grid-column: 1 / -1; }
-  .task-table td:last-child .text-button { min-height: 36px; }
+  .task-table tbody tr {
+    display: grid;
+    grid-template-columns: 44px repeat(3,minmax(0,1fr));
+    grid-template-areas: "check name name name" "owner owner status due" "update update update update" "details details details details";
+    gap: 10px;
+    padding: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .task-table tbody tr:last-child { border-bottom: 0; }
+  .task-table td { display: block; width: auto; min-width: 0 !important; max-width: none; padding: 0 !important; border: 0; white-space: normal !important; overflow-wrap: anywhere; }
+  .task-cell-completion { grid-area: check; }
+  .task-cell-name { grid-area: name; }
+  .task-cell-owner { grid-area: owner; }
+  .task-cell-status { grid-area: status; }
+  .task-cell-due { grid-area: due; }
+  .task-cell-update { grid-area: update; }
+  .task-cell-details { grid-area: details; justify-self: end; }
+  .task-table .task-card-label { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 3px; }
+  .task-table .task-card-open, .task-table .task-owner-full { display: inline; }
+  .task-table .task-owner-short { display: none; }
+  .task-table :is(.table-owner,.table-owner .person-chip) { white-space: normal; min-width: 0; max-width: 100%; text-align: left; }
+  .task-table .task-owner-full { min-width: 0; overflow-wrap: anywhere; }
+  .task-table :is(.check-button,.task-inspect-button) { width: 44px; min-width: 44px; height: 44px; border-radius: 8px; }
+  .task-table :is(.task-name-button,.table-owner,.task-link-summary,.task-cell-owner .btn,.task-cell-details button) { min-height: 44px; }
+  .task-table .task-name-button { max-width: 100%; }
+  .task-table .task-cell-details .icon-button { gap: 7px; }
+  .task-table .task-note-preview { max-width: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 600px) {
   .topbar { padding: 10px 16px; }
