@@ -13,7 +13,7 @@
   const canCreateTasks = () => isOrganizer() || store.getState().event.membersCanCreateTasks === true;
   const guidedWorkspace = !!window.GatherMode && !window.GatherMode.demo &&
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
-  let guideProgress = null, guideQueue = Promise.resolve(), guideError = false;
+  let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Pick one thing that needs doing, like “Confirm the venue.” A task name is enough to start.', 'add-task', 'Add a task'],
     ['budget_viewed', 3, 'Explore Budget', 'See where the team can track estimates and spending. You don’t need to enter any amounts.', 'guide-budget', 'Open Budget'],
@@ -56,6 +56,11 @@
   }
   function recordGuideViewClick(view) {
     if(view==='budget'||view==='info')void syncGuide(view==='budget'?'budget_clicked':'event_details_clicked');
+  }
+  function recordLoadedGuideView(view) {
+    if (!guidedWorkspace || ui.view !== view) return;
+    guideViewReady = view;
+    void syncGuide(view==='budget'?'budget_viewed':'event_details_viewed');
   }
   const planSidebar=GatherPlanningUI.createSidebar({
     getUrl:(mode='suggestions')=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode='+mode+'&embed=1':window.GatherMode.projectUrl('/plan')+'&mode='+mode+'&embed=1',
@@ -248,8 +253,8 @@
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const schedule = GatherScheduleUI.create({h,options,person,statusBadge});
-  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState()});
-  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState()});
+  const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('info')});
+  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('budget')});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
     if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;
@@ -387,13 +392,13 @@
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
+    if (ui.view!==view) guideViewReady='';
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
     navigation.replace(view);
     setDrawer(false);
     render();
     if(view==='details')loadPrivate();
-    if(view==='budget'||view==='info')void syncGuide(view==='budget'?'budget_viewed':'event_details_viewed');
     window.scrollTo({top:0,behavior:'instant'});
     return true;
   }
@@ -716,7 +721,7 @@
       if(action==='close-dialog')closeDialog();
       if(action==='move-event-plan')rescheduleDialog();
       if(action==='add-task'){newTaskDialog();void syncGuide('add_task_clicked');}
-      if(action==='guide-retry'){await syncGuide();if(ui.view==='budget'||ui.view==='info')await syncGuide(ui.view==='budget'?'budget_viewed':'event_details_viewed');}
+      if(action==='guide-retry'){await syncGuide();if(guideViewReady===ui.view)recordLoadedGuideView(ui.view);}
       if(action==='guide-budget'||action==='guide-info'){
         if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
         if(!$('#dialogBackdrop').hidden)closeDialog();

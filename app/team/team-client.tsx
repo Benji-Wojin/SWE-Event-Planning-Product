@@ -247,6 +247,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
                   action: sendEmail ? 'sendInvite' : 'invite',
                   email,
                   requestId: requestId.current,
+                  ...(tutorial ? { guidedTutorial: true } : {}),
                   ...(sendEmail ? { senderEmail: team.sender.email } : {}),
                 });
                 if (updated) {

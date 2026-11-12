@@ -9,7 +9,7 @@ async function harness(admin = true) {
     requests = [];
   let snapshot = { revision: 1, identity: { admin }, budget },
     form,
-    fail = 0,
+    fail = 0, failRead = false, loads = 0,
     closed = 0,
     poll,
     renders = 0,
@@ -61,7 +61,8 @@ async function harness(admin = true) {
     FormData: SuccessfulFormData,
     fetch: async (url, options) => {
       if (!options.body)
-        return { ok: true, json: async () => structuredClone(snapshot) };
+        return failRead ? {ok:false,status:503,json:async()=>({error:'Budget unavailable'})}
+          : { ok: true, json: async () => structuredClone(snapshot) };
       const data = JSON.parse(options.body);
       requests.push(data);
       if (fail) {
@@ -79,6 +80,7 @@ async function harness(admin = true) {
     h: (value) => String(value),
     isDialogOpen: () => false,
     getWorkspace: () => ({ tasks: [], members: [] }),
+    onLoaded() { loads++; },
     toast() {},
     closeDialog: () => {
       closed++;
@@ -125,6 +127,8 @@ async function harness(admin = true) {
     requests,
     click,
     ui,
+    setFailRead(value) { failRead=value; },
+    get loads() { return loads; },
     get renders() {
       return renders;
     },
@@ -160,6 +164,19 @@ async function harness(admin = true) {
     },
   };
 }
+test('guide readiness does not fire for a failed budget load', async () => {
+  const h = await harness();
+  assert.equal(h.loads,1);
+  h.setFailRead(true);
+  h.click('data-budget-refresh');
+  await setImmediate();
+  assert.match(h.host.innerHTML,/Budget unavailable/);
+  assert.equal(h.loads,1);
+  h.setFailRead(false);
+  h.click('data-budget-refresh');
+  await setImmediate();
+  assert.equal(h.loads,2);
+});
 test('settings serialize checked values before disabling controls; retry retains the same idempotency key', async () => {
   const h = await harness();
   h.click('data-budget-settings');

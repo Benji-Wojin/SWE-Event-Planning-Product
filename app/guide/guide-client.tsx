@@ -28,8 +28,9 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
     try {
       if (next === 'started') setProgress(await observeTutorial('started'));
       else {
-        await observeTutorial('create_project_clicked');
-        window.location.assign('/setup?guide=1');
+        const updated = await observeTutorial('create_project_clicked');
+        if (updated.projectId) setProgress(updated);
+        else window.location.assign('/setup?guide=1');
       }
     } catch {
       setError('We couldn’t save your guide progress. Try again, or keep using Weft without the guide.');

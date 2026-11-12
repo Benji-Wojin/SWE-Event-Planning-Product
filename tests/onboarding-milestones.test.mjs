@@ -365,7 +365,7 @@ test('real tutorial routes advance the right account and project, and the privat
   await observe(user,'event_details_viewed',project);
   await observe(user,'invite_clicked',project);
   await observe(user,'invite_form_viewed',project);
-  const invite = {action:'invite',email:'fictional-invite@example.com',requestId:crypto.randomUUID()};
+  const invite = {action:'invite',email:'fictional-invite@example.com',requestId:crypto.randomUUID(),guidedTutorial:true};
   await run(user, async()=>body(await api.writeTeam(request('/api/team?project='+project,{...invite,email:user.email})),400));
   assert.equal((await getProgress(user)).events.at(-1).checkpoint,'invite_form_viewed');
   for (let i=0;i<2;i++) await run(user, async()=>body(await api.writeTeam(request('/api/team?project='+project,invite))));
