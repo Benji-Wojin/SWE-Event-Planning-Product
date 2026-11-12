@@ -76,21 +76,51 @@
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
   async function refreshInbox(manual=false) {
-    if(!store.refresh||ui.syncing||ui.pendingSave||document.hidden)return;
+    if(!store.refresh||window.GatherAccessLost||ui.syncing||ui.pendingSave||document.hidden)return;
     ui.syncing=true;
     try {
-      const result=await store.refresh(()=>!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&($('#dialogBackdrop').hidden||ui.dialogKind==='thought')&&!ui.savingProposal&&!document.activeElement?.matches('input,textarea,select'));
-      if(result.changed){
+      const result=await store.refresh(canApplyWorkspaceRefresh);
+      // A local tool already published its snapshot; the next GET can have
+      // the same revision even though its render was held back during an edit.
+      const toolUpdate=ui.toolUpdatePending&&!result.pending&&canApplyWorkspaceRefresh();
+      if(toolUpdate)ui.toolUpdatePending=false;
+      if(result.changed||toolUpdate){
         // Private-record screens have their own viewing/locking lifecycle.
         if(ui.view!=='details')render();
         if(ui.dialogKind==='thought')$('#dialogStaleNotice')?.remove();
       }
-      if(result.changed||result.suggestionsChanged){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
-      const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!result.pending;
-      if(result.pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
-      else if(manual&&!result.changed&&!result.suggestionsChanged)toast('You have the latest updates.');
-    } catch(error) {if(manual)toast(error.message);}
+      const updated=result.changed||result.suggestionsChanged||toolUpdate;
+      if(updated){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
+      const pending=!!(result.pending||ui.toolUpdatePending);
+      const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!pending;
+      if(pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
+      else if(manual&&!updated)toast('You have the latest updates.');
+    } catch(error) {if(manual&&!window.GatherAccessLost)toast(error.message);}
     finally {ui.syncing=false;}
+  }
+  function canApplyWorkspaceRefresh() {
+    return !window.GatherAccessLost&&!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&
+      ($('#dialogBackdrop').hidden||ui.dialogKind==='thought')&&!ui.savingProposal&&
+      !document.activeElement?.matches('input,textarea,select');
+  }
+  function bindWorkspaceRefresh() {
+    let timer=null;
+    const refresh=()=>void refreshInbox();
+    function start() {
+      if(timer===null)timer=setInterval(refresh,window.GatherMode.demo?4000:20000);
+    }
+    window.addEventListener('gather-tool-updated',()=>{
+      if(window.GatherAccessLost)return;
+      if(!canApplyWorkspaceRefresh()){ui.toolUpdatePending=true;showPendingUpdate();return;}
+      if(ui.toolUpdatePending){refresh();return;}
+      if(ui.view!=='details')render();
+      refreshSuggestionSurfaces();
+    });
+    window.addEventListener('focus',refresh);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+    window.addEventListener('pagehide',()=>{clearInterval(timer);timer=null;});
+    window.addEventListener('pageshow',event=>{if(event.persisted){start();refresh();}});
+    start();
   }
 
   let privateOriginalEpoch=0;

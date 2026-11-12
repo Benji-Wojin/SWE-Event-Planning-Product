@@ -49,7 +49,94 @@ test('prepared hosted HTML shows loading instead of demo identity or interactive
   assert.match(readFileSync('legacy/styles.css', 'utf8'), /\[hidden\]\{display:none!important\}/);
   const app = readFileSync('public/gather-assets/app.js', 'utf8');
   const initial=app.indexOf("navigate(initialTask?'tasks':navigation.initial());");
-  assert.ok(initial>=0&&initial<app.indexOf("new Event('gather-workspace-ready')"));
+  const ready=app.indexOf("new Event('gather-workspace-ready')");
+  const refresh=app.indexOf('if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();');
+  assert.ok(initial>=0&&initial<ready);
+  assert.ok(ready<refresh,'the generated app starts refresh after rendering the authenticated workspace');
+  assert.match(app,/function bindWorkspaceRefresh\(\)/);
+});
+
+function preparedRefresh(demo=false) {
+  const app=readFileSync('public/gather-assets/app.js','utf8');
+  const source=app.slice(app.indexOf('  async function refreshInbox('),app.indexOf('  let privateOriginalEpoch='));
+  const events={},timers=new Map(),calls=[];
+  const window={GatherMode:{demo},addEventListener(name,fn){events[name]=fn;}};
+  const document={hidden:false,activeElement:null,addEventListener(name,fn){events[name]=fn;}};
+  const ui={view:'tasks'};
+  const backdrop={hidden:true}, notice={hidden:true}, inboxNotice={hidden:true};
+  const store={async refresh(canApply){calls.push('request');return result|| (canApply()?{changed:true,suggestionsChanged:true}:{pending:true});}};
+  let result;
+  let next=0;
+  vm.runInNewContext(source+'\nbindWorkspaceRefresh();',{
+    store,ui,window,document,showPendingUpdate(){calls.push('pending');},
+    render(){calls.push('render');},refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
+    $:selector=>({'#dialogBackdrop':backdrop,'#workspaceSyncNotice':notice,'#inboxSyncNotice':inboxNotice})[selector],
+    setInterval(callback,ms){const id=next++;timers.set(id,{callback,ms});return id;},
+    clearInterval(id){timers.delete(id);},
+  });
+  return {events,timers,calls,window,document,ui,backdrop,notice,snapshotResult:value=>{result=value;}};
+}
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('the generated refresh lifecycle fetches on focus, visible return, and its existing timer, without double polling after restore',async()=>{
+  for(const demo of [false,true]){
+    const {events,timers,calls,document}=preparedRefresh(demo);
+    const [timer]=timers.values();
+    assert.equal(timer.ms,demo?4000:20000);
+    timer.callback();await tick();
+    assert.deepEqual(calls.splice(0),['request','render','suggestions']);
+    document.hidden=true;events.visibilitychange();events.focus();timer.callback();await tick();
+    assert.deepEqual(calls,[]);
+    document.hidden=false;events.visibilitychange();events.focus();await tick();
+    assert.deepEqual(calls.splice(0),['request','render','suggestions'],'overlapping return events should share the in-flight refresh');
+    events.pagehide();assert.equal(timers.size,0);
+    events.pageshow({persisted:false});assert.equal(timers.size,0);
+    events.pageshow({persisted:true});events.pageshow({persisted:true});await tick();
+    assert.equal(timers.size,1);
+    assert.deepEqual(calls,['request','render','suggestions']);
+  }
+});
+
+test('restored passive refresh keeps edits intact and stops after access changes',async()=>{
+  const {events,calls,window,document,ui,backdrop,notice}=preparedRefresh();
+  backdrop.hidden=false;ui.dialogKind='task';
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending']);
+  assert.equal(notice.hidden,false);
+  backdrop.hidden=true;ui.reviewDirty=true;
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['pending']);
+  ui.reviewDirty=false;ui.pendingSave=true;
+  events.focus();await tick();
+  assert.deepEqual(calls,[]);
+  ui.pendingSave=false;document.activeElement={matches:()=>true};
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending']);
+  document.activeElement=null;events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','render','suggestions']);
+  assert.equal(notice.hidden,true);
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['render','suggestions']);
+  window.GatherAccessLost=true;
+  events.focus();events['gather-tool-updated']();await tick();
+  assert.deepEqual(calls,[]);
+});
+
+test('a deferred tool render waits for edits even if the server already has the same revision',async()=>{
+  const {events,calls,ui,backdrop,notice,snapshotResult}=preparedRefresh();
+  snapshotResult({changed:false});
+  backdrop.hidden=false;ui.dialogKind='task';
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['pending']);
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending']);
+  assert.equal(notice.hidden,false);
+  backdrop.hidden=true;
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','render','suggestions']);
+  assert.equal(notice.hidden,true);
+  events.focus();await tick();
+  assert.deepEqual(calls,['request'],'the deferred render happens only once');
 });
 
 test('slow snapshot and app download keep shell hidden until initial render completes', async () => {

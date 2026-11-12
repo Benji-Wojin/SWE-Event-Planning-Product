@@ -124,24 +124,6 @@ test('out-of-order same-revision reads cannot restore an older derived suggestio
   assert.deepEqual(store.getSuggestions(), [{ id: 'current-check' }]);
 });
 
-test('restoring the page from browser history resumes a single refresh timer', () => {
-  const app = readFileSync(new URL('../scripts/prepare.mjs', import.meta.url), 'utf8');
-  const start = app.indexOf('  let inboxRefreshTimer;'), end = app.indexOf('  setDrawer(false);', start);
-  assert.ok(start > 0 && end > start);
-  const listeners = {}, timers = new Set(); let next = 0, refreshes = 0;
-  vm.runInNewContext(app.slice(start, end), {
-    window: { GatherMode: { demo: true }, addEventListener: (name, fn) => { listeners[name] = fn; } },
-    document: { hidden: false, addEventListener: (name, fn) => { listeners[name] = fn; } },
-    setInterval: (_, interval) => { assert.equal(interval, 4000); timers.add(++next); return next; },
-    clearInterval: id => timers.delete(id), refreshInbox: () => { refreshes++; },
-  });
-  assert.equal(timers.size, 1);
-  listeners.pagehide({ persisted: true }); assert.equal(timers.size, 0);
-  listeners.pageshow({ persisted: true }); assert.equal(timers.size, 1); assert.equal(refreshes, 1);
-  listeners.pageshow({ persisted: true }); assert.equal(timers.size, 1);
-  listeners.visibilitychange(); assert.equal(refreshes, 3);
-});
-
 test('revoked project access clears cached shared data and stops further writes',async()=>{
   const {store,respond,redirected}=await hosted(snapshot(1));
   respond(async()=>({httpStatus:404,error:'Project access removed.'}));

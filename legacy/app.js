@@ -1731,6 +1731,7 @@
   if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   void syncGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
+  if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
   if(initialTask&&!window.GatherAccessLost){
     $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
     taskDialog(initialTask);

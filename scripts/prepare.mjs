@@ -169,19 +169,6 @@ app = app
     'A completion report waits for Jack’s verification.',
     'A completion report waits for the organizer’s verification.',
   );
-app = app.replace(
-  '  setDrawer(false);\n  navigate',
-  `  window.addEventListener('gather-tool-updated',()=>{if(ui.pendingSave||ui.reviewDirty||(!$('#dialogBackdrop').hidden&&ui.dialogKind!=='thought'))showPendingUpdate();else {if(ui.view!=='details')render();refreshSuggestionSurfaces();}});
-  let inboxRefreshTimer;
-  function startInboxRefresh(){if(!inboxRefreshTimer)inboxRefreshTimer=setInterval(()=>refreshInbox(),window.GatherMode?.demo?4000:20000);}
-  startInboxRefresh();
-  window.addEventListener('focus',()=>refreshInbox());
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshInbox();});
-  window.addEventListener('pagehide',()=>{clearInterval(inboxRefreshTimer);inboxRefreshTimer=null;});
-  window.addEventListener('pageshow',event=>{if(event.persisted){startInboxRefresh();refreshInbox();}});
-  setDrawer(false);
-  navigate`,
-);
 writeFileSync('public/gather-assets/app.js', app);
 writeFileSync(
   'public/gather-assets/styles.css',
