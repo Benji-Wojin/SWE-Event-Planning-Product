@@ -140,6 +140,9 @@ async function harness(admin = true) {
       snapshot = { ...snapshot, budget: { ...budget, enabled: true } };
       ui.mount(host);
     },
+    setBudget(changes) {
+      snapshot = { ...snapshot, budget: { ...budget, enabled: true, ...changes } };
+    },
     failOnce() {
       fail = 1;
     },
@@ -223,4 +226,26 @@ test('unchanged background refresh does not replace controls or collapse expande
     renders = h.renders;
   await h.poll();
   assert.equal(h.renders, renders);
+});
+test('partial Budget totals show paid-only deposits and a certain minimum overage without suggesting money remains', async () => {
+  const h = await harness(false);
+  const money = value => GatherBudget.format(value, 'USD');
+  const items = [{ title: 'Venue deposit', paid: 50000, committed: null, estimate: null, status: 'active' }];
+  h.setBudget({ target: 30000, items });
+  await h.poll();
+  assert.ok(h.host.innerHTML.includes(`<h2>Expected total</h2><strong>At least ${money(50000)}<small>1 cost is still incomplete</small>`));
+  assert.ok(h.host.innerHTML.includes(`<h2>Payments recorded</h2><strong>${money(50000)}</strong>`));
+  assert.ok(h.host.innerHTML.includes(`<small>At least ${money(20000)} over target</small>`));
+  assert.doesNotMatch(h.host.innerHTML, /below target|On target|data-budget-add/);
+  for (const target of [50000, 60000]) {
+    h.setBudget({ target, items });
+    await h.poll();
+    assert.match(h.host.innerHTML, /Target comparison incomplete/);
+    assert.doesNotMatch(h.host.innerHTML, /below target|On target/);
+  }
+  h.setBudget({ target: 60000, items: [{ ...items[0], committed: 55000 }] });
+  await h.poll();
+  assert.ok(h.host.innerHTML.includes(`<h2>Expected total</h2><strong>${money(55000)}</strong>`));
+  assert.ok(h.host.innerHTML.includes(`<small>${money(5000)} below target</small>`));
+  assert.doesNotMatch(h.host.innerHTML, /At least|still incomplete/);
 });

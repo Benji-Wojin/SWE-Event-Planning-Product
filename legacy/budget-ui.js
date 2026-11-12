@@ -64,6 +64,22 @@
           : '')
       );
     }
+    function forecastSummary(forecast) {
+      if (!forecast.unknown) return money(forecast.known);
+      const missing = forecast.unknown;
+      return `At least ${money(forecast.known)}<small>${missing} ${missing === 1 ? 'cost is' : 'costs are'} still incomplete</small>`;
+    }
+    function targetComparison(target, totals) {
+      if (target === null) return 'No target set';
+      if (totals.remaining === null) {
+        const over = totals.forecast.known - target;
+        return over > 0 ? `At least ${money(over)} over target` : 'Target comparison incomplete';
+      }
+      if (totals.remaining === 0) return 'On target';
+      return totals.remaining > 0
+        ? `${money(totals.remaining)} below target`
+        : `${money(-totals.remaining)} over target`;
+    }
     function render() {
       if (!host?.isConnected || !state) return;
       const active = document.activeElement;
@@ -90,11 +106,11 @@
           (row) => Boolean(row.archivedAt) === archived,
         ),
         workspace = getWorkspace();
-      const targetNote = budget.target === null ? 'No target set' : totals.remaining === null ? 'Remaining budget unknown' : totals.remaining === 0 ? 'On target' : totals.remaining > 0 ? `${money(totals.remaining)} below target` : `${money(-totals.remaining)} over target`;
+      const targetNote = targetComparison(budget.target, totals);
       host.innerHTML = `<div class="page-heading"><h1>Budget</h1><div class="header-actions">${admin ? '<button class="btn ' + (budget.enabled ? 'btn-secondary' : 'btn-primary') + '" data-budget-settings>' + (budget.enabled ? 'Settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">Shared with your project. Weft tracks amounts you enter and never moves money.</p>${
         !budget.enabled
           ? `<section class="panel"><h2>${budget.items.length ? 'Budget tracking is off' : 'Keep costs in view, when you need to'}</h2><p>${budget.items.length ? 'Saved costs are preserved. The organizer can enable tracking again in Budget settings.' : 'Track estimates, commitments and payments you record yourself. Skip this page if your event does not need a budget.'}</p>${!admin ? '<p class="muted">Only the organizer can enable or edit this tracker.</p>' : ''}</section>`
-          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${subtotal(totals.forecast)}</strong></section><section class="panel"><h2>Paid so far</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2>${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
+          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${forecastSummary(totals.forecast)}</strong></section><section class="panel"><h2>Payments recorded</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2>${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
               rows.length
                 ? `<ul class="budget-items">${rows
                     .map((row) => {
@@ -119,7 +135,7 @@
                     .join('')}</ul>`
                 : `<p class="notice">${archived ? 'No archived costs.' : 'No costs yet. Add a quote, deposit or other expected expense.'}</p>`
             }</section>`
-      }<section class="panel section-gap budget-reference">${budget.enabled ? `<details data-budget-details="totals"><summary>How totals work</summary><p>Estimates ${subtotal(totals.estimate)} · Commitments ${subtotal(totals.committed)}</p><p>Expected total uses each committed amount or, if blank, its estimate. It is never less than what’s recorded as paid. Cancelled costs contribute only recorded payments. Archived costs still count. Blank is unknown, not zero.</p></details>` : ''}<details data-budget-details="history"><summary>Recent budget changes (${budget.history.length})</summary><p class="muted">Latest 100 changes. This is a planning record, not a bank statement.</p><ol class="budget-history">${
+      }<section class="panel section-gap budget-reference">${budget.enabled ? `<details data-budget-details="totals"><summary>How totals work</summary><p>Estimates ${subtotal(totals.estimate)} · Commitments ${subtotal(totals.committed)}</p><p>Expected total uses each committed amount or, if blank, its estimate, and never counts less than the payment recorded. An active cost with only a payment recorded counts toward the minimum, but its final amount is still unknown. Cancelled costs contribute only recorded payments. Archived costs still count. Blank is unknown, not zero.</p></details>` : ''}<details data-budget-details="history"><summary>Recent budget changes (${budget.history.length})</summary><p class="muted">Latest 100 changes. This is a planning record, not a bank statement.</p><ol class="budget-history">${
         budget.history
           .slice()
           .reverse()

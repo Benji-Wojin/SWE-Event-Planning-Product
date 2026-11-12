@@ -138,7 +138,8 @@
       const planned =
         row.status === 'cancelled' ? row.paid : (row.committed ?? row.estimate);
       if (planned === null) result.forecast.unknown++;
-      else result.forecast.known += Math.max(planned, row.paid ?? 0);
+      // A recorded payment is a minimum even without a planned amount.
+      result.forecast.known += Math.max(planned ?? 0, row.paid ?? 0);
     }
     result.remaining =
       budget.target !== null && result.forecast.unknown === 0

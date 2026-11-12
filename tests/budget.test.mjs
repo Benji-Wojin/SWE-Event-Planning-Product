@@ -102,3 +102,22 @@ test('expected cost is never below a known recorded payment, even above the comm
     3000,
   );
 });
+test('recorded deposits set a known minimum without making unquoted active costs complete', () => {
+  const paidOnly = item({ paid: '500' });
+  const budget = { ...B.initial(), target: 30000, items: [paidOnly] };
+  const totals = B.totals(budget);
+  assert.deepEqual(totals.forecast, { known: 50000, unknown: 1 });
+  assert.deepEqual(totals.paid, { known: 50000, unknown: 0 });
+  assert.equal(totals.remaining, null);
+  assert.deepEqual(B.totals({
+    ...budget, items: [
+      { ...paidOnly, archivedAt: 'yesterday' },
+      item({ committed: '60', paid: '20' }),
+      item({ status: 'cancelled', estimate: '300', paid: '10' }),
+      item({ paid: '0' }),
+    ],
+  }).forecast, { known: 57000, unknown: 2 });
+  assert.deepEqual(B.totals({ ...budget, items: [{ ...paidOnly, status: 'cancelled' }] }).forecast, {
+    known: 50000, unknown: 0,
+  });
+});
