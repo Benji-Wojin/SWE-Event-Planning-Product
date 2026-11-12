@@ -11,7 +11,8 @@ function fixture(checkpoints,{bound=true,focused=false,error=false}={}){
   const context=vm.createContext({
     $:selector=>selector==='#workspaceGuide'?host:{focus(){focuses++;}},
     document:{activeElement:{}},guidedWorkspace:true,guideTaskId:'',
-    window:{GatherMode:{projectId:'p_fictional',projectUrl:path=>path+'?project=p_fictional'}},h:String,
+    window:{GatherMode:{projectId:'p_fictional',projectUrl:path=>path+'?project=p_fictional'}},
+    h:value=>value.replaceAll('&','&amp;'),icon:()=>'<svg aria-hidden="true"></svg>',
     guideProgress:{projectId:bound?'p_fictional':'p_other',events:checkpoints.map(checkpoint=>({checkpoint}))},guideError:error,
   });
   vm.runInContext(renderer,context);
@@ -27,13 +28,20 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.match(guide.html(),/data-guide-state="done"[\s\S]*Project/);
   assert.match(guide.html(),/data-guide-state="current" aria-current="step"[\s\S]*Task/);
   assert.match(guide.html(),/Finish later/);
+  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
   guide.context.guideProgress.events.push({checkpoint:'add_task_clicked'});guide.paint();
   assert.equal(guide.changes(),1);assert.equal(guide.focuses(),1);
   guide.context.guideProgress.events.push({checkpoint:'task_created'});guide.paint();
   assert.match(guide.html(),/Step 3 of 5/);assert.match(guide.html(),/No amounts are required/);
-  assert.match(guide.html(),/href="\/plan\?project=p_fictional&guide=1"[^>]+>Try drafting a plan with AI/);
-  assert.match(guide.html(),/Open Budget/);
+  assert.match(guide.html(),/Open Budget[\s\S]*<section[^>]+aria-labelledby="workspaceGuidePlanTitle"/);
+  assert.match(guide.html(),/Optional walkthrough[\s\S]*Draft the rest of your plan with AI/);
+  assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
+  assert.match(guide.html(),/won’t send anything to AI or change your project/);
+  assert.match(guide.html(),/Find the plan builder later in <strong>Overview/);
   assert.equal(guide.changes(),2);assert.equal(guide.focuses(),2);
+  guide.context.guideProgress.events.push({checkpoint:'budget_viewed'});guide.paint();
+  assert.match(guide.html(),/Step 4 of 5/);
+  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
 });
 
 test('a committed task does not offer to create a duplicate while progress reloads',()=>{
