@@ -4,10 +4,49 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
+import '../legacy/planning-ui.js';
 
 const create=()=>GatherStore.createStore({storage:null});
 const input=extra=>({title:'Prepare welcome signs',note:'Use the agreed accessible route.',owner:'',kind:'related',reason:'Supports guest arrival in parallel.',...extra});
 const record=(store,id)=>store.getState().tasks.find(task=>task.id===id);
+
+test('checklist preview parses plain titles and never preselects even checked input',()=>{
+  const titles=GatherPlanningUI.relatedChecklistTitles('- [x] Confirm arrival route\n2. Print hall signs\n• <img src=x>');
+  assert.deepEqual(titles,['Confirm arrival route','Print hall signs','<img src=x>']);
+  const html=GatherPlanningUI.relatedChecklistReview(titles,value=>value.replace(/[<>]/g,c=>c==='<'?'&lt;':'&gt;'));
+  assert.doesNotMatch(html,/\bchecked\b|<img/);
+  assert.match(html,/&lt;img src=x&gt;/);
+  assert.match(html,/Done when for step 3/);
+  assert.throws(()=>GatherPlanningUI.relatedChecklistTitles('x'.repeat(181)),/line 1/);
+  assert.throws(()=>GatherPlanningUI.relatedChecklistTitles('x\n'.repeat(9)),/between 1 and 8/);
+});
+
+test('batch creates only the approved related tasks and never changes the original plan or completion rules',()=>{
+  const store=create();
+  const parent=store.addTask({title:'Run arrival',owner:'jack',status:'progress',dueDate:'2029-01-01',note:'PRIVATE_PARENT',scope:'ORIGINAL_OUTCOME'});
+  const existing=store.addTask({title:'Coordinate entrance'});
+  const baseline=store.exportState();
+  let saves=0;store.subscribe(()=>saves++);
+  const valid={title:'Print foyer signs',scope:'Signs are posted.'};
+  for(const invalid of [{title:parent.title},{title:existing.title},{title:'PRINT   FOYER SIGNS'}, {title:'Set up table',scope:'x'.repeat(501)}, {title:'Choose greeter',owner:'jack'}, {title:'Hidden\u202e direction'}]){
+    assert.throws(()=>store.addRelatedTasks(parent.id,{revision:parent.revision,items:[valid,invalid]}));
+    assert.equal(store.exportState(),baseline);
+  }
+  assert.throws(()=>store.addRelatedTasks(parent.id,{revision:parent.revision,items:[valid]},'maya'),/organizer/);
+  assert.throws(()=>store.addRelatedTasks(parent.id,{revision:parent.revision-1,items:[valid]}),/changed/);
+  assert.equal(saves,0);
+  const children=store.addRelatedTasks(parent.id,{revision:parent.revision,items:[valid,{title:'Review entrance layout'}]});
+  assert.equal(saves,1);
+  assert.deepEqual(children.map(task=>task.title),['Print foyer signs','Review entrance layout']);
+  assert.equal(children[0].scope,valid.scope);
+  for(const task of children)assert.deepEqual([task.owner,task.status,task.note,task.dueDate,task.schedule,task.acceptedAt],['','todo','','',null,'']);
+  const after=record(store,parent.id);
+  assert.deepEqual([after.owner,after.status,after.note,after.scope,after.dueDate],[parent.owner,parent.status,parent.note,parent.scope,parent.dueDate]);
+  assert.deepEqual(after.dependencies.map(link=>[link.taskId,link.kind]),children.map(task=>[task.id,'related']));
+  store.reportCompletion(parent.id,'Arrival managed.','jack');
+  assert.equal(record(store,parent.id).status,'done');
+  assert.ok(children.every(task=>record(store,task.id).status==='todo'));
+});
 
 test('ordinary planning creates a linked, independently owned Todo task in one save without cloning context',()=>{
   const store=create();store.completeSetup({timeZone:'America/Los_Angeles'});

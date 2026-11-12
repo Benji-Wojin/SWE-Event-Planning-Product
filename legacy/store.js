@@ -1167,6 +1167,35 @@
       entry(actor,`created and linked ${child.title}`,child.id,'linked-task-created');
       save();return copy(child);
     }
+    function addRelatedTasks(taskId, data, actor = 'jack') {
+      actorId(actor);
+      if(actor!=='jack')throw new Error('Only the organizer can add a batch of related tasks.');
+      const parent=taskById(taskId);canManageDependencies(parent,actor);
+      if(parent.reportedAt&&parent.requiresVerification&&!parent.verifiedAt)throw new Error('Review the pending completion before adding linked work.');
+      if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['revision','items'].includes(key))||
+        !Array.isArray(data.items)||!data.items.length||data.items.length>8)throw new Error('Choose between 1 and 8 related tasks to add.');
+      if(data.revision!==parent.revision)throw new Error('The original task changed. Reopen it before adding linked work.');
+      const key=value=>value.normalize('NFKC').trim().toLowerCase().replace(/\s+/gu,' ');
+      const existing=new Set(state.tasks.filter(task=>task.status!=='done'||task.id===taskId).map(task=>key(task.title)));
+      // Validate every selected row against the live plan before creating any.
+      const approved=data.items.map(item=>{
+        if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(field=>!['title','scope'].includes(field))||
+          typeof item.title!=='string'||!item.title.trim()||item.title.length>180||/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/u.test(item.title))
+          throw new Error('Each selected task needs a plain, single-line name of up to 180 characters.');
+        if(item.scope!==undefined&&(typeof item.scope!=='string'||item.scope.length>500))throw new Error('Keep each Done when result to 500 characters or fewer.');
+        const title=item.title.trim(), normalized=key(title);
+        if(existing.has(normalized))throw new Error('A selected title already exists in this batch or in open project work. Rename it or link the existing task.');
+        existing.add(normalized);
+        return {title,scope:taskOutcome(item.scope===undefined?'':item.scope),category:parent.category};
+      });
+      const children=approved.map(fields=>{
+        const child=createTask(fields,actor);
+        linkDependency(parent,child,actor,false,'','related','Smaller step from a reviewed task breakdown; does not gate completion.');
+        entry(actor,'created and linked '+child.title,child.id,'linked-task-created');
+        return child;
+      });
+      save(true,false);return copy(children);
+    }
     function addDependency(taskId, data, actor = 'jack') {
       const task = taskById(taskId); canManageDependencies(task, actor);
       if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['taskId','title','additional','kind','reason'].includes(key)) || data.additional !== undefined && typeof data.additional !== 'boolean' || data.kind !== undefined && !['dependency','related'].includes(data.kind) || data.reason !== undefined && (typeof data.reason !== 'string' || data.reason.length > 2000)) throw new Error('Choose an existing task or enter a follow-up title and valid relationship.');
@@ -1307,7 +1336,7 @@
       if (!state.dismissed.includes(suggestionId)) { state.dismissed.push(suggestionId); save(); }
       return true;
     }
-    return { rescheduleEvent, getState, taskCompletionStates: () => new Map(state.tasks.map(task => [task.id, task.status==='done'&&(!task.requiresVerification||!!task.verifiedAt)])), getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, deleteTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, reviewCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
+    return { rescheduleEvent, getState, taskCompletionStates: () => new Map(state.tasks.map(task => [task.id, task.status==='done'&&(!task.requiresVerification||!!task.verifiedAt)])), getTimeZone: () => state.event.timeZone || 'UTC', subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); }, completeSetup, setNextUp, requestRecovery, resolveRecovery, setTaskPriority, setTaskSchedule, setTaskOutcome, addTask, deleteTask, updateTask, addComment, resolveHandoff, saveDraft, addMessage, applyMessage, refreshProposal, ignoreMessage, claimTask, acceptTask, acceptTasks, assignTasks, reportCompletion, returnCompletion, setCompletionEvidence, reviewCompletionEvidence, verifyTask, recordFollowup, updateEvent, addMemory, updateMemory, acceptSuggestion, dismissSuggestion, getSuggestions, addLinkedTask, addRelatedTasks, addDependency, setDependencyKind, removeDependency, resumeTask, exportState() { return JSON.stringify(state, null, 2); } };
   }
   function rootStorage() { return typeof localStorage !== "undefined" ? localStorage : null; }
   return { createStore, normalizeCompletionEvidence:completionEvidence, STORAGE_KEY: KEY, STATUSES: [...STATUSES] };

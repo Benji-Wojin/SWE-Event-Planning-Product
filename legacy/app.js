@@ -563,6 +563,21 @@
     if(task.status==='done'||window.GatherAccessLost||!organizer&&(task.owner!==ui.actor||state.event.membersCanCreateTasks!==true))return '';
     return `<details class="dependency-add linked-task-create"><summary>Create a linked task</summary><p class="muted">Break this work into a smaller, independently owned task. Use Related for parallel work; choose Required only when its result is needed before this task can be completed. Nothing is created until you save.</p><form id="linkedTaskForm" data-id="${h(task.id)}"><label class="field">New task name<input name="title" required maxlength="180" placeholder="What smaller result is needed?"></label><label class="field">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="What observable result will show this smaller task is finished?"></textarea><span class="muted">Shared with the team; keep private codes in Private details. This describes the result, not a progress update.</span></label><label class="field">Instructions (optional)<textarea name="note" rows="2" maxlength="3000"></textarea></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link this task?<textarea name="reason" rows="2" required maxlength="2000" placeholder="Describe the shared context or the exact result needed first."></textarea></label><p class="muted">The new task starts To do, without dates, activity times or recorded acceptance. Only the instructions and outcome entered here are shared; the current task’s notes and outcome are not copied. No message is sent.</p><button class="btn btn-secondary" type="submit">Create and link task</button></form></details>`;
   }
+  function openRelatedBatch(id) {
+    const task=store.getState().tasks.find(task=>task.id===id);
+    if(window.GatherAccessLost||!isOrganizer()||!task||task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt)return;
+    openDialog('Break down '+task.title,'<p>Paste up to 8 smaller steps, one per line. You’ll choose and edit them before anything is added. Don’t paste credentials, booking codes or private details.</p>'+
+      '<form id="relatedChecklistForm" data-id="'+h(id)+'" data-revision="'+task.revision+'"><label class="field section-gap">Smaller steps<textarea name="checklist" required rows="7" maxlength="2000"></textarea></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Review checklist</button></div></form>','',false,'related-checklist');
+  }
+  function reviewRelatedBatch(form) {
+    if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-checklist')return;
+    const id=form.dataset.id, revision=Number(form.dataset.revision), task=store.getState().tasks.find(task=>task.id===id);
+    if(!task||task.revision!==revision)throw new Error('The original task changed. Reopen it before reviewing linked work.');
+    const titles=GatherPlanningUI.relatedChecklistTitles(form.elements.checklist.value);
+    openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" data-id="'+h(id)+'" data-revision="'+revision+'">'+
+      GatherPlanningUI.relatedChecklistReview(titles,h)+
+      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review');
+  }
   function dependencyMarkup(task) {
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
     const dependents=state.tasks.filter(t=>(t.dependencies||[]).some(link=>link.taskId===task.id));
@@ -572,6 +587,7 @@
       ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
       ${manage&&task.status!=='done'?`<details class="dependency-add"><summary>Link an existing task</summary><form id="relationshipAddForm" data-id="${h(task.id)}"><label class="field">Task<select name="taskId" required>${options([['','Choose a task'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(l=>l.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link these tasks?<textarea name="reason" rows="2" maxlength="2000" required placeholder="Describe the shared context, or the exact output needed first."></textarea></label><button type="submit" class="btn btn-secondary btn-small">Save link</button></form></details>`:''}
       ${linkedTaskForm(task,state,isOrganizer())}
+      ${isOrganizer()&&!window.GatherAccessLost&&task.status!=='done'&&!(task.reportedAt&&task.requiresVerification&&!task.verifiedAt)?`<button class="btn btn-secondary section-gap" data-action="related-checklist" data-id="${h(task.id)}">Break down with a checklist</button>`:''}
       ${window.GatherMode&&canCreateTasks()&&!window.GatherAccessLost&&task.status!=='done'?`<div class="section-gap"><button class="btn btn-secondary btn-small" disabled aria-disabled="true" title="Ask Weft is coming soon">Plan smaller steps · Coming soon</button><p class="muted">Ask Weft is coming soon. You can still add and link smaller tasks manually.</p></div>`:''}
       ${task.status==='blocked'&&manage?`<details class="dependency-add"><summary>Name or link follow-up work</summary><form id="dependencyForm" data-id="${h(task.id)}"><label class="field">Existing task<select name="existingTask">${options([['','Name the follow-up'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(link=>link.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Follow-up task name<input name="newTitle" maxlength="180" placeholder="What needs to happen first?"></label><label class="check-field"><input name="additional" type="checkbox"> Add a separate blocker instead</label><p class="muted">An unused generic follow-up will be updated, not duplicated.</p><div class="form-actions"><button class="btn btn-secondary" type="submit">Save follow-up</button></div></form></details>`:''}
       ${dependents.length?`<h3>Linked from</h3><div class="dependency-targets">${dependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
@@ -982,6 +998,7 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    replacesDialog.push('related-checklist');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -990,6 +1007,7 @@
     try {
       if(action==='close-dialog')closeDialog();
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
+      if(action==='related-checklist')openRelatedBatch(id);
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
       }
@@ -1154,6 +1172,11 @@
     event.preventDefault();
     if(form.id==='guestAgendaForm')return;
     if(ui.pendingSave||form.dataset.saving==='true')return;
+    if(form.id==='relatedChecklistForm'){
+      $('.form-error',form)?.remove();
+      try{reviewRelatedBatch(form);}catch(error){formError(form,error);}
+      return;
+    }
     if(form.id==='scheduleDateForm'){
       const input=form.elements.namedItem('scheduleDate');
       if(!window.GatherAccessLost&&input.validity.valid&&input.value&&input.value!==ui.scheduleDate){
@@ -1170,6 +1193,8 @@
     if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
     if(form.id==='acceptTasksForm')data.selections=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
     if(form.id==='assignTasksForm')data.tasks=$$('input[name="assignTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
+    if(form.id==='relatedReviewForm')data.items=$$('[data-related-row]',form).filter(row=>$('[data-related-include]',row).checked)
+      .map(row=>({title:$('[data-related-title]',row).value,scope:$('[data-related-scope]',row).value}));
     $('.form-error',form)?.remove();
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
@@ -1242,6 +1267,14 @@
       if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
       if(form.id==='relationshipAddForm'){store.addDependency(form.dataset.id,{taskId:data.taskId,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Tasks linked. Task status is unchanged.');}
       if(form.id==='linkedTaskForm'){store.addLinkedTask(form.dataset.id,{title:data.title,note:data.note,scope:data.scope,owner:data.owner,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('New task created and linked. Review its owner and dates before starting.');}
+      if(form.id==='relatedReviewForm'){
+        if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-review')throw new Error('Reopen the original task as the organizer.');
+        if(!data.items.length)throw new Error('Select at least one step to add.');
+        const saved=store.addRelatedTasks(form.dataset.id,{revision:Number(form.dataset.revision),items:data.items},ui.actor);
+        render();taskDialog(form.dataset.id,'',true);
+        requestAnimationFrame(()=>{const heading=$('#dialog .task-dependencies h3');if(heading){heading.tabIndex=-1;heading.focus();}});
+        toast(saved.length===1?'1 related task added.':'Added '+saved.length+' related tasks.');
+      }
       if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.reportCompletion(id,details,ui.actor);}else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const task=store.getState().tasks.find(task=>task.id===id),hasSuggestions=(task?.handoffs||[]).some(item=>item.status==='pending');if(response==='completed')window.GatherCompletionUI?.celebrate(task,store.getState());else toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
       if(form.id==='contextForm'){
         const state=store.getState();

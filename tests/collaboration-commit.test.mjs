@@ -415,6 +415,34 @@ test('linked creation loses organizer authority even if old organizer remains a 
     assert.equal(response.status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);
   }finally{beforeRun=undefined;}
 });
+test('reviewed related tasks save in one revision only for the current organizer',async()=>{
+  const {project}=await setup();
+  const parent=(await save(project,organizer,'addTask',[{title:'Corporate summit welcome'}])).result;
+  const items=[{title:'Set up entry table',scope:'Table signed and staffed.'},{title:'Confirm the coat check'}];
+  const action=[parent.id,{revision:parent.revision,items}], baseline=stored(project);
+  assert.equal((await mutate(project,teammate,'addRelatedTasks',action,baseline.revision)).status,403);
+  assert.equal((await mutate(project,organizer,'addRelatedTasks',action,baseline.revision-1)).status,409);
+  assert.equal((await mutate(project,organizer,'addRelatedTasks',[parent.id,{revision:parent.revision,items:[...items,{title:parent.title}]}],baseline.revision)).status,400);
+  assert.deepEqual(stored(project),baseline);
+  const saved=await save(project,organizer,'addRelatedTasks',action);
+  assert.equal(saved.revision,baseline.revision+1);
+  assert.deepEqual(saved.result.map(task=>task.title),items.map(item=>item.title));
+  const live=await read(project), task=live.state.tasks.find(task=>task.id===parent.id);
+  assert.deepEqual(task.dependencies.map(link=>[link.taskId,link.kind]),saved.result.map(task=>[task.id,'related']));
+  assert.equal(task.status,'todo');
+  const before=stored(project);
+  assert.equal((await mutate(project,organizer,'addRelatedTasks',action,before.revision)).status,400);
+  assert.deepEqual(stored(project),before);
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)')
+    .run('breakdown-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());
+  let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
+  try {
+    const late=[parent.id,{revision:task.revision,items:[{title:'Never saved after transfer'}]}];
+    assert.equal((await mutate(project,organizer,'addRelatedTasks',late,before.revision)).status,409);
+    assert.ok(intercepted);assert.deepEqual(stored(project),before);
+  } finally {beforeRun=undefined;}
+});
 test('assignment loses organizer authority even if old organizer remains a teammate',async()=>{
   const {project}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate handoff'}])).result;
   sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)').run('batch-old-owner',project,organizer.userId,'jack','fictional',new Date().toISOString());

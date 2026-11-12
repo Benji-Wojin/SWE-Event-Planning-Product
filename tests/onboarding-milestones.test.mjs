@@ -445,4 +445,13 @@ test('an untimed activity can be the first task, without counting scheduling or 
   assert.equal(task.eventActivity,true);assert.deepEqual(task.schedule,slot);
   assert.equal(task.status,'todo');assert.equal(task.acceptedBy,'jack');
   assert.deepEqual(await events(),checkpoint);
+  const daily=()=>db.prepare("SELECT tasks_created FROM product_activity_daily WHERE user_id=? AND day=date('now')").bind(user.userId).first('tasks_created');
+  assert.equal(await daily(),1);
+  const breakdown={revision:task.revision,items:[{title:'Review the foyer signs'},{title:'Prepare a volunteer briefing'}]};
+  await save('addRelatedTasks',[task.id,breakdown],accepted.revision-1,409);
+  assert.equal(await daily(),1);
+  const addedSteps=await save('addRelatedTasks',[task.id,breakdown],accepted.revision);
+  assert.equal(addedSteps.result.length,2);
+  assert.equal(await daily(),3);
+  assert.deepEqual(await events(),checkpoint,'a reviewed batch does not record another first-task milestone');
 });

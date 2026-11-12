@@ -686,6 +686,8 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 }
 @media(max-width:640px){.schedule-focus{grid-template-columns:minmax(0,1fr);gap:16px}}
 .task-schedule .form-actions{flex-wrap:wrap}.task-schedule .field{min-width:0}.task-schedule input{min-width:0;max-width:100%}
+.related-review-row{min-width:0;margin:14px 0;padding:10px 14px 14px;border:1px solid var(--line);border-radius:8px}
+.related-review-row .field{margin-top:8px}
 .schedule-overlap-summary{padding:12px;border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:6px;font-size:.875rem;line-height:1.5;margin:0 0 18px}
 .schedule-overlap-label{font-size:.75rem;font-weight:600;text-decoration:underline;text-underline-offset:3px}
 .schedule-overlap-details{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:6px;font-size:.875rem}

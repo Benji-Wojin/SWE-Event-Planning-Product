@@ -108,6 +108,7 @@ const arity: Record<string, number> = {
   resolveHandoff: 3,
   addDependency: 2,
   addLinkedTask: 2,
+  addRelatedTasks: 2,
   setDependencyKind: 2,
   removeDependency: 2,
   resumeTask: 1,
@@ -203,6 +204,9 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         break;
       case 'addLinkedTask':
         result = store.addLinkedTask(a, b, user.actorId);
+        break;
+      case 'addRelatedTasks':
+        result = store.addRelatedTasks(a, b, user.actorId);
         break;
       case 'setDependencyKind':
         result = store.setDependencyKind(a, b, user.actorId);
@@ -309,13 +313,14 @@ export async function mutateWorkspace(
   const files=await completionFiles(projectId,input,authorized);
   // Count user-directed creation, not automatically generated blocker tasks
   // that can be a side effect of editing or reporting on existing work.
-  const createsTask = ['addTask', 'addLinkedTask', 'addDependency', 'acceptSuggestion', 'applyMessage'].includes(input.method) ||
+  const createsTask = ['addTask', 'addLinkedTask', 'addRelatedTasks', 'addDependency', 'acceptSuggestion', 'applyMessage'].includes(input.method) ||
     input.method === 'resolveHandoff' && input.args?.[2]?.action === 'create';
   const completesTask = ['updateTask', 'reportCompletion', 'verifyTask', 'applyMessage'].includes(input.method);
   const priorTasks: Map<string, boolean> | null = createsTask || completesTask ? store.taskCompletionStates() : null;
   const result = applyWorkspaceAction(store, user, input);
-  // Only the direct task returned by the action counts, not side-effect tasks.
-  const addedTask = createsTask && typeof result?.id === 'string' && !priorTasks?.has(result.id);
+  // Count only tasks explicitly returned by the action, not side-effect tasks.
+  const addedCount = createsTask ? (input.method==='addRelatedTasks' ? result : [result])
+    .filter((task:any) => typeof task?.id==='string' && !priorTasks?.has(task.id)).length : 0;
   const completedTask = completesTask && result?.status === 'done' &&
     (!result.requiresVerification || !!result.verifiedAt) && priorTasks?.get(result.id) === false;
   // The destination must still be a real active project member at commit,
@@ -329,7 +334,7 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(
@@ -340,10 +345,10 @@ export async function mutateWorkspace(
     `UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=? AND ${projectWriteAccess}${organizerOnly?" AND ((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))":''}${assignment?" AND EXISTS (SELECT 1 FROM project_members WHERE project_id=? AND actor_id=? AND revision=? AND revoked_at='')":''}${files?' AND EXISTS (SELECT 1 FROM project_info WHERE scope=? AND revision=?)':''}`,
   )
     .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]));
-  const write = addedTask || completedTask
-    ? (await env.DB.batch([save, taskActivityAfterSave(user.userId, Number(addedTask), Number(completedTask)),
-        ...(addedTask ? [firstTaskAfterSave(user.userId)] : []),
-        ...(addedTask && input.method === 'addTask' && authorized.role === 'admin' && projectId !== 'main'
+  const write = addedCount || completedTask
+    ? (await env.DB.batch([save, taskActivityAfterSave(user.userId, addedCount, Number(completedTask)),
+        ...(addedCount ? [firstTaskAfterSave(user.userId)] : []),
+        ...(addedCount && input.method === 'addTask' && authorized.role === 'admin' && projectId !== 'main'
           ? [tutorialCheckpointAfterTask(user.userId, projectId, result.id, row.revision + 1)] : [])]))[0]
     : await save.run();
   if (write.meta.changes !== 1)

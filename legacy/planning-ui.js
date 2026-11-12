@@ -234,5 +234,20 @@
       unsaved:()=>!!frame&&(dirty||busy),
     };
   }
-  root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup};
+  function relatedChecklistTitles(value) {
+    if(typeof value!=='string'||value.length>2000)throw new Error('Paste at most 2,000 characters of checklist text.');
+    const lines=value.split(/\r\n?|\n|\u2028|\u2029/).map((line,index)=>{
+      const title=line.trimStart().replace(/^(?:[-*+•]|[0-9]{1,4}[.)])(?:\s+|$)/u,'')
+        .replace(/^(?:\[[ xX]\]|[☐☑☒✓✔])(?:\s+|$)/u,'').trim();
+      if(title.length>180)throw new Error('Shorten line '+(index+1)+' to 180 characters or fewer.');
+      return title;
+    }).filter(Boolean);
+    if(!lines.length||lines.length>8)throw new Error('Paste between 1 and 8 task titles, one per line.');
+    return lines;
+  }
+  function relatedChecklistReview(titles,h) {
+    return '<p>Choose which smaller steps to add. Edit any title and describe an optional Done when result. Every new task starts unassigned and To do, without a date. Related work never blocks completion of the original task.</p>'+
+      titles.map((title,index)=>'<fieldset class="related-review-row" data-related-row><legend>Step '+(index+1)+'</legend><label class="check-field"><input type="checkbox" data-related-include> Include step '+(index+1)+'</label><label class="field">Title for step '+(index+1)+'<input data-related-title maxlength="180" value="'+h(title)+'"></label><label class="field">Done when for step '+(index+1)+' (optional)<textarea data-related-scope maxlength="500" rows="2"></textarea></label></fieldset>').join('');
+  }
+  root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup,relatedChecklistTitles,relatedChecklistReview};
 })(globalThis);
