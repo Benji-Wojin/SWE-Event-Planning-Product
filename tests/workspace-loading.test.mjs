@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
+import '../legacy/navigation.js';
 
 const source = readFileSync('legacy/hosted-store.js', 'utf8');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -15,7 +16,7 @@ function element(tag) {
     addEventListener(type, fn) { this.listeners[type] = fn; },
   };
 }
-function start(response, { oldDocument = false, demo = false } = {}) {
+function start(response, { oldDocument = false, demo = false, search } = {}) {
   const boot = element('main'), shell = element('div'), body = element('body'), listeners = {};
   shell.hidden = !oldDocument;boot.attributes['aria-busy'] = 'true';
   body.classList = { toggle() {} };
@@ -26,13 +27,14 @@ function start(response, { oldDocument = false, demo = false } = {}) {
     getElementById: id => id === 'workspaceBoot' ? oldDocument ? null : boot : shell,
     querySelectorAll: () => [], querySelector: selector => selector === '[data-invite-label]' ? inviteLabel : null, createElement: element, body,
   };
-  const window = { top: { location: { replace(value) { redirect = value; } } }, addEventListener(type, fn) { listeners[type] = fn; } };
+  const window = { GatherNavigation, top: { location: { replace(value) { redirect = value; } } }, addEventListener(type, fn) { listeners[type] = fn; } };
+  const requests=[];
   const run = vm.runInNewContext(source, { window, document,
-    location: { search: demo ? '?demo=1&as=jack' : '?project=new-project', origin: 'https://weft.example', reload() { reloads++; } },
-    URL, URLSearchParams, structuredClone, fetch: () => response,
+    location: { search: search ?? (demo ? '?demo=1&as=jack' : '?project=new-project'), origin: 'https://weft.example', reload() { reloads++; } },
+    URL, URLSearchParams, structuredClone, fetch: path => { requests.push(path); return response; },
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
-    inviteLabel, reloads: () => reloads, redirect: () => redirect };
+    inviteLabel, requests, reloads: () => reloads, redirect: () => redirect };
 }
 const success = value => ({ ok: true, status: 200, json: async () => value });
 const text = node => [node.textContent || '', ...node.children.map(text)].join(' ');
@@ -91,6 +93,24 @@ test('older open documents receive a loading screen and setup redirects never re
   const h = start(Promise.resolve(success({ ...state, setupRequired: true })));await h.run;
   assert.equal(h.redirect(), '/setup?project=new-project');assert.equal(h.shell.hidden, true);
   assert.equal(h.body.children.some(node => node.tag === 'script'), false);
+});
+
+test('sign-in retry keeps one valid day but never includes it in workspace API requests',async()=>{
+  for(const [search,expected] of [
+    ['?project=new-project&day=2032-02-29','2032-02-29'],
+    ['?project=new-project&day=2032-02-30',null],
+    ['?project=new-project&day=2032-02-29&day=2032-03-01',null],
+  ]){
+    const fixture=start(Promise.resolve({ok:false,status:401,json:async()=>({error:'Sign-in required'})}),{search});
+    await fixture.run;
+    const url=new URL(fixture.window.top.location.href,'https://weft.example');
+    assert.equal(url.pathname,'/sign-in');
+    const target=new URL(url.searchParams.get('return_to'),'https://weft.example');
+    assert.equal(target.pathname,'/project');
+    assert.equal(target.searchParams.get('project'),'new-project');
+    assert.equal(target.searchParams.get('day'),expected);
+    assert.deepEqual(fixture.requests,['/api/workspace?project=new-project']);
+  }
 });
 
 test('invite label matches hosted navigation while demo remains explicitly simulated', async () => {

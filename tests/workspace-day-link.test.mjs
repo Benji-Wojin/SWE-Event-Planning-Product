@@ -1,0 +1,36 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+
+test('the signed-in project wrapper forwards a valid day through sign-in and into its workspace',async()=>{
+  const stub={
+    '@/app/chatgpt-auth':'export async function requireChatGPTUser(path){ globalThis.__returnPath=path; if(globalThis.__signedOut) throw Error("sign-in"); }',
+    '@/components/app-open':'export function AppOpen(){ throw Error("Not needed for this test"); }',
+    'react/jsx-runtime':'export const jsx=(type,props)=>({type,props}),jsxs=jsx,Fragment="fragment";',
+  };
+  const output=await build({entryPoints:['app/project/page.tsx'],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'page-stubs',setup(b){
+    b.onResolve({filter:/./},a=>Object.hasOwn(stub,a.path)?{path:a.path,namespace:'test-stub'}:null);
+    b.onLoad({filter:/./,namespace:'test-stub'},a=>({contents:stub[a.path],loader:'js'}));
+  }}]});
+  const {default:Project}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].text).toString('base64'));
+  const props=await Project({searchParams:Promise.resolve({project:'school',day:'2032-02-29'})});
+  try{
+    globalThis.__signedOut=true;
+    await assert.rejects(props.type(props.props),/sign-in/);
+    assert.equal(globalThis.__returnPath,'/project?project=school&day=2032-02-29');
+    globalThis.__signedOut=false;
+    const iframe=(await props.type(props.props)).props.children[1];
+    assert.equal(iframe.props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
+    const guided=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29'})});
+    assert.equal((await guided.type(guided.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29#timeline');
+    for(const day of ['2030-02-29',['2032-02-29','2032-03-01'],'0000-01-01']){
+      const next=await Project({searchParams:Promise.resolve({project:'school',day,message:'mail-1'})});
+      const body=await next.type(next.props);
+      assert.equal(globalThis.__returnPath,'/project?project=school&message=mail-1');
+      assert.equal(body.props.children[1].props.src,'/workspace.html?project=school&message=mail-1#inbox');
+    }
+  }finally{
+    delete globalThis.__returnPath;
+    delete globalThis.__signedOut;
+  }
+});

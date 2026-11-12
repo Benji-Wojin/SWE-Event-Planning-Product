@@ -7,7 +7,7 @@ import '../legacy/navigation.js';
 
 function surface(url) {
   const location=new URL(url), listeners=new Map(), writes=[];
-  const win={location,history:{state:{framework:'preserve'},replaceState(state,_title,hash){writes.push({state,hash});location.hash=hash;}},
+  const win={location,history:{state:{framework:'preserve'},replaceState(state,_title,hash){writes.push({state,hash});location.href=new URL(hash,location).href;}},
     addEventListener(type,fn){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(fn);},
     removeEventListener(type,fn){listeners.get(type)?.delete(fn);},
     change(hash){location.hash=hash;for(const fn of listeners.get('hashchange')||[])fn();},writes};
@@ -31,6 +31,33 @@ test('navigation updates both visible URL and frame without losing query or fram
   assert.equal(host.writes[0].state,host.history.state);
   nav.replace('timeline');assert.equal(host.writes.length,1);
   nav.replace('__proto__');assert.equal(host.location.hash,'#overview');
+});
+
+test('day links only carry project and a valid date; the frame keeps the selected day after reload',()=>{
+  const host=surface('https://weft.example/project?project=school&message=retain#timeline');
+  const frame=surface('https://weft.example/workspace.html?project=school&message=retain');
+  frame.parent=host;
+  const nav=GatherNavigation.create(frame);
+  nav.replaceScheduleDate('2028-02-29');
+  assert.equal(host.location.href,'https://weft.example/project?project=school&message=retain&day=2028-02-29#timeline');
+  assert.equal(nav.initialScheduleDate(),'2028-02-29');
+  assert.equal(host.writes[0].state,host.history.state);
+  assert.equal(GatherNavigation.scheduleLink(host.location.origin,'school','2028-02-29'),'https://weft.example/project?project=school&day=2028-02-29');
+  nav.replaceScheduleDate('2028-02-30');
+  assert.equal(nav.initialScheduleDate(),'2028-02-29');
+  nav.replaceScheduleDate('');
+  assert.equal(nav.initialScheduleDate(),'');
+  assert.equal(host.location.href,'https://weft.example/project?project=school&message=retain#timeline');
+  for(const invalid of ['2028-02-30','0000-01-01','2028-2-01','not-a-date']){
+    assert.equal(GatherNavigation.scheduleLink(host.location.origin,'school',invalid),'');
+  }
+  const direct=surface('https://weft.example/workspace.html?project=school&day=2028-02-29');
+  assert.equal(GatherNavigation.create(direct).initial(),'timeline');
+  direct.location.search='?project=school&day=2028-02-29&day=2028-03-01';
+  assert.equal(GatherNavigation.create(direct).initial(),'overview');
+  const demo=surface('https://weft.example/workspace.html?demo=1&as=maya#timeline');
+  GatherNavigation.create(demo).replaceScheduleDate('2028-02-29');
+  assert.equal(demo.writes.length,0);
 });
 test('hash changes in either surface reach existing guards, rejection restores both and disposal removes listeners',()=>{
   const {nav,host,frame}=pair();let calls=0;

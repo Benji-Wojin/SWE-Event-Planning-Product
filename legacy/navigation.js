@@ -2,6 +2,23 @@
   'use strict';
   const views = new Set(['overview', 'tasks', 'inbox', 'updates', 'team', 'info', 'budget', 'timeline', 'memory', 'details']);
   const viewFrom = hash => views.has(hash.slice(1)) ? hash.slice(1) : '';
+  function scheduleDate(value) {
+    if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-'))return '';
+    const date=new Date(value+'T00:00:00Z');
+    return Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===value?value:'';
+  }
+  function scheduleDateFrom(searchParams) {
+    const values=searchParams.getAll('day');
+    return values.length===1?scheduleDate(values[0]):'';
+  }
+  function scheduleLink(origin,project,value) {
+    const day=scheduleDate(value);
+    if(!day)return '';
+    const url=new URL('/project',origin);
+    url.searchParams.set('project',project);
+    url.searchParams.set('day',day);
+    return url.href;
+  }
   function create(frame) {
     let host = frame;
     try {
@@ -9,10 +26,23 @@
       if (parent && parent !== frame && parent.location.origin === frame.location.origin &&
           ['/project', '/demo'].includes(parent.location.pathname)) host = parent;
     } catch { /* Unrelated or cross-origin embeds keep their own navigation. */ }
+    const initialScheduleDate=()=>scheduleDateFrom(new URLSearchParams(frame.location.search));
     return {
       initial() {
         // The address-bar section wins; otherwise keep mailbox/demo defaults.
-        return viewFrom(host.location.hash) || viewFrom(frame.location.hash) || 'overview';
+        return viewFrom(host.location.hash) || viewFrom(frame.location.hash) || (initialScheduleDate()?'timeline':'overview');
+      },
+      initialScheduleDate,
+      replaceScheduleDate(value) {
+        if(new URLSearchParams(frame.location.search).get('demo')==='1')return;
+        const day=scheduleDate(value);
+        if(value&&!day)return;
+        for(const target of new Set([frame,host])){
+          const url=new URL(target.location.href),previous=url.search;
+          if(day)url.searchParams.set('day',day);
+          else url.searchParams.delete('day');
+          if(url.search!==previous)target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+        }
       },
       replace(view) {
         const hash = '#' + (views.has(view) ? view : 'overview');
@@ -31,5 +61,5 @@
       },
     };
   }
-  root.GatherNavigation = { create };
+  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink };
 })(typeof window !== 'undefined' ? window : globalThis);

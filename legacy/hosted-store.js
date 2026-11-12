@@ -5,7 +5,10 @@
   const projectId = params.get('project') ?? 'main';
   const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
   const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
-  const signIn = '/sign-in?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'));
+  const signIn = () => {
+    const day=window.GatherNavigation?.scheduleDateFrom?.(new URLSearchParams(location.search));
+    return '/sign-in?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'+(day?'?day='+day:'')));
+  };
   let boot = document.getElementById('workspaceBoot');
   const shell = document.getElementById('appShell');
   // An already-open document may load the newer script during a release.
@@ -36,7 +39,7 @@
     const back = document.createElement('a');
     back.href = '/';back.target = '_top';back.textContent = 'All projects';
     const login = document.createElement('a');
-    login.href = signIn;login.target = '_top';login.textContent = 'Sign in again';
+    login.href = signIn();login.target = '_top';login.textContent = 'Sign in again';
     const actions = document.createElement('div');
     actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:16px;align-items:center';
     actions.append(retry, back, login);
@@ -73,7 +76,7 @@
       credentials: 'same-origin',
       cache: 'no-store',
     });
-    if (response.status === 401) window.top.location.href = signIn;
+    if (response.status === 401) window.top.location.href = signIn();
     const result = await response.json().catch(() => {
       throw new Error('Weft could not complete the request. Reload or sign in again.');
     });

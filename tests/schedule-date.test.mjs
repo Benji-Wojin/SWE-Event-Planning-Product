@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import '../legacy/schedule-ui.js';
+import '../legacy/navigation.js';
 
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ui=GatherScheduleUI.create({h,options:()=>'',person:()=>'',statusBadge:()=>''});
@@ -100,8 +101,10 @@ test('only an explicit valid submission applies a date, and clearing restores fo
   const action=source.split('\n').find(line=>line.includes("if(action==='clear-schedule-date'"));
   const submit=source.match(/if\(form.id==='scheduleDateForm'\)\{[\s\S]*?\n    \}/)[0];
   let renders=0,focuses=0;
+  const locations=[];
   const input={value:'2026-11-21',validity:{valid:true}};
   const context=vm.createContext({ui:uiState,window:{},form:{id:'scheduleDateForm',elements:{namedItem:name=>{assert.equal(name,'scheduleDate');return input;}}},action:'clear-schedule-date',
+    navigation:{replaceScheduleDate:day=>locations.push(day)},
     render(){renders++;},$:selector=>{assert.equal(selector,'#scheduleDate');return {focus(){focuses++;}};}});
   assert.doesNotMatch(source,/if\(el.id==='scheduleDate'/);
   vm.runInContext('(()=>{'+submit+'})()',context);
@@ -111,6 +114,7 @@ test('only an explicit valid submission applies a date, and clearing restores fo
   assert.equal(uiState.scheduleDate,'2026-11-21');assert.equal(renders,1);
   vm.runInContext(action,context);
   assert.equal(uiState.scheduleDate,'');assert.equal(renders,2);assert.equal(focuses,2);
+  assert.deepEqual(locations,['2026-11-21','']);
 });
 
 test('untimed activities remain visible across dates without becoming run-sheet entries',()=>{
@@ -124,4 +128,36 @@ test('untimed activities remain visible across dates without becoming run-sheet 
   assert.match(sheet,/1 planned activity is not shown.*not tied to the selected date/);
   assert.doesNotMatch(sheet,/unscheduled briefing/);
   assert.match(ui.preparationReview(fixture,today,scope),/review covers all event dates in this scope/);
+});
+
+test('a shared day copy action is available only for a selected day in a real hosted project',()=>{
+  const html=ui.view(state,false,today,{...scope,shareDay:true});
+  assert.match(html,/type="button" data-action="copy-schedule-day" aria-describedby="scheduleDayShareHelp">Copy day link/);
+  assert.match(html,/Recipients still need project access/);
+  assert.doesNotMatch(ui.view(state,false,today,{...scope,shareDay:false}),/Copy day link/);
+  assert.doesNotMatch(ui.view(state,false,today,{...scope,date:'',shareDay:true}),/Copy day link/);
+});
+
+test('copy submits only the live day URL and falls back without writing workspace state',async()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf("      if(action==='copy-schedule-day'");
+  const end=source.indexOf("      if(action==='run-sheet'",start);
+  assert.ok(start>=0&&end>start);
+  const run=new vm.Script('(async()=>{'+source.slice(start,end)+'})()');
+  const seen=[],window={GatherMode:{projectId:'school',demo:false}};
+  let success=true;
+  const context=vm.createContext({action:'copy-schedule-day',el:{isConnected:true},window,GatherNavigation,
+    ui:{scheduleDate:'2026-11-21',scheduleMine:true,actor:'maya'},location:{origin:'https://weft.example'},
+    copyText:async value=>{seen.push(value);return success;},toast:value=>seen.push(value),
+    copyFallback:(url,title)=>seen.push([url,title]),$:()=>({hidden:true}),
+  });
+  const link='https://weft.example/project?project=school&day=2026-11-21';
+  await run.runInContext(context);
+  assert.deepEqual(seen.splice(0),[link,'Day link copied. Recipients still need project access.']);
+  success=false;
+  await run.runInContext(context);
+  assert.deepEqual(seen.splice(0),[link,[link,'Copy the schedule day link']]);
+  window.GatherAccessLost=true;
+  await run.runInContext(context);
+  assert.deepEqual(seen,[]);
 });

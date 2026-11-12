@@ -78,11 +78,13 @@ test('timeline view and live refresh use the current profile and the same scope'
   const fragment=source.slice(start,source.indexOf('  function updatesView(s)',start));
   const calls=[];
   const context=vm.createContext({ui:{timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},isOrganizer:()=>false,
+    window:{GatherMode:{demo:false}},
     pageHeading:()=>'',schedule:{view(state,organizer,now,scope){calls.push({state,organizer,scope});return 'timetable';}}});
   vm.runInContext(fragment+'globalThis.view=timelineView;',context);
   const state={tasks:[],event};assert.match(context.view(state),/timetable/);
-  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya',date:'2026-10-04'});assert.equal(calls[0].state,state);
+  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya',date:'2026-10-04',shareDay:true});assert.equal(calls[0].state,state);
   context.ui.actor='dev';context.view(state);assert.equal(calls[1].scope.actor,'dev');
   context.ui.scheduleMine=false;context.view(state);assert.equal(calls[2].scope.mine,false);
+  context.window.GatherMode.demo=true;context.view(state);assert.equal(calls[3].scope.shareDay,false);
   assert.match(source,/if\(action==='schedule-scope'\)\{ui\.scheduleMine=id==='mine';render\(\);\}/);
 });
