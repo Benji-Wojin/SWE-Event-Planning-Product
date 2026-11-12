@@ -117,6 +117,8 @@ Scheduled activities awaiting required organizer verification also appear in **C
 
 When activities are scheduled, **Timeline → Run sheet** opens a read-only snapshot of the current All activities or My activities view. It groups event-local times by date and shows activity names, locations, owners, status and entered owner-overlap warnings. Completion awaiting verification stays distinct from Done. It never changes tasks or infers completion from the clock.
 
+Print the run sheet or **Download text (.txt)** for an offline team copy. If downloading is unavailable, use **Show text to copy**. Both formats use the same snapshot, including warnings and any selected day. **Check for updates** checks the saved plan without editing it; a known newer plan disables the export buttons until the preview is reopened. A downloaded copy is not live and cannot be recalled; confirm changes with the team before relying on it. It does not include task notes, evidence, guest records or private bookings, and downloading does not send anything.
+
 Choose a date in Timeline or jump to the first, previous or next activity day. The date applies to the schedule and run sheet in either team scope. Overnight activities appear on every date they overlap, with their original start and end shown. Untimed activities stay in a separate list until scheduled.
 
 Use **Copy day link** to share the live project date with a teammate. It does not grant access or send a message, and it does not copy your personal activity filter.

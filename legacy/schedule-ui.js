@@ -188,9 +188,13 @@
       if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
       return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${label}</span>`).join('')}</span>`:'';
     }
-    function locationNotice(tasks,locations) {
+    function locationWarning(tasks,locations) {
       const count=tasks.filter(task=>locations.has(task.id)).length;
-      return count?`<p class="schedule-overlap-summary">${count} ${count===1?'activity has a':'activities have'} potential location overlap. Matching location labels can include other teams outside this view. Confirm shared space with the organizer; this is not a booking check.</p>`:'';
+      return count?`${count} ${count===1?'activity has a':'activities have'} potential location overlap. Matching location labels can include other teams outside this view. Confirm shared space with the organizer; this is not a booking check.`:'';
+    }
+    function locationNotice(tasks,locations) {
+      const warning=locationWarning(tasks,locations);
+      return warning?`<p class="schedule-overlap-summary">${h(warning)}</p>`:'';
     }
     function fields(schedule={},startRequired=true) {
       return `<div class="form-grid"><label class="field">${startRequired?'Starts':'Starts (optional)'}<input name="start" type="datetime-local"${startRequired?' required':''} step="60" value="${h(schedule.start||'')}"></label><label class="field">Ends (optional)<input name="end" type="datetime-local" step="60" value="${h(schedule.end||'')}"></label><label class="field full-width">Activity location (optional)<input name="location" maxlength="240" value="${h(schedule.location||'')}"></label></div>`;
@@ -277,35 +281,73 @@
         ? `<p><button class="btn btn-secondary btn-small review-activity-action" data-action="review-event-acceptance">Review my assignments (${ownPending})</button></p>`:'';
       return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&(group.tasks.length<=3||group.key==='activity-time')?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span>${scheduleAction(group,task)}</li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
     }
-    function runSheet(state,now=Date.now(),scope={}) {
+    function runSheetModel(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
       const tasks=ordered(visible.filter(task=>onDate(task,day))),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks.filter(task=>onDate(task,day)));
       const untimed=visible.filter(needsActivityTime).length;
-      const untimedNotice=untimed?`<p class="notice">${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.</p>`:'';
-      const dates=day&&tasks.length?[day]:[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))];
+      const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
+      const days=new Map();
       const name=id=>{
         if(!id)return 'Unassigned';
         const owner=state.members.find(member=>member.id===id);
         return owner?owner.name+(owner.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
       };
       const unavailable=tasks.filter(task=>task.owner&&!resolved(task)&&!state.members.some(member=>member.id===task.owner&&member.active!==false)).length;
-      const ownerNotice=unavailable?'<p class="notice">'+unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.</p>':'';
+      const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
       const byId=new Map(state.tasks.map(task=>[task.id,task]));
       const prerequisites=new Set(tasks.filter(task=>unfinishedRequiredWork(task,byId)).map(task=>task.id));
-      const prerequisiteNotice=prerequisites.size?'<p class="notice">'+prerequisites.size+' '+(prerequisites.size===1?'activity has':'activities have')+' unfinished required work. Required linked tasks are incomplete, awaiting verification or unavailable. Confirm the current plan with the organizer; this snapshot does not certify event readiness.</p>':'';
+      const prerequisiteNotice=prerequisites.size?prerequisites.size+' '+(prerequisites.size===1?'activity has':'activities have')+' unfinished required work. Required linked tasks are incomplete, awaiting verification or unavailable. Confirm the current plan with the organizer; this snapshot does not certify event readiness.':'';
       const acceptance=new Set(tasks.filter(task=>pendingAcceptance(task,state.members)).map(task=>task.id));
-      const acceptanceNotice=acceptance.size?'<p class="notice">'+acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.</p>':'';
+      const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
       const changes=new Set(tasks.filter(changesRequested).map(task=>task.id));
-      const changesNotice=changes.size?'<p class="notice">'+changes.size+' '+(changes.size===1?'activity has':'activities have')+' completion changes requested. Review the task with the owner before resubmitting. Review notes are not included in this copy; the work is not verified.</p>':'';
+      const changesNotice=changes.size?changes.size+' '+(changes.size===1?'activity has':'activities have')+' completion changes requested. Review the task with the owner before resubmitting. Review notes are not included in this copy; the work is not verified.':'';
       const amendments=new Set(tasks.filter(evidenceAmended).map(task=>task.id));
-      const amendmentNotice=amendments.size?'<p class="notice">'+amendments.size+' '+(amendments.size===1?'activity has':'activities have')+' evidence amended after verification. The current submission has not been reviewed. Task verification is unchanged; review amendments with the organizer. Evidence contents are not included in this copy.</p>':'';
+      const amendmentNotice=amendments.size?amendments.size+' '+(amendments.size===1?'activity has':'activities have')+' evidence amended after verification. The current submission has not been reviewed. Task verification is unchanged; review amendments with the organizer. Evidence contents are not included in this copy.':'';
       const local=momentKey(now,state.event.timeZone);
       const timestamp=local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC';
       const title=state.event.name||'Untitled event',scopeLabel=(scope.mine?'My activities · '+name(scope.actor):'All activities')+(day?' · '+dateLabel(day):'');
       const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
       // Deliberately project only schedule facts. Never serialize the workspace,
       // notes, comments, guest records, email, files or private booking details.
-      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(state.event.timeZone||'Time zone not set')}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. This copy is not live. Confirm changes with your team; scheduled times never mark work complete.</p><p class="muted">Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.</p></header>${untimedNotice}${ownerNotice}${acceptanceNotice}${prerequisiteNotice}${changesNotice}${amendmentNotice}${overlaps.size?`<p class="notice">${overlaps.size} activities have owner overlaps. Review these with the organizer.</p>`:''}${locationNotice(tasks,locations)}${dates.map(date=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(dateLabel(date))}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(dateLabel(date))}<span>${h(scopeLabel)} · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${tasks.filter(task=>day||task.schedule.start.startsWith(date)).map(task=>`<tr><td data-label="Time">${h(range(task.schedule))}${!task.schedule.end?'<span>No end time set</span>':''}</td><th scope="row">${h(task.title)}${day?carriedOver(task,day):''}${task.schedule.location?`<span>${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span>Owner overlap</span>':''}${locations.has(task.id)?'<span>Potential location overlap</span>':''}</th><td data-label="Owner">${h(name(task.owner))}${acceptance.has(task.id)?'<span>Acceptance not recorded</span>':''}</td><td data-label="Status at snapshot">${h(status(task))}${amendments.has(task.id)?'<span>Evidence amended after verification</span>':''}${changes.has(task.id)?'<span>Changes requested</span>':''}${prerequisites.has(task.id)?'<span>Required work not complete</span>':''}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.'}</p>`}</article>`;
+      for(const task of tasks){
+        const start=task.schedule.start.slice(0,10),id=task.id,key=day||start;
+        if(!days.has(key))days.set(key,{label:dateLabel(key),rows:[]});
+        days.get(key).rows.push({title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:task.schedule.location,
+          continues:day&&start<day?'Continues from '+dateLabel(start):'',
+          activityWarnings:[overlaps.has(id)?'Owner overlap':'',locations.has(id)?'Potential location overlap':''].filter(Boolean),
+          owner:name(task.owner),acceptance:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
+          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':''].filter(Boolean)});
+      }
+      return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
+        cautions:[untimedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,changesNotice,amendmentNotice,
+          overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
+        locationWarning:locationWarning(tasks,locations),
+        empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',
+        days:[...days.values()]};
+    }
+    const snapshotDisclaimer='This copy is not live. Confirm changes with your team; scheduled times never mark work complete.';
+    const sharingDisclaimer='Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.';
+    function runSheetMarkup(model) {
+      const {title,scopeLabel,timestamp,timeZone,cautions,locationWarning,days,empty}=model;
+      const spans=(values)=>values.filter(Boolean).map(value=>`<span>${h(value)}</span>`).join('');
+      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(timeZone)}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. ${snapshotDisclaimer}</p><p class="muted">${sharingDisclaimer}</p></header>${cautions.map(warning=>`<p class="notice">${h(warning)}</p>`).join('')}${locationWarning?`<p class="schedule-overlap-summary">${h(locationWarning)}</p>`:''}${days.map(({label,rows})=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(label)}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(label)}<span>${h(scopeLabel)} · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${rows.map(row=>`<tr><td data-label="Time">${h(row.range)}${row.openEnded?'<span>No end time set</span>':''}</td><th scope="row">${h(row.title)}${row.continues?`<span class="muted">${h(row.continues)}</span>`:''}${spans([row.location,...row.activityWarnings])}</th><td data-label="Owner">${h(row.owner)}${spans([row.acceptance])}</td><td data-label="Status at snapshot">${h(row.status)}${spans(row.statusWarnings)}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${h(empty)}</p>`}</article>`;
+    }
+    function runSheetText(model) {
+      // User-entered fields stay on one line so they cannot masquerade as
+      // headings, timestamps or review warnings in the offline copy.
+      const line=value=>String(value??'').replace(/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]+/g,' ').trim();
+      const {title,scopeLabel,timestamp,timeZone,cautions,locationWarning,days,empty}=model;
+      return ['EVENT RUN SHEET — TEAM ONLY',line(title),line(scopeLabel),'All activity times: '+line(timeZone),
+        'Snapshot: '+line(timestamp)+'. '+snapshotDisclaimer,sharingDisclaimer,'',
+        ...[...cautions,locationWarning].filter(Boolean).map(warning=>'Check: '+line(warning)),
+        ...(days.length?days.flatMap(({label,rows})=>['',line(label),...rows.flatMap(row=>[
+          '',line(row.range)+' — '+line(row.title),...(row.continues?[line(row.continues)]:[]),
+          'Location: '+(line(row.location)||'Not entered'),'Owner: '+line(row.owner),'Status at snapshot: '+line(row.status),
+          ...[row.openEnded?'No end time set':'',row.acceptance,...row.activityWarnings,...row.statusWarnings].filter(Boolean).map(warning=>'Check: '+line(warning))
+        ])]):[empty]),''].join('\n');
+    }
+    function runSheet(state,now=Date.now(),scope={}) {
+      return runSheetMarkup(runSheetModel(state,now,scope));
     }
     function newActivity(state) {
       const timing=state.event.timeZone
@@ -330,7 +372,7 @@
         <p class="muted" id="guestAgendaSelectionStatus" role="status">Select at least one activity.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly></textarea></label>`;
     }
-    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
+    return {view,details,picker,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

@@ -435,6 +435,7 @@
   function openDialog(title,body,footer='',wide=false,kind='') {
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
+    if(kind!=='run-sheet')ui.runSheet=null;
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
@@ -458,6 +459,7 @@
     ui.dialogKind='';
     ui.guestAgenda=null;
     ui.reuseChecklist=null;
+    ui.runSheet=null;
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
@@ -490,10 +492,65 @@
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){ui.guestAgenda.stale=true;updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
+    if(ui.dialogKind==='run-sheet'&&ui.runSheet){ui.runSheet.stale=true;currentRunSheet();return;}
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
+  }
+  function openRunSheet() {
+    if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
+    const model=schedule.runSheetModel(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
+    const text=model.days.length?schedule.runSheetText(model):'';
+    ui.runSheet={model,text,revision:store.getSnapshotRevision?.(),stale:false,checking:false};
+    openDialog('Event run sheet','<p id="runSheetStale" class="notice" role="status" hidden>The shared plan changed. Close this snapshot and reopen Run sheet to get the latest schedule.</p>'+schedule.runSheetMarkup(model)+
+      (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
+      '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
+      (store.confirmSnapshotRevision?'<button class="btn btn-secondary" data-action="check-run-sheet">Check for updates</button>':'')+
+      (text?'<button class="btn btn-secondary" data-action="download-run-sheet">Download text (.txt)</button>':'')+
+      '<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
+    currentRunSheet();
+  }
+  function currentRunSheet() {
+    const snapshot=ui.runSheet;
+    if(!snapshot||ui.dialogKind!=='run-sheet'||!$('#eventRunSheet')||window.GatherAccessLost)return null;
+    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||(sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
+    $('#runSheetStale').hidden=!stale;
+    const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=!!stale;
+    for(const button of $$('#dialog [data-action="download-run-sheet"], #dialog [data-action="print-run-sheet"], #dialog [data-action="check-run-sheet"]'))
+      button.setAttribute('aria-disabled',String(!!stale||snapshot.checking));
+    return stale||snapshot.checking?null:snapshot;
+  }
+  async function checkRunSheet() {
+    const snapshot=currentRunSheet();
+    if(!snapshot||!store.confirmSnapshotRevision)return;
+    snapshot.checking=true;currentRunSheet();
+    try {
+      const current=await store.confirmSnapshotRevision(snapshot.revision);
+      if(ui.runSheet!==snapshot||window.GatherAccessLost)return;
+      if(!current)snapshot.stale=true;
+      else if(!snapshot.stale)toast('No newer plan found. This copy is still a snapshot.');
+    } catch {
+      if(ui.runSheet===snapshot&&!window.GatherAccessLost)toast('Could not check for updates. Confirm changes with your team before using this copy.');
+    } finally {
+      snapshot.checking=false;
+      if(ui.runSheet===snapshot)currentRunSheet();
+    }
+  }
+  function downloadRunSheet() {
+    const snapshot=currentRunSheet();
+    if(!snapshot?.text)return;
+    // Download the exact projected preview. No request, mutation or share.
+    const url=URL.createObjectURL(new Blob([snapshot.text],{type:'text/plain;charset=utf-8'}));
+    const link=document.createElement('a');
+    link.href=url;
+    link.download='weft-run-sheet'+(snapshot.model.mine?'-my-activities':'')+(snapshot.model.day?'-'+snapshot.model.day:'')+'.txt';
+    try {
+      document.body.append(link);link.click();
+      toast('Text download requested. This is a team-only snapshot.');
+    } finally {
+      link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }
   }
   function dependencyInfo(task, state=store.getState()) {
     const links=(task.dependencies||[]).map(link=>({...link,task:state.tasks.find(t=>t.id===link.taskId)}));
@@ -973,10 +1030,12 @@
           }
         }
       }
-      if(action==='run-sheet'&&!window.GatherAccessLost)openDialog('Event run sheet',schedule.runSheet(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate}),'<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
+      if(action==='run-sheet')openRunSheet();
       if(action==='before-event-review')beforeEventReview();
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
-      if(action==='print-run-sheet'&&ui.dialogKind==='run-sheet'&&$('#eventRunSheet')&&!window.GatherAccessLost)window.print();
+      if(action==='print-run-sheet'&&currentRunSheet())window.print();
+      if(action==='check-run-sheet')await checkRunSheet();
+      if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task')taskDialog(id);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
         const task=store.getState().tasks.find(task=>task.id===id);

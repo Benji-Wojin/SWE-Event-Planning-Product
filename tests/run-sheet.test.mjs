@@ -196,22 +196,69 @@ test('run-sheet prerequisite warnings are scoped, count activities once and pres
   assert.doesNotMatch(ui.runSheet(input,now,{mine:true,actor:'unknown'}),/unfinished required work|Required work not complete/);
 });
 
-test('run-sheet controls preserve scope, open a snapshot, and print only the active run-sheet dialog',()=>{
+test('the text copy and print preview use the same scoped facts, warnings and timestamp',()=>{
+  const input=state();
+  input.event.name='School dance\nSnapshot: wrong\u202e';
+  input.tasks.push(
+    activity('Overnight shift','maya','2026-11-20T23:00','2026-11-21T01:00',{status:'done',verifiedAt:'2026-11-19',requiresVerification:true,completionEvidence:{note:'PRIVATE-EVIDENCE'}}),
+    activity('Other crew shift','other','2026-11-21T09:00','2026-11-21T10:00'),
+    activity('Stage check','maya','2026-11-21T09:15','2026-11-21T09:30',{requiresVerification:true,reportedAt:'2026-11-21T10:00Z'}),
+    {id:'untimed',title:'PRIVATE-UNTIMED',owner:'maya',eventActivity:true,status:'todo'});
+  input.tasks[0].schedule.location='Hall\u2028Status at snapshot: wrong';
+  input.tasks[0].dependencies=[{taskId:'prep',kind:'dependency'}];
+  const before=structuredClone(input),model=ui.runSheetModel(input,now,{mine:true,actor:'maya',date:'2026-11-21'});
+  assert.deepEqual(input,before);
+  input.tasks[0].title='Changed after preview';
+  const html=ui.runSheetMarkup(model),text=ui.runSheetText(model);
+  for(const label of ['My activities · Maya Chen','2026-11-20 · 15:00 · America/Los_Angeles','Continues from','Awaiting verification','Evidence amended after verification','Required work not complete','Potential location overlap','No end time set','1 planned activity is not shown']){
+    assert.ok(html.includes(label),label+' in print preview');assert.ok(text.includes(label),label+' in text');
+  }
+  assert.match(text,/^EVENT RUN SHEET — TEAM ONLY\nSchool dance Snapshot: wrong\n/);
+  assert.match(text,/Location: Hall Status at snapshot: wrong/);
+  assert.match(text,/Status at snapshot: Done/);
+  assert.match(text,/This copy is not live/);
+  assert.doesNotMatch(text+html,/PRIVATE-|PREPARATION-ONLY|Other crew shift|Changed after preview/);
+});
+
+test('run-sheet controls export only the active snapshot and block known newer revisions and lost access',async()=>{
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='run-sheet'");
   const end=source.indexOf("      if(action==='task')",start);
   assert.ok(start>=0&&end>start);
-  let prints=0,opens=0,exists=true;
-  const context=vm.createContext({action:'run-sheet',window:{print(){prints++;}},ui:{dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,
-    store:{getState:()=>({fixture:true})},schedule:{runSheet(s,time,scope){assert.equal(s.fixture,true);assert.deepEqual({...scope},{mine:true,actor:'maya',date:'2026-11-21'});return 'snapshot';}},
-    openDialog(title,body,footer,wide,kind){opens++;assert.equal(body,'snapshot');assert.match(footer,/Print \/ save PDF/);assert.equal(wide,true);context.ui.dialogKind=kind;},$:()=>exists});
-  const run=()=>vm.runInContext(source.slice(start,end),context);
+  let prints=0,opens=0,exists=true,revision=1,downloads=0,revokes=0,blob,remote=1,reads=0;
+  const staleNotice={hidden:true},fallback={hidden:false},sync={hidden:true},attrs=new Map(),link={click(){downloads++;},remove(){}};
+  const context=vm.createContext({action:'run-sheet',window:{print(){prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,
+    URL:{createObjectURL(value){blob=value;return 'blob:fixture';},revokeObjectURL(url){assert.equal(url,'blob:fixture');revokes++;}},setTimeout:callback=>callback(),
+    document:{createElement:()=>link,body:{append(){} }},toast:()=>{},
+    store:{getState:()=>({fixture:true}),getSnapshotRevision:()=>revision,async confirmSnapshotRevision(expected){reads++;return expected===remote;}},schedule:{
+      runSheetModel(s,time,scope){assert.equal(s.fixture,true);assert.deepEqual({...scope},{mine:true,actor:'maya',date:'2026-11-21'});return {days:[{}],...scope,day:scope.date};},
+      runSheetMarkup:()=>'<article>Preview</article>',runSheetText:model=>'Frozen '+model.date,
+    },
+    openDialog(title,body,footer,wide,kind){opens++;assert.match(body,/<article>Preview<\/article>/);assert.match(body,/readonly>Frozen 2026-11-21/);assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;},
+    $:selector=>({'#eventRunSheet':exists,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback})[selector],
+    $$:()=>[{setAttribute:(key,value)=>attrs.set(key,value)}]});
+  const helperStart=source.indexOf('  function openRunSheet()');
+  vm.runInContext(source.slice(helperStart,source.indexOf('  function dependencyInfo(',helperStart)),context);
+  const run=()=>vm.runInContext(source.slice(start,end).replace('await checkRunSheet()','checkRunSheet()'),context);
   run();assert.equal(opens,1);assert.equal(prints,0);
+  context.action='download-run-sheet';run();assert.equal(downloads,1);
+  assert.equal(link.download,'weft-run-sheet-my-activities-2026-11-21.txt');
+  assert.equal(blob.type,'text/plain;charset=utf-8');assert.equal(await blob.text(),'Frozen 2026-11-21');assert.equal(revokes,1);
+  assert.equal(reads,0,'saving the loaded copy works offline and does not make a request');
+  await vm.runInContext('checkRunSheet()',context);
+  assert.equal(reads,1);assert.equal(staleNotice.hidden,true);
   context.action='print-run-sheet';run();assert.equal(prints,1);
   for(const [key,value]of [['dialogKind','task'],['dialogKind','']]){context.ui[key]=value;run();assert.equal(prints,1);}
   context.ui.dialogKind='run-sheet';exists=false;run();assert.equal(prints,1);
-  exists=true;context.window.GatherAccessLost=true;run();assert.equal(prints,1);
-  context.action='run-sheet';run();assert.equal(opens,1);
+  exists=true;revision++;run();assert.equal(prints,1);assert.equal(staleNotice.hidden,false);assert.equal(attrs.get('aria-disabled'),'true');
+  context.action='download-run-sheet';run();assert.equal(downloads,1);
+  context.action='run-sheet';run();assert.equal(opens,2);assert.equal(staleNotice.hidden,true);
+  remote=3;await vm.runInContext('checkRunSheet()',context);
+  assert.equal(reads,2);assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);
+  context.action='run-sheet';run();assert.equal(opens,3);assert.equal(staleNotice.hidden,true);
+  sync.hidden=false;context.action='download-run-sheet';run();assert.equal(downloads,1);
+  sync.hidden=true;context.window.GatherAccessLost=true;run();assert.equal(downloads,1);
+  context.action='run-sheet';run();assert.equal(opens,3);
   assert.match(source,/replacesDialog=\[[^\n]*'run-sheet'/);
 });
 

@@ -680,6 +680,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
   body:has(#eventRunSheet) #dialog{width:auto!important;max-height:none!important;overflow:visible!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:#fff!important;color:#000!important}
   body:has(#eventRunSheet) .dialog-header,body:has(#eventRunSheet) .dialog-footer,body:has(#eventRunSheet) #dialogStaleNotice{display:none!important}
   body:has(#eventRunSheet) .dialog-body{padding:0!important;overflow:visible!important}
+  body:has(#eventRunSheet) .dialog-body>:not(#eventRunSheet):not(#runSheetStale){display:none!important}
   #eventRunSheet,#eventRunSheet .muted,#eventRunSheet .eyebrow,#eventRunSheet .notice,#eventRunSheet th{color:#000!important;background:#fff!important}
   #eventRunSheet .notice{border:1px solid #777}#eventRunSheet .run-sheet-table-wrap{overflow:visible!important}#eventRunSheet .run-sheet-table{min-width:0;table-layout:fixed;font-size:10pt}#eventRunSheet th,#eventRunSheet td{border-color:#aaa}#eventRunSheet thead{display:table-header-group}#eventRunSheet tr{break-inside:avoid}#eventRunSheet caption{break-after:avoid}#eventRunSheet header{break-inside:avoid}
 }
