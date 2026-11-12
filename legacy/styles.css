@@ -624,6 +624,11 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .agreed-scope{padding:14px 16px;border-left:3px solid var(--green);margin-bottom:20px}
 .schedule-switch{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
 .schedule-panel{padding:22px}.schedule-zone{font-size:.875rem;line-height:1.5;margin:0 0 18px;overflow-wrap:anywhere}
+.schedule-pending{margin:20px 0 24px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}
+.schedule-pending h2{font-size:1rem;margin:0 0 8px}.schedule-pending p{font-size:.875rem}
+.schedule-pending ul{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.schedule-pending li{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:8px 0}
+.schedule-pending .text-button{text-align:left;max-width:100%;overflow-wrap:anywhere}.schedule-pending .btn,.schedule-pending .text-button{min-height:44px}
 .schedule-day+.schedule-day{margin-top:28px}.schedule-day h2,.schedule-empty h2{font-size:1rem;margin:0 0 14px}
 .schedule-list{display:grid;gap:8px}.schedule-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(0,1fr) minmax(110px,auto);gap:16px;align-items:start;width:100%;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--white);color:var(--ink);text-align:left;cursor:pointer;font:inherit;overflow-wrap:anywhere}
 .schedule-row:hover{background:var(--paper)}.schedule-row:focus-visible{outline:2px solid var(--green);outline-offset:2px}

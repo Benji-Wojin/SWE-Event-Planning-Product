@@ -145,6 +145,7 @@
         list(value.tasks,task=>validNoteAttribution(task)&&validReview(task.completionReview)&&validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
         (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
         list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
+        list(value.tasks, task => task.eventActivity === undefined || task.eventActivity === true) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
         list(value.tasks, (task) => strings(task, ["id", "title", "category", "note", "owner", "updatedBy", "completedBy", "completedAt", "sourceMessageId"]) && ["completionReportedBy", "completionReportSourceId", "memoryId", "suggestionId"].every((field) => task[field] === undefined || typeof task[field] === "string") && STATUSES.includes(task.status) && validDate(task.dueDate) && validOwner(task.owner) && validOwner(task.updatedBy) && validTime(task.updatedAt) && (task.completedAt === "" || validTime(task.completedAt)) && list(task.comments, (comment) => strings(comment, ["id", "actor", "text"]) && validOwner(comment.actor) && validTime(comment.at))) && uniqueIds(value.tasks) &&
         list(value.messages, (message) => strings(message, ["id", "sender", "subject", "body"]) && validTime(message.receivedAt) && strings(message.suggested, ["mode", "taskId", "title", "owner", "dueDate", "status", "note"]) && ["new", "update"].includes(message.suggested.mode) && STATUSES.includes(message.suggested.status) && validOwner(message.suggested.owner) && validDate(message.suggested.dueDate)) && uniqueIds(value.messages) &&
@@ -306,12 +307,14 @@
       if(!Array.isArray(links)||links.length>8||new Set(links.map(link=>link?.taskId)).size!==links.length||links.some(link=>!link||typeof link!=='object'||Array.isArray(link)||Object.keys(link).some(key=>!['taskId','kind','reason'].includes(key))||typeof link.taskId!=='string'||!['dependency','related'].includes(link.kind)||typeof link.reason!=='string'||!link.reason.trim()||link.reason.length>2000))throw new Error('Review up to eight different linked tasks and explain each relationship.');
       for(const link of links)taskById(link.taskId);
       if(links.length&&data.status==='done')throw new Error('New work with reviewed links must start incomplete.');
+      if(data.eventActivity!==undefined&&data.eventActivity!==true)throw new Error('Review the event activity setting.');
       const schedule = data.schedule === undefined ? null : scheduleFields(data.schedule, actor);
       const task = createTask(data, actor);
       // Check all links before recording any of them. A legacy unavailable link
       // must not let a coincident new ID introduce a cycle or partial creation.
       if(links.some(link=>link.kind!=='related'&&dependsOn(link.taskId,task.id))){state.tasks.shift();throw new Error('These tasks would depend on each other. Choose different linked work.');}
       task.schedule = schedule;
+      if(data.eventActivity===true)task.eventActivity=true;
       for(const link of links)linkDependency(task,taskById(link.taskId),actor,false,'',link.kind,clean(link.reason,2000));
       entry(actor, `created ${task.title}`, task.id, "created");
       syncBlocker(task, actor);

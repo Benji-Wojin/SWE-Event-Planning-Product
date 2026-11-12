@@ -34,6 +34,33 @@ test('personal run sheets contain only the signed-in actor schedule, with truthf
   assert.match(ui.runSheet({...input,tasks:[]},now),/No scheduled activities in this view/);
 });
 
+test('explicitly planned but untimed activities stay visible in the right scope, outside the run sheet',()=>{
+  const input=state();
+  input.tasks=[
+    {id:'pending',title:'Guest welcome <desk>',status:'todo',eventActivity:true,owner:'maya'},
+    {id:'other',title:'Other team activity',status:'todo',eventActivity:true,owner:'other'},
+    {id:'done',title:'Finished activity',status:'done',eventActivity:true,owner:'maya'},
+    {id:'prep',title:'Order signs',status:'todo',owner:'maya'},
+  ];
+  const view=GatherScheduleUI.create({h,options:(items,selected)=>items.map(([id,label])=>`<option value="${h(id)}"${id===selected?' selected':''}>${h(label)}</option>`).join(''),person:()=>'<span>Teammate</span>',statusBadge:()=>''});
+  const mine={mine:true,actor:'maya'};
+  const organizer=view.view(input,true,now,mine),participant=view.view(input,false,now,mine);
+  assert.match(organizer,/Activities need a start time · 1/);
+  assert.match(organizer,/data-action="schedule-task" data-id="pending" aria-label="Set start time for Guest welcome &lt;desk&gt;"/);
+  assert.match(participant,/Guest welcome &lt;desk&gt;/);
+  assert.doesNotMatch(participant,/data-action="schedule-task"|Other team activity|Finished activity|Order signs|No activities assigned/);
+  assert.match(view.details(input.tasks[0],false,input.event),/Planned activity · no start time/);
+  assert.match(view.picker(input,'pending'),/value="pending" selected/);
+  assert.doesNotMatch(view.picker(input,'foreign'),/value="pending" selected/);
+  const groups=GatherScheduleUI.reviewItems(input,now,mine);
+  assert.deepEqual(groups.find(group=>group.key==='activity-time').tasks.map(task=>task.id),['pending']);
+  assert.deepEqual(groups.find(group=>group.key==='preparation').tasks.map(task=>task.id),['prep']);
+  assert.doesNotMatch(view.runSheet(input,now,mine),/Guest welcome/);
+  input.tasks[0].schedule={start:'2026-11-20T17:30',end:'',location:''};
+  assert.doesNotMatch(view.view(input,true,now,mine),/Activities need a start time/);
+  assert.match(view.runSheet(input,now,mine),/Guest welcome &lt;desk&gt;/);
+});
+
 test('run sheet retains blocked/completed/review states and warns about entered owner overlaps',()=>{
   const input=state();input.tasks=[
     activity('Blocked','maya','2026-11-20T17:00','2026-11-20T18:00',{status:'blocked'}),

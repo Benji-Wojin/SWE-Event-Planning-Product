@@ -519,7 +519,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
               </label>
               <label className="flex items-start gap-2 text-sm">
                 <input id="starter-activities" type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
-                <span>Add event-day activities <span className="block text-muted-foreground">Get a short set of activities for this event type. Give them start times in the draft to put them on the run sheet, or leave them as unscheduled tasks.</span></span>
+                <span>Add event-day activities <span className="block text-muted-foreground">Give activities start times in the draft to put them on the run sheet, or add them now and set their times later in Timeline.</span></span>
               </label>
               <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
                 {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}

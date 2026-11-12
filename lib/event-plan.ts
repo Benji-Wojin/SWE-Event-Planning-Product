@@ -604,6 +604,7 @@ async function applyDraft(c: Context, input: any) {
               : ''),
           dueDate: item.dueDate,
           status: 'todo',
+          ...(item.kind === 'activity' ? {eventActivity: true} : {}),
           dependencies:item.dependsOn.map(prerequisite=>({taskId:ids.get(prerequisite)!,kind:'dependency',reason:item.note||'Required output reviewed in the private plan.'})),
           ...(item.start
             ? {

@@ -48,19 +48,28 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       const days=snap.draft.items.filter(item=>item.kind==='activity');
       assert.equal(days.length,4);
       assert.ok(days.every(item=>!item.start&&!item.end&&!item.owner&&!item.dueDate));
-      const items=snap.draft.items.map(item=>({...item,included:['day_arrivals','day_programme'].includes(item.id)}));
+      const items=snap.draft.items.map((item,index)=>({...item,included:index===0||['day_arrivals','day_programme'].includes(item.id)}));
       const arrival=items.find(item=>item.id==='day_arrivals');
       Object.assign(arrival,{start:'2100-03-14T17:30',end:'2100-03-14T18:00',location:'Fictional lobby',owner:'jack'});
       const applied=await post(project,{action:'apply',revision:snap.revision,workspaceRevision:snap.workspaceRevision,generation:snap.draft.generation,items,confirm:true});
       assert.equal(applied.status,200,await applied.clone().text());
       const tasks=JSON.parse(ws(project).data).tasks;
-      assert.equal(tasks.length,2);
+      assert.equal(tasks.length,3);
       const scheduled=tasks.find(task=>task.title===arrival.title);
       assert.equal(scheduled.schedule.start,arrival.start);
       assert.equal(scheduled.schedule.end,arrival.end);
       assert.equal(scheduled.schedule.location,arrival.location);
       assert.equal(scheduled.status,'todo');
-      assert.equal(tasks.find(task=>task.id!==scheduled.id).schedule,null);
+      assert.equal(scheduled.eventActivity,true);
+      const pending=tasks.find(task=>task.title===items.find(item=>item.id==='day_programme').title);
+      assert.equal(pending.schedule,null);assert.equal(pending.eventActivity,true);
+      assert.equal(tasks.find(task=>task.title===items[0].title).eventActivity,undefined);
+      for(const next of [{start:'2100-03-14T18:15',end:'',location:''},null]){
+        const res=await workspace.POST(request('/api/workspace?project='+project,{method:'setTaskSchedule',args:[pending.id,next],revision:ws(project).revision}));
+        assert.equal(res.status,200,await res.clone().text());
+        const current=(await res.json()).state.tasks.find(task=>task.id===pending.id);
+        assert.deepEqual(current.schedule,next);assert.equal(current.eventActivity,true);assert.equal(current.status,'todo');
+      }
     });
     await t.test('dated starter is opt-in, requires dated project context, and applies only reviewed deadlines',async()=>{
       const project=await setup(),blank=await read(project);

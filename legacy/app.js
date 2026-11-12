@@ -670,7 +670,7 @@
       if(action==='move-event-plan')rescheduleDialog();
       if(action==='add-task')newTaskDialog();
       if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
-      if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState()));
+      if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState(),id));
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
