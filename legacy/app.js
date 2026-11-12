@@ -232,6 +232,7 @@
       </section></div>
       <div class="workspace-grid"><div class="stack" id="overviewMain">
         ${s.tasks.length?`
+        ${isOrganizer()?recovery.organizerReviewPanel(s,{expanded:ui.organizerReviewsExpanded}):''}
         ${recovery.nextUpPanel(s,{overview:true})}
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
           <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
@@ -460,6 +461,18 @@
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
+  }
+  function openOrganizerReview(id,kind) {
+    if(!isOrganizer()||window.GatherAccessLost)return;
+    if(!GatherRecoveryUI.organizerReviews(store.getState().tasks).some(row=>row.task.id===id&&row.kind===kind)){
+      render();toast('This review is no longer pending.');return;
+    }
+    taskDialog(id);
+    requestAnimationFrame(()=>{
+      if(ui.dialogKind!=='task'||ui.detailId!==id)return;
+      const section=kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
+      $(section+' h3',$('#dialog'))?.focus();
+    });
   }
   function eventReviewScope() {
     return {mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
@@ -911,7 +924,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -919,6 +932,10 @@
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
+      if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
+      if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
+        ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
+      }
       if(action==='move-event-plan')rescheduleDialog();
       if(action==='add-task'){newTaskDialog();void syncGuide('add_task_clicked');}
       if(action==='guide-retry'){await syncGuide();if(guideViewReady===ui.view)recordLoadedGuideView(ui.view);}

@@ -77,6 +77,8 @@ Organizers can use **Tasks → Assign tasks** to delegate selected open tasks fr
 
 Owners can commit to up to three actionable Next up tasks, propose a date or ask for help without changing the agreed plan. Organizer decisions stay in Needs attention. Decisions record a check-in, deadline history and an owner-visible comment; fixed external dates require explicit confirmation. Ranking considers essential work and downstream deadlines, not only overdue age. Waiting parents route attention to their prerequisites. These are in-app prompts, not background email reminders.
 
+**Overview → Waiting for your review** brings pending teammate requests, completion reports and amended completion evidence together for the organizer. The oldest items appear first; expand to see the entire queue. Each item opens the relevant task section. Acknowledging an amendment does not reopen or reverify the task, and opening the queue never changes records.
+
 When Next up is empty, ready tasks are shown directly; unavailable work and no assignments have distinct empty states. Reassignment advice considers active teammates only.
 
 Populated project Overviews start with **Your next steps** for the signed-in planner: their recorded Next up commitments and up to three actionable suggestions across remaining slots, not other people's assignments. **View my tasks** opens the existing personal task view and clears stale search/owner/status filters. Review a task before explicitly accepting responsibility, committing, reporting progress or completion. Displaying this panel makes no API/provider request or task changes; suggestions are not commitments, completion or a readiness score. Empty projects retain their role-aware starting guidance.

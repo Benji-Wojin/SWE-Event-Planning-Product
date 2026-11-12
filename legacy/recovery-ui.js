@@ -1,11 +1,43 @@
 (function(root){
   'use strict';
+  const reviewLabels={completion:'Verify completion',amendment:'Review amended evidence',help:'Respond to help request',date:'Review proposed date'};
+  function organizerReviews(tasks) {
+    const time=value=>{const parsed=Date.parse(value||'');return Number.isFinite(parsed)?parsed:Number.MAX_SAFE_INTEGER;};
+    return tasks.flatMap(task=>{
+      if(task.status==='done'){
+        if(task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt)
+          return [{task,kind:'amendment',at:task.completionEvidence.at}];
+        // A legacy Done record without a current report has nothing to verify here.
+        if(!task.reportedAt)return [];
+      }
+      if(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)
+        return [{task,kind:'completion',at:task.reportedAt}];
+      if(task.status==='done')return [];
+      const request=root.GatherPriorities.pendingRequest(task);
+      return request&&(request.kind==='date'||request.kind==='help')?[{task,kind:request.kind,at:request.createdAt}]:[];
+    }).sort((a,b)=>time(a.at)-time(b.at)||a.task.id.localeCompare(b.task.id));
+  }
   function create({store,ui,h,options,dayLabel,member}) {
     const P=root.GatherPriorities;
     const state=()=>store.getState();
     const dateKey=(offset=0)=>root.GatherCalendar.dayKey(new Date(),state().event.timeZone,offset);
     const tomorrow=()=>dateKey(1);
     const taskLink=t=>'<button class="text-button" data-action="task" data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
+    function organizerReviewPanel(s,{expanded=false}={}) {
+      const rows=organizerReviews(s.tasks),limit=5;
+      if(!rows.length)return '';
+      const members=new Map(s.members.map(person=>[person.id,person]));
+      return `<section class="panel organizer-review" aria-labelledby="organizerReviewTitle">
+        <div class="panel-heading"><h2 class="section-title" id="organizerReviewTitle">Waiting for your review <span class="muted">${rows.length}</span></h2></div>
+        <p class="muted">Team requests and completion decisions, oldest first. Open a task to review it; nothing changes until you confirm a decision.</p>
+        <ul id="organizerReviewList">${(expanded?rows:rows.slice(0,limit)).map(({task,kind})=>{
+          const label=reviewLabels[kind],owner=members.get(task.owner);
+          const ownership=owner?owner.name+(owner.active===false?' · inactive':''):task.owner?'Unavailable owner':'Unassigned';
+          return `<li><button class="text-button" data-action="review-organizer-item" data-id="${h(task.id)}" data-review-kind="${kind}" aria-label="${h(label+': '+task.title)}">${h(task.title)}</button><span><strong>${label}</strong> · ${h(ownership)}</span></li>`;
+        }).join('')}</ul>
+        ${rows.length>limit?`<button class="text-button" data-action="expand-organizer-reviews" aria-expanded="${expanded}" aria-controls="organizerReviewList">${expanded?'Show fewer reviews':'Show all '+rows.length+' reviews'}</button>`:''}
+      </section>`;
+    }
     function ownerLoad(owner) {
       if(!owner)return '';
       const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
@@ -29,7 +61,7 @@
     function recoveryMarkup(task,organizer) {
       const s=state(),request=P.pendingRequest(task),decision=P.decision(task,s.tasks,new Date(),s.event.timeZone),suggestion=P.suggestion(task,s);
       if(!request&&(!organizer||!decision))return '';
-      let html='<section class="task-recovery section-gap"><h3>'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
+      let html='<section class="task-recovery section-gap"><h3 tabindex="-1">'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
       if(request)html+='<p>'+h(request.note)+'</p>'+(request.kind==='date'?'<div class="date-proposal"><span>Current: '+dayLabel(task.dueDate)+'</span><strong>Proposed: '+dayLabel(request.proposedDate)+'</strong></div>':'')+'<p class="muted">'+(organizer?'From '+h(member(request.createdBy).name):'Awaiting the organizer. Your current plan is unchanged.')+'</p>';
       if(organizer) {
         const choices=[...(request?.kind==='date'?[['date','Approve or adjust the date']]:[['date','Agree a new date']]),['reassign','Reassign the task'],['scope','Reduce the scope'],['checkin','Keep plan · set a check-in']];
@@ -68,7 +100,7 @@
       form.elements.dueDate.min=dateKey();form.elements.reviewAfter.min=tomorrow();
       form.querySelector('[data-owner-load]').innerHTML=ownerLoad(form.elements.owner.value);
     }
-    return {nextUpPanel,responseMarkup,recoveryMarkup,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
+    return {nextUpPanel,organizerReviewPanel,responseMarkup,recoveryMarkup,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
   }
-  root.GatherRecoveryUI={create};
+  root.GatherRecoveryUI={create,organizerReviews};
 })(typeof window!=='undefined'?window:globalThis);

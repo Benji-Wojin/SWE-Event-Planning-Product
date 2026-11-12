@@ -133,7 +133,7 @@
       return '';
     const value = task.completionEvidence;
     return (
-      '<section class="completion-evidence section-gap"><h3>Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
+      '<section class="completion-evidence section-gap"><h3 tabindex="-1">Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
       (review?'<section class="notice" aria-label="Completion changes requested"><h4>Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit again. Nothing was verified; earlier submissions remain below.</p></section>':'')+
       (value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
         ? '<p class="completion-amendment">This submission was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'

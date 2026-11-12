@@ -10,7 +10,7 @@ function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='
   const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};
   const before=structuredClone(state),requests=[];
   const context=vm.createContext({
-    window:{GatherMode:hosted?{}:undefined},isOrganizer:()=>organizer,canCreateTasks:()=>canCreate,
+    window:{GatherMode:hosted?{}:undefined},ui:{actor},isOrganizer:()=>organizer,canCreateTasks:()=>canCreate,
     store:{getState:()=>state,getSuggestions:()=>[]},attention:()=>[],completed:()=>[],pending:()=>[],
     dateKey:()=> '2026-11-01',dayLabel:value=>value,h:value=>String(value),icon:()=>'',insightMarkup:()=>'',
     pageHeading:(_eyebrow,title,copy,actions)=>'<h1>'+title+'</h1><p>'+copy+'</p>'+actions,
@@ -84,6 +84,14 @@ test('personal Overview does not suggest blocked work, but makes the personal re
   const html=render({organizer:false,tasks:[{id:'blocked',title:'Not ready to start',owner:'maya',status:'blocked'}]});
   assert.match(html,/Nothing ready to start/);assert.match(html,/Open My tasks/);
   assert.match(html,/View my tasks/);assert.doesNotMatch(html,/data-id="blocked"/);
+});
+
+test('only organizers see pending reviews on Overview',()=>{
+  const tasks=[{id:'review',title:'Fictional completion',status:'progress',owner:'jack',requiresVerification:true,reportedAt:'2026-11-01T12:00Z'}];
+  const organizer=render({organizer:true,tasks});
+  assert.match(organizer,/Waiting for your review/);
+  assert.match(organizer,/Verify completion: Fictional completion/);
+  assert.doesNotMatch(render({organizer:false,tasks}),/Waiting for your review|data-action="review-organizer-item"/);
 });
 
 test('plan-builder navigation still requires an explicit organizer action and preserves project scope',()=>{
