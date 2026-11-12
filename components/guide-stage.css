@@ -1,0 +1,24 @@
+.weft-guide-stage{display:grid;gap:10px;margin:0 0 18px}
+.weft-guide-stage p{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;color:var(--primary);font-size:.84rem}
+.weft-guide-stage p span,.weft-guide-badge{border-radius:999px;padding:3px 9px;background:var(--secondary);color:var(--secondary-foreground);font-size:.75rem;font-weight:650}
+.weft-guide-stage ol{list-style:none;display:flex;flex-wrap:wrap;gap:7px 15px;margin:0;padding:0}
+.weft-guide-stage li{display:flex;align-items:center;gap:5px;color:var(--muted-foreground);font-size:.75rem;font-weight:600}
+.weft-guide-stage li>span:first-child{display:grid;place-items:center;border:1px solid var(--border);border-radius:50%;width:24px;height:24px}
+.weft-guide-stage li[data-state=done]>span:first-child{background:var(--secondary);color:var(--secondary-foreground)}
+.weft-guide-stage li[data-state=current]{color:var(--foreground)}
+.weft-guide-stage li[data-state=current]>span:first-child{border:2px solid var(--primary);font-weight:800}
+.weft-guide-intro{display:grid;gap:18px}
+.weft-guide-hero{padding:clamp(20px,4vw,32px);border:1px solid var(--border);border-radius:20px;background:linear-gradient(135deg,color-mix(in srgb,var(--primary) 9%,var(--card)),var(--card) 75%);box-shadow:0 9px 32px rgb(0 0 0 / .06)}
+.weft-guide-hero h2{font-size:clamp(1.5rem,3.5vw,2.125rem);font-weight:720;letter-spacing:-.035em;line-height:1.2;margin:8px 0}
+.weft-guide-hero>p{color:var(--muted-foreground);max-width:60ch;line-height:1.6}
+.weft-guide-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px 12px;margin-top:16px}
+.weft-guide-actions :is(a,button){min-height:44px;max-width:100%;white-space:normal}
+.weft-guide-roadmap{list-style:none;display:grid;gap:8px;margin:0;padding:0}
+.weft-guide-roadmap li{display:grid;grid-template-columns:32px minmax(0,1fr) auto;gap:5px 12px;align-items:start;border:1px solid var(--border);border-radius:12px;padding:13px 14px;background:var(--card)}
+.weft-guide-roadmap li[aria-current=step]{border-color:var(--primary)}
+.weft-guide-roadmap li p{color:var(--muted-foreground);font-size:.86rem;line-height:1.45}
+.weft-guide-roadmap li strong{display:block;font-size:.94rem;margin-bottom:2px}
+.weft-guide-roadmap li>span:first-child{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--border);border-radius:50%;font-size:.8rem;font-weight:700}
+.weft-guide-roadmap [aria-current=step]>span:first-child{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.weft-guide-fine-print{color:var(--muted-foreground);font-size:.82rem;line-height:1.5}
+@media(max-width:380px){.weft-guide-roadmap li{grid-template-columns:28px minmax(0,1fr);column-gap:8px}.weft-guide-roadmap .weft-guide-badge{grid-column:2;justify-self:start}.weft-guide-roadmap li>span:first-child{width:26px;height:26px}}

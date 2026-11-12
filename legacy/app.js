@@ -15,23 +15,37 @@
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   const guideSteps = [
-    ['task_created', 2, 'Add your first task', 'Pick one thing that needs doing, like “Confirm the venue.” A task name is enough to start.', 'add-task', 'Add a task'],
-    ['budget_viewed', 3, 'Explore Budget', 'See where the team can track estimates and spending. You don’t need to enter any amounts.', 'guide-budget', 'Open Budget'],
-    ['event_details_viewed', 4, 'Review Event info', 'See where you can share event details such as location, guest information and files.', 'guide-info', 'Open Event info'],
-    ['invite_created', 5, 'Invite a teammate', 'Use the email your teammate signs in with. You can keep working alone if you’re not ready to invite anyone.', 'guide-invite', 'Open invitation form'],
+    ['task_created', 2, 'Add your first task', 'Start with one real thing you need to get done. A title is enough; you can add an owner and a deadline later.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
+    ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
+    ['event_details_viewed', 4, 'Review Event info', 'See where the team can find event details, guest information, and shared files.', 'guide-info', 'Open Event info', 'Take a look around. You don’t need to add guests or upload anything.'],
+    ['invite_created', 5, 'Invite a teammate', 'Invite someone who can help plan or run the event. Use the email they’ll sign in with.', 'guide-invite', 'Open invitation form', 'Planning solo? Finish the guide and invite people whenever you’re ready.'],
   ];
+  const guideLabels=['Project','Task','Budget','Event info','Invite'];
+  function guideTrack(step,finished,skipped) {
+    return `<ol class="workspace-guide-track" aria-label="Guide progress">${guideLabels.map((label,index)=>{
+      const n=index+1, state=skipped&&n===5?'skipped':finished||n<step?'done':n===step?'current':'upcoming';
+      return `<li data-guide-state="${state}"${state==='current'?' aria-current="step"':''}><span class="workspace-guide-marker" aria-hidden="true">${state==='done'?'✓':state==='skipped'?'–':n}</span><span>${label}</span><span class="sr-only"> — ${state==='done'?'complete':state}</span></li>`;
+    }).join('')}</ol>`;
+  }
   function paintGuide() {
     const host = $('#workspaceGuide');
     if (!guidedWorkspace || !host) return;
     const bound = guideProgress?.projectId === window.GatherMode.projectId;
     const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
     const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
-    host.hidden = !next && !guideError;
+    const finished=bound&&reached.has('event_details_viewed')&&(reached.has('invite_created')||reached.has('invite_skipped'));
+    host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
-    host.innerHTML = guideError
-      ? '<h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div>'
-      : `<p class="eyebrow">Getting started · Step ${next[1]} of 5</p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><div class="form-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without a new invite</button>':''}<a class="btn btn-secondary" href="${h(window.GatherMode.projectUrl('/project'))}" target="_top">Finish later</a></div>`;
+    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):next[0];
+    if(host.dataset.guideState===mode)return;
+    const projectHref=h(window.GatherMode.projectUrl('/project'));
+    host.dataset.guideState=mode;
+    host.innerHTML=guideError
+      ? '<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started</p><h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="workspace-guide-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div></div>'
+      : finished
+        ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a></div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
+        : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
   function syncGuide(checkpoint) {
@@ -684,8 +698,12 @@
     if(response)recovery.syncResponse(response);
     if(decision)recovery.syncDecision(decision);
   }
-  function newTaskDialog() {
+  function newTaskDialog(firstTask=false) {
     if(!canCreateTasks())throw new Error('Only the organizer can add tasks.');
+    if(firstTask&&guidedWorkspace){
+      openDialog('Add your first task','<p class="workspace-first-task-copy">Give one thing that needs doing a name. We’ll add it to your shared plan as To do. You can assign it or set a deadline afterward.</p><form id="newTaskForm"><label class="field section-gap">Task name<input name="title" required maxlength="180" placeholder="e.g. Confirm the venue"></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button class="btn btn-primary" type="submit">Save first task</button></div></form>');
+      return;
+    }
     const organizer=isOrganizer();
     openDialog('Add task',`${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="Describe the result that means this task is finished."></textarea><small>Shared with the team and kept separately from progress updates. Do not include private booking codes or credentials.</small></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Add task</button></div></form>`);
   }
@@ -1012,7 +1030,7 @@
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
       }
       if(action==='move-event-plan')rescheduleDialog();
-      if(action==='add-task'){newTaskDialog();void syncGuide('add_task_clicked');}
+      if(action==='add-task'||action==='guide-add-task'){newTaskDialog(action==='guide-add-task');void syncGuide('add_task_clicked');}
       if(action==='guide-retry'){await syncGuide();if(guideViewReady===ui.view)recordLoadedGuideView(ui.view);}
       if(action==='guide-budget'||action==='guide-info'){
         if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
@@ -1154,8 +1172,6 @@
       if(action==='guide-skip-invite'&&guidedWorkspace){
         if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
         await syncGuide('invite_skipped');
-        if(guideProgress?.events?.some(item=>item.checkpoint==='invite_skipped'||item.checkpoint==='invite_created'))
-          window.top.location.href='/guide';
         return;
       }
       if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){window.top.location.href=window.GatherMode.projectUrl('/team');return;}const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}

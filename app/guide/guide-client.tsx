@@ -3,7 +3,8 @@
 import { useRef, useState } from 'react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { observeTutorial, type TutorialProgress } from '@/lib/guided-tutorial-client';
-import { nextTutorialMilestone, TUTORIAL_GUIDE_STEPS } from '@/lib/guided-tutorial';
+import { nextTutorialMilestone, TUTORIAL_GUIDE_STEPS as steps } from '@/lib/guided-tutorial';
+import { GuideStage } from '@/components/guide-stage';
 
 export function GuideClient({ initial }: { initial: TutorialProgress }) {
   const [progress, setProgress] = useState(initial);
@@ -13,6 +14,8 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
   const reached = progress.events.map(event => event.checkpoint);
   const next = nextTutorialMilestone(reached);
   const query = progress.projectId ? '?project=' + encodeURIComponent(progress.projectId) : '';
+  const currentIndex = next === 'started' ? 0 : steps.findIndex(([id]) => id === next);
+  const intro = next === 'started';
   async function startOrOpenSetup() {
     if (pending.current) return;
     pending.current = true;
@@ -31,23 +34,28 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
       setBusy(false);
     }
   }
-  return <section className="space-y-5">
-    <p className="text-muted-foreground">Follow a few short steps in a real project. You can leave at any time and resume from Projects. Weft saves guide progress and the app owner can see which steps people reach.</p>
-    <ol className="divide-y rounded-xl border bg-card px-5">
-      {TUTORIAL_GUIDE_STEPS.map(([id,title,copy], index) => <li key={id} className="py-4" aria-current={id===next?'step':undefined}>
-        <p className="font-medium">{index+1}. {title}{reached.includes(id) ? ' · Done' : id==='invite_created' && reached.includes('invite_skipped') ? ' · Skipped' : id===next ? ' · Next' : ''}</p>
-        <p className="text-sm text-muted-foreground">{copy}</p>
-      </li>)}
-    </ol>
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <div className="flex flex-wrap items-center gap-3">
-      {next === 'started' || next === 'project_created'
-        ? <Button disabled={busy} onClick={startOrOpenSetup}>{busy ? 'Saving…' : next === 'started' ? 'Start guide' : 'Create a project'}</Button>
-        : next === 'invite_created'
-          ? <a className={buttonVariants()} href={'/project'+query+'&guide=1'}>Resume guide to invite someone</a>
+  return <section className="weft-guide-intro" aria-label="First project guide">
+    <div className="weft-guide-hero">
+      {currentIndex >= 0 && !intro ? <GuideStage step={currentIndex+1} /> : <span className="weft-guide-badge">{intro ? 'Five quick steps' : 'Guide complete'}</span>}
+      <h2>{intro ? 'Get your event off the ground' : next ? steps[currentIndex]?.[1] : 'You’re ready to keep planning'}</h2>
+      <p>{intro ? 'Create a real project, add your first task, and see where the team will work together. You can pause any time and pick up from Getting started.' : next ? steps[currentIndex]?.[2] : reached.includes('invite_skipped') ? 'You finished the guide on your own. Invite a teammate from People whenever you’re ready.' : 'Your invitation is ready. Your teammate still needs to accept it.'}</p>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <div className="weft-guide-actions">
+        {intro || next === 'project_created'
+          ? <Button disabled={busy} onClick={startOrOpenSetup}>{busy ? 'Saving…' : intro ? 'Start guide' : 'Create a project'}</Button>
           : <a className={buttonVariants()} href={'/project'+query+(next ? '&guide=1' : '')}>{next ? 'Resume in your project' : 'Open your project'}</a>}
-      <a className={buttonVariants({variant:'ghost'})} href="/">Back to projects</a>
+        <a className={buttonVariants({variant:'ghost'})} href="/">Back to projects</a>
+      </div>
     </div>
-    {next === null && <p role="status">Guide complete. Your project is ready to keep planning.</p>}
+    <ol className="weft-guide-roadmap" aria-label="Guide steps">
+      {steps.map(([id,title,copy], index) => {
+        const status = reached.includes(id) ? 'Done' : id==='invite_created' && reached.includes('invite_skipped') ? 'Skipped' : id===next ? 'Up next' : id==='invite_created' ? 'Optional' : '';
+        return <li key={id} aria-current={id===next?'step':undefined}>
+          <span aria-hidden="true">{status==='Done'?'✓':index+1}</span><div><strong>{title}</strong><p>{copy}</p></div>
+          {status && <span className="weft-guide-badge">{status}</span>}
+        </li>;
+      })}
+    </ol>
+    <p className="weft-guide-fine-print">Weft saves which steps you reach so you can resume. The app owner can see that progress to improve onboarding.</p>
   </section>;
 }

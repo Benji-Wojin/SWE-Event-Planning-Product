@@ -25,9 +25,9 @@ async function SignedInSetup({projectId,guided}:{projectId?:string;guided:boolea
       <a href="/" className="text-2xl font-semibold tracking-tight text-primary">weft</a>
       <ThemeToggle />
     </header>
-    {!projectId && <p className="mb-3 text-xs font-medium uppercase tracking-widest text-primary">{guided ? 'Getting started · Step 1 of 5' : 'Your first step · Give your event a home'}</p>}
-    <h1 className="mb-4 text-3xl font-semibold">{projectId ? 'Project settings' : 'What are you bringing people together for?'}</h1>
-    {!projectId && <p className="mb-7 text-sm leading-7 text-muted-foreground">{guided ? 'Name the event you’re planning. If you know the date, guest count or location, add them now. You can fill in the rest later.' : 'Start with a name. Add what you know now, then invite someone to help or open your private project and add the first task. Creating it does not call AI or send invitations.'}</p>}
+    {!projectId && !guided && <p className="mb-3 text-xs font-medium uppercase tracking-widest text-primary">Your first step · Give your event a home</p>}
+    <h1 className={guided ? 'sr-only' : 'mb-4 text-3xl font-semibold'}>{projectId ? 'Project settings' : guided ? 'Set up your event' : 'What are you bringing people together for?'}</h1>
+    {!projectId && !guided && <p className="mb-7 text-sm leading-7 text-muted-foreground">Start with a name. Add what you know now, then invite someone to help or open your private project and add the first task. Creating it does not call AI or send invitations.</p>}
     <ProjectSetup projectId={projectId} guided={guided} />
   </main>;
 }

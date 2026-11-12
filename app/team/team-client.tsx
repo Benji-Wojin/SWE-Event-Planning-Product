@@ -7,6 +7,7 @@ import type { TeamView } from '@/lib/team';
 import { GMAIL_ENABLED } from '@/lib/release-policy';
 import { accountRequest } from '@/lib/account-request';
 import { observeTutorial } from '@/lib/guided-tutorial-client';
+import { GuideStage } from '@/components/guide-stage';
 export function TeamClient({ projectId, guided = false, tutorial = false }: { projectId: string; guided?: boolean; tutorial?: boolean }) {
   const [team, setTeam] = useState<TeamView | null>(null),
     [error, setError] = useState(''),
@@ -18,6 +19,24 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
     requestId = useRef(''),
     readEpoch = useRef(0);
   const endpoint = '/api/team?project=' + encodeURIComponent(projectId);
+  const [tutorialInviteCreated, setTutorialInviteCreated] = useState(false);
+  async function finishWithoutInviting() {
+    if (!tutorial || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await observeTutorial('invite_skipped', projectId);
+      if (result.projectId !== projectId || !result.events.some(event => event.checkpoint === 'invite_skipped' || event.checkpoint === 'invite_created'))
+        throw new Error('Could not finish the guide. Return to Getting started to continue.');
+      window.location.assign('/guide');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not finish the guide. Try again.');
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
   const loaded = team !== null;
   useEffect(() => {
     if (tutorial && loaded) void observeTutorial('invite_form_viewed', projectId).catch(() => {});
@@ -231,7 +250,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
             </details>
           </details> : null}
           <section className="space-y-4 rounded-xl border bg-card p-5">
-            {guided && <p className="text-sm font-medium text-primary">{tutorial ? 'Getting started · Step 5 of 5' : 'Getting started · Invite a teammate'}</p>}
+            {tutorial && !tutorialInviteCreated ? <GuideStage step={5} /> : guided && <p className="text-sm font-medium text-primary">{tutorialInviteCreated ? 'Getting started · Complete' : 'Getting started · Invite a teammate'}</p>}
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <p id="invite-help" className="text-sm text-muted-foreground">
               Use the email they’ll sign in with. Once they have access to Weft, they can accept the invitation from Projects. It expires in 7 days.
@@ -252,6 +271,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
                 });
                 if (updated) {
                   const invitation = updated.invitations.find(item => item.id === requestId.current);
+                  if (tutorial && invitation) setTutorialInviteCreated(true);
                   setEmail('');
                   requestId.current = '';
                   if (!sendEmail) {
@@ -284,7 +304,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
                     requestId.current = '';
                   }}
                 />
-                <Button disabled={busy} type="submit">
+                <Button disabled={busy} className="min-h-11 whitespace-normal" type="submit">
                   {busy ? 'Working…' : emailDelivery && team.sender.connected ? 'Invite and send email' : 'Invite in Weft'}
                 </Button>
               </div>
@@ -294,7 +314,10 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
                 Send an invitation email from {team.sender.email}
               </label>}
             </form>
-            {tutorial ? <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide">View guide progress</a> : guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
+            {tutorial ? <div className="weft-guide-actions">
+              {!tutorialInviteCreated && <Button type="button" variant="outline" disabled={busy} onClick={finishWithoutInviting}>Finish without inviting</Button>}
+              <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide">{tutorialInviteCreated ? 'Finish guide' : 'View guide progress'}</a>
+            </div> : guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">People</h2>

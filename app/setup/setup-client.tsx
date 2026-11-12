@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
+import { GuideStage } from '@/components/guide-stage';
 
 type Details = {
   name: string; date: string; location: string; timeZone: string; guestCount: string;
@@ -102,13 +103,13 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   if (createdId) {
     const query = '?project=' + encodeURIComponent(createdId);
     return <Card><CardContent className="space-y-4 px-5 sm:px-7">
-      <p className="text-sm font-medium text-primary">Project created · Next step</p>
+      {guided ? <GuideStage step={2} /> : <p className="text-sm font-medium text-primary">Project created · Next step</p>}
       <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">{guided ? 'Add your first task' : 'Bring someone into the plan'}</h2>
       <p className="text-muted-foreground">{guided ? 'Your project is ready. Add one real thing that needs doing to start your shared plan.' : `Invite a teammate to ${form?.name.trim()}. Once they have access to Weft, they can join and help you keep track of what needs doing.`}</p>
-      <div className="flex flex-wrap gap-3">
+      <div className="weft-guide-actions">
         {guided ? <a className={buttonVariants()} href={'/project' + query + '&guide=1'}>Continue to your project</a> : <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>}
-        <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>Open project</a>
-        <a className={buttonVariants({ variant: 'ghost' })} href={'/plan' + query}>Explore starter plans</a>
+        <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>{guided ? 'Finish later' : 'Open project'}</a>
+        {!guided && <a className={buttonVariants({ variant: 'ghost' })} href={'/plan' + query}>Explore starter plans</a>}
       </div>
       <p className="text-sm text-muted-foreground">{guided ? 'You can also come back and resume from Getting started.' : 'Working solo? You can invite people later from your project.'}</p>
     </CardContent></Card>;
@@ -122,8 +123,20 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
     <Label htmlFor={'setup-' + name}>{label}</Label>
     <Input id={'setup-' + name} name={name} type={type} value={form[name]} onChange={e => update(name, e.target.value)}
       required={name === 'name'} maxLength={maxLength} min={type === 'number' ? 0 : undefined} max={type === 'number' ? 100000 : undefined}
+      placeholder={guided && name === 'name' ? 'e.g. Spring dance or team off-site' : undefined}
       step={type === 'number' ? 1 : undefined} className="h-11 text-base md:text-base" />
   </div>;
+  const eventOptions = <>
+    <div className="grid gap-6 sm:grid-cols-2">
+      {textField('date', 'Event date (optional)', 'date')}
+      {textField('guestCount', 'Expected guests', 'number')}
+    </div>
+    {textField('location', 'Location (optional)', 'text', 240)}
+    <div className="space-y-5 border-t pt-6">
+      <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-outdoor">Outdoor event</Label><Switch id="setup-outdoor" checked={form.outdoor} onCheckedChange={checked => update('outdoor', checked)} /></div>
+      <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-transportNeeded">Organized transport needed</Label><Switch id="setup-transportNeeded" checked={form.transportNeeded} onCheckedChange={checked => update('transportNeeded', checked)} /></div>
+    </div>
+  </>;
   return <>
     <form onSubmit={save} aria-busy={busy}>
       {errorMessage}
@@ -131,14 +144,10 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
         if (!dirty || window.confirm('Discard these unsaved details and load the current project setup?')) void load();
       }}>Reload saved details</Button>}
       <Card className="py-6 sm:py-7"><CardContent className="px-5 sm:px-7">
+        {guided && <div className="mb-6"><GuideStage step={1} /><h2 className="mb-2 text-2xl font-semibold">Give your event a home</h2><p className="text-sm text-muted-foreground">Start with a name and confirm your time zone. You can fill in the date, location, and other details later.</p></div>}
         <fieldset disabled={busy} className="space-y-6">
           <legend className="sr-only">Event details</legend>
           {textField('name', 'Event name', 'text', 160)}
-          <div className="grid gap-6 sm:grid-cols-2">
-            {textField('date', 'Event date (optional)', 'date')}
-            {textField('guestCount', 'Expected guests', 'number')}
-          </div>
-          {textField('location', 'Location (optional)', 'text', 240)}
           <div className="space-y-2">
             <Label htmlFor="setup-timeZone">Event time zone</Label>
             <Input id="setup-timeZone" name="timeZone" list="event-time-zones" required maxLength={100} value={form.timeZone}
@@ -146,10 +155,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
             <datalist id="event-time-zones">{['UTC',...Intl.supportedValuesOf('timeZone')].map(zone=><option key={zone} value={zone} />)}</datalist>
             <p className="text-sm text-muted-foreground">Schedule times use this zone for everyone. Changing the event date does not move scheduled activities.</p>
           </div>
-          <div className="space-y-5 border-t pt-6">
-            <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-outdoor">Outdoor event</Label><Switch id="setup-outdoor" checked={form.outdoor} onCheckedChange={checked => update('outdoor', checked)} /></div>
-            <div className="flex items-center justify-between gap-4"><Label htmlFor="setup-transportNeeded">Organized transport needed</Label><Switch id="setup-transportNeeded" checked={form.transportNeeded} onCheckedChange={checked => update('transportNeeded', checked)} /></div>
-          </div>
+          {guided ? <details className="border-t pt-4"><summary className="cursor-pointer py-2 text-sm font-medium">Add optional event details</summary><div className="mt-4 space-y-5">{eventOptions}</div></details> : eventOptions}
           <details className="border-t pt-6" open={!isNew || undefined}>
             <summary className="cursor-pointer text-sm font-medium">More event and team settings</summary>
             <div className="mt-5 space-y-5">
@@ -167,7 +173,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
             </div>
           </details>
           <div className="border-t pt-5">
-            <p className="mb-5 text-sm text-muted-foreground">{isNew ? 'Next: invite a teammate, or open your project and add the first task.' : 'Changes only this project’s settings.'}</p>
+            <p className="mb-5 text-sm text-muted-foreground">{guided ? 'Up next: add one real task to your project. Nothing is sent to anyone.' : isNew ? 'Next: invite a teammate, or open your project and add the first task.' : 'Changes only this project’s settings.'}</p>
             <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>
           </div>
         </fieldset>

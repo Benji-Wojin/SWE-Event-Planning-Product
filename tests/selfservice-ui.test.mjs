@@ -15,6 +15,7 @@ before(async () => {
     format: 'esm',
     platform: 'node',
     jsx: 'automatic',
+    loader: { '.css': 'empty' },
     plugins: [
       {
         name: 'ui',
