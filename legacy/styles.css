@@ -790,3 +790,11 @@ form[aria-busy="true"]{cursor:progress}
 .task-table .guide-first-task-row,.task-table .guide-first-task-row:hover{background:color-mix(in srgb,var(--green-soft) 45%,var(--white))}
 .guide-first-task-row .check-button:focus-visible{outline:3px solid var(--green);outline-offset:4px}
 @media(max-width:640px){.guide-task-practice,.guide-task-fields .form-grid{grid-template-columns:minmax(0,1fr)}}
+.breakdown-ai{padding:0 15px;border:1px solid var(--line);border-radius:12px;background:var(--warm)}
+.breakdown-ai summary{min-height:44px;padding:12px 0;cursor:pointer;font-weight:650;color:var(--ink)}
+.breakdown-ai[open]{padding-bottom:16px}
+.breakdown-ai>div{display:grid;gap:10px;line-height:1.55}
+.breakdown-ai blockquote{margin:0;padding:10px 12px;border-inline-start:3px solid var(--green);background:var(--white);color:var(--ink);overflow-wrap:anywhere;white-space:pre-wrap}
+.breakdown-ai .form-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:0}
+.breakdown-ai .form-actions .btn{min-height:44px;white-space:normal}
+.breakdown-ai [role=status]:empty{display:none}

@@ -45,5 +45,5 @@ test('task entry cannot launch the coming-soon assistant in any role or state',(
     assert.equal(offers.length,0);assert.equal(closed,0);
   }
   assert.doesNotMatch(handler,/store\.(?:add|update|save)|fetch\(|task\.note|task\.comments|task\.scope/);
-  assert.match(source,/Plan smaller steps · Coming soon/);assert.match(source,/You can still add and link smaller tasks manually/);
+  assert.match(source,/Ask Weft chat · Coming soon/);assert.match(source,/You can still add and link smaller tasks manually/);
 });

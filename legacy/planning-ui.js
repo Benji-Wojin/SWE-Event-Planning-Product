@@ -247,7 +247,9 @@
   }
   function relatedChecklistReview(titles,h) {
     return '<p>Choose which smaller steps to add. Edit any title and describe an optional Done when result. Every new task starts unassigned and To do, without a date. Related work never blocks completion of the original task.</p>'+
-      titles.map((title,index)=>'<fieldset class="related-review-row" data-related-row><legend>Step '+(index+1)+'</legend><label class="check-field"><input type="checkbox" data-related-include> Include step '+(index+1)+'</label><label class="field">Title for step '+(index+1)+'<input data-related-title maxlength="180" value="'+h(title)+'"></label><label class="field">Done when for step '+(index+1)+' (optional)<textarea data-related-scope maxlength="500" rows="2"></textarea></label></fieldset>').join('');
+      titles.map((item,index)=>{const {title,scope=''}=typeof item==='string'?{title:item}:item;
+        return '<fieldset class="related-review-row" data-related-row><legend>Step '+(index+1)+'</legend><label class="check-field"><input type="checkbox" data-related-include> Include step '+(index+1)+'</label><label class="field">Title for step '+(index+1)+'<input data-related-title maxlength="180" value="'+h(title)+'"></label><label class="field">Done when for step '+(index+1)+' (optional)<textarea data-related-scope maxlength="500" rows="2">'+h(scope)+'</textarea></label></fieldset>';
+      }).join('');
   }
   root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup,relatedChecklistTitles,relatedChecklistReview};
 })(globalThis);

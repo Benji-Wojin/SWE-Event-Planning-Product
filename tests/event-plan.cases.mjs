@@ -188,6 +188,77 @@ export async function eventPlanTests({
     return snap;
   }
   try {
+    await t.test('task breakdown sends only the confirmed title and cannot write shared tasks',async()=>{
+      const project=await setup();
+      const parent=(await change(project,'addTask',[{title:'Plan welcome desk',note:'PRIVATE_TASK_NOTE',scope:'PRIVATE_TASK_OUTCOME'}])).result;
+      await change(project,'addTask',[{title:'PRIVATE_UNRELATED_TITLE'}]);
+      const path=project+'&mode=breakdown&task='+encodeURIComponent(parent.id);
+      const snap=await read(path), before=await (await realRead(project)).json();
+      assert.deepEqual(snap.task,{id:parent.id,title:parent.title,revision:parent.revision});
+      assert.deepEqual(Object.keys(snap).sort(),['configured','contextChanged','issue','revision','status','steps','task','workspaceRevision']);
+      const input={action:'generate',revision:snap.revision,workspaceRevision:snap.workspaceRevision,taskRevision:snap.task.revision,
+        requestId:crypto.randomUUID(),consent:true,consentVersion:'groq-task-breakdown-v1'};
+      assert.equal((await post(path,{...input,consentVersion:'groq-plan-v1'})).status,400);
+      assert.equal((await post(path,{...input,taskTitle:'Caller-substituted title'})).status,400);
+      assert.equal((await post(path,{...input,taskRevision:0})).status,409);
+      assert.equal((await post(path,{...input,action:'apply'})).status,400);
+      assert.equal((await get(path+'&task='+parent.id)).status,404);
+      assert.equal(calls.length,0);
+      const step={title:'Draft a volunteer rota',scope:'Every shift has an identified volunteer.'};
+      provider({items:[{title:parent.title,scope:''},step,{...step,title:'  DRAFT A VOLUNTEER ROTA  '}]});
+      const response=await post(path,input);
+      assert.equal(response.status,200,await response.clone().text());
+      const generated=await response.json();
+      assert.deepEqual(generated.steps,[step]);
+      assert.equal(generated.status,'ready');
+      assert.deepEqual(JSON.parse(calls[0].messages[1].content),{taskTitle:parent.title});
+      assert.doesNotMatch(JSON.stringify(calls[0]),/PRIVATE_|School hall|Fictional arts evening|tool_choice/);
+      assert.equal((await post(path,input)).status,200);
+      assert.equal(calls.length,1);
+      assert.equal((await read(project)).draft,null,'normal starting plan is untouched');
+      assert.equal((await read(project+'&mode=suggestions')).draft,null,'gap review is untouched');
+      assert.deepEqual((await (await realRead(project)).json()).state,before.state);
+      cool(project);
+      provider({items:[{...step,owner:'jack'}]});
+      const malformed=await post(path,{...input,revision:generated.revision,requestId:crypto.randomUUID()});
+      assert.equal(malformed.status,200);
+      const failed=await malformed.json();
+      assert.equal(failed.status,'error');assert.deepEqual(failed.steps,[step],'failed drafts preserve the last valid private version');
+      await change(project,'updateTask',[parent.id,{title:'Updated welcome desk'}]);
+      assert.equal((await read(path)).steps,null);
+      assert.equal((await read(path)).contextChanged,true);
+      assert.equal((await post(path,input)).status,409);
+      await joinPerson(project,'fictional-breakdown-member@example.com','fictional-breakdown-member');
+      assert.equal((await get(path)).status,403);
+      assert.equal((await post(path,input)).status,403);
+      assert.equal(calls.length,2);
+      assert.equal(sqlite.prepare("SELECT count FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().count,2);
+      owner();sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+    });
+    await t.test('AI breakdown refuses a workspace change at reservation and does not persist a late answer',async()=>{
+      const project=await setup(),parent=(await change(project,'addTask',[{title:'Plan the foyer'}])).result;
+      const path=project+'&mode=breakdown&task='+parent.id;
+      const input=snap=>({action:'generate',revision:snap.revision,workspaceRevision:snap.workspaceRevision,taskRevision:snap.task.revision,
+        requestId:crypto.randomUUID(),consent:true,consentVersion:'groq-task-breakdown-v1'});
+      const initial=await read(path),originalBatch=db.batch;
+      const advance=()=>sqlite.prepare('UPDATE workspaces SET revision=revision+1 WHERE id=?').run(project);
+      db.batch=async statements=>{advance();return originalBatch.call(db,statements);};
+      try {
+        assert.equal((await post(path,input(initial))).status,409);
+        assert.equal(calls.length,0);
+        assert.equal(sqlite.prepare("SELECT count(*) AS n FROM resource_usage WHERE id LIKE 'plan-ai:%'").get().n,0);
+      } finally {db.batch=originalBatch;}
+      globalThis.fetch=async()=>{
+        calls.push('late mock');advance();
+        return success({items:[{title:'Prepare sign',scope:'A sign is ready.'}]});
+      };
+      assert.equal((await post(path,input(await read(path)))).status,409);
+      const stale=await read(path);
+      assert.equal(stale.status,'error');assert.equal(stale.steps,null);
+      assert.equal(calls.length,1);
+      assert.equal((await (await realRead(project)).json()).state.tasks.length,1);
+      sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+    });
     await t.test('reviewed AI outcomes save separately from instructions and apply as incomplete unaccepted shared tasks',async()=>{
       const project=await setup(),generated=output();generated.items[0].scope='The organizer records the approval decision and outstanding conditions.';provider(generated);
       try {

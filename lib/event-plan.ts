@@ -1,5 +1,7 @@
 import { env } from '@/lib/runtime';
 import { PLAN_AI_CONSENT_VERSION } from './groq';
+import { BREAKDOWN_CONSENT_VERSION, breakdownRequest, breakdownTitleAllowed, generateTaskBreakdown } from './breakdown-generation';
+import { workspaceTaskId } from './workspace-task-link';
 import {
   administrator,
   HttpError,
@@ -67,7 +69,9 @@ const existingPlanTasks = (c: Context) =>
 async function loadContext(request: Request) {
   const params = new URL(request.url).searchParams,
     demo = params.get('demo') === '1';
-  const purpose = params.get('mode') === 'assistant' ? 'assistant' : params.get('mode') === 'suggestions' ? 'suggestions' : 'plan';
+  const mode=params.get('mode');
+  const purpose = mode==='assistant'||mode==='suggestions'||mode==='breakdown'?mode:'plan';
+  if(purpose==='breakdown'&&demo)throw new HttpError(400,'AI task breakdown is only available in a real project.');
   const identity = demo ? await administrator() : await principal();
   const user = demo ? identity : await projectUser(identity, request);
   const projectId = demo ? 'demo:' + user.userId : (user as any).projectId;
@@ -77,6 +81,11 @@ async function loadContext(request: Request) {
   const state = store.getState();
   const memberAssistant = !demo && purpose==='assistant' && user.role==='member' && state.event.membersCanCreateTasks===true;
   if ((!memberAssistant && user.role!=='admin') || (demo && demoPersona(params.get('as'))!=='jack')) throw new HttpError(403,'Only the organizer can review plans. Ask the organizer to enable teammate task creation for the task assistant.');
+  const taskId=purpose==='breakdown'&&params.getAll('task').length===1?workspaceTaskId(params.get('task')):'';
+  const task=taskId?state.tasks.find((item:any)=>item.id===taskId):null;
+  if(purpose==='breakdown'&&(!task||task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt||!breakdownTitleAllowed(task.title)))
+    throw new HttpError(404,'Open an unfinished task with a plain, single-line title to draft smaller steps.');
+  const breakdown=task?{id:task.id as string,title:task.title as string,revision:task.revision as number}:null;
   const ownerSql = memberAssistant ? `(${projectWriteAccess}) AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.event.membersCanCreateTasks')=1)` : demo
     ? `EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin') AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND json_extract(data,'$.demoGeneration')=?)`
     : `((?='main' AND EXISTS (SELECT 1 FROM members WHERE user_id=? AND actor_id='jack' AND role='admin')) OR EXISTS (SELECT 1 FROM projects WHERE id=? AND owner_id=?))`;
@@ -85,9 +94,9 @@ async function loadContext(request: Request) {
     : [projectId, user.userId, projectId, user.userId];
   const scope = demo ? projectId + ':' + state.demoGeneration : projectId;
   // Separate review documents; asking for suggestions must never replace a plan draft.
-  const id = await hash(purpose === 'plan' ? [scope, user.userId] : [scope, user.userId, purpose]);
+  const id = await hash(purpose === 'plan' ? [scope, user.userId] : [scope, user.userId, purpose,...(breakdown?[breakdown.id]:[])]);
   // Explicitly exclude contacts, emails, files, booking records, progress notes and member identities.
-  const source = {
+  const source = breakdown?{taskTitle:breakdown.title}:{
     event: Object.fromEntries(
       [
         'name',
@@ -119,11 +128,12 @@ async function loadContext(request: Request) {
     state,
     id,
     purpose,
+    breakdown,
     memberAssistant,
     ownerSql,
     ownerArgs,
     source,
-    contextHash: await hash(source),
+    contextHash: await hash(breakdown?{title:breakdown.title,revision:breakdown.revision}:source),
   };
 }
 async function authorized(c: Context) {
@@ -153,6 +163,14 @@ const issueText: Record<string, string> = {
 async function snapshot(c: Context) {
   const row = await read(c.id),
     data = await decode(row);
+  if(c.breakdown){
+    await authorized(c);
+    const contextChanged=!!data.draft&&data.draft.contextHash!==c.contextHash;
+    return {task:c.breakdown,revision:row?.revision||0,workspaceRevision:c.row.revision,configured:!!env.GROQ_API_KEY,
+      status:row?.status==='generating'&&row.lease_until<=Date.now()?'interrupted':row?.status||'empty',
+      issue:issueText[row?.issue]||'',contextChanged,
+      steps:contextChanged?null:data.draft?.breakdownItems??null};
+  }
   if (c.purpose === 'suggestions' && !row) {
     const starting = await decode(await read(await hash([c.demo ? c.projectId + ':' + c.state.demoGeneration : c.projectId, c.user.userId])));
     data.brief = starting.brief?.description ? starting.brief : {...emptyBrief, description: c.state.event.name};
@@ -438,23 +456,25 @@ async function generate(c: Context, input: any) {
       'revision',
       'workspaceRevision',
       'requestId',
-      'brief',
+      ...(c.breakdown?['taskRevision']:['brief']),
       'consent',
       'consentVersion',
     ]) ||
     !uuid(input.requestId) ||
     input.consent !== true ||
-    input.consentVersion !== PLAN_AI_CONSENT_VERSION
+    input.consentVersion !== (c.breakdown?BREAKDOWN_CONSENT_VERSION:PLAN_AI_CONSENT_VERSION)
   )
-    throw new HttpError(400, 'Confirm the event details to send to AI.');
+    throw new HttpError(400, c.breakdown?'Confirm the displayed task title before sending it to Groq.':'Confirm the event details to send to AI.');
+  if(c.breakdown&&input.taskRevision!==c.breakdown.revision)
+    throw new HttpError(409,'The task changed. Reopen the task and confirm the title again.');
   let brief;
   try {
-    brief = parseBrief(input.brief, c.state.event.date);
+    brief = c.breakdown?emptyBrief:parseBrief(input.brief, c.state.event.date);
     if(c.purpose==='assistant')taskConversation(brief.description);
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
-  const fingerprint = await hash({ source: c.source, brief }),
+  const fingerprint = await hash({ source: c.source, brief, ...(c.breakdown?{taskRevision:c.breakdown.revision}:{}) }),
     previous = await read(c.id);
   if (previous?.request_id === input.requestId) {
     if (previous.request_hash !== fingerprint)
@@ -487,7 +507,7 @@ async function generate(c: Context, input: any) {
     ),
   };
   try {
-    planRequestBody(generationContext);
+    if(c.breakdown)breakdownRequest(c.breakdown.title);else planRequestBody(generationContext);
   } catch {
     throw new HttpError(
       413,
@@ -507,6 +527,7 @@ async function generate(c: Context, input: any) {
   const reserved = await env.DB.batch([
     env.DB.prepare(`INSERT INTO plan_drafts (id,owner_id,workspace_id,request_id,request_hash,payload,status,lease,lease_until,started_at)
       SELECT ?,?,?,?,?,?,'generating',?,?,? WHERE COALESCE((SELECT count FROM resource_usage WHERE id=?),0)<? AND ${c.ownerSql}
+      ${c.breakdown?'AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?)':''}
       ON CONFLICT(id) DO UPDATE SET request_id=excluded.request_id,request_hash=excluded.request_hash,payload=excluded.payload,status='generating',issue='',lease=excluded.lease,lease_until=excluded.lease_until,started_at=excluded.started_at,revision=revision+1
       WHERE plan_drafts.revision=? AND plan_drafts.lease_until<=? AND plan_drafts.started_at<=?`).bind(
       c.id,
@@ -521,6 +542,7 @@ async function generate(c: Context, input: any) {
       quota,
       c.dailyLimit,
       ...c.ownerArgs,
+      ...(c.breakdown?[c.projectId,c.row.revision]:[]),
       input.revision,
       now,
       now - cooldown,
@@ -578,21 +600,23 @@ async function generate(c: Context, input: any) {
     throw new HttpError(status, message);
   }
   try {
-    const output = c.purpose==='assistant' ? await generateTaskProposal(generationContext, env.GROQ_API_KEY) : await generateEventPlan(generationContext, env.GROQ_API_KEY);
-    const reviewed = output.items.map((item) => ({
+    const breakdownItems = c.breakdown ? await generateTaskBreakdown(c.breakdown.title,env.GROQ_API_KEY) : null;
+    const output = c.breakdown?null:c.purpose==='assistant' ? await generateTaskProposal(generationContext, env.GROQ_API_KEY) : await generateEventPlan(generationContext, env.GROQ_API_KEY);
+    const reviewed = (output?.items||[]).map((item) => ({
       ...item,
       owner: '',
       included: true,
     }));
-    const { matches } = planSelection(reviewed, existingPlanTasks(c));
-    const draft = {
+    const existing = c.breakdown ? [] : existingPlanTasks(c);
+    const { matches } = planSelection(reviewed, existing);
+    const draft = c.breakdown?{breakdownItems,generation:input.requestId,contextHash:c.contextHash}:{
       ...output,
       items: reviewed.map((item) => ({
         ...item,
         owner: '',
         included: matches.get(item.id)!.length === 0,
       })),
-      duplicateSuggestions: duplicateSuggestions(reviewed, existingPlanTasks(c).slice(0, 200)),
+      duplicateSuggestions: duplicateSuggestions(reviewed, existing.slice(0, 200)),
       generation: input.requestId,
       contextHash: c.contextHash,
       brief,
@@ -814,6 +838,10 @@ async function applyDraft(c: Context, input: any) {
 export async function writeEventPlan(request: Request, input: any) {
   const c = await loadContext(request);
   await authorized(c);
+  if(c.breakdown){
+    if(input.action!=='generate')throw new HttpError(400,'Review smaller steps in the task before adding related work.');
+    return generate(c,input);
+  }
   if (input.action === 'save') return saveDraft(c, input);
   if (input.action === 'starter') return createStarter(c, input);
   if (input.action === 'import-checklist') {

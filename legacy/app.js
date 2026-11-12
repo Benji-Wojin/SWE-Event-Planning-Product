@@ -674,17 +674,68 @@
   function openRelatedBatch(id) {
     const task=store.getState().tasks.find(task=>task.id===id);
     if(window.GatherAccessLost||!isOrganizer()||!task||task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt)return;
-    openDialog('Break down '+task.title,'<p>Paste up to 8 smaller steps, one per line. You’ll choose and edit them before anything is added. Don’t paste credentials, booking codes or private details.</p>'+
-      '<form id="relatedChecklistForm" data-id="'+h(id)+'" data-revision="'+task.revision+'"><label class="field section-gap">Smaller steps<textarea name="checklist" required rows="7" maxlength="2000"></textarea></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Review checklist</button></div></form>','',false,'related-checklist');
+    const ai=window.GatherMode&&!window.GatherMode.demo?'<details class="breakdown-ai section-gap"><summary>Draft smaller steps with AI</summary><div><p>Generate sends exactly the title below to Groq. No notes, event details, files, or member records are attached. Anything written in the title is sent, so skip AI if it contains private details.</p><blockquote>'+h(task.title)+'</blockquote><p>You’ll review a private draft. Nothing is added to the project until you choose what to save.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="related-ai-review">Review saved AI draft</button><button type="button" class="btn btn-primary" data-action="related-ai-generate">Send title to Groq and generate</button></div><p id="relatedAiStatus" role="status" class="muted"></p></div></details>':'';
+    openDialog('Break down '+task.title,'<p>Make this task easier to hand off. You can draft ideas with AI when available or write your own checklist.</p>'+ai+
+      '<form id="relatedChecklistForm" data-id="'+h(id)+'" data-revision="'+task.revision+'"><label class="field section-gap">Write your own smaller steps<textarea name="checklist" required rows="5" maxlength="2000" aria-describedby="relatedChecklistHelp"></textarea></label><p id="relatedChecklistHelp" class="muted">Up to 8 steps, one per line. Don’t paste credentials, booking codes or private details.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Review checklist</button></div></form>','',false,'related-checklist');
+    requestAnimationFrame(()=>{
+      if(ui.dialogKind!=='related-checklist'||$('#relatedChecklistForm')?.dataset.id!==id)return;
+      const heading=$('#dialogTitle');
+      if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});$('#dialog').scrollTop=0;}
+    });
   }
   function reviewRelatedBatch(form) {
     if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-checklist')return;
     const id=form.dataset.id, revision=Number(form.dataset.revision), task=store.getState().tasks.find(task=>task.id===id);
     if(!task||task.revision!==revision)throw new Error('The original task changed. Reopen it before reviewing linked work.');
-    const titles=GatherPlanningUI.relatedChecklistTitles(form.elements.checklist.value);
-    openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" data-id="'+h(id)+'" data-revision="'+revision+'">'+
-      GatherPlanningUI.relatedChecklistReview(titles,h)+
-      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review');
+    showRelatedReview(task,GatherPlanningUI.relatedChecklistTitles(form.elements.checklist.value),false);
+  }
+  function showRelatedReview(task,items,ai) {
+    openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" data-id="'+h(task.id)+'" data-revision="'+task.revision+'">'+
+      (ai?'<p class="notice">Drafted by AI using only the task title. Check each step for accuracy and avoid private details. None are selected.</p>':'')+
+      GatherPlanningUI.relatedChecklistReview(items,h)+
+      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(task.id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review');
+  }
+  async function relatedAi(generate) {
+    const form=$('#relatedChecklistForm'),status=$('#relatedAiStatus'), mode=window.GatherMode;
+    if(!form||!status||form.dataset.aiBusy==='true'||!mode||mode.demo||window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-checklist'||!confirmDiscard(form))return;
+    const task=store.getState().tasks.find(task=>task.id===form.dataset.id),revision=Number(form.dataset.revision);
+    if(!task||task.revision!==revision){status.textContent='The task changed. Reopen it before using AI.';return;}
+    const active=()=>form.isConnected&&ui.dialogKind==='related-checklist'&&isOrganizer()&&!window.GatherAccessLost;
+    const controls=$$('#dialog [data-action^="related-ai-"]'), initialText=form.elements.checklist.value;
+    const url=mode.projectUrl('/api/plan')+'&mode=breakdown&task='+encodeURIComponent(task.id);
+    async function request(data) {
+      const response=await fetch(url,{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(data?50000:10000),
+        ...(data?{method:'POST',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},body:JSON.stringify(data)}:{})});
+      const result=await response.json().catch(()=>null);
+      if(!response.ok||!result)throw new Error(result?.error||'Could not load an AI draft. You can still use the checklist.');
+      if(result.task?.id!==task.id||result.task.revision!==revision||result.task.title!==task.title)throw new Error('The task changed. Reopen it and review the title again.');
+      return result;
+    }
+    form.dataset.aiBusy='true';controls.forEach(control=>control.disabled=true);
+    status.textContent=generate?'Checking the task before sending its title…':'Checking for a saved draft…';
+    try {
+      let result=await request();
+      if(!active())return;
+      if(generate){
+        if(!result.configured)throw new Error('AI is not configured. You can still use the checklist.');
+        if(result.status==='generating')throw new Error('A draft is already generating. Check the saved draft in a moment.');
+        if(form.elements.checklist.value!==initialText){status.textContent='Your checklist changed. No title was sent to Groq.';return;}
+        status.textContent='Drafting smaller steps with Groq…';
+        result=await request({action:'generate',revision:result.revision,workspaceRevision:result.workspaceRevision,
+          taskRevision:revision,requestId:crypto.randomUUID(),consent:true,consentVersion:'groq-task-breakdown-v1'});
+      }
+      if(!active())return;
+      if(result.status==='generating')throw new Error('A draft is still generating. Check again in a moment.');
+      if(result.contextChanged)throw new Error('The saved AI draft is from an older version of this task. Generate a new one or use the checklist.');
+      if(result.issue&&generate)throw new Error(result.issue);
+      if(!Array.isArray(result.steps)||!result.steps.length)throw new Error(Array.isArray(result.steps)?'No smaller steps were suggested. Try the checklist instead.':'No current AI draft. Generate one or use the checklist.');
+      if(form.elements.checklist.value!==initialText){status.textContent='A draft is saved. Your checklist is unchanged. Use Review saved AI draft to open it.';return;}
+      showRelatedReview(task,result.steps,true);
+    } catch(error) {
+      if(active())status.textContent=error.name==='TimeoutError'?'The request timed out. Check for a saved draft before generating again.':error.message;
+    } finally {
+      if(active()){delete form.dataset.aiBusy;controls.forEach(control=>control.disabled=false);}
+    }
   }
   function dependencyMarkup(task) {
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
@@ -695,8 +746,8 @@
       ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
       ${manage&&task.status!=='done'?`<details class="dependency-add"><summary>Link an existing task</summary><form id="relationshipAddForm" data-id="${h(task.id)}"><label class="field">Task<select name="taskId" required>${options([['','Choose a task'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(l=>l.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link these tasks?<textarea name="reason" rows="2" maxlength="2000" required placeholder="Describe the shared context, or the exact output needed first."></textarea></label><button type="submit" class="btn btn-secondary btn-small">Save link</button></form></details>`:''}
       ${linkedTaskForm(task,state,isOrganizer())}
-      ${isOrganizer()&&!window.GatherAccessLost&&task.status!=='done'&&!(task.reportedAt&&task.requiresVerification&&!task.verifiedAt)?`<button class="btn btn-secondary section-gap" data-action="related-checklist" data-id="${h(task.id)}">Break down with a checklist</button>`:''}
-      ${window.GatherMode&&canCreateTasks()&&!window.GatherAccessLost&&task.status!=='done'?`<div class="section-gap"><button class="btn btn-secondary btn-small" disabled aria-disabled="true" title="Ask Weft is coming soon">Plan smaller steps · Coming soon</button><p class="muted">Ask Weft is coming soon. You can still add and link smaller tasks manually.</p></div>`:''}
+      ${isOrganizer()&&!window.GatherAccessLost&&task.status!=='done'&&!(task.reportedAt&&task.requiresVerification&&!task.verifiedAt)?`<button class="btn btn-secondary section-gap" data-action="related-checklist" data-id="${h(task.id)}">Break down task</button>`:''}
+      ${window.GatherMode&&canCreateTasks()&&!window.GatherAccessLost&&task.status!=='done'?`<div class="section-gap"><button class="btn btn-secondary btn-small" disabled aria-disabled="true" title="Ask Weft chat is coming soon">Ask Weft chat · Coming soon</button><p class="muted">You can still add and link smaller tasks manually.</p></div>`:''}
       ${task.status==='blocked'&&manage?`<details class="dependency-add"><summary>Name or link follow-up work</summary><form id="dependencyForm" data-id="${h(task.id)}"><label class="field">Existing task<select name="existingTask">${options([['','Name the follow-up'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(link=>link.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Follow-up task name<input name="newTitle" maxlength="180" placeholder="What needs to happen first?"></label><label class="check-field"><input name="additional" type="checkbox"> Add a separate blocker instead</label><p class="muted">An unused generic follow-up will be updated, not duplicated.</p><div class="form-actions"><button class="btn btn-secondary" type="submit">Save follow-up</button></div></form></details>`:''}
       ${dependents.length?`<h3>Linked from</h3><div class="dependency-targets">${dependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
     </section>`;
@@ -1137,6 +1188,7 @@
       if(action==='toggle-task-reminders')toggleTaskReminders();
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
       if(action==='related-checklist')openRelatedBatch(id);
+      if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
       }
