@@ -74,6 +74,22 @@ test('assignment review starts on the heading so the explanation is not skipped'
   assert.notEqual(f.input.focused,true);
 });
 
+test('Tab and Shift+Tab from the programmatically focused dialog heading stay in the dialog',()=>{
+  let active,handler,prevented;
+  const heading={},first={focus(){active=first;}},last={focus(){active=last;}};
+  const dialog={id:'dialog',contains:el=>[dialog,heading,first,last].includes(el)};
+  const ctx=vm.createContext({document:{get activeElement(){return active;},addEventListener(_type,fn){handler=fn;}},
+    $:selector=>({'#dialogBackdrop':{hidden:false},'#dialog':dialog,'#dialogTitle':heading})[selector],
+    focusable:()=>[first,last]});
+  const start=source.indexOf("  document.addEventListener('keydown'"),end=source.indexOf("  $('#mobileMenu').addEventListener",start);
+  vm.runInContext(source.slice(start,end),ctx);
+  for(const [shiftKey,target] of [[false,first],[true,last]]){
+    active=heading;prevented=false;
+    handler({key:'Tab',shiftKey,preventDefault(){prevented=true;}});
+    assert.equal(active,target);assert.equal(prevented,true);
+  }
+});
+
 test('restoration refuses a connected field hidden by collapse but can restore its summary',()=>{
   const f=fixture();assert.equal(f.ctx.restore(f.input,f.root),false);assert.notEqual(f.input.focused,true);
   assert.equal(f.ctx.restore(f.summary,f.root),true);assert.equal(f.summary.focused,true);

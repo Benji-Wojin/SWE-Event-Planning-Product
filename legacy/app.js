@@ -1629,7 +1629,8 @@
       const controls=focusable(scope);
       const first=controls[0],last=controls.at(-1);
       if(!first){event.preventDefault();scope.focus();return;}
-      if(document.activeElement===scope||!scope.contains(document.activeElement)){event.preventDefault();(event.shiftKey?last:first).focus();return;}
+      const atDialogHeading=scope.id==='dialog'&&document.activeElement===$('#dialogTitle',scope);
+      if(atDialogHeading||document.activeElement===scope||!scope.contains(document.activeElement)){event.preventDefault();(event.shiftKey?last:first).focus();return;}
       if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
       if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
     }
