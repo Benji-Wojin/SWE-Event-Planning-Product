@@ -121,6 +121,8 @@ Use **Copy day link** to share the live project date with a teammate. It does no
 
 In the private plan, **Paste a checklist** imports one title per line without calling AI. Imported tasks start unchecked and unassigned. If the shared plan changes, recheck a pasted draft without losing edits before adding anything.
 
+After adding a reviewed plan, open a task directly from the receipt. The organizer can refresh the handoff to see which new tasks still need an active owner, acceptance, or completion review.
+
 Use **Wrap up → Reuse tasks for another event** to choose and edit titles for that importer. Only reviewed titles carry forward; the source event and its task history are unchanged.
 
 Organizers can use **Draft guest agenda** to turn selected activities into plain text for guests. Review the guest-facing titles and add any locations you want to share. Owners, internal notes, and saved locations are not included. The draft is not saved or sent; copying checks that the schedule is still current.

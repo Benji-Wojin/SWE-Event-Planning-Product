@@ -12,6 +12,8 @@ export async function eventPlanTests({
   planGeneration,
   newTeamProject,
   joinPerson,
+  teamRead,
+  teamWrite,
   realRead,
   workspace,
   demoRead,
@@ -981,6 +983,53 @@ export async function eventPlanTests({
       assert.deepEqual(state.tasks.find(task => task.id === before.id), before);
       assert.equal(state.tasks.find(task => task.title === 'Welcome attendees').dependencies[0].taskId, before.id);
       assert.equal((await post(project, approval(snap))).status, 200);
+    });
+    await t.test('the organizer receipt follows current team commitments and completion without rewriting the approval',async(test)=>{
+      const project=await setup();
+      test.after(()=>{owner();sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);});
+      await joinPerson(project,'fictional-handoff@example.com','fictional-handoff-user');
+      const teammate=globalThis.__gatherUser;
+      const actor=(await (await realRead(project)).json()).identity.actorId;
+      owner();
+      const snap=await ready(project);
+      snap.draft.items[0].owner=actor;
+      snap.draft.items[2].owner='jack';
+      const response=await post(project,approval(snap));
+      assert.equal(response.status,200,await response.clone().text());
+      const applied=await response.json(),[first,second,third]=applied.receiptTasks;
+      assert.deepEqual(first.handoff,{state:'awaiting-acceptance',ownerName:'Maya Real'});
+      assert.deepEqual(second.handoff,{state:'needs-owner'});
+      assert.equal(third.handoff.state,'awaiting-acceptance');
+      globalThis.__gatherUser=teammate;
+      assert.equal((await get(project)).status,403,'the teammate has no access to the organizer receipt');
+      await change(project,'acceptTask',[first.id]);
+      owner();
+      assert.deepEqual((await read(project)).receiptTasks[0].handoff,{state:'accepted',ownerName:'Maya Real'});
+      await change(project,'updateTask',[third.id,{requiresVerification:true}]);
+      await change(project,'reportCompletion',[third.id,'Cleanup owners and handback recorded.']);
+      assert.equal((await read(project)).receiptTasks[2].handoff.state,'needs-review');
+      await change(project,'verifyTask',[third.id]);
+      assert.equal((await read(project)).receiptTasks[2].handoff.state,'complete');
+      const amended=await change(project,'setCompletionEvidence',[third.id,{note:'Added the updated handback record.'}]);
+      assert.equal((await read(project)).receiptTasks[2].handoff.state,'needs-amendment-review');
+      await change(project,'reviewCompletionEvidence',[third.id,amended.state.tasks.find(task=>task.id===third.id).revision]);
+      const member=(await (await teamRead(project)).json()).members[0];
+      assert.equal((await teamWrite(project,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+      const before=sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+      const refreshed=await read(project);
+      assert.deepEqual(refreshed.receipt,applied.receipt);
+      assert.deepEqual(refreshed.receiptTasks[0].handoff,{state:'needs-reassignment'});
+      assert.equal(refreshed.receiptTasks[1].handoff.state,'needs-owner');
+      assert.equal(refreshed.receiptTasks[2].handoff.state,'complete');
+      assert.deepEqual(sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project),before);
+      assert.equal(calls.length,1);
+      await change(project,'updateTask',[first.id,{status:'done',requiresVerification:true}]);
+      assert.deepEqual((await read(project)).receiptTasks[0].handoff,{state:'needs-review'},'Done without required verification still needs review even without a report');
+      const shared=(await (await realRead(project)).json()).state.tasks;
+      await change(project,'deleteTask',[second.id,shared.find(task=>task.id===second.id).revision]);
+      const deleted=await read(project);
+      assert.deepEqual(deleted.receipt,applied.receipt);
+      assert.equal(deleted.receiptTasks.some(task=>task.id===second.id),false);
     });
     await t.test('semantic duplicate review persists choices, reuses an existing prerequisite and preserves its details', async () => {
       const project = await setup();

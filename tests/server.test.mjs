@@ -2413,7 +2413,7 @@ test('beta admission rejects stale invitations and invitations from other projec
 });
 
 test('private starting plans',async t=>{
-  await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,realRead,workspace,demoRead,demoWrite});
+  await eventPlanTests({t,assert,sqlite,db,owner,request,security,planApi,planGeneration,newTeamProject,joinPerson,teamRead,teamWrite,realRead,workspace,demoRead,demoWrite});
 });
 
 test('automatic Gmail integration', async t => {

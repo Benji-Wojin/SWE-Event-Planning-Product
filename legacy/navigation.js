@@ -2,6 +2,11 @@
   'use strict';
   const views = new Set(['overview', 'tasks', 'inbox', 'updates', 'team', 'info', 'budget', 'timeline', 'memory', 'details']);
   const viewFrom = hash => views.has(hash.slice(1)) ? hash.slice(1) : '';
+  const taskIdPattern=/^[A-Za-z0-9][A-Za-z0-9_-]{0,179}$/;
+  function taskIdFrom(params) {
+    const hints=params.getAll('task');
+    return hints.length===1&&taskIdPattern.test(hints[0])?hints[0]:'';
+  }
   function scheduleDate(value) {
     if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-'))return '';
     const date=new Date(value+'T00:00:00Z');
@@ -33,6 +38,17 @@
         return viewFrom(host.location.hash) || viewFrom(frame.location.hash) || (initialScheduleDate()?'timeline':'overview');
       },
       initialScheduleDate,
+      takeInitialTask() {
+        const search=new URLSearchParams(frame.location.search);
+        if(!search.has('task'))return '';
+        for(const target of new Set([frame,host])){
+          const url=new URL(target.location.href);
+          if(!url.searchParams.has('task'))continue;
+          url.searchParams.delete('task');
+          target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+        }
+        return taskIdFrom(search);
+      },
       replaceScheduleDate(value) {
         if(new URLSearchParams(frame.location.search).get('demo')==='1')return;
         const day=scheduleDate(value);
@@ -61,5 +77,5 @@
       },
     };
   }
-  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink };
+  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink, taskIdFrom };
 })(typeof window !== 'undefined' ? window : globalThis);

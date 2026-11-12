@@ -23,6 +23,10 @@ test('the signed-in project wrapper forwards a valid day through sign-in and int
     assert.equal(iframe.props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
     const guided=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29'})});
     assert.equal((await guided.type(guided.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29#timeline');
+    const receipt=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29',task:'task-123'})});
+    assert.equal((await receipt.type(receipt.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29&task=task-123#tasks');
+    const invalidTask=await Project({searchParams:Promise.resolve({project:'school',day:'2032-02-29',task:['a','b']})});
+    assert.equal((await invalidTask.type(invalidTask.props)).props.children[1].props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
     for(const day of ['2030-02-29',['2032-02-29','2032-03-01'],'0000-01-01']){
       const next=await Project({searchParams:Promise.resolve({project:'school',day,message:'mail-1'})});
       const body=await next.type(next.props);

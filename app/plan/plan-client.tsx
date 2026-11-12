@@ -8,6 +8,8 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection, selectNewPlanItems } from '@/lib/plan-selection';
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
+import { handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
+import { planReceiptTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
@@ -69,8 +71,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     starterRequest = useRef<any>(null),
     checklistRequest = useRef<{key:string;requestId:string}|null>(null),
     focusImportNotice = useRef(false),
+    focusReceipt = useRef(false),
     errorBox = useRef<HTMLParagraphElement>(null),
-    noticeBox = useRef<HTMLParagraphElement>(null);
+    noticeBox = useRef<HTMLParagraphElement>(null),
+    receiptHeading = useRef<HTMLHeadingElement>(null);
   const [checklist,setChecklist]=useState('');
   const checklistTooLong=checklist.length>pastedChecklistLimit;
   const [chatDirty,setChatDirty]=useState(false);
@@ -120,6 +124,21 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const waiting = data?.status === 'generating',
     locked = busy || waiting || researchBusy,
     applied = !!data?.receipt && !chatStartingNew;
+  const receiptTasks:PlanReceiptTask[]=applied?data.receiptTasks||[]:[];
+  const addedCount:number=applied?data.receipt.taskIds.length:0;
+  const unavailableCount=Math.max(0,addedCount-receiptTasks.length);
+  const showHandoff=applied&&!assistant&&!suggestions;
+  const handoffCounts={owner:0,acceptance:0,review:0};
+  for(const {handoff} of receiptTasks){
+    if(handoff?.state==='needs-owner'||handoff?.state==='needs-reassignment')handoffCounts.owner++;
+    else if(handoff?.state==='awaiting-acceptance')handoffCounts.acceptance++;
+    else if(handoff&&['needs-review','needs-amendment-review','changes-requested'].includes(handoff.state))handoffCounts.review++;
+  }
+  useEffect(()=>{
+    if(!applied||!focusReceipt.current)return;
+    focusReceipt.current=false;
+    receiptHeading.current?.focus();
+  },[applied]);
   const {
     selected,
     reusable,
@@ -356,7 +375,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       request.current = null;
       starterRequest.current = null;
       setNotice(
-        result.contextChanged
+        result.receipt ? 'Task handoff refreshed from the project.' : result.contextChanged
           ? result.draft?.source==='starter' ? 'Event details or tasks changed. Choose a fresh starter checklist before adding it.' : result.draft?.source==='pasted' ? 'Event details or tasks changed. Recheck the pasted draft before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
           : 'Project context refreshed. Your draft edits are kept.',
       );
@@ -425,20 +444,38 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         </p>
       )}
       {applied && (
-        <div
-          role="status"
-          className="mb-5 rounded-lg border border-primary/40 p-4"
-        >
-          <p className="font-medium">
-            {data.receipt.taskIds.length} items added to the project.
+        <section aria-labelledby="plan-receipt-heading" className="mb-5 space-y-3 rounded-lg border border-primary/40 p-4">
+          <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="font-medium">Plan added to the project</h2>
+          <p role="status" className="text-sm">
+            {addedCount} {addedCount===1?'task':'tasks'} added to the project.
+            {unavailableCount>0&&` ${unavailableCount} ${unavailableCount===1?'is':'are'} no longer available.`}
           </p>
+          {showHandoff && (
+            <div className="space-y-1 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-medium">Team handoff</h3>
+                <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={refreshContext}>Refresh task handoff</Button>
+              </div>
+              <p>For tasks added from this draft. Assignment does not record acceptance.</p>
+              <p>Need an active owner: {handoffCounts.owner} · Awaiting acceptance: {handoffCounts.acceptance} · Need completion review: {handoffCounts.review}</p>
+            </div>
+          )}
+          {receiptTasks.length>0 && <ol className="list-decimal space-y-1 ps-5 text-sm">
+            {receiptTasks.map(({id,title,handoff})=>{
+              const href=planReceiptTaskHref(params,id);
+              return <li key={id} className="break-words">
+                {href?<a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a>:title}
+                {showHandoff&&handoff&&<span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
+              </li>;
+            })}
+          </ol>}
           {!embedded && <a
             href={projectUrl}
             className="mt-2 inline-block text-sm text-primary underline"
           >
             View tasks and schedule
           </a>}
-        </div>
+        </section>
       )}
       {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} proposalTitles={data.draft?.items?.map((item:ReviewedItem)=>item.title)||[]} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{
         if(locked||pending.current)return;
@@ -1116,6 +1153,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                       items: latest.draft.items,
                       confirm: true,
                     });
+                    focusReceipt.current=!!result.receipt;
                     accept(result);
                     request.current = null;
                   })

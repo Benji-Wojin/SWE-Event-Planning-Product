@@ -1298,8 +1298,14 @@
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   setDrawer(false);
   ui.scheduleDate=navigation.initialScheduleDate();
-  navigate(navigation.initial());
+  const initialTask=navigation.takeInitialTask();
+  if(initialTask)ui.tab='all';
+  navigate(initialTask?'tasks':navigation.initial());
   void syncGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
+  if(initialTask&&!window.GatherAccessLost){
+    $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
+    taskDialog(initialTask);
+  }
   if((!window.GatherMode||window.GatherMode.demo)&&ui.view==='overview'&&$('#dialogBackdrop').hidden)tour.offer();
 })();

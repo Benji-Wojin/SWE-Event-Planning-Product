@@ -385,6 +385,7 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
         revision: saved.revision + 1,
         status: 'applied',
         receipt: { taskIds: ['task-new'] },
+        receiptTasks: [{id:'task-new',title:'Updated task',handoff:{state:'needs-owner'}}],
       };
       if (first) {
         first = false;
@@ -403,7 +404,7 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
     );
     assert.equal(active.find('title-one').props.value, 'Updated task');
     await active.click('Add 1 selected items to project');
-    assert.match(text(active.tree), /1 items added/);
+    assert.match(text(active.tree), /1 task added/);
     assert.deepEqual(
       active.requests
         .filter((input) => input.action !== 'get')
@@ -417,6 +418,68 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
   } finally {
     active.dispose();
   }
+});
+test('the plan receipt links only current created tasks in order and reports unavailable tasks',async()=>{
+  for(const [query,embedded,expected] of [
+    ['project=p_school&mode=suggestions',false,'/project?project=p_school&task='],
+    ['project=p_school&mode=assistant',true,'/project?project=p_school&task='],
+    ['demo=1&project=not-shared&mode=suggestions',true,'/demo?as=jack&task='],
+  ]){
+    const initial=fixture();
+    initial.status='applied';
+    initial.receipt={taskIds:['task-b','task-missing','task-a']};
+    initial.receiptTasks=[{id:'task-b',title:'Run volunteer briefing'},{id:'task-a',title:'Check signage'}];
+    initial.existingTasks=[{id:'task-reused',title:'Approve venue'}];
+    const app=harness(null,initial,query,embedded);
+    try{
+      await app.start();
+      const receipt=nodes(app.tree).find(node=>node.type==='section'&&node.props['aria-labelledby']==='plan-receipt-heading');
+      assert.ok(receipt);
+      assert.match(text(receipt),/3 tasks added to the project\. 1 is no longer available/);
+      const links=nodes(receipt).filter(node=>node.type==='a');
+      assert.deepEqual(links.slice(0,2).map(node=>[text(node),node.props.href]),[
+        ['Run volunteer briefing',expected+'task-b'],['Check signage',expected+'task-a'],
+      ]);
+      assert.ok(links.every(node=>node.props.target===(embedded?'_top':undefined)));
+      if(!embedded)assert.equal(text(links[2]),'View tasks and schedule');
+      assert.doesNotMatch(text(receipt),/Approve venue|task-missing/);
+    }finally{app.dispose();}
+  }
+});
+test('the organizer handoff refreshes assignment and acceptance with a read only',async()=>{
+  const initial=fixture();
+  initial.status='applied';
+  initial.receipt={taskIds:['task-1','task-2','task-3']};
+  initial.receiptTasks=[
+    {id:'task-1',title:'Set up AV',handoff:{state:'awaiting-acceptance',ownerName:'Fictional Planner'}},
+    {id:'task-2',title:'Print signs',handoff:{state:'needs-review'}},
+    {id:'task-3',title:'Confirm handback',handoff:{state:'needs-amendment-review'}},
+  ];
+  let reads=0;
+  const app=harness(context=>{
+    if(!context.input&&++reads===2){
+      const next=copy(context.saved);
+      next.workspaceRevision++;
+      next.contextChanged=true;
+      next.receiptTasks[0].handoff.state='accepted';
+      next.receiptTasks[1].handoff.state='needs-owner';
+      next.receiptTasks[2].handoff.state='complete';
+      context.value=next;
+    }
+  },initial);
+  try{
+    await app.start();
+    assert.match(text(app.tree),/Need an active owner: 0 · Awaiting acceptance: 1 · Need completion review: 2/);
+    assert.match(text(app.tree),/Assigned to Fictional Planner · awaiting acceptance/);
+    assert.match(text(app.tree),/Completion needs verification/);
+    assert.match(text(app.tree),/Complete · updated evidence needs review/);
+    await app.click('Refresh task handoff');
+    assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
+    assert.match(text(app.tree),/Need an active owner: 1 · Awaiting acceptance: 0 · Need completion review: 0/);
+    assert.match(text(app.tree),/Accepted by Fictional Planner/);
+    assert.match(text(app.tree),/Task handoff refreshed from the project/);
+    assert.doesNotMatch(text(app.tree),/Choose a fresh starter|Generate a new draft before adding it/);
+  }finally{app.dispose();}
 });
 test('context refresh discards a rejected stale generation payload and uses the current revision', async () => {
   let failed = false;

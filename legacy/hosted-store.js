@@ -6,8 +6,15 @@
   const projectUrl = path => { const url=new URL(path,location.origin);url.searchParams.set('project',projectId);return url.pathname+url.search+url.hash; };
   const endpoint = demo ? '/api/demo?as=' + encodeURIComponent(actor) : projectUrl('/api/workspace');
   const signIn = () => {
-    const day=window.GatherNavigation?.scheduleDateFrom?.(new URLSearchParams(location.search));
-    return '/sign-in?return_to=' + encodeURIComponent(demo ? '/demo?as=' + actor : projectUrl('/project'+(day?'?day='+day:'')));
+    const source=new URLSearchParams(location.search);
+    const query=new URLSearchParams(demo?{as:actor}:{});
+    const day=window.GatherNavigation?.scheduleDateFrom?.(source);
+    const task=window.GatherNavigation?.taskIdFrom?.(source);
+    if(!demo&&day)query.set('day',day);
+    if(!demo&&source.get('guide')==='1')query.set('guide','1');
+    if(task)query.set('task',task);
+    const path=(demo?'/demo':'/project')+'?'+query;
+    return '/sign-in?return_to=' + encodeURIComponent(demo?path:projectUrl(path));
   };
   let boot = document.getElementById('workspaceBoot');
   const shell = document.getElementById('appShell');

@@ -18,6 +18,7 @@ import { loadWorkspace } from './workspace';
 import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
 import { duplicateSuggestions, planSelection, planTaskSignature } from './plan-selection';
+import type { PlanReceiptTask } from './plan-receipt';
 import {
   generateEventPlan,
   planRequestBody,
@@ -158,6 +159,30 @@ async function snapshot(c: Context) {
   }
   await authorized(c);
   const {lastChecklistImport,...draftView}=data.draft||{};
+  const receiptTasks: PlanReceiptTask[]=[];
+  if(data.receipt){
+    const tasks=new Map<string,any>(c.state.tasks.map((task:any)=>[task.id,task]));
+    const owners=c.purpose==='plan'?new Map<string,string>(c.state.members
+      .filter((member:any)=>member.active!==false&&(c.demo||!member.role?.includes('· example')))
+      .map((member:any)=>[member.id,member.name])):null;
+    for(const id of data.receipt.taskIds){
+      const task=tasks.get(id);
+      if(!task)continue;
+      const row:PlanReceiptTask={id,title:task.title};
+      if(owners){
+        const ownerName=owners.get(task.owner);
+        const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
+          :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
+          :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt?'needs-review'
+          :task.status!=='done'&&!task.reportedAt&&task.completionReview?'changes-requested'
+          :!task.owner?'needs-owner'
+          :!owners.has(task.owner)?'needs-reassignment'
+          :task.acceptedAt&&task.acceptedBy===task.owner?'accepted':'awaiting-acceptance';
+        row.handoff={state,...(ownerName?{ownerName}:{})};
+      }
+      receiptTasks.push(row);
+    }
+  }
   return {
     revision: row?.revision || 0,
     workspaceRevision: c.row.revision,
@@ -173,6 +198,7 @@ async function snapshot(c: Context) {
     brief: data.brief,
     draft: data.draft ? draftView : null,
     receipt: data.receipt,
+    ...(data.receipt ? {receiptTasks} : {}),
     status:
       row?.status === 'generating' && row.lease_until <= Date.now()
         ? 'interrupted'

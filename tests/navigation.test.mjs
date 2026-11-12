@@ -59,6 +59,22 @@ test('day links only carry project and a valid date; the frame keeps the selecte
   GatherNavigation.create(demo).replaceScheduleDate('2028-02-29');
   assert.equal(demo.writes.length,0);
 });
+test('a receipt hint is consumed once without erasing project, guide or schedule date',()=>{
+  const host=surface('https://weft.example/project?project=school&guide=1&day=2028-02-29&task=task-current#timeline');
+  const frame=surface('https://weft.example/workspace.html?project=school&guide=1&day=2028-02-29&task=task-current#tasks');
+  frame.parent=host;
+  const nav=GatherNavigation.create(frame);
+  assert.equal(nav.takeInitialTask(),'task-current');
+  assert.equal(nav.takeInitialTask(),'');
+  assert.equal(host.location.href,'https://weft.example/project?project=school&guide=1&day=2028-02-29#timeline');
+  assert.equal(frame.location.href,'https://weft.example/workspace.html?project=school&guide=1&day=2028-02-29#tasks');
+  assert.equal(nav.initialScheduleDate(),'2028-02-29');
+  for(const invalid of ['task=first&task=second','task=%22%3E','task=']){
+    frame.location.search='?project=school&'+invalid;
+    assert.equal(nav.takeInitialTask(),'');
+    assert.equal(frame.location.search,'?project=school');
+  }
+});
 test('hash changes in either surface reach existing guards, rejection restores both and disposal removes listeners',()=>{
   const {nav,host,frame}=pair();let calls=0;
   const unsubscribe=nav.subscribe(view=>{calls++;assert.ok(['tasks','timeline'].includes(view));nav.replace('info');});
