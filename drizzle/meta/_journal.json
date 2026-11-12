@@ -85,6 +85,13 @@
       "when": 1794249668561,
       "tag": "0011_product_activity_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794456005247,
+      "tag": "0012_guided_tutorial_events",
+      "breakpoints": true
     }
   ]
 }

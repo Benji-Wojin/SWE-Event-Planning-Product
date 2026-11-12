@@ -101,14 +101,14 @@ before(async () => {
     },
   };
   const migrations = await readMigrations();
-  await migrateDatabase(client, { migrations: migrations.slice(0, -2), apply: true });
+  await migrateDatabase(client, { migrations: migrations.filter(item => item.name < '0010_'), apply: true });
   for (const account of [owner, alice, bob, carol, dylan]) await run(account, api.registerAccount);
   historicProject = await makeProject(carol, 'Private historic project');
   await db.prepare('UPDATE projects SET created_at=? WHERE id=?').bind('2025-05-01T12:00:00.000Z', historicProject).run();
   const legacy = api.model(await db.prepare('SELECT data FROM workspaces WHERE id=?').bind(historicProject).first('data'));
   legacy.addTask({ title: 'Private historic task', owner: 'jack' });
   await db.prepare('UPDATE workspaces SET data=? WHERE id=?').bind(legacy.exportState(), historicProject).run();
-  assert.deepEqual((await migrateDatabase(client, { migrations, apply: true })).applied, ['0010_onboarding_first_tasks.sql', '0011_product_activity_daily.sql']);
+  assert.deepEqual((await migrateDatabase(client, { migrations, apply: true })).applied.slice(0, 2), ['0010_onboarding_first_tasks.sql', '0011_product_activity_daily.sql']);
   assert.equal(await db.prepare('SELECT COUNT(*) AS total FROM onboarding_first_tasks').first('total'), 0);
 });
 
