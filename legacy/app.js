@@ -55,7 +55,16 @@
   }
   function guidePlanTip() {
     const href=h(window.GatherMode.projectUrl('/plan')+'&guide=1');
-    return `<aside class="workspace-guide-plan" aria-label="Optional AI plan walkthrough"><p><strong>Want help drafting the rest of the plan?</strong> Open the planner to describe your event and review suggested tasks before adding any.</p><a class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a></aside>`;
+    return `<section class="workspace-guide-plan" aria-labelledby="workspaceGuidePlanTitle">
+      <div class="workspace-guide-plan-icon" aria-hidden="true">${icon('spark')}</div>
+      <div class="workspace-guide-plan-content">
+        <p class="workspace-guide-plan-kicker">Optional walkthrough</p>
+        <h3 id="workspaceGuidePlanTitle">Draft the rest of your plan with AI</h3>
+        <p>Describe your event, review the suggested tasks, then add only the ones you want. Opening the planner won’t send anything to AI or change your project.</p>
+        <a class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a>
+        <p class="workspace-guide-plan-later">Find the plan builder later in <strong>Overview</strong>.</p>
+      </div>
+    </section>`;
   }
   function syncGuide(checkpoint) {
     if (!guidedWorkspace) return Promise.resolve();

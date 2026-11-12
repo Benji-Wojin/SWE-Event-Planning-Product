@@ -1,12 +1,12 @@
 import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-let TeamClient, Invitations, CreateAccountButton, JoinClient;
+let TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint;
 before(async () => {
   const result = await build({
     stdin: {
       contents:
-        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client'; export {JoinClient} from './app/join/join-client';",
+        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client'; export {JoinClient} from './app/join/join-client'; export {PlanGuideHint} from './app/plan/guide-hint';",
       resolveDir: process.cwd(),
       loader: 'tsx',
     },
@@ -37,7 +37,7 @@ before(async () => {
       },
     ],
   });
-  ({ TeamClient, Invitations, CreateAccountButton, JoinClient } = await import(
+  ({ TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint } = await import(
     'data:text/javascript;base64,' +
       Buffer.from(result.outputFiles[0].text).toString('base64')
   ));
@@ -77,6 +77,17 @@ function render(component, props, values = []) {
   finally { delete globalThis.__selfserviceEffects; }
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+test('optional planner walkthrough teaches the actual controls, fallback and shared destinations', () => {
+  const guide = PlanGuideHint();
+  const tree = nodes(guide);
+  const steps = tree.filter((node) => node.type === 'li');
+  assert.equal(steps.length, 3);
+  assert.match(text(steps[0]), /Event type.*What are you planning\?.*Example:.*40 people/);
+  assert.match(text(steps[1]), /Groq.*Generate draft.*Opening this page alone.*Use starter checklist/);
+  assert.match(text(steps[2]), /deselect.*Add selected items to project.*Shared tasks.*Timeline/);
+  assert.match(text(guide), /Return to your guide.*without generating or adding anything/);
+  assert.equal(tree.some((node) => ['button', 'input', 'form'].includes(node.type)), false);
+});
 test('invitation states remain textual, distinct and recoverable with scanable badges', () => {
   const expected = {sent:'Email accepted',sending:'Sending…',unknown:'Sending not confirmed',failed:'Not sent',none:'In-app only · Email not sent'};
   for (const [status,label] of Object.entries(expected)) {
