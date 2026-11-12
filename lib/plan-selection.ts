@@ -66,10 +66,15 @@ export function planTaskSignature(item: { title: string; start: string }) {
 }
 // Selection convenience only. Never decide semantic reuse/keep choices or alter
 // proposal content, owners, dates, links, or existing shared tasks.
-export function selectNewPlanItems(items: ReviewedItem[], existing: ExistingPlanTask[]) {
+export function selectNewPlanItems(
+  items: ReviewedItem[],
+  existing: ExistingPlanTask[],
+  kind?: ReviewedItem['kind'],
+) {
   const seen = new Set(existing.map(planTaskSignature));
   return items.map(item => {
     if (item.duplicateChoice === 'reuse') return item;
+    if (kind && item.kind !== kind) return {...item, included:false};
     const signature = planTaskSignature(item), included = !seen.has(signature);
     seen.add(signature);
     return {...item, included};

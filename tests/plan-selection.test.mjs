@@ -57,6 +57,18 @@ test('batch selection keeps prerequisite links and existing-task reuse behavior 
   assert.deepEqual(selected[1].dependsOn,['one']);assert.equal(selected[0].included,false);assert.equal(selected[1].included,true);
   assert.equal(planSelection(selected,existing).missing.length,0);
 });
+test('kind selection replaces the selection without consuming a signature from the excluded kind',()=>{
+  const existing=[{id:'old',title:'Already scheduled',start:''}];
+  const proposals=[{...item,title:'Welcome',included:true},
+    {...item,id:'activity',kind:'activity',title:'Welcome',owner:'maya',dependsOn:['one']},
+    {...item,id:'repeat',kind:'activity',title:'WELCOME!',included:true},
+    {...item,id:'existing',kind:'activity',title:'Already scheduled',included:true}];
+  const selected=selectNewPlanItems(proposals,existing,'activity');
+  assert.deepEqual(selected.map(i=>i.included),[false,true,false,false]);
+  assert.deepEqual(selected[1],{...proposals[1],included:true});
+  assert.deepEqual(planSelection(selected,existing).missing,[{itemId:'activity',prerequisiteId:'one'}]);
+  assert.deepEqual(selectNewPlanItems(selected,existing,'preparation').map(i=>i.included),[true,false,false,false]);
+});
 test('unique exact matches can satisfy an excluded prerequisite, without fuzzy title or date matches', () => {
   const existing = [{ id: 'old', title: ' CONFIRM venue! ', start: '' }];
   const resolved = planSelection([item, dependent], existing);

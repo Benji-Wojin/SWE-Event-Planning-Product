@@ -760,6 +760,33 @@ test('batch selection changes only inclusion, preserves draft edits, and never c
   }finally{app.dispose();}
 });
 
+test('mixed starter groups can be selected separately, with required links still blocking apply',async()=>{
+  const initial=fixture();
+  initial.draft.source='starter';initial.draft.starterVersion=5;
+  initial.draft.items.push({...copy(item),id:'arrival',kind:'activity',title:'Welcome guests',dependsOn:['one']});
+  const app=harness(undefined,initial);
+  try{
+    await app.start();assert.equal(app.find('starter-activities').props.checked,true);
+    await app.click('Select activities only');
+    assert.equal(app.find('include-one').props.checked,false);assert.equal(app.find('include-arrival').props.checked,true);
+    const add=()=>nodes(app.tree).find(n=>n.type==='button'&&/^Add \d+ selected/.test(text(n)));
+    assert.equal(add().props.disabled,true);assert.match(text(app.tree),/Resolve the unchecked prerequisites/);
+    await app.click('Select preparation only');
+    assert.equal(app.find('include-one').props.checked,true);assert.equal(app.find('include-arrival').props.checked,false);
+    assert.equal(add().props.disabled,false);assert(app.requests.every(r=>r.action==='get'));
+  }finally{app.dispose();}
+});
+
+test('prep-only starters leave activities off and do not show group controls',async()=>{
+  const initial=fixture();initial.draft.source='starter';initial.draft.starterVersion=4;
+  initial.draft.items.push({...copy(item),id:'other',title:'Prepare signage'});
+  const app=harness(undefined,initial);
+  try{
+    await app.start();assert.equal(app.find('starter-activities').props.checked,false);
+    assert(!nodes(app.tree).some(n=>n.type==='button'&&/^Select (preparation|activities) only$/.test(text(n))));
+  }finally{app.dispose();}
+});
+
 test('batch owner assignment changes selected proposals only and saves through the existing draft workflow',async()=>{
   const initial=fixture();initial.members.push({id:'maya',name:'Maya'},{id:'former',name:'Former',active:false});
   initial.draft.items=[{...copy(item),owner:'jack',dueDate:'2030-10-02'},

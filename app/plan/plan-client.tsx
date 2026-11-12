@@ -129,13 +129,18 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     data?.draft?.duplicateSuggestions || [],
   );
   const missingDependencies = missing.length > 0;
-  function accept(result: any) {
+  const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
+  function accept(result: any, restoreActivityPreference = true) {
     setChatStartingNew(false);
     setData(result);
     setBrief(result.brief);
     setItems(result.draft?.items || []);
     setBatchOwner('');
     setSuggestStarterDates(!!result.draft?.starterDates && !!result.event.date && !!result.event.timeZone);
+    // Starter version 5 opted into event-day activities, even if their rows were later edited.
+    if (restoreActivityPreference) {
+      setIncludeStarterActivities(result.draft?.source==='starter' && result.draft.starterVersion===5);
+    }
     setInitial(editable(result.brief, result.draft?.items || []));
   }
   async function run(operation: () => Promise<void>) {
@@ -240,7 +245,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       items,
       generation: data.draft?.generation,
     });
-    accept(result);
+    accept(result, false);
     request.current = null;
     starterRequest.current = null;
     return result;
@@ -513,7 +518,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                 <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
               </label>
               <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
+                <input id="starter-activities" type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
                 <span>Add event-day activities <span className="block text-muted-foreground">Get a short set of activities for this event type. Give them start times in the draft to put them on the run sheet, or leave them as unscheduled tasks.</span></span>
               </label>
               <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
@@ -605,9 +610,14 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
               <p className="text-sm" role="status">{selected.length} of {items.length} proposals selected.</p>
               <div className="flex flex-wrap gap-3">
                 <Button type="button" variant="outline" disabled={locked} onClick={()=>editBatch(current=>selectNewPlanItems(current,data.existingTasks||[]))}>Select all new items</Button>
+                {mixedDraft && <>
+                  <Button type="button" variant="outline" disabled={locked} onClick={()=>editBatch(current=>selectNewPlanItems(current,data.existingTasks||[],'preparation'))}>Select preparation only</Button>
+                  <Button type="button" variant="outline" disabled={locked} onClick={()=>editBatch(current=>selectNewPlanItems(current,data.existingTasks||[],'activity'))}>Select activities only</Button>
+                </>}
                 <Button type="button" variant="outline" disabled={locked||!selected.length} onClick={()=>editBatch(current=>current.map(item=>({...item,included:false})))}>Select none</Button>
               </div>
               <p className="text-sm text-muted-foreground">Exact matches already in the project and repeated title/time matches are skipped. Possible duplicates still need your review; saved reuse choices are kept.</p>
+              {mixedDraft && <p className="text-sm text-muted-foreground">Selecting one group replaces your selection. Review any required links to unchecked tasks before adding items.</p>}
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
                   <Label htmlFor="batch-owner">Owner for selected items</Label>
