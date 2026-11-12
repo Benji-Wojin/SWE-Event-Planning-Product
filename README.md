@@ -19,6 +19,8 @@ The Vercel migration is not a completed hosted rollout: credentials, isolated st
 
 The hosted workspace shows a neutral loading screen until its authenticated project has rendered. It does not briefly show the sample event or inactive task controls. Failed data or app loading provides retry and navigation without exposing an uninitialized workspace.
 
+An unfinished **Getting started** guide shows its next saved step on Projects. Resume uses the original guide project; ordinary project cards still open without the guide. The resume card is private to the signed-in account and reading it does not record a click, view or completion.
+
 Gmail and guest-list imports are optional. The Gmail connection and optional manual label remain account-wide. Automatic matches are privately associated with one selected project; legacy manual imports remain available across the owner's projects. Reviewed summaries explicitly target a project. Tasks, guests, files, private bookings, suggestions and resource caches are project-scoped. Setup uses organizer authorization, origin verification, field validation and revision-checked edits. Failed saves preserve form values. Event date and location are optional. There is a 100-new-project organizer limit.
 
 ## Accounts and invitations

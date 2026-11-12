@@ -5,6 +5,7 @@ import {
   shouldRecordTutorialCheckpoint as mayRecord,
   TUTORIAL_MILESTONES,
   TUTORIAL_STEPS,
+  tutorialResume,
 } from '../lib/guided-tutorial.ts';
 
 const initial = { projectId: null, reached: [] };
@@ -55,4 +56,13 @@ test('an explicit finish without a new invite does not pretend an invitation was
   assert.equal(nextTutorialMilestone(skipped.reached),null);
   assert.ok(!mayRecord(skipped,'invite_created','invite_commit',project));
   assert.ok(!mayRecord({ ...progress,reached:[...progress.reached,'invite_created'] },'invite_skipped','interaction',project));
+});
+
+test('resume uses persisted milestones, never an unrelated or unavailable project', () => {
+  assert.equal(tutorialResume(initial, [project]), null);
+  assert.deepEqual(tutorialResume({projectId:null,reached:['started','setup_viewed']}, []), {next:'project_created',projectId:null});
+  const bound = {projectId:project,reached:['started','project_created','add_task_clicked']};
+  assert.equal(tutorialResume(bound, ['p_other']), null);
+  assert.deepEqual(tutorialResume(bound, ['p_other',project]), {next:'task_created',projectId:project});
+  assert.equal(tutorialResume({projectId:project,reached:[...TUTORIAL_MILESTONES.slice(0,-1),'invite_skipped']}, [project]), null);
 });

@@ -6,12 +6,12 @@ const firstSteps = [
     copy: 'Give your event a name. The date, location and other details can come later.',
   },
   {
-    title: 'Invite a teammate',
-    copy: 'Invite someone using the email they sign in with. Once they have access to Weft, they can accept from Projects.',
-  },
-  {
     title: 'Add your first task',
     copy: 'Pick one thing that needs doing and give it an owner. Start from scratch or use a starter checklist.',
+  },
+  {
+    title: 'Explore and invite a teammate',
+    copy: 'Look around Budget and Event info. When you’re ready, invite someone using the email they sign in with.',
   },
 ];
 

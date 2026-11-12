@@ -22,6 +22,10 @@
 .projects-title-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; margin-bottom: 26px; }
 .projects-title-copy { min-width: 0; }
 .projects-title-row h1, .project-create-heading h1 { font-size: 28px; line-height: 1.2; font-weight: 720; }
+.projects-resume { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; margin-bottom: 18px; padding: clamp(14px, 3vw, 22px); border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow-wrap: anywhere; }
+.projects-resume h2 { margin: 3px 0; font-size: 19px; font-weight: 700; }
+.projects-resume p { color: var(--muted-foreground); font-size: 14px; }
+.projects-resume .projects-resume-step { color: var(--foreground); font-size: 13px; font-weight: 650; }
 .projects-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .project-card { min-height: 188px; display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--card-foreground); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease; }
 .project-card:hover { border-color: var(--ring); background: var(--surface-raised); }

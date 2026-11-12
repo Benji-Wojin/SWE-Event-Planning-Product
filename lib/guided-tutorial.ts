@@ -29,6 +29,17 @@ type Evidence = Step['evidence'];
 export const TUTORIAL_MILESTONES = [
   'started', 'project_created', 'task_created', 'budget_viewed', 'event_details_viewed', 'invite_created',
 ] as const satisfies readonly TutorialCheckpoint[];
+export const TUTORIAL_GUIDE_STEPS = [
+  ['project_created', 'Set up your event', 'Create a project and give the event a name.'],
+  ['task_created', 'Add a real task', 'Name one concrete thing that needs to get done.'],
+  ['budget_viewed', 'Explore Budget', 'See how to track estimates and spending without moving money.'],
+  ['event_details_viewed', 'Review Event info', 'See where teammates find the event details.'],
+  ['invite_created', 'Invite a teammate', 'Use the email they sign in with to give them a way to join.'],
+] as const;
+export type TutorialResume = {
+  next: (typeof TUTORIAL_GUIDE_STEPS)[number][0];
+  projectId: string | null;
+};
 
 type Progress = {
   readonly projectId: string | null;
@@ -59,4 +70,14 @@ export function shouldRecordTutorialCheckpoint(
 export function nextTutorialMilestone(reached: readonly TutorialCheckpoint[]) {
   return TUTORIAL_MILESTONES.find(id => !reached.includes(id) &&
     (id !== 'invite_created' || !reached.includes('invite_skipped'))) ?? null;
+}
+
+/** Resume only a started, incomplete guide. Do not start a second project
+ * when the original guide's project is no longer in the visible list. */
+export function tutorialResume(progress: Progress, visibleProjectIds: readonly string[]): TutorialResume | null {
+  const next = nextTutorialMilestone(progress.reached);
+  if (!next || next === 'started') return null;
+  if (next === 'project_created') return progress.projectId === null ? { next, projectId: null } : null;
+  if (!progress.projectId || !visibleProjectIds.includes(progress.projectId)) return null;
+  return { next, projectId: progress.projectId };
 }

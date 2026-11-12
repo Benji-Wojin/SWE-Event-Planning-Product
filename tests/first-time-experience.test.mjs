@@ -7,11 +7,11 @@ import { pathToFileURL } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import vm from 'node:vm';
-let Welcome, PrivateBeta, FirstProjectIntro;
+let Welcome, PrivateBeta, FirstProjectIntro, ProjectsHome;
 before(async () => {
   const directory = mkdtempSync(join(process.cwd(), 'work/intro-test-'));
-  await build({ stdin: { contents: "export {Welcome} from './components/welcome';export {PrivateBeta} from './components/private-beta';export {FirstProjectIntro} from './components/projects/FirstProjectIntro';", resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, outfile: join(directory, 'ui.mjs'), format: 'esm', platform: 'node', jsx: 'automatic', external: ['react', 'react/jsx-runtime'], loader: { '.css': 'empty' } });
-  ({ Welcome, PrivateBeta, FirstProjectIntro } = await import(pathToFileURL(join(directory, 'ui.mjs'))));
+  await build({ stdin: { contents: "export {Welcome} from './components/welcome';export {PrivateBeta} from './components/private-beta';export {FirstProjectIntro} from './components/projects/FirstProjectIntro';export {ProjectsHome} from './components/projects/ProjectsHome';", resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, outfile: join(directory, 'ui.mjs'), format: 'esm', platform: 'node', jsx: 'automatic', packages: 'external', loader: { '.css': 'empty' } });
+  ({ Welcome, PrivateBeta, FirstProjectIntro, ProjectsHome } = await import(pathToFileURL(join(directory, 'ui.mjs'))));
 });
 test('public landing introduces the product with real paths and an explicitly fictional illustration', () => {
   const html = renderToStaticMarkup(createElement(Welcome));
@@ -31,14 +31,31 @@ test('private-beta marketing preserves approval-only access, while signed-in den
   assert.match(denied, /This account does not have beta access yet/);
   assert.match(denied, /Use another account/); assert.doesNotMatch(denied, /Less chasing/);
 });
-test('first-project introduction explains the create, invite and add-task flow with no automatic actions', () => {
+test('first-project introduction explains setup, tasks and then inviting teammates with no automatic actions', () => {
   const html = renderToStaticMarkup(createElement(FirstProjectIntro, { onCreate() {} }));
-  assert.match(html, /Create my first project/); assert.match(html, /Create your project[\s\S]*Invite a teammate[\s\S]*Add your first task/);
+  assert.match(html, /Create my first project/); assert.match(html, /Create your project[\s\S]*Add your first task[\s\S]*Explore and invite a teammate/);
   assert.match(html, /Nothing is sent or added by AI automatically/);
   assert.match(html, /private booking details/); assert.match(html, /<ol/);
   const setup = readFileSync('app/setup/page.tsx', 'utf8');
   assert.match(setup, /Creating it does not call AI or send invitations/);
   assert.match(readFileSync('components/welcome.css', 'utf8'), /prefers-reduced-motion:reduce/);
+});
+test('Projects resumes the exact visible project, while setup and ordinary navigation remain separate', () => {
+  const projects = [{ id:'p_1', name:'Fictional & school', openTaskCount:0 }, { id:'p_2', name:'Other event', openTaskCount:1 }];
+  const render = props => renderToStaticMarkup(createElement(ProjectsHome, {
+    onCreate() {}, onOpen() {}, guideHref:'/guide', projects, ...props,
+  }));
+  const resumed = render({ resumeGuide:{ next:'task_created', projectId:'p_1' } });
+  assert.match(resumed, /Step 2 of 5[\s\S]*Add a real task[\s\S]*Fictional &amp; school/);
+  assert.match(resumed, /href="\/project\?project=p_1&amp;guide=1" aria-describedby="projects-resume-title">Resume guide/);
+  assert.match(resumed, /Other event/);
+  const setup = render({ projects:[], resumeGuide:{ next:'project_created', projectId:null } });
+  assert.match(setup, /Step 1 of 5[\s\S]*Set up your event[\s\S]*href="\/guide"[^>]*>Resume guide/);
+  assert.doesNotMatch(setup, /Guide me through my first project/);
+  assert.match(setup, /Create my first project/);
+  assert.doesNotMatch(render({ resumeGuide:null }), /Resume guide/);
+  assert.doesNotMatch(render({ resumeGuide:{ next:'task_created', projectId:'p_missing' } }), /Resume guide/);
+  assert.doesNotMatch(render({ isLoading:true, resumeGuide:{ next:'task_created', projectId:'p_1' } }), /Resume guide/);
 });
 test('first-project action keeps native button semantics and a wrapping 44px minimum target', () => {
   const html = renderToStaticMarkup(createElement(FirstProjectIntro, { onCreate() {} }));

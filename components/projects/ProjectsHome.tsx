@@ -9,8 +9,9 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Invitations } from './Invitations';
 import { FirstProjectIntro } from './FirstProjectIntro';
+import { TUTORIAL_GUIDE_STEPS, type TutorialResume } from '@/lib/guided-tutorial';
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 import "./projects-home.css";
 
@@ -33,6 +34,7 @@ type ProjectsHomeProps = {
   canCreate?: boolean;
   canUseDemo?: boolean;
   guideHref?: string;
+  resumeGuide?: TutorialResume | null;
 };
 
 export function ProjectsHome({
@@ -46,6 +48,7 @@ export function ProjectsHome({
   canCreate = true,
   canUseDemo = false,
   guideHref,
+  resumeGuide,
 }: ProjectsHomeProps) {
   return (
     <div className="projects-home">
@@ -72,10 +75,11 @@ export function ProjectsHome({
             </div>
 
             {isLoading ? <ProjectsLoadingState /> : null}
+            {!isLoading && !error && resumeGuide ? <ResumeGuideCard resume={resumeGuide} projects={projects} /> : null}
             {!isLoading && !error && <Invitations />}
             {!isLoading && error ? <ProjectsErrorState message={error} {...(onRetry ? { onRetry } : {})} /> : null}
             {!isLoading && !error && projects.length === 0 ? (
-              <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} guideHref={guideHref} />
+              <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} guideHref={resumeGuide ? undefined : guideHref} />
             ) : null}
             {!isLoading && !error && projects.length > 0 ? (
               <div className="projects-grid" aria-label="Projects">
@@ -98,6 +102,24 @@ export function ProjectsHome({
       </main>
     </div>
   );
+}
+
+function ResumeGuideCard({ resume, projects }: { resume: TutorialResume; projects: GatherProject[] }) {
+  const index = TUTORIAL_GUIDE_STEPS.findIndex(([step]) => step === resume.next);
+  if (index < 0) return null;
+  const [, title, description] = TUTORIAL_GUIDE_STEPS[index];
+  const project = resume.projectId ? projects.find(project => project.id === resume.projectId) : null;
+  if (resume.next === 'project_created' ? !!resume.projectId : !project) return null;
+  const href = project ? '/project?project=' + encodeURIComponent(project.id) + '&guide=1' : '/guide';
+  return <section className="projects-resume" aria-labelledby="projects-resume-title">
+    <div>
+      <p className="projects-resume-step">Getting started · Step {index + 1} of {TUTORIAL_GUIDE_STEPS.length}</p>
+      <h2 id="projects-resume-title">{title}</h2>
+      <p>{project ? <>Continue in <strong>{project.name}</strong>. </> : null}{description}</p>
+    </div>
+    <a className={buttonVariants({className:'h-auto min-h-11 max-w-full whitespace-normal'})} href={href}
+      aria-describedby="projects-resume-title">Resume guide</a>
+  </section>;
 }
 
 function ProjectsLoadingState() {

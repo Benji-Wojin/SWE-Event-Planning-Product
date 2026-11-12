@@ -64,7 +64,7 @@ before(async () => {
       export { readOnboardingMilestones } from './lib/onboarding-milestones';
       export { POST as openApp } from './app/api/activity/route';
       export { default as OnboardingPage } from './app/admin/onboarding/page';
-      export { POST as createProject } from './app/api/projects/route';
+      export { GET as readProjects, POST as createProject } from './app/api/projects/route';
       export { GET as readWorkspace, POST as writeWorkspace } from './app/api/workspace/route';
       export { GET as readPlan, POST as writePlan } from './app/api/plan/route';
       export { GET as readTutorial, POST as observeTutorial } from './app/api/tutorial/route';
@@ -108,6 +108,9 @@ before(async () => {
   await migrateDatabase(client, { migrations: migrations.filter(item => item.name < '0010_'), apply: true });
   for (const account of [owner, alice, bob, carol, dylan]) await run(account, api.registerAccount);
   historicProject = await makeProject(carol, 'Private historic project');
+  const beforeGuideMigration = await run(carol, async()=>body(await api.readProjects()));
+  assert.equal(beforeGuideMigration.resumeGuide, null);
+  assert.deepEqual(beforeGuideMigration.projects.map(project=>project.id),[historicProject]);
   await db.prepare('UPDATE projects SET created_at=? WHERE id=?').bind('2025-05-01T12:00:00.000Z', historicProject).run();
   const legacy = api.model(await db.prepare('SELECT data FROM workspaces WHERE id=?').bind(historicProject).first('data'));
   legacy.addTask({ title: 'Private historic task', owner: 'jack' });
@@ -329,9 +332,16 @@ test('real tutorial routes advance the right account and project, and the privat
   const observe = (who, checkpoint, project, status=200) => run(who, async () => body(
     await api.observeTutorial(request('/api/tutorial',{checkpoint,...(project?{project}:{})})), status));
   const getProgress = who => run(who, async () => body(await api.readTutorial()));
+  const list = (who,status=200) => run(who,async()=>{
+    const response=await api.readProjects();
+    assert.equal(response.headers.get('cache-control'),'no-store, private');
+    return body(response,status);
+  });
   const setup = (who, requestId, status=201) => run(who, async () => body(
     await api.createProject(request('/api/projects',{ requestId, event:{name:'Fictional tutorial project'}, guidedTutorial:true })),status));
   await observe(null,'started',null,401);
+  await list(null,401);
+  assert.equal((await list(user)).resumeGuide,null);
   await setup(user,crypto.randomUUID(),409);
   const badOrigin = new Request(origin+'/api/tutorial',{ method:'POST',
     headers:{ Origin:'https://outside.example','Content-Type':'application/json','X-Gather-Request':'1' },body:'{"checkpoint":"started"}' });
@@ -339,6 +349,7 @@ test('real tutorial routes advance the right account and project, and the privat
   await observe(user,'started');
   await observe(user,'create_project_clicked');
   await observe(user,'setup_viewed');
+  assert.deepEqual((await list(user)).resumeGuide,{next:'project_created',projectId:null});
   await observe(user,'project_created',null,400);
   const ordinaryId=crypto.randomUUID();
   await run(user,async()=>body(await api.createProject(request('/api/projects',{
@@ -349,6 +360,9 @@ test('real tutorial routes advance the right account and project, and the privat
   assert.equal((await setup(user,requestId)).id,project);
   await setup(user,crypto.randomUUID(),409);
   const foreign=await makeProject(peer,'Fictional unrelated project');
+  assert.deepEqual((await list(user)).resumeGuide,{next:'task_created',projectId:project});
+  assert.equal((await list(peer)).resumeGuide,null);
+  assert.equal((await getProgress(user)).events.length,4,'listing projects records no interaction or view');
   assert.equal((await observe(user,'add_task_clicked',foreign)).events.length,4);
   assert.equal((await observe(peer,'add_task_clicked',project)).events.length,0);
   await observe(user,'add_task_clicked',project);
@@ -359,6 +373,7 @@ test('real tutorial routes advance the right account and project, and the privat
   assert.equal((await getProgress(user)).events.at(-1).checkpoint,'add_task_clicked');
   await body(await change(user,project,{method:'addTask',args:[{title:'Fictional guide task'}],revision:current.revision}));
   assert.equal((await getProgress(user)).events.at(-1).checkpoint,'task_created');
+  assert.deepEqual((await list(user)).resumeGuide,{next:'budget_viewed',projectId:project});
   await observe(user,'budget_clicked',project);
   await observe(user,'budget_viewed',project);
   await observe(user,'event_details_clicked',project);
@@ -373,6 +388,7 @@ test('real tutorial routes advance the right account and project, and the privat
   assert.equal(final.projectId,project);
   assert.equal(final.events.length,13);
   assert.equal(final.events.at(-1).checkpoint,'invite_created');
+  assert.equal((await list(user)).resumeGuide,null);
   assert.equal((await getProgress(peer)).events.length,0);
   await assert.rejects(run(peer,()=>api.readTutorialFunnel()),error=>error.status===403);
   await assert.rejects(run(null,()=>api.readTutorialFunnel()),error=>error.status===401);
