@@ -670,6 +670,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .empty-plan{padding:clamp(16px,3vw,24px);overflow-wrap:anywhere}.empty-plan p{margin:12px 0;max-width:62ch}.empty-plan .form-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:20px}
 .event-run-sheet{font-size:.875rem;line-height:1.6;overflow-wrap:anywhere}.event-run-sheet header h2{font-size:1.5rem;margin:8px 0}.event-run-sheet header p{margin:8px 0}.run-sheet-snapshot{font-weight:600}.run-sheet-table-wrap{max-width:100%;overflow-x:auto;margin-top:24px}.run-sheet-table{width:100%;border-collapse:collapse;min-width:540px;text-align:left}.run-sheet-table caption{text-align:left;font-weight:650;font-size:1rem;margin-bottom:10px}.run-sheet-table th,.run-sheet-table td{border-bottom:1px solid var(--line);padding:12px 10px;vertical-align:top;overflow-wrap:anywhere}.run-sheet-table thead th{font-size:.75rem;color:var(--muted)}.run-sheet-table tbody th{font-weight:600;width:38%}.run-sheet-table span{display:block;font-weight:400;margin-top:4px}.run-sheet-table td:first-child{width:22%}
 .run-sheet-repeat-heading{display:none}
+#runSheetPrintBlocked{display:none}
 @media screen and (max-width:640px){
   .run-sheet-table{min-width:0}.run-sheet-table thead{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%)}
   .run-sheet-table tbody{display:grid;gap:14px}.run-sheet-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;border:1px solid var(--line);border-radius:8px;padding:14px}
@@ -685,7 +686,9 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
   body:has(#eventRunSheet) #dialog{width:auto!important;max-height:none!important;overflow:visible!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:#fff!important;color:#000!important}
   body:has(#eventRunSheet) .dialog-header,body:has(#eventRunSheet) .dialog-footer,body:has(#eventRunSheet) #dialogStaleNotice{display:none!important}
   body:has(#eventRunSheet) .dialog-body{padding:0!important;overflow:visible!important}
-  body:has(#eventRunSheet) .dialog-body>:not(#eventRunSheet):not(#runSheetStale){display:none!important}
+  body:has(#eventRunSheet) .dialog-body>:not(#eventRunSheet):not(#runSheetPrintBlocked){display:none!important}
+  body:has(#runSheetPrintBlocked[data-blocked]) #eventRunSheet{display:none!important}
+  body:has(#eventRunSheet) #runSheetPrintBlocked[data-blocked]{display:block!important}
   #eventRunSheet,#eventRunSheet .muted,#eventRunSheet .eyebrow,#eventRunSheet .notice,#eventRunSheet th{color:#000!important;background:#fff!important}
   #eventRunSheet .notice{border:1px solid #777}#eventRunSheet .run-sheet-table-wrap{overflow:visible!important}#eventRunSheet .run-sheet-table{min-width:0;table-layout:fixed;font-size:10pt}#eventRunSheet th,#eventRunSheet td{border-color:#aaa}#eventRunSheet thead{display:table-header-group}#eventRunSheet tr{break-inside:avoid}#eventRunSheet caption{break-after:avoid}#eventRunSheet header{break-inside:avoid}
 }

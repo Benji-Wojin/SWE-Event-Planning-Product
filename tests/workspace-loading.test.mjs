@@ -31,7 +31,7 @@ function start(response, { oldDocument = false, demo = false, search } = {}) {
   const requests=[];
   const run = vm.runInNewContext(source, { window, document,
     location: { search: search ?? (demo ? '?demo=1&as=jack' : '?project=new-project'), origin: 'https://weft.example', reload() { reloads++; } },
-    URL, URLSearchParams, structuredClone, fetch: path => { requests.push(path); return response; },
+    URL, URLSearchParams, structuredClone, fetch: (path,options) => { requests.push(path); return typeof response==='function'?response(options):response; },
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
     inviteLabel, requests, reloads: () => reloads, redirect: () => redirect };
@@ -62,19 +62,19 @@ function preparedRefresh(demo=false) {
   const events={},timers=new Map(),calls=[];
   const window={GatherMode:{demo},addEventListener(name,fn){events[name]=fn;}};
   const document={hidden:false,activeElement:null,addEventListener(name,fn){events[name]=fn;}};
-  const ui={view:'tasks'};
+  const ui={view:'tasks'},busyRunSheetRevisions=new Set();
   const backdrop={hidden:true}, notice={hidden:true}, inboxNotice={hidden:true};
   const store={async refresh(canApply){calls.push('request');return result|| (canApply()?{changed:true,suggestionsChanged:true}:{pending:true});}};
   let result;
   let next=0;
   vm.runInNewContext(source+'\nbindWorkspaceRefresh();',{
-    store,ui,window,document,showPendingUpdate(){calls.push('pending');},
+    store,ui,window,document,busyRunSheetRevisions,showPendingUpdate(){calls.push('pending');},
     render(){calls.push('render');},refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
     $:selector=>({'#dialogBackdrop':backdrop,'#workspaceSyncNotice':notice,'#inboxSyncNotice':inboxNotice})[selector],
     setInterval(callback,ms){const id=next++;timers.set(id,{callback,ms});return id;},
     clearInterval(id){timers.delete(id);},
   });
-  return {events,timers,calls,window,document,ui,backdrop,notice,snapshotResult:value=>{result=value;}};
+  return {events,timers,calls,window,document,ui,backdrop,notice,busyRunSheetRevisions,snapshotResult:value=>{result=value;}};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
@@ -98,7 +98,7 @@ test('the generated refresh lifecycle fetches on focus, visible return, and its 
 });
 
 test('restored passive refresh keeps edits intact and stops after access changes',async()=>{
-  const {events,calls,window,document,ui,backdrop,notice}=preparedRefresh();
+  const {events,calls,window,document,ui,backdrop,notice,busyRunSheetRevisions}=preparedRefresh();
   backdrop.hidden=false;ui.dialogKind='task';
   events.focus();await tick();
   assert.deepEqual(calls.splice(0),['request','pending']);
@@ -117,6 +117,10 @@ test('restored passive refresh keeps edits intact and stops after access changes
   assert.equal(notice.hidden,true);
   events['gather-tool-updated']();
   assert.deepEqual(calls.splice(0),['render','suggestions']);
+  ui.runSheet={revision:1};busyRunSheetRevisions.add(1);
+  events.focus();await tick();
+  assert.deepEqual(calls,[],'a passive read must not supersede an explicit run-sheet read');
+  busyRunSheetRevisions.clear();ui.runSheet=null;
   window.GatherAccessLost=true;
   events.focus();events['gather-tool-updated']();await tick();
   assert.deepEqual(calls,[]);
@@ -206,13 +210,38 @@ test('a snapshot confirmation is a read-only check and never replaces the displa
   const fixture=start({ok:true,status:200,json:async()=>({...state,revision:++checks>2?2:1})});
   await fixture.run;
   const store=fixture.window.GatherStore.createStore();
+  const newer=[];
+  const record=revision=>newer.push(revision);
   assert.equal(store.getSnapshotRevision(),1);
-  assert.equal(await store.confirmSnapshotRevision(0),false);
+  assert.equal(await store.confirmSnapshotRevision(0,record),false);
   assert.equal(checks,1);
-  assert.equal(await store.confirmSnapshotRevision(1),true);
-  assert.equal(await store.confirmSnapshotRevision(1),false);
+  assert.equal(await store.confirmSnapshotRevision(1,record),true);
+  assert.equal(await store.confirmSnapshotRevision(1,record),false);
+  assert.deepEqual(newer,[1,2]);
+  const pending=await store.refresh(()=>false);
+  assert.equal(pending.pending,true);
+  assert.equal(pending.newerRevision,2);
   assert.equal(store.getSnapshotRevision(),1);
-  assert.deepEqual(fixture.requests,Array(3).fill('/api/workspace?project=new-project'));
+  assert.deepEqual(fixture.requests,Array(4).fill('/api/workspace?project=new-project'));
+});
+
+test('a concurrent failed save makes confirmation inconclusive without reporting a newer revision',async()=>{
+  const read=deferred(),started=deferred();
+  let reads=0;
+  const fixture=start(options=>{
+    if(options.method==='POST')return {ok:false,status:400,json:async()=>({error:'Fictional save rejected'})};
+    if(++reads===2){started.resolve();return read.promise;}
+    return success(state);
+  });
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore(),newer=[];
+  const checking=store.confirmSnapshotRevision(1,value=>newer.push(value));
+  await started.promise;
+  await assert.rejects(store.addTask({title:'Fictional change'}),/Fictional save rejected/);
+  read.resolve(success(state));
+  assert.equal(await checking,false);
+  assert.deepEqual(newer,[]);
+  assert.equal(await store.confirmSnapshotRevision(1),true);
 });
 
 test('invite label matches hosted navigation while demo remains explicitly simulated', async () => {

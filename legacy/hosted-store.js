@@ -173,12 +173,14 @@
       getReminderScope: () => demo || accessLost ? '' : snapshot.reminderScope,
       exportState: () => JSON.stringify(snapshot.exportState, null, 2),
       getSnapshotRevision: () => snapshot.revision,
-      confirmSnapshotRevision: async expected => {
+      confirmSnapshotRevision: async (expected,onNewer) => {
         await queue;
-        if(snapshot.revision!==expected)return false;
+        const report=revision=>{if(Number.isSafeInteger(revision)&&revision>expected)onNewer?.(revision);};
+        if(snapshot.revision!==expected){report(snapshot.revision);return false;}
         const generation=mutationGeneration, latest=await request();
         validateIdentity(latest);
         if(!Number.isSafeInteger(latest.revision))throw new Error('Weft could not confirm the current plan.');
+        report(Math.max(latest.revision,snapshot.revision));
         return latest.revision===expected&&snapshot.revision===expected&&generation===mutationGeneration;
       },
       subscribe: (fn) => {
@@ -192,7 +194,8 @@
         validateIdentity(latest);
         if(refreshId!==refreshGeneration)return {changed:false};
         if(latest.revision<snapshot.revision)return {changed:false};
-        if(snapshot.revision!==base||mutationGeneration!==generation)return {pending:latest.revision>snapshot.revision};
+        if(snapshot.revision!==base||mutationGeneration!==generation)return latest.revision>snapshot.revision
+          ? {pending:true,newerRevision:latest.revision} : {pending:false};
         const suggestionsChanged=JSON.stringify(latest.suggestions)!==JSON.stringify(snapshot.suggestions);
         // Clock-driven checks can change without a persisted workspace edit.
         // Updating only derived suggestions cannot overwrite an in-progress form.
@@ -200,7 +203,7 @@
           if(suggestionsChanged)snapshot={...snapshot,suggestions:latest.suggestions};
           return {changed:false,suggestionsChanged};
         }
-        if(!canApply())return {pending:true};
+        if(!canApply())return {pending:true,newerRevision:latest.revision};
         publish(latest);return {changed:true,suggestionsChanged};
       },
     };

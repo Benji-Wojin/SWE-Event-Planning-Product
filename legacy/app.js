@@ -714,53 +714,108 @@
       title.tabIndex=-1;title.focus();
     });
   }
-  function showPendingUpdate() {
+  function showPendingUpdate(newerRevision) {
+    if(Number.isSafeInteger(newerRevision))rememberStaleRunSheet(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){ui.guestAgenda.stale=true;updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
-    if(ui.dialogKind==='run-sheet'&&ui.runSheet){ui.runSheet.stale=true;currentRunSheet();return;}
+    if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
   }
-  function openRunSheet() {
+  let staleRunSheetRevision=null;
+  const busyRunSheetRevisions=new Set();
+  function rememberStaleRunSheet(snapshot,newerRevision) {
+    if(!Number.isSafeInteger(newerRevision))return;
+    if(snapshot&&snapshot.revision<newerRevision)snapshot.stale=true;
+    staleRunSheetRevision=Math.max(staleRunSheetRevision??-1,newerRevision-1);
+  }
+  function runSheetRevisionIsStale(revision) {
+    return staleRunSheetRevision!==null&&Number.isSafeInteger(revision)&&revision<=staleRunSheetRevision;
+  }
+  function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
-    const model=schedule.runSheetModel(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
+    const model=schedule.runSheetModel(store.getState(),Date.now(),scope);
     const text=model.days.length?schedule.runSheetText(model):'';
-    ui.runSheet={model,text,revision:store.getSnapshotRevision?.(),stale:false,checking:false};
-    openDialog('Event run sheet','<p id="runSheetStale" class="notice" role="status" hidden>The shared plan changed. Close this snapshot and reopen Run sheet to get the latest schedule.</p>'+schedule.runSheetMarkup(model)+
+    ui.runSheet={model,text,scope,revision:store.getSnapshotRevision?.(),stale:false};
+    openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. Refresh it before printing or downloading.</p>'+
+      (store.refresh?'<button type="button" class="btn btn-secondary" id="runSheetRefresh" data-action="refresh-run-sheet">Refresh run sheet</button>':'')+
+      '</div><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked">Run sheet isn’t ready to print. Return to Weft to check or refresh it.</p>'+schedule.runSheetMarkup(model)+
       (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
       (store.confirmSnapshotRevision?'<button class="btn btn-secondary" data-action="check-run-sheet">Check for updates</button>':'')+
       (text?'<button class="btn btn-secondary" data-action="download-run-sheet">Download text (.txt)</button>':'')+
-      '<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
+      '<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet',focusHeading);
     currentRunSheet();
   }
   function currentRunSheet() {
     const snapshot=ui.runSheet;
     if(!snapshot||ui.dialogKind!=='run-sheet'||!$('#eventRunSheet')||window.GatherAccessLost)return null;
-    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||(sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
+    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||runSheetRevisionIsStale(snapshot.revision)||
+      (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
+    const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
-    const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=!!stale;
+    $('#runSheetPrintBlocked')?.toggleAttribute('data-blocked',blocked);
+    $('#runSheetRefresh')?.setAttribute('aria-disabled',String(!!busy));
+    const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=blocked;
     for(const button of $$('#dialog [data-action="download-run-sheet"], #dialog [data-action="print-run-sheet"], #dialog [data-action="check-run-sheet"]'))
-      button.setAttribute('aria-disabled',String(!!stale||snapshot.checking));
-    return stale||snapshot.checking?null:snapshot;
+      button.setAttribute('aria-disabled',String(blocked));
+    return blocked?null:snapshot;
   }
   async function checkRunSheet() {
     const snapshot=currentRunSheet();
     if(!snapshot||!store.confirmSnapshotRevision)return;
-    snapshot.checking=true;currentRunSheet();
+    busyRunSheetRevisions.add(snapshot.revision);currentRunSheet();
     try {
-      const current=await store.confirmSnapshotRevision(snapshot.revision);
-      if(ui.runSheet!==snapshot||window.GatherAccessLost)return;
-      if(!current)snapshot.stale=true;
-      else if(!snapshot.stale)toast('No newer plan found. This copy is still a snapshot.');
+      const current=await store.confirmSnapshotRevision(snapshot.revision,newer=>rememberStaleRunSheet(snapshot,newer));
+      if(window.GatherAccessLost)return;
+      if(!current){snapshot.stale=true;currentRunSheet();}
+      else if(ui.runSheet===snapshot&&!snapshot.stale)toast('No newer plan found. This copy is still a snapshot.');
     } catch {
       if(ui.runSheet===snapshot&&!window.GatherAccessLost)toast('Could not check for updates. Confirm changes with your team before using this copy.');
     } finally {
-      snapshot.checking=false;
-      if(ui.runSheet===snapshot)currentRunSheet();
+      busyRunSheetRevisions.delete(snapshot.revision);
+      currentRunSheet();
+    }
+  }
+  async function refreshRunSheet() {
+    const snapshot=ui.runSheet;
+    const stillOpen=()=>ui.runSheet===snapshot&&ui.dialogKind==='run-sheet'&&ui.view==='timeline'&&
+      ui.timelineMode!=='deadlines'&&!ui.pendingSave&&!window.GatherAccessLost;
+    if(!snapshot||!stillOpen()||busyRunSheetRevisions.has(snapshot.revision)||!store.refresh||!$('#eventRunSheet'))return;
+    if(currentRunSheet())return;
+    const status=$('#runSheetRefreshStatus');
+    busyRunSheetRevisions.add(snapshot.revision);
+    if(status)status.textContent='Refreshing run sheet…';
+    currentRunSheet();
+    try {
+      const result=await store.refresh(stillOpen);
+      if(result.pending&&!window.GatherAccessLost)rememberStaleRunSheet(snapshot,result.newerRevision);
+      if(!stillOpen())return;
+      const revision=store.getSnapshotRevision?.();
+      if(result.pending||!Number.isSafeInteger(revision)||runSheetRevisionIsStale(revision))
+        throw new Error('A newer snapshot is not ready.');
+      // A successful publish already read an authorized revision. If the
+      // cache was advanced elsewhere, check it before clearing the warning.
+      if(!result.changed&&(!store.confirmSnapshotRevision||
+          !await store.confirmSnapshotRevision(revision,newer=>rememberStaleRunSheet({revision},newer)))){
+        throw new Error('This revision could not be confirmed.');
+      }
+      if(!stillOpen())return;
+      if(store.getSnapshotRevision()!==revision||runSheetRevisionIsStale(revision))
+        throw new Error('The plan changed again.');
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();
+      openRunSheet(snapshot.scope,true);
+      toast('Run sheet refreshed. This copy is still a snapshot.');
+    } catch {
+      if(stillOpen()&&status)status.textContent='Could not refresh the run sheet. Try again before exporting.';
+    } finally {
+      busyRunSheetRevisions.delete(snapshot.revision);
+      currentRunSheet();
     }
   }
   function downloadRunSheet() {
@@ -1374,6 +1429,7 @@
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
       if(action==='print-run-sheet'&&currentRunSheet())window.print();
       if(action==='check-run-sheet')await checkRunSheet();
+      if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task')taskDialog(id);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -1732,6 +1788,7 @@
   });
   setInterval(refreshAttentionDate,60000);
   window.addEventListener('focus',refreshAttentionDate);
+  window.addEventListener('beforeprint',()=>{if(ui.dialogKind==='run-sheet')currentRunSheet();});
   window.addEventListener('pageshow',refreshAttentionDate);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';

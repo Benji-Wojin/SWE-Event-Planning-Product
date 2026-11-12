@@ -76,7 +76,8 @@
     submit.textContent=values.mode==='new'?'Accept & create task':'Accept changes';
   }
   async function refreshInbox(manual=false) {
-    if(!store.refresh||window.GatherAccessLost||ui.syncing||ui.pendingSave||document.hidden)return;
+    if(!store.refresh||window.GatherAccessLost||ui.syncing||ui.pendingSave||
+      (ui.runSheet&&busyRunSheetRevisions.has(ui.runSheet.revision))||document.hidden)return;
     ui.syncing=true;
     try {
       const result=await store.refresh(canApplyWorkspaceRefresh);
@@ -93,7 +94,7 @@
       if(updated){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
       const pending=!!(result.pending||ui.toolUpdatePending);
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!pending;
-      if(pending){showPendingUpdate();const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
+      if(pending){showPendingUpdate(result.newerRevision);const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
       else if(manual&&!updated)toast('You have the latest updates.');
     } catch(error) {if(manual&&!window.GatherAccessLost)toast(error.message);}
     finally {ui.syncing=false;}

@@ -220,56 +220,210 @@ test('the text copy and print preview use the same scoped facts, warnings and ti
   assert.doesNotMatch(text+html,/PRIVATE-|PREPARATION-ONLY|Other crew shift|Changed after preview/);
 });
 
-test('run-sheet controls export only the active snapshot and block known newer revisions and lost access',async()=>{
+function runSheetHarness(){
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='run-sheet'");
   const end=source.indexOf("      if(action==='task')",start);
   assert.ok(start>=0&&end>start);
-  let prints=0,opens=0,exists=true,revision=1,downloads=0,revokes=0,blob,remote=1,reads=0;
-  const staleNotice={hidden:true},fallback={hidden:false},sync={hidden:true},attrs=new Map(),link={click(){downloads++;},remove(){}};
-  const context=vm.createContext({action:'run-sheet',window:{print(){prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,
-    URL:{createObjectURL(value){blob=value;return 'blob:fixture';},revokeObjectURL(url){assert.equal(url,'blob:fixture');revokes++;}},setTimeout:callback=>callback(),
-    document:{createElement:()=>link,body:{append(){} }},toast:()=>{},
-    store:{getState:()=>({fixture:true}),getSnapshotRevision:()=>revision,async confirmSnapshotRevision(expected){reads++;return expected===remote;}},schedule:{
-      runSheetModel(s,time,scope){assert.equal(s.fixture,true);assert.deepEqual({...scope},{mine:true,actor:'maya',date:'2026-11-21'});return {days:[{}],...scope,day:scope.date};},
-      runSheetMarkup:()=>'<article>Preview</article>',runSheetText:model=>'Frozen '+model.date,
+  const fixture={prints:0,opens:[],exists:true,revision:1,downloads:0,revokes:0,blob:null,remote:1,reads:0,refreshes:0,renders:0};
+  const staleNotice={hidden:true},fallback={hidden:false},sync={hidden:true},attrs=new Map();
+  const refreshButton={hidden:true,setAttribute:(key,value)=>attrs.set('refresh:'+key,value)};
+  const refreshStatus={textContent:''},printable={dataset:{},toggleAttribute(){},setAttribute(){},removeAttribute(){}};
+  const printAttributes=new Set();
+  const printBlocked={toggleAttribute(key,active){if(active)printAttributes.add(key);else printAttributes.delete(key);}};
+  const heading={focus(){},setAttribute(){}},backdrop={hidden:false,dataset:{}};
+  const link={click(){fixture.downloads++;},remove(){}};
+  const context=vm.createContext({action:'run-sheet',window:{print(){fixture.prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,
+    URL:{createObjectURL(value){fixture.blob=value;return 'blob:fixture';},revokeObjectURL(url){assert.equal(url,'blob:fixture');fixture.revokes++;}},setTimeout:callback=>callback(),requestAnimationFrame:callback=>callback(),
+    document:{hidden:false,createElement:()=>link,body:{append(){} }},toast:()=>{},render:()=>fixture.renders++,
+    store:{getState:()=>({revision:fixture.revision}),getSnapshotRevision:()=>fixture.revision,
+      async confirmSnapshotRevision(expected,onNewer){
+        fixture.reads++;
+        if(fixture.waitForCheck)await fixture.waitForCheck;
+        if(fixture.remote>expected)onNewer?.(fixture.remote);
+        if(fixture.inconclusiveChecks>0){fixture.inconclusiveChecks--;return false;}
+        return expected===fixture.remote;
+      },
+      async refresh(canApply){
+        fixture.refreshes++;
+        if(fixture.waitForRefresh)await fixture.waitForRefresh;
+        if(fixture.remote===fixture.revision)return {changed:false};
+        if(!canApply())return {pending:true,newerRevision:fixture.remote};
+        fixture.revision=fixture.remote;
+        return {changed:true};
+      },
+    },schedule:{
+      runSheetModel(s,time,scope){return {days:[{}],...scope,day:scope.date,revision:s.revision};},
+      runSheetMarkup:model=>'<article>Preview '+model.revision+'</article>',runSheetText:model=>'Frozen '+model.date+' revision '+model.revision,
     },
-    openDialog(title,body,footer,wide,kind){opens++;assert.match(body,/<article>Preview<\/article>/);assert.match(body,/readonly>Frozen 2026-11-21/);assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;},
-    $:selector=>({'#eventRunSheet':exists,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback})[selector],
+    openDialog(title,body,footer,wide,kind){fixture.opens.push({body,footer});assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;},
+    $:selector=>({'#eventRunSheet':fixture.exists?printable:null,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback,'#runSheetRefresh':refreshButton,'#runSheetRefreshStatus':refreshStatus,'#runSheetPrintBlocked':printBlocked,'#dialogTitle':heading,'#dialogBackdrop':backdrop})[selector],
     $$:()=>[{setAttribute:(key,value)=>attrs.set(key,value)}]});
-  const helperStart=source.indexOf('  function openRunSheet()');
+  const helperStart=source.indexOf('  let staleRunSheetRevision');
+  assert.ok(helperStart>=0);
   vm.runInContext(source.slice(helperStart,source.indexOf('  function dependencyInfo(',helperStart)),context);
-  const run=()=>vm.runInContext(source.slice(start,end).replace('await checkRunSheet()','checkRunSheet()'),context);
-  run();assert.equal(opens,1);assert.equal(prints,0);
-  context.action='download-run-sheet';run();assert.equal(downloads,1);
+  const run=action=>{
+    context.action=action;
+    return vm.runInContext('(async()=>{'+source.slice(start,end)+'})()',context);
+  };
+  const close=()=>{context.ui.dialogKind='';context.ui.runSheet=null;};
+  return {fixture,context,run,close,staleNotice,fallback,sync,attrs,link,source,blocksNativePrint:()=>printAttributes.has('data-blocked')};
+}
+
+test('run-sheet controls export only the active snapshot and block known newer revisions and lost access',async()=>{
+  const {fixture,context,run,close,staleNotice,fallback,sync,attrs,link,source}=runSheetHarness();
+  await run('run-sheet');assert.equal(fixture.opens.length,1);assert.equal(fixture.prints,0);
+  await run('download-run-sheet');assert.equal(fixture.downloads,1);
   assert.equal(link.download,'weft-run-sheet-my-activities-2026-11-21.txt');
-  assert.equal(blob.type,'text/plain;charset=utf-8');assert.equal(await blob.text(),'Frozen 2026-11-21');assert.equal(revokes,1);
-  assert.equal(reads,0,'saving the loaded copy works offline and does not make a request');
-  await vm.runInContext('checkRunSheet()',context);
-  assert.equal(reads,1);assert.equal(staleNotice.hidden,true);
-  context.action='print-run-sheet';run();assert.equal(prints,1);
-  for(const [key,value]of [['dialogKind','task'],['dialogKind','']]){context.ui[key]=value;run();assert.equal(prints,1);}
-  context.ui.dialogKind='run-sheet';exists=false;run();assert.equal(prints,1);
-  exists=true;revision++;run();assert.equal(prints,1);assert.equal(staleNotice.hidden,false);assert.equal(attrs.get('aria-disabled'),'true');
-  context.action='download-run-sheet';run();assert.equal(downloads,1);
-  context.action='run-sheet';run();assert.equal(opens,2);assert.equal(staleNotice.hidden,true);
-  remote=3;await vm.runInContext('checkRunSheet()',context);
-  assert.equal(reads,2);assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);
-  context.action='run-sheet';run();assert.equal(opens,3);assert.equal(staleNotice.hidden,true);
-  sync.hidden=false;context.action='download-run-sheet';run();assert.equal(downloads,1);
-  sync.hidden=true;context.window.GatherAccessLost=true;run();assert.equal(downloads,1);
-  context.action='run-sheet';run();assert.equal(opens,3);
+  assert.equal(fixture.blob.type,'text/plain;charset=utf-8');assert.equal(await fixture.blob.text(),'Frozen 2026-11-21 revision 1');assert.equal(fixture.revokes,1);
+  assert.equal(fixture.reads,0,'saving the loaded copy works offline and does not make a request');
+  await run('check-run-sheet');assert.equal(fixture.reads,1);assert.equal(staleNotice.hidden,true);
+  await run('print-run-sheet');assert.equal(fixture.prints,1);
+  for(const kind of ['task','']){context.ui.dialogKind=kind;await run('print-run-sheet');assert.equal(fixture.prints,1);}
+  context.ui.dialogKind='run-sheet';fixture.exists=false;await run('print-run-sheet');assert.equal(fixture.prints,1);
+  fixture.exists=true;fixture.revision++;await run('print-run-sheet');
+  assert.equal(fixture.prints,1);assert.equal(staleNotice.hidden,false);assert.equal(attrs.get('aria-disabled'),'true');
+  await run('download-run-sheet');assert.equal(fixture.downloads,1);
+  close();await run('run-sheet');assert.equal(fixture.opens.length,2);assert.equal(staleNotice.hidden,true);
+  fixture.remote=3;await run('check-run-sheet');
+  assert.equal(fixture.reads,2);assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);
+  close();await run('run-sheet');assert.equal(fixture.opens.length,3);
+  assert.equal(staleNotice.hidden,false,'close/reopen alone cannot clear a remote mismatch');
+  assert.equal(fallback.hidden,true);
+  await run('print-run-sheet');await run('download-run-sheet');
+  assert.equal(fixture.prints,1);assert.equal(fixture.downloads,1);
+  fixture.revision=3;
+  close();await run('run-sheet');assert.equal(fixture.opens.length,4);assert.equal(staleNotice.hidden,true);
+  assert.equal(fallback.hidden,false,'reopening after a newer authorized snapshot restores export');
+  sync.hidden=false;await run('download-run-sheet');assert.equal(fixture.downloads,1);
+  sync.hidden=true;context.window.GatherAccessLost=true;await run('download-run-sheet');assert.equal(fixture.downloads,1);
+  await run('run-sheet');assert.equal(fixture.opens.length,4);
   assert.match(source,/replacesDialog=\[[^\n]*'run-sheet'/);
+});
+
+test('run-sheet refresh keeps scope and re-enables exports only after the newer snapshot applies',async()=>{
+  const {fixture,context,run,staleNotice,fallback,sync,blocksNativePrint}=runSheetHarness();
+  await run('run-sheet');
+  fixture.remote=2;await run('check-run-sheet');
+  assert.equal(staleNotice.hidden,false);
+  // Model a pending workspace notice and UI filters changed elsewhere; the
+  // refresh belongs to the exact scope the user opened, not current filters.
+  sync.hidden=false;context.ui.scheduleMine=false;context.ui.scheduleDate='2026-11-22';
+  const deferred=Promise.withResolvers();fixture.waitForRefresh=deferred.promise;
+  const pending=run('refresh-run-sheet');
+  assert.equal(fixture.refreshes,1);
+  await run('print-run-sheet');await run('download-run-sheet');
+  assert.equal(fixture.prints,0);assert.equal(fixture.downloads,0);assert.equal(fallback.hidden,true);
+  assert.equal(blocksNativePrint(),true);
+  deferred.resolve();await pending;
+  assert.equal(fixture.revision,2);assert.equal(fixture.renders,1);assert.equal(fixture.opens.length,2);
+  assert.equal(sync.hidden,true);assert.equal(staleNotice.hidden,true);assert.equal(fallback.hidden,false);
+  assert.equal(blocksNativePrint(),false);
+  assert.deepEqual({...context.ui.runSheet.scope},{mine:true,actor:'maya',date:'2026-11-21'});
+  assert.match(fixture.opens.at(-1).body,/<article>Preview 2<\/article>/);
+  await run('download-run-sheet');assert.equal(await fixture.blob.text(),'Frozen 2026-11-21 revision 2');
+});
+
+test('reopening while the same run-sheet revision is being checked does not bypass the export gate',async()=>{
+  const {fixture,run,close,staleNotice,fallback,blocksNativePrint}=runSheetHarness();
+  await run('run-sheet');
+  assert.match(fixture.opens[0].body,/id="runSheetPrintBlocked"/);
+  assert.equal(blocksNativePrint(),false);
+  const deferred=Promise.withResolvers();fixture.waitForCheck=deferred.promise;
+  const pending=run('check-run-sheet');
+  assert.equal(fixture.reads,1);assert.equal(blocksNativePrint(),true);
+  close();await run('run-sheet');
+  assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('print-run-sheet');await run('download-run-sheet');await run('check-run-sheet');
+  assert.deepEqual([fixture.prints,fixture.downloads,fixture.reads],[0,0,1]);
+  fixture.remote=4;deferred.resolve();await pending;
+  assert.equal(staleNotice.hidden,false,'a late known-newer response applies to the reopened copy');
+  assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('print-run-sheet');await run('download-run-sheet');
+  assert.deepEqual([fixture.prints,fixture.downloads],[0,0]);
+  for(const revision of [2,3]){
+    fixture.revision=revision;close();await run('run-sheet');
+    assert.equal(staleNotice.hidden,false,'an intermediate revision cannot clear a known revision 4');
+    assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+    await run('download-run-sheet');assert.equal(fixture.downloads,0);
+  }
+  fixture.revision=4;close();await run('run-sheet');
+  assert.equal(staleNotice.hidden,true);assert.equal(blocksNativePrint(),false);
+  await run('download-run-sheet');assert.equal(await fixture.blob.text(),'Frozen 2026-11-21 revision 4');
+});
+
+test('an inconclusive run-sheet check can recover by re-confirming the same revision',async()=>{
+  const {fixture,run,staleNotice,fallback,blocksNativePrint}=runSheetHarness();
+  await run('run-sheet');
+  fixture.inconclusiveChecks=2;await run('check-run-sheet');
+  assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('download-run-sheet');assert.equal(fixture.downloads,0);
+  await run('refresh-run-sheet');
+  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,2,1,1]);
+  assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('refresh-run-sheet');
+  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,3,2,2]);
+  assert.equal(staleNotice.hidden,true);assert.equal(fallback.hidden,false);assert.equal(blocksNativePrint(),false);
+  await run('download-run-sheet');assert.equal(fixture.downloads,1);
+});
+
+test('a refresh superseded by reopening cannot expose a snapshot older than its pending result',async()=>{
+  const {fixture,context,run,close,staleNotice,fallback,blocksNativePrint}=runSheetHarness();
+  await run('run-sheet');
+  fixture.inconclusiveChecks=1;await run('check-run-sheet');
+  assert.equal(staleNotice.hidden,false);
+  const deferred=Promise.withResolvers();fixture.waitForRefresh=deferred.promise;
+  const pending=run('refresh-run-sheet');assert.equal(fixture.refreshes,1);
+  close();await run('run-sheet');
+  const replacement=context.ui.runSheet;
+  assert.equal(replacement.revision,1);
+  assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('print-run-sheet');await run('download-run-sheet');await run('check-run-sheet');await run('refresh-run-sheet');
+  assert.deepEqual([fixture.prints,fixture.downloads,fixture.reads,fixture.refreshes],[0,0,1,1]);
+  fixture.remote=2;deferred.resolve();await pending;
+  assert.equal(fixture.revision,1,'the old refresh may observe the new revision but must not publish after reopening');
+  assert.equal(context.ui.runSheet,replacement);assert.equal(fixture.opens.length,2);assert.equal(fixture.renders,0);
+  assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  await run('print-run-sheet');await run('download-run-sheet');
+  assert.deepEqual([fixture.prints,fixture.downloads],[0,0]);
+  close();await run('run-sheet');assert.equal(staleNotice.hidden,false,'the learned revision floor survives another reopen');
+  fixture.revision=2;close();await run('run-sheet');
+  assert.equal(staleNotice.hidden,true);assert.equal(blocksNativePrint(),false);
+});
+
+test('failed or superseded run-sheet refresh never exports or reopens the frozen copy',async()=>{
+  const {fixture,context,run,close,staleNotice,fallback}=runSheetHarness();
+  await run('run-sheet');
+  fixture.remote=2;await run('check-run-sheet');
+  const failing=Promise.withResolvers();fixture.waitForRefresh=failing.promise;
+  const failed=run('refresh-run-sheet');
+  failing.reject(Error('Fictional network failure'));await failed;
+  assert.equal(fixture.opens.length,1);assert.equal(fixture.renders,0);
+  assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);
+  await run('print-run-sheet');await run('download-run-sheet');
+  assert.equal(fixture.prints,0);assert.equal(fixture.downloads,0);
+  const deferred=Promise.withResolvers();fixture.waitForRefresh=deferred.promise;
+  const pending=run('refresh-run-sheet');assert.equal(fixture.refreshes,2);
+  close();context.ui.dialogKind='task';
+  deferred.resolve();await pending;
+  assert.equal(fixture.revision,1,'the guarded refresh cannot apply after the run-sheet closes');
+  assert.equal(fixture.opens.length,1);assert.equal(fixture.renders,0);
+  assert.equal(context.ui.dialogKind,'task');assert.equal(context.ui.runSheet,null);
 });
 
 test('print isolation hides every other body surface, retains table headers and removes dialog chrome',()=>{
   const css=readFileSync('legacy/styles.css','utf8');
+  const source=readFileSync('legacy/app.js','utf8');
   assert.match(css,/@media print\{/);
   assert.match(css,/body:has\(#eventRunSheet\)>:not\(#dialogBackdrop\)\{display:none!important\}/);
   assert.match(css,/#eventRunSheet thead\{display:table-header-group\}/);
   assert.match(css,/#eventRunSheet tr\{break-inside:avoid\}/);
   assert.match(css,/body:has\(#eventRunSheet\) \.dialog-footer[^}]*display:none!important/);
   assert.match(css,/body:has\(#eventRunSheet\) #dialog\{[^}]*overflow:visible!important/);
+  assert.match(css,/^#runSheetPrintBlocked\{display:none\}/m);
+  assert.match(css,/@media print\{[\s\S]*body:has\(#runSheetPrintBlocked\[data-blocked\]\) #eventRunSheet\{display:none!important\}/);
+  assert.match(css,/@media print\{[\s\S]*body:has\(#eventRunSheet\) #runSheetPrintBlocked\[data-blocked\]\{display:block!important\}/);
+  assert.match(source,/window\.addEventListener\('beforeprint',[^\n]*currentRunSheet\(\)/);
 });
 
 test('phone run sheets stack labeled facts without changing the print table',()=>{
