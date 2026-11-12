@@ -215,6 +215,11 @@ test('dialog is filtered, bounded, escaped, organizer-only and never preselects 
     isOrganizer: () => organizer,
     window: { GatherMode: { demo: false } },
     store: { getState: () => state },
+    eventReviewScope: () => ({mine:false,actor:'jack'}),
+    schedule: {reviewAssignmentTasks(s,scope,key){
+      assert.equal(s,state);assert.equal(scope.actor,'jack');
+      return key==='owner-unavailable'?[{...state.tasks[0],id:'formerly-owned',owner:'old'}]:[];
+    }},
     filteredTasks: (s) => s.tasks,
     h: (v) =>
       String(v ?? '')
@@ -254,6 +259,13 @@ test('dialog is filtered, bounded, escaped, organizer-only and never preselects 
   assert.match(markup, /Choose a teammate/);
   assert.match(markup, /id="assignmentSubmit"[^>]*disabled/);
   assert.match(markup, /No messages are sent/);
+  vm.runInContext('assignmentDialog("owner-unavailable")',context);
+  assert.equal(opened,2);
+  assert.match(markup,/data-return-to="event-review"/);
+  assert.match(markup,/Current owner: Old · Inactive teammate/);
+  assert.match(markup,/data-action="before-event-review">Back to event review/);
+  assert.match(markup,/value="formerly-owned"/);
+  assert.doesNotMatch(markup,/value="a"| checked/);
   assert.equal(
     vm.runInContext(
       'assignmentCandidates(Array.from({length:101},()=>({status:"todo"}))).length',
@@ -263,7 +275,7 @@ test('dialog is filtered, bounded, escaped, organizer-only and never preselects 
   );
   organizer = false;
   vm.runInContext('assignmentDialog()', context);
-  assert.equal(opened, 1);
+  assert.equal(opened, 2);
 });
 test('confirmation and an actual owner change are required before submit', () => {
   const selected = [],

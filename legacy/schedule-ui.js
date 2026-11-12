@@ -9,6 +9,10 @@
   const resolved = task => task.status==='done'&&(!task.requiresVerification||task.verifiedAt);
   const needsActivityTime = task => task.eventActivity===true&&!task.schedule&&!resolved(task);
   const needsActivityDetails = task => !!task.schedule&&!resolved(task)&&(!task.schedule.end||!task.schedule.location);
+  const assignmentGroup = key => key==='unassigned'||key==='owner-unavailable';
+  const canReviewAssignment = task => task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
+  const assignmentIssue = (task,members) => !task.owner?'unassigned':
+    members.some(member=>member.id===task.owner&&member.active!==false)?'':'owner-unavailable';
   function newActivityTask({title,owner,note,start='',end='',location=''}) {
     if(!start&&(end||location.trim()))throw new Error('Enter a start time to save an end time or activity location, or clear those fields to set the time later.');
     return {title,owner,note,category:'Program',status:'todo',eventActivity:true,
@@ -89,8 +93,8 @@
       {key:'evidence-amendments',title:'Evidence amended after verification',help:'The current completion submission was edited after verification and has not been reviewed. Task verification is unchanged. Open the task to review the amendment with the organizer.',tasks:tasks.filter(evidenceAmended)},
       {key:'changes',title:'Completion changes requested',help:'The organizer returned a completion report. Review the requested changes with the owner, then submit a new report; the work is not verified.',tasks:open.filter(changesRequested)},
       {key:'blocked',title:'Marked blocked',help:'Review the latest update with the owner; this review does not change task status.',tasks:open.filter(task=>task.status==='blocked'&&!waitingVerification(task))},
-      {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>!task.owner)},
-      {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner is missing or inactive in this project. Review who will take responsibility.',tasks:open.filter(task=>task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false))},
+      {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='unassigned')},
+      {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner is missing or inactive in this project. Review who will take responsibility.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='owner-unavailable')},
       {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members))},
       {key:'overdue',title:'Preparation deadline passed',help:'The entered due date is before today in the event time zone. Check the real progress.',tasks:day?open.filter(task=>task.dueDate&&task.dueDate<day&&!waitingVerification(task)):[]},
       {key:'prerequisites',title:'Required work not complete',help:'One or more required linked tasks are incomplete, awaiting verification, or unavailable. Related links do not block completion.',tasks:open.filter(task=>unfinishedRequiredWork(task,byId))},
@@ -167,6 +171,11 @@
       if(!state.event.timeZone)return needsZone();
       return `<p><strong>${h(task.title)}</strong></p><form id="reviewScheduleForm" data-id="${h(task.id)}" data-revision="${h(task.revision)}">${zone(state.event)}${fields(task.schedule||{})}<div class="form-actions"><button class="btn btn-primary" type="submit">Save schedule</button></div></form>`;
     }
+    function reviewAssignmentTasks(state,scope,key) {
+      if(!assignmentGroup(key))return [];
+      return scoped(state.tasks,scope)
+        .filter(task=>canReviewAssignment(task)&&assignmentIssue(task,state.members)===key);
+    }
     function preparationReview(state,now=Date.now(),scope={},organizer=false) {
       const groups=reviewItems(state,now,scope),tasks=scoped(state.tasks,scope);
       const local=momentKey(now,state.event.timeZone);
@@ -180,7 +189,12 @@
         const label=group.key==='activity-time'?'Set start time':'Review timing and location';
         return `<button class="btn btn-secondary btn-small review-activity-action" data-action="schedule-review-activity" data-id="${h(task.id)}" aria-label="${label} for ${h(task.title)}">${label}</button>`;
       };
-      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&(group.tasks.length<=3||group.key==='activity-time')?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span>${scheduleAction(group,task)}</li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
+      const assignmentAction=group=>{
+        if(!organizer||!assignmentGroup(group.key)||!group.tasks.some(canReviewAssignment))return '';
+        const label=group.key==='unassigned'?'Assign unowned tasks':'Reassign tasks with unavailable owners';
+        return `<button class="btn btn-secondary btn-small review-activity-action" data-action="review-event-assignments" data-id="${group.key}">${label}</button>`;
+      };
+      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&(group.tasks.length<=3||group.key==='activity-time')?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span>${scheduleAction(group,task)}</li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
     }
     function runSheet(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),tasks=ordered(visible),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks);
@@ -217,7 +231,7 @@
         : '<p class="muted">Add this activity now and set its start time later, after setting the event time zone in Project settings.</p>';
       return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(member=>member.active!==false).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${timing}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
     }
-    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm};
+    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm,reviewAssignmentTasks};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems};
 })(typeof window!=='undefined'?window:globalThis);

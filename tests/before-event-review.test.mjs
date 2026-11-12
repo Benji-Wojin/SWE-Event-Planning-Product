@@ -101,6 +101,23 @@ test('organizer review offers direct scheduling only for scoped activities that 
   for(const id of ['missing','prep','complete-details'])assert.throws(()=>ui.activityReviewForm(s,id),/Reopen the event review/);
 });
 
+test('the event review routes only actionable owner gaps to assignment and never widens My tasks',()=>{
+  const s=state([task('unowned',{owner:''}),task('former',{owner:'old',schedule:slot()}),
+    task('missing',{owner:'missing-member'}),task('active',{owner:'maya'}),
+    task('reported',{owner:'',requiresVerification:true,reportedAt:now}),
+    task('completed',{owner:'old',status:'done'})]);
+  const pick=(scope,key)=>ui.reviewAssignmentTasks(s,scope,key).map(item=>item.id);
+  assert.deepEqual(pick({},'unassigned'),['unowned']);
+  assert.deepEqual(pick({},'owner-unavailable'),['former','missing']);
+  assert.deepEqual(pick({mine:true,actor:'maya'},'unassigned'),[]);
+  assert.deepEqual(pick({mine:true,actor:'maya'},'owner-unavailable'),[]);
+  assert.deepEqual(pick({},'acceptance'),[]);
+  const actions=markup=>markup.match(/data-action="review-event-assignments"/g)||[];
+  assert.equal(actions(ui.preparationReview(s,now,{},true)).length,2);
+  assert.equal(actions(ui.preparationReview(s,now,{mine:true,actor:'maya'},true)).length,0);
+  assert.equal(actions(ui.preparationReview(s,now)).length,0);
+});
+
 test('real store changes recompute the review only from recorded acceptance and completion',()=>{
   const store=GatherStore.createStore({storage:null});store.completeSetup(event);
   const item=store.addTask({title:'Check school hall',owner:'maya',requiresVerification:true});
@@ -111,7 +128,7 @@ test('real store changes recompute the review only from recorded acceptance and 
 });
 
 test('review handler uses current scope, blocks lost access, and participates in dialog discard protection',()=>{
-  const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function beforeEventReview(');
+  const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function eventReviewScope(');
   const fragment=source.slice(start,source.indexOf('  function showPendingUpdate(',start));const calls=[];
   const context=vm.createContext({action:'before-event-review',window:{GatherAccessLost:false},Date,
     requestAnimationFrame:()=>{},isOrganizer:()=>false,

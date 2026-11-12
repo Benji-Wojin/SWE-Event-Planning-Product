@@ -222,12 +222,20 @@
   function assignmentCandidates(tasks) {
     return tasks.filter(task=>task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
   }
-  function assignmentDialog() {
+  function assignmentDialog(reviewGroup='') {
     if(!isOrganizer()||window.GatherAccessLost)return;
-    const state=store.getState(),tasks=assignmentCandidates(filteredTasks(state));
+    const state=store.getState(),tasks=assignmentCandidates(reviewGroup
+      ?schedule.reviewAssignmentTasks(state,eventReviewScope(),reviewGroup):filteredTasks(state));
     if(!tasks.length){toast('No open tasks in this view can be assigned together. Review completed or reported work separately.');return;}
     const people=state.members.filter(person=>person.active!==false&&(!window.GatherMode||window.GatherMode.demo||!person.role?.includes('· example')));
-    openDialog('Assign tasks to a teammate',`<p>Choose tasks from the current filtered view, up to 100 at a time, then choose one owner. Nothing is selected for you. Repeat for another teammate.</p><p class="notice">Only open work without a completion report is included. Reassignment clears the previous owner’s acceptance, Next up commitment and pending plan requests; the new owner must accept responsibility. Task progress, instructions, dates, schedules and prerequisites stay unchanged. No messages are sent.</p><form id="assignTasksForm" data-actor="${h(ui.actor)}"><label class="field">New owner<select name="owner" required>${options([['','Choose a teammate'],...people.map(person=>[person.id,person.name])],'')}</select></label><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="assignTask" value="${h(task.id)}" data-revision="${task.revision}" data-owner="${h(task.owner)}"><span><strong>${h(task.title)}</strong><span>Current owner: ${h(task.owner?member(task.owner).name:'Unassigned')} · ${h(statuses[task.status]||task.status)}</span><span>${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}${task.schedule?' · Activity '+h(task.schedule.start.replace('T',' '))+' · '+h(state.event.timeZone):''}</span><span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="assignmentCount" role="status">0 tasks selected; 0 owner changes.</p><label class="acceptance-item"><input type="checkbox" name="confirmed" required><span>I reviewed these owner changes and the need for renewed acceptance. Tasks already owned by this teammate will stay unchanged.</span></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button id="assignmentSubmit" class="btn btn-primary" type="submit" disabled>Assign selected tasks</button></div></form>`,'',true,'assignment');
+    const title=reviewGroup==='unassigned'?'Assign unowned tasks':reviewGroup==='owner-unavailable'?'Reassign tasks with unavailable owners':'Assign tasks to a teammate';
+    const source=reviewGroup?'this event review section':'the current filtered view';
+    const currentOwner=task=>{
+      if(!task.owner)return 'Unassigned';
+      const person=state.members.find(item=>item.id===task.owner);
+      return person?person.name+(person.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
+    };
+    openDialog(title,`<p>Choose tasks from ${source}, up to 100 at a time, then choose one owner. Nothing is selected for you. Repeat for another teammate.</p><p class="notice">Only open work without a completion report is included. Reassignment clears the previous owner’s acceptance, Next up commitment and pending plan requests; the new owner must accept responsibility. Task progress, instructions, dates, schedules and prerequisites stay unchanged. No messages are sent.</p><form id="assignTasksForm" data-actor="${h(ui.actor)}"${reviewGroup?' data-return-to="event-review"':''}><label class="field">New owner<select name="owner" required>${options([['','Choose a teammate'],...people.map(person=>[person.id,person.name])],'')}</select></label><div data-owner-load></div><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="assignTask" value="${h(task.id)}" data-revision="${task.revision}" data-owner="${h(task.owner)}"><span><strong>${h(task.title)}</strong><span>Current owner: ${h(currentOwner(task))} · ${h(statuses[task.status]||task.status)}</span><span>${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}${task.schedule?' · Activity '+h(task.schedule.start.replace('T',' '))+' · '+h(state.event.timeZone):''}</span><span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="assignmentCount" role="status">0 tasks selected; 0 owner changes.</p><label class="acceptance-item"><input type="checkbox" name="confirmed" required><span>I reviewed these owner changes and the need for renewed acceptance. Tasks already owned by this teammate will stay unchanged.</span></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${reviewGroup?'before-event-review':'close-dialog'}">${reviewGroup?'Back to event review':'Cancel'}</button><button id="assignmentSubmit" class="btn btn-primary" type="submit" disabled>Assign selected tasks</button></div></form>`,'',true,'assignment');
   }
   function syncAssignmentSelection(form) {
     const selected=$$('input[name="assignTask"]:checked',form),owner=$('select[name="owner"]',form).value;
@@ -392,10 +400,12 @@
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
+  function eventReviewScope() {
+    return {mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
+  }
   function beforeEventReview() {
     if(window.GatherAccessLost)return;
-    const scope={mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
-    openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),scope,isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
+    openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),eventReviewScope(),isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
     requestAnimationFrame(()=>{
       if(ui.dialogKind!=='before-event-review')return;
       const title=$('#dialogTitle');
@@ -669,7 +679,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -738,6 +748,7 @@
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Responsibility accepted.');}
       if(action==='review-acceptance'&&!window.GatherAccessLost)acceptanceDialog();
       if(action==='review-assignments')assignmentDialog();
+      if(action==='review-event-assignments'&&ui.dialogKind==='before-event-review'&&['unassigned','owner-unavailable'].includes(id))assignmentDialog(id);
       if(action==='assignment-select'){
         const form=$('#assignTasksForm');
         if(form){$$('input[name="assignTask"]',form).forEach(input=>input.checked=id==='all');syncAssignmentSelection(form);}
@@ -818,7 +829,9 @@
         if(!isOrganizer()||window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task assignment.');
         if(data.confirmed!=='on')throw new Error('Confirm that you reviewed the owner changes.');
         const result=store.assignTasks({owner:data.owner,tasks:data.tasks},ui.actor);
-        closeDialog();render();toast(`${result.changedTaskCount} ${result.changedTaskCount===1?'task assigned':'tasks assigned'}. New owners still need to accept; progress is unchanged.`);
+        if(form.dataset.returnTo==='event-review'){render();beforeEventReview();}
+        else{closeDialog();render();}
+        toast(`${result.changedTaskCount} ${result.changedTaskCount===1?'task assigned':'tasks assigned'}. New owners still need to accept; progress is unchanged.`);
       }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
