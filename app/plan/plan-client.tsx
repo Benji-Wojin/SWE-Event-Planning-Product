@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection, selectNewPlanItems } from '@/lib/plan-selection';
+import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import {AskWeftPanel} from './ask-weft-panel';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
@@ -66,7 +67,12 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const pending = useRef(false),
     request = useRef<any>(null),
     starterRequest = useRef<any>(null),
-    errorBox = useRef<HTMLParagraphElement>(null);
+    checklistRequest = useRef<{key:string;requestId:string}|null>(null),
+    focusImportNotice = useRef(false),
+    errorBox = useRef<HTMLParagraphElement>(null),
+    noticeBox = useRef<HTMLParagraphElement>(null);
+  const [checklist,setChecklist]=useState('');
+  const checklistTooLong=checklist.length>pastedChecklistLimit;
   const [chatDirty,setChatDirty]=useState(false);
   const [chatSeed,setChatSeed]=useState('');
   const [taskContext,setTaskContext]=useState<TaskBreakdownContext|null>(null);
@@ -76,7 +82,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const [researchBusy,setResearchBusy]=useState(false);
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
-  const dirty = draftDirty || chatDirty;
+  const dirty = draftDirty || chatDirty || !!checklist.trim();
   useEffect(() => {
     if (!embedded) return;
     window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || researchBusy || data?.status === 'generating'}, window.location.origin);
@@ -131,6 +137,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const missingDependencies = missing.length > 0;
   const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
   function accept(result: any, restoreActivityPreference = true) {
+    checklistRequest.current=null;
     setChatStartingNew(false);
     setData(result);
     setBrief(result.brief);
@@ -159,6 +166,8 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         setInitial('');
         request.current = null;
         starterRequest.current = null;
+        checklistRequest.current=null;
+        setChecklist('');
       }
       setError(
         e instanceof Error
@@ -178,6 +187,8 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     });
   }
   useEffect(() => {
+    setChecklist('');
+    checklistRequest.current=null;
     void reload();
   }, [query]);
   useEffect(() => {
@@ -192,6 +203,11 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   useEffect(() => {
     if (error) errorBox.current?.focus();
   }, [error]);
+  useEffect(()=>{
+    if(!notice||!focusImportNotice.current)return;
+    focusImportNotice.current=false;
+    noticeBox.current?.focus();
+  },[notice]);
   // Recover a running request after refresh; polling only reads, never generates another plan.
   useEffect(() => {
     if (!waiting || busy || error) return;
@@ -250,6 +266,40 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     starterRequest.current = null;
     return result;
   }
+  async function importChecklist() {
+    if(locked||applied||data.contextChanged||items.length>=24||checklistTooLong||!checklist.trim())return;
+    await run(async()=>{
+      const input={
+        action:'import-checklist',revision:data.revision,workspaceRevision:data.workspaceRevision,
+        generation:data.draft?.generation??null,items,text:checklist,
+        brief:{...brief,description:brief.description.trim()||data.event.name||names[brief.kind]},
+      };
+      const key=JSON.stringify(input);
+      if(checklistRequest.current?.key!==key)checklistRequest.current={key,requestId:crypto.randomUUID()};
+      const result=await api(query,{...input,requestId:checklistRequest.current.requestId});
+      const {added,skipped}=result.checklistImportResult;
+      if(added){
+        accept(result);
+        setChecklist('');
+        request.current=null;
+        starterRequest.current=null;
+      }
+      focusImportNotice.current=true;
+      setNotice((added?`${added} ${added===1?'task added':'tasks added'} unchecked to your private draft.`:'Nothing was added to your draft.')+
+        (skipped?` ${skipped} matching ${skipped===1?'line was':'lines were'} skipped.`:'')+
+        (added?' Select what you want to share in Review proposed items. No AI was used.':' Edit the pasted text to try again.'));
+    });
+  }
+  async function recheckPasted() {
+    await run(async()=>{
+      const current=await api(query);
+      if(current.revision!==data.revision||current.draft?.source!=='pasted')
+        throw new Error('The saved draft changed. Reload it before rechecking. Your local edits have not been replaced.');
+      accept(await api(query,{action:'recheck-pasted',revision:current.revision,
+        workspaceRevision:current.workspaceRevision,generation:current.draft.generation,brief,items}));
+      setNotice('Draft kept and checked against the current project. Review any matching tasks or dates before adding items.');
+    });
+  }
   async function useStarter() {
     if (!starterRequest.current && data.draft && !window.confirm('Replace the saved private draft with a starter checklist? Your existing shared tasks will not change.')) return;
     await run(async () => {
@@ -307,7 +357,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       starterRequest.current = null;
       setNotice(
         result.contextChanged
-          ? result.draft?.source==='starter' ? 'Event details or tasks changed. Choose a fresh starter checklist before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
+          ? result.draft?.source==='starter' ? 'Event details or tasks changed. Choose a fresh starter checklist before adding it.' : result.draft?.source==='pasted' ? 'Event details or tasks changed. Recheck the pasted draft before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
           : 'Project context refreshed. Your draft edits are kept.',
       );
     });
@@ -350,7 +400,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         </Button>
       )}
       {notice && (
-        <p role="status" className="mb-4 text-sm">
+        <p role="status" ref={noticeBox} tabIndex={-1} className="mb-4 text-sm">
           {notice}
         </p>
       )}
@@ -529,6 +579,24 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
         </CardContent>
       </Card>
       </details>}
+      {!applied && !suggestions && !assistant && <details className="mt-4 space-y-3 rounded-lg border p-4">
+        <summary className="flex min-h-11 cursor-pointer items-center gap-2 font-medium">
+          <span aria-hidden="true">+</span> Paste a checklist
+        </summary>
+        <div className="space-y-2 text-sm">
+          <Label htmlFor="plan-pasted-checklist">Task titles, one per line</Label>
+          <p id="plan-pasted-checklist-help" className="text-muted-foreground">Paste up to 24 task titles. Bullets, numbers and checkboxes are removed. New items start unchecked, without dates or owners. Import saves to your private draft without AI or shared changes.</p>
+          <Textarea id="plan-pasted-checklist" rows={5} value={checklist} disabled={locked}
+            aria-invalid={checklistTooLong||undefined} aria-describedby={'plan-pasted-checklist-help'+(checklistTooLong?' plan-pasted-checklist-length':'')}
+            onChange={event=>setChecklist(event.target.value)} />
+          {checklistTooLong && <p id="plan-pasted-checklist-length" role="status">Shorten the text to 6,000 characters or fewer. Nothing has been imported.</p>}
+          <Button type="button" variant="outline" className="min-h-11"
+            disabled={locked||!!data.contextChanged||items.length>=24||checklistTooLong||!checklist.trim()}
+            onClick={()=>void importChecklist()}>Import for review</Button>
+          {data.contextChanged ? <p>Review the current project context before importing.</p> :
+            items.length>=24 ? <p>This draft already has 24 items.</p> : null}
+        </div>
+      </details>}
       {waiting && (
         <p role="status" className="my-4 text-sm">
           Generating a private draft. You can return later; nothing is added
@@ -538,6 +606,13 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
       {data.draft && !(assistant && (chatStartingNew || data.draft.work)) && (
         <section className="mt-8 space-y-4" aria-label="Review draft">
           {data.draft.source==='starter' && <p className="rounded-lg border p-4 text-sm">Product-authored starter checklist · No AI used. Not tailored to your brief; review every item, date and owner before adding it.</p>}
+          {data.draft.source==='pasted' && <p className="rounded-lg border p-4 text-sm">Pasted checklist · No AI used. Review the titles and select only the tasks you want to share.</p>}
+          {!applied && data.draft.source==='pasted' && data.contextChanged && (
+            <div className="space-y-2 rounded-lg border p-4 text-sm">
+              <p>The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
+              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckPasted()}>Recheck pasted draft</Button>
+            </div>
+          )}
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
@@ -1000,7 +1075,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
             <div className="rounded-lg border p-5 space-y-3">
               {data.contextChanged && (
                 <p role="status" className="text-sm">
-                  Project details or tasks changed. {data.draft.source==='starter' ? 'Choose a fresh starter checklist' : 'Generate a new draft'} before adding it.
+                  Project details or tasks changed. {data.draft.source==='starter' ? 'Choose a fresh starter checklist' : data.draft.source==='pasted' ? 'Recheck your pasted draft' : 'Generate a new draft'} before adding it.
                 </p>
               )}
               {missingDependencies && (
@@ -1074,7 +1149,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
                 'Discard unsaved edits and reload the saved draft?',
               )
             )
-              void reload();
+              {setChecklist('');void reload();}
           }}
           className="text-primary underline disabled:opacity-50"
         >

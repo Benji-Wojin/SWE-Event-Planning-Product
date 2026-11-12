@@ -172,6 +172,11 @@ export async function eventPlanTests({
     generation: snap.draft?.generation,
     ...extra,
   });
+  const paste = (snap,text,extra={}) => ({
+    action:'import-checklist',revision:snap.revision,workspaceRevision:snap.workspaceRevision,
+    generation:snap.draft?.generation??null,requestId:crypto.randomUUID(),
+    brief:snap.brief.description?snap.brief:brief,items:snap.draft?.items??[],text,...extra,
+  });
   async function ready(project) {
     const response = await post(project, generation(await read(project)));
     assert.equal(response.status, 200, await response.clone().text());
@@ -1396,6 +1401,95 @@ export async function eventPlanTests({
     );
     // Explicit opt-in only: fixture identity + in-memory SQLite, never live user
     // data. The key is supplied out-of-band and is never written or logged here.
+    await t.test('a pasted checklist starts a private plan and only adds selected tasks on approval',async(test)=>{
+      const project=await setup();
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      await change(project,'addTask',[{title:'Confirm venue access'}]);
+      const before=await read(project);
+      const input=paste(before,'- [x] Confirm venue access\r\n1. Recruit volunteers\r\n• Prepare signage\n- [ ] recruit VOLUNTEERS\n\n☑');
+      const duplicateOnly=await post(project,paste(before,'Confirm venue access'));
+      assert.deepEqual((await duplicateOnly.json()).checklistImportResult,{added:0,skipped:1});
+      assert.equal(row(project),undefined);
+      assert.equal((await post(project+'&mode=suggestions',input)).status,400);
+      const response=await post(project,input);
+      assert.equal(response.status,200,await response.clone().text());
+      const result=await response.json();
+      assert.equal(result.draft.source,'pasted');
+      assert.equal(result.workspaceRevision,before.workspaceRevision);
+      assert.deepEqual(result.checklistImportResult,{added:2,skipped:2});
+      assert.deepEqual(result.draft.items.map(item=>item.title),['Recruit volunteers','Prepare signage']);
+      assert.ok(result.draft.items.every(item=>!item.included&&!item.owner&&!item.dueDate&&!item.start&&!item.end&&!item.dependsOn.length));
+      assert.equal(result.draft.lastChecklistImport,undefined);
+      assert.ok(!JSON.stringify(row(project)).includes('Recruit volunteers'));
+      assert.equal((await read(project)).checklistImportResult,undefined);
+      assert.deepEqual(await (await post(project,input)).json(),result);
+      assert.equal((await post(project,{...input,text:'Other task'})).status,409);
+      assert.equal((await post(project,approval(result))).status,400);
+      const picked=result.draft.items.map((item,i)=>({...item,included:i===0}));
+      assert.equal((await post(project,approval(result,{items:picked}))).status,200);
+      const shared=(await (await realRead(project)).json()).state.tasks;
+      assert.deepEqual(shared.map(item=>item.title).sort(),['Confirm venue access','Recruit volunteers']);
+      assert.notEqual(shared.find(item=>item.title==='Recruit volunteers').status,'done');
+      assert.equal(calls.length,0);
+    });
+    await t.test('pasting keeps reviewed edits and rejects stale, invalid or oversized imports atomically',async(test)=>{
+      const project=await setup();
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const snap=await ready(project), previous=row(project);
+      const edited=structuredClone(snap.draft.items);
+      edited[0].title='Confirm edited venue wording';
+      edited[0].included=false;
+      const input=paste(snap,'Confirm edited venue wording\n2) Request the accessibility map',{items:edited});
+      for(const bad of ['- [x]', 'x'.repeat(181), 'x'.repeat(6001), 'invalid\u0000text',
+        Array.from({length:25},(_,i)=>'Line '+i).join('\n'),
+        Array.from({length:24},(_,i)=>'Line '+i).join('\n')]){
+        assert.equal((await post(project,{...input,text:bad})).status,400);
+      }
+      assert.deepEqual(row(project),previous);
+      const [first,second]=await Promise.all([post(project,input),post(project,input)]);
+      assert.equal(first.status,200,await first.clone().text());
+      assert.equal(second.status,200,await second.clone().text());
+      const result=await first.json();
+      assert.deepEqual(await second.json(),result);
+      assert.equal(result.revision,snap.revision+1);
+      assert.deepEqual(result.draft.items.slice(0,edited.length),edited);
+      assert.deepEqual(result.checklistImportResult,{added:1,skipped:1});
+      assert.equal(result.draft.items.at(-1).title,'Request the accessibility map');
+      assert.equal(result.workspaceRevision,snap.workspaceRevision);
+      assert.equal(result.draft.generation,snap.draft.generation);
+      for(const field of ['started_at','request_id','request_hash','lease_until'])assert.equal(row(project)[field],previous[field]);
+      assert.equal(calls.length,1);
+      const next=paste(result,'Prepare volunteer badges');
+      await change(project,'addTask',[{title:'New shared task'}]);
+      assert.equal((await post(project,next)).status,409);
+      assert.equal((await post(project,{...next,workspaceRevision:(await read(project)).workspaceRevision})).status,409);
+      assert.equal((await read(project)).draft.items.length,edited.length+1);
+    });
+
+    await t.test('rechecking a pasted draft preserves edits and makes new exact matches visible before approval',async(test)=>{
+      const project=await setup();
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const created=await post(project,paste(await read(project),'Schedule volunteer briefing\nPrint welcome signs'));
+      assert.equal(created.status,200,await created.clone().text());
+      await change(project,'addTask',[{title:'Print welcome signs'}]);
+      const latest=await read(project);
+      assert.equal(latest.contextChanged,true);
+      const items=latest.draft.items.map((item,index)=>({...item,included:true,note:index===0?'Confirm the backup lead.':''}));
+      const input={action:'recheck-pasted',revision:latest.revision,workspaceRevision:latest.workspaceRevision,
+        generation:latest.draft.generation,brief:latest.brief,items};
+      const savedBefore=row(project);
+      assert.equal((await post(project,{...input,workspaceRevision:latest.workspaceRevision-1})).status,409);
+      assert.deepEqual(row(project),savedBefore);
+      const reviewed=await post(project,input);assert.equal(reviewed.status,200,await reviewed.clone().text());
+      const result=await reviewed.json();
+      assert.equal(result.contextChanged,false);
+      assert.deepEqual(result.draft.items,items);
+      assert.deepEqual(result.existingTasks.map(item=>item.title),['Print welcome signs']);
+      assert.equal((await post(project,approval(result))).status,400,'review cannot bypass exact duplicates');
+      assert.equal((await post(project,approval(result,{items:items.map((item,index)=>({...item,included:index===0}))}))).status,200);
+      assert.equal(calls.length,0);
+    });
+
     if (process.env.WEFT_LIVE_PLAN_TEST === '1') {
       await t.test('LIVE Groq fictional draft is validated, saved, reloaded and applied in isolated SQLite', async () => {
         assert.ok(process.env.GROQ_API_KEY, 'Live smoke requires an explicitly supplied Groq key');

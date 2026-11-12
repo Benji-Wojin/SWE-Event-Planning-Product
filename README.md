@@ -119,6 +119,8 @@ Choose a date in Timeline or jump to the first, previous or next activity day. T
 
 Use **Copy day link** to share the live project date with a teammate. It does not grant access or send a message, and it does not copy your personal activity filter.
 
+In the private plan, **Paste a checklist** imports one title per line without calling AI. Imported tasks start unchecked and unassigned. If the shared plan changes, recheck a pasted draft without losing edits before adding anything.
+
 Organizers can use **Draft guest agenda** to turn selected activities into plain text for guests. Review the guest-facing titles and add any locations you want to share. Owners, internal notes, and saved locations are not included. The draft is not saved or sent; copying checks that the schedule is still current.
 
 Run sheets label an inactive assigned person as **Inactive teammate** and a missing assigned member as **Assigned owner unavailable**, rather than calling either unassigned. A scoped warning calls out unresolved activities with either responsibility gap; completed, verified work keeps its historical owner label without an open-work warning. Confirm responsibility with the organizer. The snapshot does not reassign work or expose member identifiers or contact details.

@@ -12,11 +12,12 @@ import { projectUser, projectWriteAccess, accessArgs, type ProjectUser } from '.
 import {generateTaskProposal} from './task-assistant';
 import {taskConversation} from './task-conversation';
 import {starterChecklist} from './starter-checklists';
+import {pastedChecklistTitles} from './pasted-checklist';
 import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
 import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
-import { duplicateSuggestions, planSelection } from './plan-selection';
+import { duplicateSuggestions, planSelection, planTaskSignature } from './plan-selection';
 import {
   generateEventPlan,
   planRequestBody,
@@ -156,6 +157,7 @@ async function snapshot(c: Context) {
     data.brief = starting.brief?.description ? starting.brief : {...emptyBrief, description: c.state.event.name};
   }
   await authorized(c);
+  const {lastChecklistImport,...draftView}=data.draft||{};
   return {
     revision: row?.revision || 0,
     workspaceRevision: c.row.revision,
@@ -169,7 +171,7 @@ async function snapshot(c: Context) {
     existingTasks: existingPlanTasks(c),
     configured: !!env.GROQ_API_KEY,
     brief: data.brief,
-    draft: data.draft,
+    draft: data.draft ? draftView : null,
     receipt: data.receipt,
     status:
       row?.status === 'generating' && row.lease_until <= Date.now()
@@ -301,6 +303,107 @@ async function createStarter(c: Context, input: any) {
     throw new HttpError(409, 'Another update saved first. Reload the draft before choosing a checklist.');
   }
   return snapshot(c);
+}
+async function importChecklist(c: Context, input: any) {
+  if (c.purpose !== 'plan' ||
+    !exact(input, ['action','revision','workspaceRevision','generation','requestId','brief','items','text']) ||
+    !uuid(input.requestId) || !(input.generation === null || uuid(input.generation)) ||
+    !Number.isSafeInteger(input.revision) || input.revision < 0)
+    throw new HttpError(400,'Review the pasted checklist request.');
+
+  const row = await read(c.id), data = await decode(row), draft = data.draft;
+  const retrying = draft?.lastChecklistImport?.requestId === input.requestId;
+  if (data.receipt || (!retrying && (draft?.generation ?? null) !== input.generation) ||
+    row?.lease_until > Date.now() || c.row.revision !== input.workspaceRevision ||
+    draft && draft.contextHash !== c.contextHash)
+    throw new HttpError(409,'The project or draft changed. Refresh and review it before importing.');
+
+  let titles: string[], brief: ReturnType<typeof parseBrief>;
+  try {
+    titles = pastedChecklistTitles(input.text);
+    brief = parseBrief(input.brief, c.state.event.date);
+  } catch (error) { throw new HttpError(400,(error as Error).message); }
+  const fingerprint = await hash([input.revision,input.workspaceRevision,input.generation,brief,input.items,titles]);
+  const replay = (latestRow: any, latestData: any) => {
+    const saved = latestData.draft?.lastChecklistImport;
+    if (latestData.receipt || saved?.requestId !== input.requestId) return null;
+    if (saved.fingerprint !== fingerprint || latestRow.revision !== input.revision + 1)
+      throw new HttpError(409,'This import request was already used. Reload the draft before trying again.');
+    return {added:saved.added, skipped:saved.skipped};
+  };
+  const previous = replay(row,data);
+  if (previous) return previous;
+  if ((row?.revision ?? 0) !== input.revision)
+    throw new HttpError(409,'The draft changed. Reload it before importing.');
+  let items: ReviewedItem[] = [];
+  try {
+    if (draft) items = reviewedItems(input.items,draft);
+    else if (!Array.isArray(input.items) || input.items.length)
+      throw new Error('Start with a checklist or reload your existing draft.');
+  } catch (error) { throw new HttpError(400,(error as Error).message); }
+  const key = (title: string) => {
+    const normalized = planTaskSignature({title,start:''});
+    return normalized === '|' ? '|' + title.trim() : normalized;
+  };
+  const known = new Set([...items,...existingPlanTasks(c)].map(item=>key(item.title)));
+  const additions: ReviewedItem[] = [];
+  for (const title of titles) {
+    const signature = key(title);
+    if (known.has(signature)) continue;
+    known.add(signature);
+    additions.push({
+      id:crypto.randomUUID(), title, category:'Program', kind:'preparation',
+      owner:'', included:false, note:'', scope:'', dueDate:'', start:'', end:'', location:'', dependsOn:[],
+    });
+  }
+  const outcome = {added:additions.length, skipped:titles.length-additions.length};
+  if (!outcome.added) return outcome; // No draft or unsaved edit is changed.
+  if (items.length + additions.length > 24)
+    throw new HttpError(400,`This draft can fit ${24-items.length} more tasks. Paste fewer new lines; nothing was imported.`);
+
+  const generation = draft?.generation ?? input.requestId;
+  const payload = await seal({brief,receipt:null,draft:{
+    ...(draft ?? {source:'pasted',brief,generation,contextHash:c.contextHash,
+      generatedAt:new Date().toISOString(),questions:[],assumptions:[]}),
+    items:[...items,...additions],
+    lastChecklistImport:{requestId:input.requestId,fingerprint,...outcome},
+  }},'event-plan:'+c.id);
+  // Private draft only. Preserve AI request history and cooldown; pin both
+  // revisions and authorization in the same write that imports the titles.
+  const saved = await env.DB.prepare(`INSERT INTO plan_drafts (id,owner_id,workspace_id,payload,draft_generation,status)
+    SELECT ?,?,?,?,?,'ready' WHERE ${c.ownerSql} AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?)
+    AND (?=0 OR EXISTS (SELECT 1 FROM plan_drafts WHERE id=?))
+    ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,draft_generation=excluded.draft_generation,
+    status='ready',issue='',lease='',lease_until=0,revision=revision+1
+    WHERE plan_drafts.revision=? AND plan_drafts.draft_generation=? AND plan_drafts.status!='applied' AND plan_drafts.lease_until<=?`)
+    .bind(c.id,c.user.userId,c.projectId,payload,generation,...c.ownerArgs,c.projectId,c.row.revision,input.revision,c.id,
+      input.revision,input.generation ?? '',Date.now()).run();
+  if (saved.meta.changes === 1) return outcome;
+  await authorized(c);
+  const latest = await read(c.id), retried = replay(latest,await decode(latest));
+  if (retried) return retried;
+  throw new HttpError(409,'Another update saved first. Reload the draft before importing.');
+}
+async function recheckPasted(c: Context, input: any) {
+  if (c.purpose!=='plan' || !exact(input,['action','revision','workspaceRevision','generation','brief','items']))
+    throw new HttpError(400,'Review the pasted draft request.');
+  const row=await read(c.id), data=await decode(row), draft=data.draft;
+  if(!row||!draft||draft.source!=='pasted'||data.receipt||draft.generation!==input.generation||
+    row.revision!==input.revision||row.lease_until>Date.now()||c.row.revision!==input.workspaceRevision)
+    throw new HttpError(409,'The project or draft changed. Reload before rechecking.');
+  try{
+    data.brief=parseBrief(input.brief,c.state.event.date);
+    draft.brief=data.brief;
+    draft.items=reviewedItems(input.items,draft);
+  }catch(error){throw new HttpError(400,(error as Error).message);}
+  draft.contextHash=c.contextHash;
+  delete draft.lastChecklistImport;
+  const payload=await seal(data,'event-plan:'+c.id);
+  const saved=await env.DB.prepare(`UPDATE plan_drafts SET payload=?,revision=revision+1,status='ready',issue='',lease='',lease_until=0
+    WHERE id=? AND revision=? AND draft_generation=? AND status!='applied' AND lease_until<=? AND ${c.ownerSql}
+    AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?)`)
+    .bind(payload,c.id,row.revision,draft.generation,Date.now(),...c.ownerArgs,c.projectId,c.row.revision).run();
+  if(saved.meta.changes!==1)throw new HttpError(409,'The project or draft changed. Reload before rechecking.');
 }
 async function generate(c: Context, input: any) {
   if (
@@ -687,6 +790,14 @@ export async function writeEventPlan(request: Request, input: any) {
   await authorized(c);
   if (input.action === 'save') return saveDraft(c, input);
   if (input.action === 'starter') return createStarter(c, input);
+  if (input.action === 'import-checklist') {
+    const checklistImportResult=await importChecklist(c,input);
+    return {...await snapshot(await loadContext(request)),checklistImportResult};
+  }
+  if (input.action === 'recheck-pasted') {
+    await recheckPasted(c,input);
+    return snapshot(await loadContext(request));
+  }
   if (input.action === 'generate') return generate(c, input);
   if (input.action === 'apply') {
     await applyDraft(c, input);

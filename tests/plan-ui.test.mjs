@@ -293,6 +293,37 @@ test('starter checklist is available with an empty brief and no AI configuration
   }finally{active.dispose();}
 });
 
+test('pasted text and pending edits survive a lost response and retry without changing selection',async()=>{
+  const pasted={...item,id:'pasted-signage',title:'Prepare signage',note:'',included:false};
+  let loseResponse=true;
+  const app=harness(context=>{
+    if(context.input?.action!=='import-checklist')return;
+    if(loseResponse){
+      context.value={...context.saved,revision:3,
+        draft:{...context.saved.draft,items:[...context.input.items,pasted]},
+        checklistImportResult:{added:1,skipped:1}};
+      loseResponse=false;
+      throw new Error('Response lost');
+    }
+  });
+  try{
+    await app.start();
+    await app.edit('title-one','Keep the revised programme');
+    const input='- Keep the revised programme\n- [x] Prepare signage';
+    await app.edit('plan-pasted-checklist',input);
+    await app.click('Import for review');
+    assert.equal(app.find('plan-pasted-checklist').props.value,input);
+    assert.equal(app.find('title-one').props.value,'Keep the revised programme');
+    await app.click('Import for review');
+    assert.deepEqual(app.requests.map(x=>x.action),['get','import-checklist','import-checklist']);
+    assert.deepEqual(app.requests[1],app.requests[2]);
+    assert.equal(app.find('plan-pasted-checklist').props.value,'');
+    assert.equal(app.find('include-one').props.checked,true);
+    assert.equal(app.find('include-'+pasted.id).props.checked,false);
+    assert.match(text(app.tree),/1 matching line was skipped/);
+  }finally{app.dispose();}
+});
+
 test('starter replacement saves edited work and retries the same request after an uncertain response',async()=>{
   let first=true,body;
   const active=harness(context=>{
