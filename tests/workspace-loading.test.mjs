@@ -113,6 +113,20 @@ test('sign-in retry keeps one valid day but never includes it in workspace API r
   }
 });
 
+test('a snapshot confirmation is a read-only check and never replaces the displayed workspace',async()=>{
+  let checks=0;
+  const fixture=start({ok:true,status:200,json:async()=>({...state,revision:++checks>2?2:1})});
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore();
+  assert.equal(store.getSnapshotRevision(),1);
+  assert.equal(await store.confirmSnapshotRevision(0),false);
+  assert.equal(checks,1);
+  assert.equal(await store.confirmSnapshotRevision(1),true);
+  assert.equal(await store.confirmSnapshotRevision(1),false);
+  assert.equal(store.getSnapshotRevision(),1);
+  assert.deepEqual(fixture.requests,Array(3).fill('/api/workspace?project=new-project'));
+});
+
 test('invite label matches hosted navigation while demo remains explicitly simulated', async () => {
   const hosted = start(Promise.resolve(success(state)));await hosted.run;
   assert.equal(hosted.inviteLabel.textContent, 'Invite people');

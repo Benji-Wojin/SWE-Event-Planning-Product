@@ -347,7 +347,7 @@
   }
   function timelineView(s) {
     const scheduled=ui.timelineMode!=='deadlines';
-    const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
+    const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?(s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="draft-guest-agenda">Draft guest agenda</button>':'')+'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
     const heading=pageHeading('','Timeline','','<button class="btn btn-secondary" data-action="before-event-review">Before the event</button>'+controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
     if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate,shareDay:!!window.GatherMode&&!window.GatherMode.demo});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
@@ -430,6 +430,7 @@
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='') {
+    if(kind!=='guest-agenda')ui.guestAgenda=null;
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
@@ -451,6 +452,7 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
+    ui.guestAgenda=null;
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
@@ -469,6 +471,7 @@
   }
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
+    if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){ui.guestAgenda.stale=true;updateGuestAgendaWarning();return;}
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
@@ -606,6 +609,91 @@
   function digestText(s) {
     return `${s.event.name} — ${new Date().toLocaleDateString()}\n\nCOMPLETED\n${completed(s).map(t=>`• ${t.title} — ${completionText(t)} (${timeLabel(t.completedAt)})`).join('\n')||'No completed tasks yet.'}\n\nNEEDS ATTENTION\n${attention(s).map(t=>`• ${t.title} — ${member(t.owner).name}; ${reason(t).label}. ${t.note||''}`).join('\n')||'No outstanding attention items.'}\n\nEMAIL TO REVIEW\n${pending(s).map(m=>`• ${m.subject} — ${m.sender}`).join('\n')||'All messages reviewed.'}`;
   }
+  function updateGuestAgendaWarning() {
+    if(ui.dialogKind!=='guest-agenda'||!ui.guestAgenda)return false;
+    const draft=ui.guestAgenda, sync=$('#workspaceSyncNotice');
+    const stale=draft.stale||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
+    const offline=window.navigator?.onLine===false;
+    const message=window.GatherAccessLost||!isOrganizer()?'Project access changed. This agenda cannot be copied.':
+      stale?'The shared plan changed. Close this draft and open a new agenda from the current schedule.':
+      offline?'Couldn’t check the shared plan. Reconnect before copying the agenda.':'';
+    const notice=$('#guestAgendaWarning');
+    if(notice){if(notice.textContent!==message)notice.textContent=message;notice.hidden=!message;}
+    const preview=$('#guestAgendaText');
+    const text=message?'':draft.text;
+    if(preview&&preview.value!==text)preview.value=text;
+    $('[data-action="copy-guest-agenda"]')?.setAttribute('aria-disabled',String(!!message||!draft.text||draft.copying));
+    return !!message;
+  }
+  function guestAgendaDialog() {
+    if(!isOrganizer()||window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
+    const state=store.getState(), scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate};
+    const snapshot=GatherScheduleUI.guestAgendaSnapshot(state,scope);
+    const {activities,timeZone}=snapshot;
+    if(!activities.length){toast('No scheduled activities in this view. Choose a different day or activity filter.');return;}
+    if(activities.length>80){toast('Choose a day or My activities to review at most 80 activities at a time.');return;}
+    if(!GatherScheduleUI.momentKey(Date.now(),timeZone)){toast('Set the event time zone in Project settings before drafting an agenda.');return;}
+    ui.guestAgenda={snapshot,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false};
+    openDialog('Draft guest agenda',schedule.guestAgendaForm(snapshot,state.event.name),
+      '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="copy-guest-agenda" aria-disabled="true">Copy guest agenda</button>',true,'guest-agenda');
+    updateGuestAgendaWarning();
+  }
+  function syncGuestAgenda(form) {
+    const draft=ui.guestAgenda;
+    if(!draft||ui.dialogKind!=='guest-agenda')return;
+    const field=name=>form.elements.namedItem(name);
+    const choices=draft.snapshot.activities.map((_,index)=>{
+      const included=field('include-'+index)?.checked===true;
+      const fields=form.querySelector('[data-agenda-fields="'+index+'"]');
+      if(fields)fields.hidden=!included;
+      return {included,title:field('title-'+index)?.value,location:field('location-'+index)?.value};
+    });
+    draft.text=GatherScheduleUI.guestAgenda(draft.snapshot,field('agendaTitle')?.value,choices);
+    const status=$('#guestAgendaSelectionStatus'), count=choices.filter(choice=>choice.included).length;
+    if(status){
+      const text=!count?'Select at least one activity.':draft.text?count+' '+(count===1?'activity':'activities')+' in the preview.':'Enter an agenda title and a guest-facing title for each selected activity.';
+      if(status.textContent!==text)status.textContent=text;
+    }
+    updateGuestAgendaWarning();
+  }
+  async function copyGuestAgenda() {
+    const draft=ui.guestAgenda, form=$('#guestAgendaForm'), preview=$('#guestAgendaText');
+    if(!draft||!form||!preview||draft.copying||ui.dialogKind!=='guest-agenda'||!isOrganizer()||window.GatherAccessLost)return;
+    const shown=preview.value;
+    syncGuestAgenda(form);
+    if(updateGuestAgendaWarning()){toast('This agenda is not current. Check the warning before copying.');return;}
+    if(!draft.text){toast('Select an activity and review the agenda preview before copying.');return;}
+    if(shown!==draft.text){toast('The preview changed. Review it before copying again.');return;}
+    const text=draft.text;
+    draft.copying=true;updateGuestAgendaWarning();
+    try {
+      // Confirm against an authenticated workspace read, without applying a newer snapshot over this form.
+      if(store.confirmSnapshotRevision){
+        let current;
+        try{current=await store.confirmSnapshotRevision(draft.revision);}
+        catch{
+          if(ui.guestAgenda===draft&&!window.GatherAccessLost)toast('Could not confirm the latest schedule. Reconnect or try again before copying.');
+          return;
+        }
+        if(ui.guestAgenda!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
+        if(!current)draft.stale=true;
+        if(updateGuestAgendaWarning()){toast('This agenda is not current. Check the warning before copying.');return;}
+        if(draft.text!==text){toast('The preview changed. Review it before copying again.');return;}
+      }
+      const copied=await copyText(text);
+      if(ui.guestAgenda!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
+      const stale=updateGuestAgendaWarning();
+      if(stale||draft.text!==text){
+        if(copied)toast(stale?'An older agenda was copied. Don’t share it; open a new draft from the current schedule.':
+          'An older agenda was copied. Review the current preview and copy it again before sharing.');
+        else toast(stale?'The agenda is no longer current. Open a new draft before copying.':'The preview changed. Review it before copying again.');
+      }else if(copied)toast('Guest agenda copied. Nothing was sent.');
+      else {preview.focus();preview.select();toast('Copy the selected preview manually. Nothing was sent.');}
+    } finally {
+      draft.copying=false;
+      if(ui.guestAgenda===draft)updateGuestAgendaWarning();
+    }
+  }
   function digestDialog() {
     const s=store.getState();
     const section=(title,items)=>`<section class="digest-section"><h3>${title}</h3>${items||'<p class="muted">Nothing here right now.</p>'}</section>`;
@@ -734,7 +822,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -765,6 +853,8 @@
         }
       }
       if(action==='clear-schedule-date'&&!window.GatherAccessLost){ui.scheduleDate='';navigation.replaceScheduleDate('');render();($('#scheduleDate')||$('[data-action="timeline-mode"][data-id="schedule"]'))?.focus();}
+      if(action==='draft-guest-agenda')guestAgendaDialog();
+      if(action==='copy-guest-agenda')await copyGuestAgenda();
       if(action==='copy-schedule-day'&&!window.GatherAccessLost&&window.GatherMode&&!window.GatherMode.demo){
         const link=GatherNavigation.scheduleLink(location.origin,window.GatherMode.projectId,ui.scheduleDate);
         if(link){
@@ -895,6 +985,7 @@
     const form=event.target;
     if(!form.id)return;
     event.preventDefault();
+    if(form.id==='guestAgendaForm')return;
     if(ui.pendingSave||form.dataset.saving==='true')return;
     if(form.id==='scheduleDateForm'){
       const input=form.elements.namedItem('scheduleDate');
@@ -1014,6 +1105,7 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
+    if(el.closest('#guestAgendaForm'))syncGuestAgenda(el.closest('#guestAgendaForm'));
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
     if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'));
     if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
@@ -1045,6 +1137,7 @@
     if(ui.taskView==='map')$('#taskMap').innerHTML=GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members);
   }
   document.addEventListener('input',event=>{
+    if(event.target.closest('#guestAgendaForm'))syncGuestAgenda(event.target.closest('#guestAgendaForm'));
     if(event.target.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(event.target.id==='taskSearch'){
       ui.search=event.target.value;

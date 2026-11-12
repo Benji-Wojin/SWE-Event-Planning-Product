@@ -161,6 +161,15 @@
       getTimeZone: () => snapshot.state.event.timeZone || 'UTC',
       getSuggestions: () => structuredClone(snapshot.suggestions),
       exportState: () => JSON.stringify(snapshot.exportState, null, 2),
+      getSnapshotRevision: () => snapshot.revision,
+      confirmSnapshotRevision: async expected => {
+        await queue;
+        if(snapshot.revision!==expected)return false;
+        const generation=mutationGeneration, latest=await request();
+        validateIdentity(latest);
+        if(!Number.isSafeInteger(latest.revision))throw new Error('Weft could not confirm the current plan.');
+        return latest.revision===expected&&snapshot.revision===expected&&generation===mutationGeneration;
+      },
       subscribe: (fn) => {
         listeners.add(fn);
         return () => listeners.delete(fn);

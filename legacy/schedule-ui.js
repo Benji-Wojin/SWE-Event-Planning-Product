@@ -15,6 +15,27 @@
   const onDate = (task,day) => !day||Boolean(task.schedule&&(
     task.schedule.start.startsWith(day)||
     task.schedule.start<day+'T00:00'&&task.schedule.end>day+'T00:00'));
+  function guestAgendaSnapshot(state,scope={}) {
+    const date=selectedDate(scope);
+    return {date,timeZone:state.event.timeZone,
+      activities:ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)))
+        .map(task=>({title:task.title,start:task.schedule.start,end:task.schedule.end}))};
+  }
+  const agendaText = value => typeof value==='string' ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,' ').trim().slice(0,180) : '';
+  const agendaTime = slot => slot.start.replace('T',' ') + (slot.end ? ' – ' +
+    (slot.end.slice(0,10)===slot.start.slice(0,10)?slot.end.slice(11):slot.end.replace('T',' ')) : '');
+  function guestAgenda(snapshot,title,choices) {
+    const heading=agendaText(title);
+    if(!heading)return '';
+    const items=snapshot.activities.flatMap((slot,index)=>{
+      const choice=choices[index];
+      if(!choice?.included)return [];
+      const title=agendaText(choice.title),location=agendaText(choice.location);
+      return title?[agendaTime(slot)+' · '+title+(location?' · '+location:'')]:[null];
+    });
+    if(!items.length||items.some(item=>item===null))return '';
+    return [heading,'Times: '+agendaText(snapshot.timeZone), '', ...items].join('\n');
+  }
   // UTC here is only calendar arithmetic; these strings represent event wall dates.
   function stepDate(day,step) {
     const date=new Date(day+'T12:00:00Z');
@@ -292,7 +313,24 @@
         : '<p class="muted">Add this activity now and set its start time later, after setting the event time zone in Project settings.</p>';
       return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(member=>member.active!==false).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${timing}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
     }
-    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays};
+    function guestAgendaForm(snapshot,title) {
+      return `<p>Choose only the activities guests should see, then review their titles and the preview. Check each title for internal details. Notes, owners, statuses, saved locations, bookings and guest records are not copied. Nothing is saved or sent.</p>
+        <p class="muted">From ${snapshot.date?h(dateLabel(snapshot.date)):'all dates'} in the current activity filter · ${h(snapshot.timeZone)}.</p>
+        <p id="guestAgendaWarning" class="notice" role="status" hidden></p>
+        <form id="guestAgendaForm" class="section-gap">
+          <label class="field">Agenda title<input name="agendaTitle" maxlength="180" value="${h(agendaText(title))}"></label>
+          <div class="acceptance-list">${snapshot.activities.map((slot,index)=>`<div class="section-gap">
+            <label class="acceptance-item"><input type="checkbox" name="include-${index}"><span><strong>${h(slot.title)}</strong><span>${h(agendaTime(slot))}</span></span></label>
+            <fieldset class="form-grid" data-agenda-fields="${index}" hidden><legend class="sr-only">Guest details for ${h(slot.title)}</legend>
+              <label class="field">Guest-facing title<input name="title-${index}" maxlength="180" value="${h(agendaText(slot.title))}"></label>
+              <label class="field">Location to share (optional)<input name="location-${index}" maxlength="180" placeholder="Leave blank to omit"></label>
+            </fieldset>
+          </div>`).join('')}</div>
+        </form>
+        <p class="muted" id="guestAgendaSelectionStatus" role="status">Select at least one activity.</p>
+        <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly></textarea></label>`;
+    }
+    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
