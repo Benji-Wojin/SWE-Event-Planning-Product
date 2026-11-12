@@ -80,7 +80,7 @@ Weft’s sign-in page is `/sign-in`. The legacy `/signin-with-chatgpt` address r
 
 ## Initialize an isolated database
 
-This is an explicit operator action, **not a build hook or request-time migration**. The checked-in migrations run from `0000` through `0011`; the existing `0000`–`0009` migrations are unchanged. The runner applies them transactionally and records names/checksums in `_weft_migrations`. It refuses a nonempty database without that ledger or a changed applied history. Do not delete tables, reset a ledger or edit old migrations to bypass a refusal.
+This is an explicit operator action, **not a build hook or request-time migration**. The checked-in migrations run from `0000` through `0012`; previously applied migrations are unchanged. The runner applies them transactionally and records names/checksums in `_weft_migrations`. It refuses a nonempty database without that ledger or a changed applied history. Do not delete tables, reset a ledger or edit old migrations to bypass a refusal.
 
 First verify the environment and exact database hostname in the provider dashboard. The `--target` argument is the hostname from `TURSO_DATABASE_URL`, **not the website domain**. Replace the fictional hostname below with that observed hostname. The ignored local file must contain only credentials approved for this target; never copy production secrets into a preview file.
 
@@ -88,7 +88,7 @@ First verify the environment and exact database hostname in the provider dashboa
 node --env-file=.env.local scripts/migrate-vercel.mjs --check --target example-db-org.turso.io
 ```
 
-`--check` connects and reads schema/history without applying SQL. On a fresh empty database it should report all twelve pending migrations; a database current through `0009` should report only `0010_onboarding_first_tasks.sql` and `0011_product_activity_daily.sql`. Review the result and obtain approval for the exact database change before running:
+`--check` connects and reads schema/history without applying SQL. On a fresh empty database it should report all thirteen pending migrations; a database current through `0011` should report only `0012_guided_tutorial_events.sql`. Review the result and obtain approval for the exact database change before running:
 
 ```bash
 node --env-file=.env.local scripts/migrate-vercel.mjs --apply --target example-db-org.turso.io
@@ -98,6 +98,8 @@ node --env-file=.env.local scripts/migrate-vercel.mjs --check --target example-d
 The second check should report no pending migrations. Repeat with independently verified Production configuration only when production initialization is approved. A failed or ambiguous run is not evidence of success; recheck history and connectivity, do not blindly clear state and retry. `npm run db:generate` creates schema source changes for development; it is not this deployment's database initialization command.
 
 For the usage analytics release, apply and verify additive migrations `0010` and `0011` before routing traffic to a build that uses the dashboard or writes analytics. This applies separately to each preview and production database. These migrations create empty analytics tables; they do not rewrite or backfill project or task data. A code rollback to a build from before `0010` leaves the tables and migration ledger intact.
+
+For the guided tutorial release, apply and verify `0012_guided_tutorial_events.sql` before exposing that build in each environment. This additive migration creates an empty checkpoint table and index; it does not backfill anyone’s guide history or modify project data. The guide is opt-in, and only the app owner can view the funnel at `/admin/onboarding/funnel`. Verify the guide with a fictional non-app-owner account (app-owner checkpoints are excluded from the dashboard), then verify the same pseudonymous checkpoints in the owner dashboard. Do not use a real invitee or send a test email. Rolling back the app does not require removing the table.
 
 ### Legacy data is a separate migration
 

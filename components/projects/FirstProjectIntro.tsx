@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 
 const firstSteps = [
   {
@@ -15,7 +15,7 @@ const firstSteps = [
   },
 ];
 
-export function FirstProjectIntro({ onCreate }: { onCreate: () => void }) {
+export function FirstProjectIntro({ onCreate, guideHref }: { onCreate: () => void; guideHref?: string }) {
   return (
     <section
       className="first-project-intro"
@@ -43,7 +43,9 @@ export function FirstProjectIntro({ onCreate }: { onCreate: () => void }) {
         ))}
       </ol>
       <div className="first-project-action">
+        {guideHref && <a className={buttonVariants({className:'h-auto min-h-11 px-5 py-2'})} href={guideHref}>Guide me through my first project</a>}
         <Button
+          variant={guideHref ? 'outline' : 'default'}
           className="h-auto min-h-11 max-w-full whitespace-normal px-5 py-2"
           onClick={onCreate}
         >

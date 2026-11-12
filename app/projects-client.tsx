@@ -18,7 +18,7 @@ export function ProjectsClient() {
     finally { if (generation.current === ticket) setLoading(false); }
   }
   useEffect(() => { void load(); const refresh = () => { if (!document.hidden) void load(); }; window.addEventListener('pageshow',refresh); document.addEventListener('visibilitychange',refresh); return () => { generation.current++; window.removeEventListener('pageshow',refresh); document.removeEventListener('visibilitychange',refresh); }; }, []);
-  return <ProjectsHome projects={projects} canCreate={canCreate} canUseDemo={canUseDemo} isLoading={loading} error={error} onRetry={load}
+  return <ProjectsHome projects={projects} canCreate={canCreate} canUseDemo={canUseDemo} isLoading={loading} error={error} onRetry={load} guideHref="/guide"
     onCreate={() => window.location.assign('/setup')}
     onOpen={project => window.location.assign('/project?project=' + encodeURIComponent(project.id))} />;
 }

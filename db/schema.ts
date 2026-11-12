@@ -34,6 +34,17 @@ export const onboardingFirstTasks = sqliteTable('onboarding_first_tasks', {
   userId: text('user_id').primaryKey().references(() => members.userId, { onDelete: 'cascade' }),
   createdAt: text('created_at').notNull(),
 });
+export const guidedTutorialEvents = sqliteTable('guided_tutorial_events', {
+  userId: text('user_id').notNull().references(() => members.userId, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  checkpoint: text('checkpoint').notNull(),
+  occurredAt: text('occurred_at').notNull(),
+  // Only the project-created checkpoint carries the internal project binding.
+  projectId: text('project_id'),
+}, table => [
+  primaryKey({ columns: [table.userId, table.version, table.checkpoint] }),
+  index('guided_tutorial_funnel').on(table.version, table.checkpoint, table.occurredAt),
+]);
 export const productActivityDaily = sqliteTable('product_activity_daily', {
   userId: text('user_id').notNull().references(() => members.userId, { onDelete: 'cascade' }),
   day: text('day').notNull(),

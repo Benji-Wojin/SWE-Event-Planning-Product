@@ -9,6 +9,7 @@ const source=readFileSync('legacy/info-ui.js','utf8');
 async function harness(uploadsAvailable,extra={}){
   let snapshot={revision:1,uploadsAvailable,identity:{admin:true},guests:[],files:[],...extra},poll,failure=null,closed=0,deferNext=false,resolvePending,dialogKind='',focused=0;
   const dialogs=[],toasts=[],requests=[];
+  let loads=0;
   const host={isConnected:true,innerHTML:'',listeners:{},contains:()=>false,addEventListener(event,fn){this.listeners[event]=fn;},querySelector:()=>({innerHTML:'',focus(){focused++;}})};
   const window={GatherGuests,GatherMode:{projectId:'fictional-project'}};
   vm.runInNewContext(source.replace('return { markup, mount };','return { markup, mount, submit };'),{window,document:{hidden:false,activeElement:null},URLSearchParams,FormData,
@@ -21,11 +22,20 @@ async function harness(uploadsAvailable,extra={}){
       return response;
     },
   });
-  const ui=window.GatherInfoUI.create({h:value=>String(value),openDialog:(...args)=>{dialogs.push(args);dialogKind='info';},closeDialog(){closed++;dialogKind='';},toast:value=>toasts.push(value),saveLock:()=>()=>{},isDialogOpen:kind=>kind?dialogKind===kind:!!dialogKind});
+  const ui=window.GatherInfoUI.create({h:value=>String(value),openDialog:(...args)=>{dialogs.push(args);dialogKind='info';},closeDialog(){closed++;dialogKind='';},toast:value=>toasts.push(value),saveLock:()=>()=>{},isDialogOpen:kind=>kind?dialogKind===kind:!!dialogKind,onLoaded(){loads++;}});
   ui.mount(host);await setImmediate();
   const click=attrs=>host.listeners.click({target:{closest:()=>({dataset:Object.fromEntries(Object.entries(attrs).map(([key,value])=>[key.replace(/^data-/,'').replace(/-([a-z])/g,(_,letter)=>letter.toUpperCase()),value])),hasAttribute:key=>Object.hasOwn(attrs,key)})}});
-  return{host,dialogs,toasts,requests,click,ui,openEditor:kind=>{dialogKind=kind;},get closed(){return closed;},get focused(){return focused;},defer(){deferNext=true;},async resolve(){resolvePending();await setImmediate();},fail:status=>{failure={status,message:'Access or load denied'};},recover(){failure=null;},change:next=>{snapshot={...snapshot,...next};},async poll(){poll();await setImmediate();}};
+  return{host,dialogs,toasts,requests,click,ui,openEditor:kind=>{dialogKind=kind;},get closed(){return closed;},get focused(){return focused;},get loads(){return loads;},defer(){deferNext=true;},async resolve(){resolvePending();await setImmediate();},fail:status=>{failure={status,message:'Access or load denied'};},recover(){failure=null;},change:next=>{snapshot={...snapshot,...next};},async poll(){poll();await setImmediate();}};
 }
+
+test('guide readiness ignores failed Event info reads and records a successful retry', async () => {
+  const h=await harness(false);
+  assert.equal(h.loads,1);
+  h.fail(500);h.click({'data-info-refresh':''});await setImmediate();
+  assert.equal(h.loads,1);assert.match(h.host.innerHTML,/role="alert"/);
+  h.recover();h.click({'data-info-refresh':''});await setImmediate();
+  assert.equal(h.loads,2);assert.match(h.host.innerHTML,/Event info/);
+});
 
 test('unconfigured or unknown storage hides upload while keeping guest entry and CSV import usable',async()=>{
   for(const available of [false,undefined]){

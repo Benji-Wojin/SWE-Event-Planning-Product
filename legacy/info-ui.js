@@ -8,6 +8,7 @@
     saveLock,
     isDialogOpen,
     getWorkspace,
+    onLoaded,
   }) {
     let state = null,
       host = null,
@@ -229,6 +230,7 @@
         if (!state || next.revision !== state.revision || next.uploadsAvailable !== state.uploadsAvailable || identityChanged || !quiet) {
           state = next;
           render();
+          onLoaded?.();
         }
       } catch (e) {
         if (

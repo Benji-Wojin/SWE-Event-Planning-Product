@@ -8,6 +8,7 @@
     saveLock,
     isDialogOpen,
     getWorkspace,
+    onLoaded,
   }) {
     const B = root.GatherBudget;
     let host = null,
@@ -150,6 +151,7 @@
           state.identity.admin === next.identity.admin;
         state = next;
         if (!quiet || !unchanged) render();
+        if (!quiet || !unchanged) onLoaded?.();
       } catch (error) {
         if (mine !== ticket || target !== host || !target?.isConnected) return;
         // Never leave a stale budget visible after revoked access or a failed refresh.

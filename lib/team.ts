@@ -5,6 +5,7 @@ import { HttpError, nonce, seal, unseal, type principal } from './security';
 import { type ProjectUser, projectOwner } from './project-access';
 import { mailbox, senderStatus } from './invitation-sender';
 import { deliveryView, sendInvitation, type DeliveryView } from './invitation-delivery';
+import { tutorialCheckpointAfterCommit } from './guided-tutorial-store';
 
 type Invite = {
   id: string;
@@ -124,11 +125,12 @@ export async function changeTeam(
 ) {
   organizer(user);
   if (input.action === 'sendInvite') {
-    fields(input, ['action', 'email', 'requestId', 'senderEmail']);
+    fields(input, ['action', 'email', 'requestId', 'senderEmail', 'guidedTutorial']);
     const sender = await senderStatus(user.userId);
     if (!sender.connected || input.senderEmail !== sender.email)
       throw new HttpError(409, 'Invitation email is unavailable or the sender changed. Reload Team access; in-app invitations still work.');
-    await changeTeam(user, { action: 'invite', email: input.email, requestId: input.requestId });
+    await changeTeam(user, { action: 'invite', email: input.email, requestId: input.requestId,
+      ...(input.guidedTutorial === undefined ? {} : { guidedTutorial: input.guidedTutorial }) });
     await sendInvitation(user, input.requestId as string, input.senderEmail);
     return readTeam(user);
   }
@@ -139,7 +141,9 @@ export async function changeTeam(
     return readTeam(user);
   }
   if (input.action === 'invite') {
-    fields(input, ['action', 'email', 'requestId']);
+    fields(input, ['action', 'email', 'requestId', 'guidedTutorial']);
+    if (input.guidedTutorial !== undefined && input.guidedTutorial !== true)
+      throw new HttpError(400, 'Invalid tutorial setting.');
     if (
       typeof input.email !== 'string' ||
       input.email.length > 254 ||
@@ -179,8 +183,7 @@ export async function changeTeam(
     if (member) throw new HttpError(409, 'This person has already joined.');
     const token = nonce(),
       now = Date.now();
-    const result =
-      await env.DB.prepare(`INSERT OR IGNORE INTO project_invites (id,project_id,email,token_hash,payload,created_by,created_at,expires_at)
+    const save = env.DB.prepare(`INSERT OR IGNORE INTO project_invites (id,project_id,email,token_hash,payload,created_by,created_at,expires_at)
       SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM project_invites WHERE project_id=?)<500
       AND (SELECT COUNT(*) FROM project_invites WHERE project_id=? AND accepted_by='' AND revoked_at='' AND expires_at>?)<50
       AND (SELECT COUNT(*) FROM project_invites WHERE created_by=? AND created_at>?)<50
@@ -208,8 +211,10 @@ export async function changeTeam(
           now,
           user.projectId,
           email,
-        )
-        .run();
+        );
+    const result = user.projectId === 'main' || input.guidedTutorial !== true ? await save.run() : (await env.DB.batch([
+      save, tutorialCheckpointAfterCommit(user.userId,'invite_created',user.projectId),
+    ]))[0];
     if (result.meta.changes !== 1) {
       const retry = await env.DB.prepare(
         'SELECT project_id,email,created_by FROM project_invites WHERE id=?',

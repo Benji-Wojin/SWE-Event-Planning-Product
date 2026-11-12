@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
         { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
       ],
     }, {
-      source: '/admin/onboarding',
+      source: '/admin/onboarding/:path*',
       headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
     }, {
       source: '/gather-assets/versioned/:path*',

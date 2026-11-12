@@ -32,6 +32,7 @@ type ProjectsHomeProps = {
   onRetry?: () => void;
   canCreate?: boolean;
   canUseDemo?: boolean;
+  guideHref?: string;
 };
 
 export function ProjectsHome({
@@ -44,6 +45,7 @@ export function ProjectsHome({
   onRetry,
   canCreate = true,
   canUseDemo = false,
+  guideHref,
 }: ProjectsHomeProps) {
   return (
     <div className="projects-home">
@@ -54,6 +56,7 @@ export function ProjectsHome({
         <div className="projects-header-actions">
           <ThemeToggle />
           <a className="projects-account-link" href="/feedback">Feedback</a>
+          {guideHref && <a className="projects-account-link" href={guideHref}>Getting started</a>}
           {canUseDemo && <a className="projects-account-link" href="/demo">Demo</a>}
           <a className="projects-account-link" href={accountHref}>Account</a>
         </div>
@@ -72,7 +75,7 @@ export function ProjectsHome({
             {!isLoading && !error && <Invitations />}
             {!isLoading && error ? <ProjectsErrorState message={error} {...(onRetry ? { onRetry } : {})} /> : null}
             {!isLoading && !error && projects.length === 0 ? (
-              <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} />
+              <ProjectsEmptyState onCreate={onCreate} canCreate={canCreate} guideHref={guideHref} />
             ) : null}
             {!isLoading && !error && projects.length > 0 ? (
               <div className="projects-grid" aria-label="Projects">
@@ -116,8 +119,8 @@ function ProjectsErrorState({ message, onRetry }: { message: string; onRetry?: (
   );
 }
 
-function ProjectsEmptyState({ onCreate, canCreate }: { onCreate: () => void; canCreate:boolean }) {
-  if (canCreate) return <FirstProjectIntro onCreate={onCreate} />;
+function ProjectsEmptyState({ onCreate, canCreate, guideHref }: { onCreate: () => void; canCreate:boolean; guideHref?: string }) {
+  if (canCreate) return <FirstProjectIntro onCreate={onCreate} guideHref={guideHref} />;
   return (
     <section className="projects-state">
       <h2>No projects yet</h2>
