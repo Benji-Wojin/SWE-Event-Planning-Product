@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const app=readFileSync('legacy/app.js','utf8');
-const start=app.indexOf('  function overview(s) {');
+const start=app.indexOf('  function overview(s,');
 const overview=app.slice(start,app.indexOf('  function filteredTasks(s)',start));
 function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){
   const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};

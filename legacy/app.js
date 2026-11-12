@@ -237,7 +237,7 @@
     return `<article class="insight"><span class="insight-source">${h(item.source)}</span><h3>${h(item.title)}</h3><p>${h(item.body)}</p><div class="insight-actions"><button class="btn btn-small" data-action="accept-insight" data-id="${h(item.id)}">${icon('plus')} Add to plan</button><button class="icon-button" data-action="dismiss-insight" data-id="${h(item.id)}" aria-label="Dismiss ${h(item.title)}">${icon('close')}</button></div></article>`;
   }
 
-  function overview(s) {
+  function overview(s,showGuideTask=false) {
     const needs=attention(s), done=completed(s), emails=pending(s);
     const taskIds=new Set(s.tasks.map(task=>task.id));
     const progress=Math.round(done.length/Math.max(s.tasks.length,1)*100);
@@ -247,7 +247,7 @@
     const days=s.event.date?Math.max(0,(Date.parse(s.event.date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${s.tasks.length&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${s.tasks.length?addButton():''}`)+setupNote+(guideTaskNeedsReveal?guideTaskPanel(s,true):'')+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${s.tasks.length&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${s.tasks.length?addButton():''}`)+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
@@ -492,7 +492,7 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    const markup=(guideTaskNeedsReveal&&!['tasks','overview'].includes(ui.view)?guideTaskPanel(s,true):'')+({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const markup=(guideTaskNeedsReveal&&!['tasks','overview'].includes(ui.view)?guideTaskPanel(s,true):'')+({overview:()=>overview(s,guideTaskNeedsReveal),tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
@@ -1355,7 +1355,7 @@
       }
       if(form.id==='newTaskForm'){
         const activity=form.dataset.scheduled==='true';
-        const firstTask=guidedWorkspace&&form.dataset.guideTask==='true';
+        const firstTask=form.dataset.guideTask==='true'&&guidedWorkspace;
         const taskData=activity?GatherScheduleUI.newActivityTask(data):data;
         const task=store.addTask(taskData,ui.actor);closeDialog();
         if(firstTask){guideTaskId=task.id;paintGuide();release();revealGuideTask();}

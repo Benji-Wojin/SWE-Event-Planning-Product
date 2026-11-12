@@ -99,7 +99,7 @@ test('per-task date labels do not clone the full workspace', () => {
 
 test('overview countdown counts event calendar days across viewer DST and year boundaries', () => {
   const source=readFileSync('legacy/app.js','utf8');
-  const start=source.indexOf('  function overview(s) {');
+  const start=source.indexOf('  function overview(s,');
   const prefix=source.slice(start,source.indexOf('    const suggestions=',start));
   const original=process.env.TZ;
   const cases=[
