@@ -629,6 +629,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .schedule-pending ul{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:8px}
 .schedule-pending li{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:8px 0}
 .schedule-pending .text-button{text-align:left;max-width:100%;overflow-wrap:anywhere}.schedule-pending .btn,.schedule-pending .text-button{min-height:44px}
+.review-activity-action{margin-top:6px;min-height:44px;white-space:normal;text-align:left}
 .schedule-day+.schedule-day{margin-top:28px}.schedule-day h2,.schedule-empty h2{font-size:1rem;margin:0 0 14px}
 .schedule-list{display:grid;gap:8px}.schedule-row{display:grid;grid-template-columns:minmax(110px,160px) minmax(0,1fr) minmax(110px,auto);gap:16px;align-items:start;width:100%;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--white);color:var(--ink);text-align:left;cursor:pointer;font:inherit;overflow-wrap:anywhere}
 .schedule-row:hover{background:var(--paper)}.schedule-row:focus-visible{outline:2px solid var(--green);outline-offset:2px}

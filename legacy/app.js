@@ -392,6 +392,16 @@
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
+  function beforeEventReview() {
+    if(window.GatherAccessLost)return;
+    const scope={mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
+    openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),scope,isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
+    requestAnimationFrame(()=>{
+      if(ui.dialogKind!=='before-event-review')return;
+      const title=$('#dialogTitle');
+      title.tabIndex=-1;title.focus();
+    });
+  }
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
@@ -659,7 +669,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -675,7 +685,8 @@
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
       if(action==='run-sheet'&&!window.GatherAccessLost)openDialog('Event run sheet',schedule.runSheet(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor}),'<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
-      if(action==='before-event-review'&&!window.GatherAccessLost)openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),{mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor}),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
+      if(action==='before-event-review')beforeEventReview();
+      if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
       if(action==='print-run-sheet'&&ui.dialogKind==='run-sheet'&&$('#eventRunSheet')&&!window.GatherAccessLost)window.print();
       if(action==='task')taskDialog(id);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -824,6 +835,13 @@
         const taskId=form.dataset.id||data.taskId;
         store.setTaskSchedule(taskId,event.submitter?.value==='remove'?null:{start:data.start,end:data.end,location:data.location},ui.actor);
         render();taskDialog(taskId,form.id);toast(event.submitter?.value==='remove'?'Removed from schedule. The task is unchanged.':'Schedule saved.');
+      }
+      if(form.id==='reviewScheduleForm'){
+        if(ui.dialogKind!=='schedule-from-review'||!isOrganizer()||window.GatherAccessLost)throw new Error('Reopen the event review as the organizer.');
+        const task=store.getState().tasks.find(item=>item.id===form.dataset.id);
+        if(!task||task.revision!==Number(form.dataset.revision))throw new Error('This activity changed. Reopen the event review before saving.');
+        store.setTaskSchedule(task.id,{start:data.start,end:data.end,location:data.location},ui.actor);
+        render();beforeEventReview();toast('Schedule saved. Event review updated.');
       }
       if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;const before=store.getState().tasks.find(task=>task.id===form.dataset.id);store.updateTask(form.dataset.id,data,ui.actor);const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());else toast(`Update recorded by ${member(ui.actor).name}.`);}
       if(form.id==='completionEvidenceForm'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.setCompletionEvidence(form.dataset.id,details,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Submission saved. Task status and verification are unchanged.');}

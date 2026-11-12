@@ -8,6 +8,7 @@
   const scoped = (tasks,scope={}) => scope.mine ? tasks.filter(task=>!!scope.actor&&task.owner===scope.actor) : tasks;
   const resolved = task => task.status==='done'&&(!task.requiresVerification||task.verifiedAt);
   const needsActivityTime = task => task.eventActivity===true&&!task.schedule&&!resolved(task);
+  const needsActivityDetails = task => !!task.schedule&&!resolved(task)&&(!task.schedule.end||!task.schedule.location);
   function newActivityTask({title,owner,note,start='',end='',location=''}) {
     if(!start&&(end||location.trim()))throw new Error('Enter a start time to save an end time or activity location, or clear those fields to set the time later.');
     return {title,owner,note,category:'Program',status:'todo',eventActivity:true,
@@ -82,8 +83,8 @@
     const day=momentKey(now,state.event.timeZone)?.slice(0,10);
     const overlapIds=ownerOverlaps(tasks),locationIds=locationOverlaps(state.tasks);
     return [
-      {key:'preparation',title:'Preparation still open',help:'Open preparation tasks that are not awaiting verification.',tasks:open.filter(task=>!task.schedule&&task.eventActivity!==true&&!waitingVerification(task))},
       {key:'activity-time',title:'Activities need a start time',help:'These planned activities are not on the schedule or run sheet yet. Open the task or visit Timeline to coordinate a start time.',tasks:open.filter(needsActivityTime)},
+      {key:'preparation',title:'Preparation still open',help:'Open preparation tasks that are not awaiting verification.',tasks:open.filter(task=>!task.schedule&&task.eventActivity!==true&&!waitingVerification(task))},
       {key:'verification',title:'Completion needs verification',help:'A completion report or completed record still needs the required organizer verification.',tasks:open.filter(waitingVerification)},
       {key:'evidence-amendments',title:'Evidence amended after verification',help:'The current completion submission was edited after verification and has not been reviewed. Task verification is unchanged. Open the task to review the amendment with the organizer.',tasks:tasks.filter(evidenceAmended)},
       {key:'changes',title:'Completion changes requested',help:'The organizer returned a completion report. Review the requested changes with the owner, then submit a new report; the work is not verified.',tasks:open.filter(changesRequested)},
@@ -95,7 +96,7 @@
       {key:'prerequisites',title:'Required work not complete',help:'One or more required linked tasks are incomplete, awaiting verification, or unavailable. Related links do not block completion.',tasks:open.filter(task=>unfinishedRequiredWork(task,byId))},
       {key:'overlaps',title:'Activities with owner overlaps',help:'The same owner has overlapping entered activity times. Missing end times limit which overlaps can be detected.',tasks:open.filter(task=>overlapIds.has(task.id))},
       {key:'locations',title:'Potential location overlaps',help:'Matching location labels have overlapping entered times, including activities outside My tasks. A space may be shared or divisible; confirm with the organizer. Aliases, capacity, travel and external bookings are not checked. Missing ends limit detection.',tasks:open.filter(task=>locationIds.has(task.id))},
-      {key:'activity-details',title:'Activity details not entered',help:'An activity has no end time or no activity location. These may be intentional; confirm what the team needs.',tasks:open.filter(task=>task.schedule&&(!task.schedule.end||!task.schedule.location))},
+      {key:'activity-details',title:'Activity details not entered',help:'An activity has no end time or no activity location. These may be intentional; confirm what the team needs.',tasks:open.filter(needsActivityDetails)},
     ];
   }
 
@@ -159,7 +160,14 @@
       if(!available.length)return '<p>All existing tasks are scheduled.</p><button class="btn btn-primary" data-action="add-activity">Add activity</button>';
       return `<form id="schedulePickerForm">${zone(state.event)}<label class="field">Existing task<select name="taskId" required>${options([['','Choose a task'],...available.map(task=>[task.id,task.title])],available.some(task=>task.id===taskId)?taskId:'')}</select></label>${fields()}<div class="form-actions"><button class="btn btn-primary" type="submit">Add to schedule</button></div></form>`;
     }
-    function preparationReview(state,now=Date.now(),scope={}) {
+    function activityReviewForm(state,taskId) {
+      const task=state.tasks.find(task=>task.id===taskId);
+      if(!task||!(needsActivityTime(task)||needsActivityDetails(task)))
+        throw new Error('This schedule item has changed. Reopen the event review.');
+      if(!state.event.timeZone)return needsZone();
+      return `<p><strong>${h(task.title)}</strong></p><form id="reviewScheduleForm" data-id="${h(task.id)}" data-revision="${h(task.revision)}">${zone(state.event)}${fields(task.schedule||{})}<div class="form-actions"><button class="btn btn-primary" type="submit">Save schedule</button></div></form>`;
+    }
+    function preparationReview(state,now=Date.now(),scope={},organizer=false) {
       const groups=reviewItems(state,now,scope),tasks=scoped(state.tasks,scope);
       const local=momentKey(now,state.event.timeZone);
       const name=id=>state.members.find(member=>member.id===id)?.name||'Unassigned';
@@ -167,7 +175,12 @@
       const context=[!state.event.date?'Event date not entered':'Event date: '+dateLabel(state.event.date),
         !local?'Event time zone not set or unavailable':'Event time zone: '+state.event.timeZone,
         !state.event.location?'Event location not entered':'Event location: '+state.event.location];
-      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. No task is changed and no message is sent.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&group.tasks.length<=3?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span></li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
+      const scheduleAction=(group,task)=>{
+        if(!organizer||!['activity-time','activity-details'].includes(group.key))return '';
+        const label=group.key==='activity-time'?'Set start time':'Review timing and location';
+        return `<button class="btn btn-secondary btn-small review-activity-action" data-action="schedule-review-activity" data-id="${h(task.id)}" aria-label="${label} for ${h(task.title)}">${label}</button>`;
+      };
+      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${groups.map(group=>`<details class="before-event-group"${group.tasks.length&&(group.tasks.length<=3||group.key==='activity-time')?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}</span>${scheduleAction(group,task)}</li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
     }
     function runSheet(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),tasks=ordered(visible),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks);
@@ -204,7 +217,7 @@
         : '<p class="muted">Add this activity now and set its start time later, after setting the event time zone in Project settings.</p>';
       return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(member=>member.active!==false).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${timing}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
     }
-    return {view,details,picker,newActivity,clock,runSheet,preparationReview};
+    return {view,details,picker,newActivity,clock,runSheet,preparationReview,activityReviewForm};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,timing,momentKey,reviewItems};
 })(typeof window!=='undefined'?window:globalThis);

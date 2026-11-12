@@ -84,6 +84,23 @@ test('empty plans and missing context are explicit, not an all-clear',()=>{
   assert.deepEqual(linked(html),[]);assert.doesNotMatch(html,/100%|All clear|Everything is ready/);
 });
 
+test('organizer review offers direct scheduling only for scoped activities that still need details',()=>{
+  const pending=task('pending',{title:'Arrival <desk>',owner:'maya',eventActivity:true,revision:4});
+  const partial=task('partial',{owner:'maya',revision:2,schedule:slot('09:30','','')});
+  const s=state([pending,partial,task('other',{eventActivity:true,revision:1}),task('prep',{owner:'maya'}),task('complete-details',{owner:'maya',schedule:slot()})]);
+  const scope={mine:true,actor:'maya'};
+  const member=ui.preparationReview(s,now,scope),organizer=ui.preparationReview(s,now,scope,true);
+  assert.doesNotMatch(member,/data-action="schedule-review-activity"/);
+  assert.match(organizer,/data-action="schedule-review-activity" data-id="pending" aria-label="Set start time for Arrival &lt;desk&gt;"/);
+  assert.match(organizer,/data-action="schedule-review-activity" data-id="partial" aria-label="Review timing and location for partial"/);
+  assert.equal((organizer.match(/data-action="schedule-review-activity"/g)||[]).length,2);
+  assert.match(ui.activityReviewForm(s,'pending'),/id="reviewScheduleForm" data-id="pending" data-revision="4"/);
+  const form=ui.activityReviewForm(s,'partial');
+  assert.match(form,/value="2026-10-03T09:30"/);assert.doesNotMatch(form,/name="taskId"|Remove from schedule/);
+  assert.match(ui.activityReviewForm({...s,event:{...event,timeZone:''}},'pending'),/Set the event time zone/);
+  for(const id of ['missing','prep','complete-details'])assert.throws(()=>ui.activityReviewForm(s,id),/Reopen the event review/);
+});
+
 test('real store changes recompute the review only from recorded acceptance and completion',()=>{
   const store=GatherStore.createStore({storage:null});store.completeSetup(event);
   const item=store.addTask({title:'Check school hall',owner:'maya',requiresVerification:true});
@@ -94,14 +111,15 @@ test('real store changes recompute the review only from recorded acceptance and 
 });
 
 test('review handler uses current scope, blocks lost access, and participates in dialog discard protection',()=>{
-  const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf("      if(action==='before-event-review'");
-  const fragment=source.slice(start,source.indexOf('\n',start));const calls=[];
+  const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function beforeEventReview(');
+  const fragment=source.slice(start,source.indexOf('  function showPendingUpdate(',start));const calls=[];
   const context=vm.createContext({action:'before-event-review',window:{GatherAccessLost:false},Date,
+    requestAnimationFrame:()=>{},isOrganizer:()=>false,
     ui:{timelineMode:'schedule',scheduleMine:true,actor:'maya'},store:{getState:()=>({marker:true})},
-    schedule:{preparationReview(s,now,scope){calls.push({...scope});assert.equal(s.marker,true);return 'review';}},
+    schedule:{preparationReview(s,now,scope,organizer){calls.push({...scope});assert.equal(s.marker,true);assert.equal(organizer,false);return 'review';}},
     openDialog(title,body,footer,wide,kind){assert.equal(title,'Before the event');assert.equal(body,'review');assert.equal(kind,'before-event-review');}});
-  vm.runInContext(fragment,context);assert.deepEqual(calls,[{mine:true,actor:'maya'}]);
-  context.ui.timelineMode='deadlines';vm.runInContext(fragment,context);assert.deepEqual(calls[1],{mine:false,actor:'maya'});
-  context.window.GatherAccessLost=true;vm.runInContext(fragment,context);assert.equal(calls.length,2);
-  assert.match(source,/replacesDialog=\[[^\n]*'before-event-review'/);assert.match(source,/data-action="before-event-review">Before the event/);
+  vm.runInContext(fragment+'beforeEventReview();',context);assert.deepEqual(calls,[{mine:true,actor:'maya'}]);
+  context.ui.timelineMode='deadlines';vm.runInContext('beforeEventReview();',context);assert.deepEqual(calls[1],{mine:false,actor:'maya'});
+  context.window.GatherAccessLost=true;vm.runInContext('beforeEventReview();',context);assert.equal(calls.length,2);
+  assert.match(source,/replacesDialog=\[[^\n]*'schedule-review-activity'[^\n]*'before-event-review'/);assert.match(source,/data-action="before-event-review">Before the event/);
 });
