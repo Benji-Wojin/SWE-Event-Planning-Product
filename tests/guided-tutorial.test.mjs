@@ -47,3 +47,12 @@ test('retries, unrelated projects, out-of-order and unknown signals cannot alter
   assert.ok(!mayRecord(progress, 'invite_created', 'invite_commit', project));
   assert.ok(!mayRecord(progress, { checkpoint: 'task_created' }, 'task_commit', project));
 });
+
+test('an explicit finish without a new invite does not pretend an invitation was saved', () => {
+  const progress = { projectId: project, reached: TUTORIAL_MILESTONES.slice(0,-1) };
+  assert.ok(mayRecord(progress,'invite_skipped','interaction',project));
+  const skipped = { ...progress, reached:[...progress.reached,'invite_skipped'] };
+  assert.equal(nextTutorialMilestone(skipped.reached),null);
+  assert.ok(!mayRecord(skipped,'invite_created','invite_commit',project));
+  assert.ok(!mayRecord({ ...progress,reached:[...progress.reached,'invite_created'] },'invite_skipped','interaction',project));
+});

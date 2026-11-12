@@ -43,7 +43,7 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
     <p className="text-muted-foreground">Follow a few short steps in a real project. You can leave at any time and resume from Projects. Weft saves guide progress and the app owner can see which steps people reach.</p>
     <ol className="divide-y rounded-xl border bg-card px-5">
       {steps.map(([id,title,copy], index) => <li key={id} className="py-4" aria-current={id===next?'step':undefined}>
-        <p className="font-medium">{index+1}. {title}{reached.includes(id) ? ' · Done' : id===next ? ' · Next' : ''}</p>
+        <p className="font-medium">{index+1}. {title}{reached.includes(id) ? ' · Done' : id==='invite_created' && reached.includes('invite_skipped') ? ' · Skipped' : id===next ? ' · Next' : ''}</p>
         <p className="text-sm text-muted-foreground">{copy}</p>
       </li>)}
     </ol>

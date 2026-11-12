@@ -18,7 +18,8 @@ export const TUTORIAL_STEPS = [
   { id: 'event_details_viewed', title: 'Explore Event info', evidence: 'view', after: 'budget_viewed' },
   { id: 'invite_clicked', title: 'Choose to invite a teammate', evidence: 'interaction', after: 'event_details_viewed', before: 'invite_created' },
   { id: 'invite_form_viewed', title: 'Open the invitation form', evidence: 'view', after: 'event_details_viewed', before: 'invite_created' },
-  { id: 'invite_created', title: 'Create an invitation', evidence: 'invite_commit', after: 'event_details_viewed' },
+  { id: 'invite_created', title: 'Create an invitation', evidence: 'invite_commit', after: 'event_details_viewed', before: 'invite_skipped' },
+  { id: 'invite_skipped', title: 'Finish without a new invitation', evidence: 'interaction', after: 'event_details_viewed', before: 'invite_created' },
 ] as const;
 
 type Step = (typeof TUTORIAL_STEPS)[number];
@@ -56,5 +57,6 @@ export function shouldRecordTutorialCheckpoint(
 }
 
 export function nextTutorialMilestone(reached: readonly TutorialCheckpoint[]) {
-  return TUTORIAL_MILESTONES.find(id => !reached.includes(id)) ?? null;
+  return TUTORIAL_MILESTONES.find(id => !reached.includes(id) &&
+    (id !== 'invite_created' || !reached.includes('invite_skipped'))) ?? null;
 }

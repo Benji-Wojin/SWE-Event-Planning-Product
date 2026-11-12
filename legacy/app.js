@@ -18,20 +18,20 @@
     ['task_created', 2, 'Add your first task', 'Pick one thing that needs doing, like “Confirm the venue.” A task name is enough to start.', 'add-task', 'Add a task'],
     ['budget_viewed', 3, 'Explore Budget', 'See where the team can track estimates and spending. You don’t need to enter any amounts.', 'guide-budget', 'Open Budget'],
     ['event_details_viewed', 4, 'Review Event info', 'See where you can share event details such as location, guest information and files.', 'guide-info', 'Open Event info'],
-    ['invite_created', 5, 'Invite a teammate', 'Use the email your teammate signs in with. You can keep working alone if you’re not ready to invite anyone.', 'invite', 'Open invitation form'],
+    ['invite_created', 5, 'Invite a teammate', 'Use the email your teammate signs in with. You can keep working alone if you’re not ready to invite anyone.', 'guide-invite', 'Open invitation form'],
   ];
   function paintGuide() {
     const host = $('#workspaceGuide');
     if (!guidedWorkspace || !host) return;
     const bound = guideProgress?.projectId === window.GatherMode.projectId;
     const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
-    const next = bound ? guideSteps.find(([id]) => !reached.has(id)) : null;
+    const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
     host.hidden = !next && !guideError;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
     host.innerHTML = guideError
       ? '<h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div>'
-      : `<p class="eyebrow">Getting started · Step ${next[1]} of 5</p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><div class="form-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button><a class="btn btn-secondary" href="${h(window.GatherMode.projectUrl('/project'))}" target="_top">Finish later</a></div>`;
+      : `<p class="eyebrow">Getting started · Step ${next[1]} of 5</p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><div class="form-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without a new invite</button>':''}<a class="btn btn-secondary" href="${h(window.GatherMode.projectUrl('/project'))}" target="_top">Finish later</a></div>`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
   function syncGuide(checkpoint) {
@@ -711,7 +711,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-assignments','add-task','add-activity','schedule-task','run-sheet','before-event-review','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -828,10 +828,18 @@
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
       if(action==='dismiss-insight'){store.dismissSuggestion(id);render();if(ui.dialogKind==='thought')thoughtDialog();toast('Suggestion dismissed for this plan.');}
       if(action==='event-info')contextDialog();
-      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){
-        if(guidedWorkspace)await syncGuide('invite_clicked');
-        window.top.location.href=window.GatherMode.projectUrl(guidedWorkspace?'/team?guide=1':'/team');return;
-      }const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
+      if(action==='guide-invite'&&guidedWorkspace){
+        await syncGuide('invite_clicked');
+        window.top.location.href=window.GatherMode.projectUrl('/team?guide=1');return;
+      }
+      if(action==='guide-skip-invite'&&guidedWorkspace){
+        if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
+        await syncGuide('invite_skipped');
+        if(guideProgress?.events?.some(item=>item.checkpoint==='invite_skipped'||item.checkpoint==='invite_created'))
+          window.top.location.href='/guide';
+        return;
+      }
+      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){window.top.location.href=window.GatherMode.projectUrl('/team');return;}const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Weft workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='weft-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}

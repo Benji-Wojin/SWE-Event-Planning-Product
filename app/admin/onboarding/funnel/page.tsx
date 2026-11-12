@@ -40,7 +40,7 @@ export default async function TutorialFunnelPage({ searchParams }: { searchParam
         <p className="text-sm text-muted-foreground">“Not yet reached” may mean someone is still working through the guide. Expand an account to see its recorded timestamps (UTC).</p>
         <ul className="flex flex-wrap gap-2 text-sm">
           {TUTORIAL_MILESTONES.slice(1).map((id,index) => <li key={id} className="rounded-lg border px-3 py-2">
-            {labels.get(id)}: {(totals.get(TUTORIAL_MILESTONES[index]) ?? 0)-(totals.get(id) ?? 0)} not yet reached
+            {labels.get(id)}: {(totals.get(TUTORIAL_MILESTONES[index]) ?? 0)-(totals.get(id) ?? 0)-(id==='invite_created'?(totals.get('invite_skipped') ?? 0):0)} not yet reached
           </li>)}
         </ul>
         {data.rows.length===0 ? <p>No accounts on this page.</p> : <ul className="divide-y rounded-xl border">
