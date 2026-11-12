@@ -21,5 +21,8 @@ export default async function OnboardingPage({ searchParams }: {
     if (error instanceof HttpError && error.status === 403) notFound();
     throw error;
   }
-  return <AccountLayout title="Usage analytics"><OnboardingDashboard data={data} /></AccountLayout>;
+  return <AccountLayout title="Usage analytics">
+    <p className="mb-5 text-sm"><a href="/admin/onboarding/funnel" className="underline">View tutorial funnel</a></p>
+    <OnboardingDashboard data={data} />
+  </AccountLayout>;
 }

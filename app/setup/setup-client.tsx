@@ -1,4 +1,5 @@
 'use client';
+import { observeTutorial } from '@/lib/guided-tutorial-client';
 import { useEffect, useRef, useState } from 'react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,7 +28,7 @@ async function workspaceRequest(projectId: string, body?: unknown) {
   if (!result?.state?.event) throw new Error('Could not load the project. Please try again.');
   return result;
 }
-export function ProjectSetup({ projectId }: { projectId?: string }) {
+export function ProjectSetup({ projectId, guided = false }: { projectId?: string; guided?: boolean }) {
   const isNew = projectId === undefined;
   const backUrl = isNew ? '/' : '/project?project=' + encodeURIComponent(projectId);
   const requestId = useRef('');
@@ -54,6 +55,10 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
     finally { pending.current = false; setBusy(false); }
   }
   useEffect(() => { void load(); }, []);
+  const loaded = form !== null;
+  useEffect(() => {
+    if (guided && loaded) void observeTutorial('setup_viewed').catch(() => {});
+  }, [guided, loaded]);
   useEffect(() => {
     if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => { if (!leaving.current) { event.preventDefault(); event.returnValue = ''; } };
@@ -75,7 +80,7 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
       };
       if (isNew) {
         requestId.current ||= crypto.randomUUID();
-        const response = await fetch('/api/projects', {method:'POST', credentials:'same-origin',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},body:JSON.stringify({requestId:requestId.current,event:details})});
+        const response = await fetch('/api/projects', {method:'POST', credentials:'same-origin',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},body:JSON.stringify({requestId:requestId.current,event:details,...(guided ? { guidedTutorial: true } : {})})});
         const result: any = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not create the project. Your details are still here.');
         if (typeof result.id !== 'string' || !result.id) throw new Error('Could not confirm the new project. Retry to check the same save.');
@@ -98,14 +103,14 @@ export function ProjectSetup({ projectId }: { projectId?: string }) {
     const query = '?project=' + encodeURIComponent(createdId);
     return <Card><CardContent className="space-y-4 px-5 sm:px-7">
       <p className="text-sm font-medium text-primary">Project created · Next step</p>
-      <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">Bring someone into the plan</h2>
-      <p className="text-muted-foreground">Invite a teammate to {form?.name.trim()}. Once they have access to Weft, they can join and help you keep track of what needs doing.</p>
+      <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">{guided ? 'Add your first task' : 'Bring someone into the plan'}</h2>
+      <p className="text-muted-foreground">{guided ? 'Your project is ready. Add one real thing that needs doing to start your shared plan.' : `Invite a teammate to ${form?.name.trim()}. Once they have access to Weft, they can join and help you keep track of what needs doing.`}</p>
       <div className="flex flex-wrap gap-3">
-        <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>
+        {guided ? <a className={buttonVariants()} href={'/project' + query + '&guide=1'}>Continue to your project</a> : <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>}
         <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>Open project</a>
         <a className={buttonVariants({ variant: 'ghost' })} href={'/plan' + query}>Explore starter plans</a>
       </div>
-      <p className="text-sm text-muted-foreground">Working solo? You can invite people later from your project.</p>
+      <p className="text-sm text-muted-foreground">{guided ? 'You can also come back and resume from Getting started.' : 'Working solo? You can invite people later from your project.'}</p>
     </CardContent></Card>;
   }
   if (!form || !project) return <section aria-busy={busy}>

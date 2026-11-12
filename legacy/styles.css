@@ -719,3 +719,7 @@ form[aria-busy="true"]{cursor:progress}
 .submission-or{display:block;text-align:center;color:var(--muted);font-size:12px;margin:14px 0}
 .submission-file{display:flex;align-items:center;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
 .submission-attachments [data-submission-status]:empty{display:none}
+.workspace-guide{margin:20px clamp(14px,4vw,40px) 0;border-color:var(--green)}
+.workspace-guide h2{margin:6px 0;font-size:1.2rem}
+.workspace-guide .form-actions{justify-content:flex-start;margin-top:12px}
+.workspace-guide[hidden]{display:none}

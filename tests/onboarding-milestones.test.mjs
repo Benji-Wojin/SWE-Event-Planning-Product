@@ -67,6 +67,10 @@ before(async () => {
       export { POST as createProject } from './app/api/projects/route';
       export { GET as readWorkspace, POST as writeWorkspace } from './app/api/workspace/route';
       export { GET as readPlan, POST as writePlan } from './app/api/plan/route';
+      export { GET as readTutorial, POST as observeTutorial } from './app/api/tutorial/route';
+      export { POST as writeTeam } from './app/api/team/route';
+      export { readTutorialFunnel } from './lib/tutorial-funnel';
+      export { default as TutorialFunnelPage } from './app/admin/onboarding/funnel/page';
     ` },
     bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, jsx: 'automatic',
     plugins: [{ name: 'fictional-auth-and-provider', setup(b) {
@@ -317,4 +321,68 @@ test('owner account results are bounded, totals span every page, and cursors can
   assert.equal(next.next, '');
   assert.deepEqual(next.totals, first.totals);
   assert.equal(new Set([...first.rows, ...next.rows].map(row => row.accountCode)).size, 57);
+});
+
+test('real tutorial routes advance the right account and project, and the private funnel sees the same events', async () => {
+  const user = person('tutorial'), peer = person('tutorial-peer');
+  for (const member of [user,peer]) await run(member, () => api.registerAccount());
+  const observe = (who, checkpoint, project, status=200) => run(who, async () => body(
+    await api.observeTutorial(request('/api/tutorial',{checkpoint,...(project?{project}:{})})), status));
+  const getProgress = who => run(who, async () => body(await api.readTutorial()));
+  const setup = (who, requestId, status=201) => run(who, async () => body(
+    await api.createProject(request('/api/projects',{ requestId, event:{name:'Fictional tutorial project'}, guidedTutorial:true })),status));
+  await observe(null,'started',null,401);
+  await setup(user,crypto.randomUUID(),409);
+  const badOrigin = new Request(origin+'/api/tutorial',{ method:'POST',
+    headers:{ Origin:'https://outside.example','Content-Type':'application/json','X-Gather-Request':'1' },body:'{"checkpoint":"started"}' });
+  assert.equal((await run(user,()=>api.observeTutorial(badOrigin))).status,403);
+  await observe(user,'started');
+  await observe(user,'create_project_clicked');
+  await observe(user,'setup_viewed');
+  await observe(user,'project_created',null,400);
+  const ordinaryId=crypto.randomUUID();
+  await run(user,async()=>body(await api.createProject(request('/api/projects',{
+    requestId:ordinaryId,event:{name:'Fictional tutorial project'},
+  })),201));
+  await setup(user,ordinaryId,409);
+  const requestId = crypto.randomUUID(), {id:project}=await setup(user,requestId);
+  assert.equal((await setup(user,requestId)).id,project);
+  await setup(user,crypto.randomUUID(),409);
+  const foreign=await makeProject(peer,'Fictional unrelated project');
+  assert.equal((await observe(user,'add_task_clicked',foreign)).events.length,4);
+  assert.equal((await observe(peer,'add_task_clicked',project)).events.length,0);
+  await observe(user,'add_task_clicked',project);
+  await observe(user,'task_created',project,400);
+  await observe(user,'budget_viewed',project);
+  const current=await read(user,project);
+  await body(await change(user,project,{method:'addTask',args:[{title:'Fictional guide task'}],revision:current.revision-1}),409);
+  assert.equal((await getProgress(user)).events.at(-1).checkpoint,'add_task_clicked');
+  await body(await change(user,project,{method:'addTask',args:[{title:'Fictional guide task'}],revision:current.revision}));
+  assert.equal((await getProgress(user)).events.at(-1).checkpoint,'task_created');
+  await observe(user,'budget_clicked',project);
+  await observe(user,'budget_viewed',project);
+  await observe(user,'event_details_clicked',project);
+  await observe(user,'event_details_viewed',project);
+  await observe(user,'invite_clicked',project);
+  await observe(user,'invite_form_viewed',project);
+  const invite = {action:'invite',email:'fictional-invite@example.com',requestId:crypto.randomUUID()};
+  await run(user, async()=>body(await api.writeTeam(request('/api/team?project='+project,{...invite,email:user.email})),400));
+  assert.equal((await getProgress(user)).events.at(-1).checkpoint,'invite_form_viewed');
+  for (let i=0;i<2;i++) await run(user, async()=>body(await api.writeTeam(request('/api/team?project='+project,invite))));
+  const final = await getProgress(user);
+  assert.equal(final.projectId,project);
+  assert.equal(final.events.length,13);
+  assert.equal(final.events.at(-1).checkpoint,'invite_created');
+  assert.equal((await getProgress(peer)).events.length,0);
+  await assert.rejects(run(peer,()=>api.readTutorialFunnel()),error=>error.status===403);
+  await assert.rejects(run(null,()=>api.readTutorialFunnel()),error=>error.status===401);
+  const funnel = await run(owner,()=>api.readTutorialFunnel());
+  assert.equal(funnel.rows.length,1);
+  assert.equal(funnel.rows[0].code,await memberCode(user));
+  assert.equal(funnel.rows[0].next,null);
+  assert.deepEqual(funnel.rows[0].events,final.events);
+  assert.ok(funnel.counts.every(row=>row.accounts===1));
+  const html=renderToStaticMarkup(await run(owner,()=>api.TutorialFunnelPage({searchParams:Promise.resolve({})})));
+  assert.match(html,/Guide complete/);
+  assert.doesNotMatch(html,/fictional-invite|Fictional tutorial project|Fictional guide task|provider-tutorial/);
 });

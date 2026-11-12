@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import type { TeamView } from '@/lib/team';
 import { GMAIL_ENABLED } from '@/lib/release-policy';
 import { accountRequest } from '@/lib/account-request';
-export function TeamClient({ projectId, guided = false }: { projectId: string; guided?: boolean }) {
+import { observeTutorial } from '@/lib/guided-tutorial-client';
+export function TeamClient({ projectId, guided = false, tutorial = false }: { projectId: string; guided?: boolean; tutorial?: boolean }) {
   const [team, setTeam] = useState<TeamView | null>(null),
     [error, setError] = useState(''),
     [email, setEmail] = useState(''),
@@ -17,6 +18,10 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
     requestId = useRef(''),
     readEpoch = useRef(0);
   const endpoint = '/api/team?project=' + encodeURIComponent(projectId);
+  const loaded = team !== null;
+  useEffect(() => {
+    if (tutorial && loaded) void observeTutorial('invite_form_viewed', projectId).catch(() => {});
+  }, [tutorial, loaded, projectId]);
   async function reload() {
     const epoch = ++readEpoch.current;
     setError('');
@@ -226,7 +231,7 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
             </details>
           </details> : null}
           <section className="space-y-4 rounded-xl border bg-card p-5">
-            {guided && <p className="text-sm font-medium text-primary">Getting started · Invite a teammate</p>}
+            {guided && <p className="text-sm font-medium text-primary">{tutorial ? 'Getting started · Step 5 of 5' : 'Getting started · Invite a teammate'}</p>}
             <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
             <p id="invite-help" className="text-sm text-muted-foreground">
               Use the email they’ll sign in with. Once they have access to Weft, they can accept the invitation from Projects. It expires in 7 days.
@@ -288,7 +293,7 @@ export function TeamClient({ projectId, guided = false }: { projectId: string; g
                 Send an invitation email from {team.sender.email}
               </label>}
             </form>
-            {guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
+            {tutorial ? <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide">View guide progress</a> : guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">People</h2>

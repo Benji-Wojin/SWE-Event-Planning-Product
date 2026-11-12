@@ -1,10 +1,11 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
 import { AppOpen } from '@/components/app-open';
 export const dynamic = 'force-dynamic';
-export default async function Project({ searchParams }: { searchParams: Promise<{ project?: string; message?: string }> }) {
+export default async function Project({ searchParams }: { searchParams: Promise<{ project?: string; message?: string; guide?: string }> }) {
   const params = await searchParams;
   const query = new URLSearchParams({ project: typeof params.project === 'string' ? params.project : 'main' });
   if (typeof params.message === 'string') query.set('message',params.message.slice(0,200));
+  if (params.guide === '1') query.set('guide','1');
   return <SignedInProject query={query.toString()} inbox={!!params.message}/>;
 }
 async function SignedInProject({query,inbox}:{query:string;inbox:boolean}) {

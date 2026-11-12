@@ -7,6 +7,7 @@ import { accessArgs, projectWriteAccess, projectUser } from './project-access';
 import {completionFiles} from './completion-files';
 import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
+import { tutorialCheckpointAfterTask } from './guided-tutorial-store';
 const api = (globalThis as any).GatherStore;
 export function model(data?: string) {
   let raw = data || null;
@@ -341,7 +342,9 @@ export async function mutateWorkspace(
     .bind(serialized, projectId, row.revision,...accessArgs(authorized),...(organizerOnly?[projectId,user.userId,projectId,user.userId]:[]),...(assignment?[projectId,assignment.actor,assignment.revision]:[]),...(files?[files.scope,files.revision]:[]));
   const write = addedTask || completedTask
     ? (await env.DB.batch([save, taskActivityAfterSave(user.userId, Number(addedTask), Number(completedTask)),
-        ...(addedTask ? [firstTaskAfterSave(user.userId)] : [])]))[0]
+        ...(addedTask ? [firstTaskAfterSave(user.userId)] : []),
+        ...(addedTask && input.method === 'addTask' && authorized.role === 'admin' && projectId !== 'main'
+          ? [tutorialCheckpointAfterTask(user.userId, projectId, result.id, row.revision + 1)] : [])]))[0]
     : await save.run();
   if (write.meta.changes !== 1)
     throw new HttpError(

@@ -11,6 +11,52 @@
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
   const canCreateTasks = () => isOrganizer() || store.getState().event.membersCanCreateTasks === true;
+  const guidedWorkspace = !!window.GatherMode && !window.GatherMode.demo &&
+    new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
+  let guideProgress = null, guideQueue = Promise.resolve(), guideError = false;
+  const guideSteps = [
+    ['task_created', 2, 'Add your first task', 'Pick one thing that needs doing, like “Confirm the venue.” A task name is enough to start.', 'add-task', 'Add a task'],
+    ['budget_viewed', 3, 'Explore Budget', 'See where the team can track estimates and spending. You don’t need to enter any amounts.', 'guide-budget', 'Open Budget'],
+    ['event_details_viewed', 4, 'Review Event info', 'See where you can share event details such as location, guest information and files.', 'guide-info', 'Open Event info'],
+    ['invite_created', 5, 'Invite a teammate', 'Use the email your teammate signs in with. You can keep working alone if you’re not ready to invite anyone.', 'invite', 'Open invitation form'],
+  ];
+  function paintGuide() {
+    const host = $('#workspaceGuide');
+    if (!guidedWorkspace || !host) return;
+    const bound = guideProgress?.projectId === window.GatherMode.projectId;
+    const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
+    const next = bound ? guideSteps.find(([id]) => !reached.has(id)) : null;
+    host.hidden = !next && !guideError;
+    if (host.hidden) return;
+    const wasFocused=host.contains(document.activeElement);
+    host.innerHTML = guideError
+      ? '<h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div>'
+      : `<p class="eyebrow">Getting started · Step ${next[1]} of 5</p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><div class="form-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button><a class="btn btn-secondary" href="${h(window.GatherMode.projectUrl('/project'))}" target="_top">Finish later</a></div>`;
+    if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
+  }
+  function syncGuide(checkpoint) {
+    if (!guidedWorkspace) return Promise.resolve();
+    guideQueue = guideQueue.then(async () => {
+      if (checkpoint && guideProgress?.events?.some(item => item.checkpoint === checkpoint)) return;
+      try {
+        const response = await fetch('/api/tutorial',{
+          cache:'no-store', credentials:'same-origin', signal:AbortSignal.timeout(6000),
+          ...(checkpoint ? {method:'POST',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},
+            body:JSON.stringify({checkpoint,project:window.GatherMode.projectId})} : {}),
+        });
+        if(!response.ok) throw new Error('Guide unavailable');
+        guideProgress = await response.json();
+        guideError = false;
+      } catch {
+        guideError = true;
+      }
+      paintGuide();
+    });
+    return guideQueue;
+  }
+  function recordGuideViewClick(view) {
+    if(view==='budget'||view==='info')void syncGuide(view==='budget'?'budget_clicked':'event_details_clicked');
+  }
   const planSidebar=GatherPlanningUI.createSidebar({
     getUrl:(mode='suggestions')=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode='+mode+'&embed=1':window.GatherMode.projectUrl('/plan')+'&mode='+mode+'&embed=1',
     notify:message=>toast(message),
@@ -347,6 +393,7 @@
     setDrawer(false);
     render();
     if(view==='details')loadPrivate();
+    if(view==='budget'||view==='info')void syncGuide(view==='budget'?'budget_viewed':'event_details_viewed');
     window.scrollTo({top:0,behavior:'instant'});
     return true;
   }
@@ -655,7 +702,7 @@
     const el=event.target.closest('[data-action], [data-view]');
     if(!el)return;
     if(el.dataset.action==='skip-content'){event.preventDefault();skipToContent();return;}
-    if(el.dataset.view){event.preventDefault();if(el.dataset.view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}if(!confirmDiscard($('#dialog'),el.dataset.view!==ui.view?$('#emailReviewForm'):null))return;if(!$('#dialogBackdrop').hidden)closeDialog();navigate(el.dataset.view);return;}
+    if(el.dataset.view){event.preventDefault();if(el.dataset.view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}if(!confirmDiscard($('#dialog'),el.dataset.view!==ui.view?$('#emailReviewForm'):null))return;if(!$('#dialogBackdrop').hidden)closeDialog();recordGuideViewClick(el.dataset.view);navigate(el.dataset.view);return;}
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
@@ -668,7 +715,15 @@
     try {
       if(action==='close-dialog')closeDialog();
       if(action==='move-event-plan')rescheduleDialog();
-      if(action==='add-task')newTaskDialog();
+      if(action==='add-task'){newTaskDialog();void syncGuide('add_task_clicked');}
+      if(action==='guide-retry'){await syncGuide();if(ui.view==='budget'||ui.view==='info')await syncGuide(ui.view==='budget'?'budget_viewed':'event_details_viewed');}
+      if(action==='guide-budget'||action==='guide-info'){
+        if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
+        if(!$('#dialogBackdrop').hidden)closeDialog();
+        const view=action==='guide-budget'?'budget':'info';
+        recordGuideViewClick(view);
+        navigate(view);
+      }
       if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
       if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState()));
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
@@ -768,7 +823,10 @@
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
       if(action==='dismiss-insight'){store.dismissSuggestion(id);render();if(ui.dialogKind==='thought')thoughtDialog();toast('Suggestion dismissed for this plan.');}
       if(action==='event-info')contextDialog();
-      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){window.top.location.href=window.GatherMode.projectUrl('/team');return;}const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
+      if(action==='invite'){if(window.GatherMode&&!window.GatherMode.demo){
+        if(guidedWorkspace)await syncGuide('invite_clicked');
+        window.top.location.href=window.GatherMode.projectUrl(guidedWorkspace?'/team?guide=1':'/team');return;
+      }const text=`Event plan: ${store.getState().event.name}.\n\nHere is the plan: [add your shared workspace link]`;openDialog('Invitation draft',`<p class="notice">Demo invitation only. No invite or email will be sent.</p><label class="field">Invitation message<textarea id="inviteDraft" rows="7">${h(text)}</textarea></label>`,`<button class="btn btn-primary" data-action="copy-invite">${icon('copy')} Copy invitation draft</button>`);}
       if(action==='copy-invite'){const text=$('#inviteDraft').value;if(await copyText(text))toast('Invitation draft copied. Nothing sent.');else copyFallback(text);}
       if(action==='demo-info')openDialog('Your local Weft workspace',`<p>Try the full journey: review an email, assign the work, post an update, and mark it complete.</p><p>Switch the demo member in the top bar to try a teammate’s perspective. Every update records who made it.</p><div class="notice">Tasks, comments, messages, and feedback are saved in this browser. This prototype does not connect to live email, send messages, sync between people, or call an AI service.</div>`,`<button class="btn btn-secondary" data-action="export">Export workspace backup</button>`);
       if(action==='export'){const blob=new Blob([store.exportState()],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='weft-workspace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Workspace backup downloaded.');}
@@ -817,6 +875,7 @@
         let taskData=data;
         if(form.dataset.scheduled==='true'){const {start,end,location,...fields}=data;taskData={...fields,schedule:{start,end,location}};}
         const task=store.addTask(taskData,ui.actor);closeDialog();render();if(form.dataset.scheduled==='true')taskDialog(task.id);toast(form.dataset.scheduled==='true'?'Activity added.':'Task added.');
+        void syncGuide();
       }
       if(form.id==='scheduleForm'||form.id==='schedulePickerForm'){
         const taskId=form.dataset.id||data.taskId;
@@ -973,6 +1032,7 @@
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   setDrawer(false);
   navigate(navigation.initial());
+  void syncGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if((!window.GatherMode||window.GatherMode.demo)&&ui.view==='overview'&&$('#dialogBackdrop').hidden)tour.offer();
 })();
