@@ -1839,6 +1839,88 @@ test('organizer explicitly restores responsibility for an inactive owner without
     assert.equal(snap.state.tasks[0].status,'progress');assert.deepEqual(snap.state.tasks[0].schedule,activity.schedule);
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
 });
+test('budget edits preserve historical links only on their original cost',async()=>{
+  const id=await newTeamProject('Fictional budget history');
+  const query='?project='+id,email='budget-history@example.com',userId='budget-history-teammate';
+  const readWorkspace=async()=>{
+    const response=await realRead(id);assert.equal(response.status,200);return response.json();
+  };
+  const writeWorkspace=async(method,args)=>{
+    const {revision}=await readWorkspace();
+    const response=await workspace.POST(request('/api/workspace'+query,{method,args,revision}));
+    assert.equal(response.status,200);return response.json();
+  };
+  const readInfo=async()=>{
+    const response=await infoRead(query);assert.equal(response.status,200);return response.json();
+  };
+  const cost=fields=>({title:'Fictional venue deposit',estimate:'100',committed:'80',paid:'20',owner:'',taskId:'',dueDate:'',status:'active',...fields});
+  const send=(revision,fields)=>infoWrite({...fields,revision,requestId:crypto.randomUUID()},query);
+  const edit=(current,costId,item)=>send(current.revision,{action:'budgetItem',id:costId,item});
+  const successful=async response=>{
+    const body=await response.json();assert.equal(response.status,200,body.error);return body;
+  };
+  try{
+    await joinPerson(id,email,userId);
+    const formerActor=(await readWorkspace()).identity.actorId;
+    owner();
+    await writeWorkspace('completeSetup',[{timeZone:'America/Los_Angeles'}]);
+    await writeWorkspace('addTask',[{title:'Fictional initial reservation',owner:formerActor}]);
+    const setup=await writeWorkspace('addTask',[{title:'Fictional current reservation',owner:'jack'}]);
+    const oldTask=setup.state.tasks.find(task=>task.title==='Fictional initial reservation');
+    const currentTask=setup.state.tasks.find(task=>task.title==='Fictional current reservation');
+    let snapshot=await successful(await send((await readInfo()).revision,{
+      action:'budgetSettings',settings:{enabled:true,currency:'USD',target:'300'},
+    }));
+    const original=cost({owner:formerActor,taskId:oldTask.id});
+    snapshot=await successful(await edit(snapshot,'',original));
+    const originalRow=snapshot.budget.items.find(row=>row.title===original.title);
+    const other=cost({title:'Fictional catering deposit',owner:'jack',taskId:currentTask.id});
+    snapshot=await successful(await edit(snapshot,'',other));
+    const otherRow=snapshot.budget.items.find(row=>row.title===other.title);
+
+    await writeWorkspace('deleteTask',[oldTask.id,oldTask.revision]);
+    const member=(await (await teamRead(id)).json()).members.find(person=>person.actorId===formerActor);
+    assert.ok(member);
+    assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+    const historical=await readWorkspace();
+    assert.ok(!historical.state.tasks.some(task=>task.id===oldTask.id));
+    assert.equal(historical.state.members.find(person=>person.id===formerActor).active,false);
+
+    const changedPayment=cost({...original,paid:'35.25'});
+    snapshot=await successful(await edit(snapshot,originalRow.id,changedPayment));
+    const paidRow=snapshot.budget.items.find(row=>row.id===originalRow.id),audit=snapshot.budget.history.at(-1);
+    assert.deepEqual([paidRow.owner,paidRow.taskId,paidRow.paid],[formerActor,oldTask.id,3525]);
+    assert.deepEqual([audit.action,audit.actor],['budgetItem','jack']);
+    assert.deepEqual(audit.before,originalRow);
+    assert.deepEqual(audit.after,paidRow);
+    assert.deepEqual(await readInfo(),snapshot,'payment and historical references survive a fresh read');
+    assert.equal((await readWorkspace()).revision,historical.revision,'updating the cost does not modify the workspace');
+
+    for(const [destination,item] of [['',cost({title:'Fictional new cost'})],[otherRow.id,other]]){
+      assert.equal((await edit(snapshot,destination,{...item,owner:formerActor})).status,400,'cannot attach an inactive owner to a different cost');
+      assert.equal((await edit(snapshot,destination,{...item,taskId:oldTask.id})).status,400,'cannot attach a deleted task to a different cost');
+    }
+    assert.deepEqual(await readInfo(),snapshot,'invalid link attempts do not write costs or audit');
+
+    snapshot=await successful(await edit(snapshot,originalRow.id,{...changedPayment,owner:'jack'}));
+    let row=snapshot.budget.items.find(item=>item.id===originalRow.id);
+    assert.deepEqual([row.owner,row.taskId,row.paid],['jack',oldTask.id,3525]);
+    assert.equal((await edit(snapshot,originalRow.id,changedPayment)).status,400,'a replaced historical owner cannot be reattached');
+    snapshot=await successful(await edit(snapshot,originalRow.id,{...changedPayment,owner:'jack',taskId:''}));
+    row=snapshot.budget.items.find(item=>item.id===originalRow.id);
+    assert.deepEqual([row.owner,row.taskId,row.paid],['jack','',3525]);
+    assert.equal((await edit(snapshot,originalRow.id,{...changedPayment,owner:'jack'})).status,400,'a cleared historical task cannot be reattached');
+    snapshot=await successful(await edit(snapshot,originalRow.id,{...changedPayment,owner:'',taskId:currentTask.id}));
+    row=snapshot.budget.items.find(item=>item.id===originalRow.id);
+    assert.deepEqual([row.owner,row.taskId,row.paid],['',currentTask.id,3525]);
+    assert.deepEqual(await readInfo(),snapshot);
+  }finally{
+    // Don't consume the shared fixture organizer's daily invitation allowance.
+    sqlite.prepare('DELETE FROM project_invites WHERE project_id=? AND email=?').run(id,email);
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+    owner();
+  }
+});
 test('membership removal at workspace commit prevents a write even with a freshly checked revision',async()=>{
   const id=await newTeamProject();await joinPerson(id);owner();let snap=await (await realRead(id)).json();
   snap=await (await workspace.POST(request('/api/workspace?project='+id,{method:'addTask',args:[{title:'Race claim'}],revision:snap.revision}))).json();asTeammate();

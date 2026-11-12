@@ -56,6 +56,8 @@
       }
     }
     const money = (value) => h(B.format(value, state.budget.currency));
+    const activeBudgetMember = (member) =>
+      member.active !== false && !member.role.startsWith('Former');
     function subtotal(value) {
       return (
         money(value.known) +
@@ -120,7 +122,10 @@
                         owner = workspace.members.find(
                           (member) => member.id === row.owner,
                         );
-                      const metadata=[owner?.name || (row.owner ? 'Former / unavailable member' : ''),row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
+                      const ownerLabel = owner
+                        ? owner.name + (activeBudgetMember(owner) ? '' : ' (former teammate)')
+                        : row.owner ? 'Unavailable owner' : '';
+                      const metadata=[ownerLabel,row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
                       return `<li><div class="budget-item-heading"><h3>${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
                         ['estimate', 'Estimate'],
                         ['committed', 'Committed'],
@@ -296,10 +301,22 @@
         workspace = getWorkspace();
       const option = (id, label, selected) =>
         `<option value="${h(id)}" ${selected ? 'selected' : ''}>${h(label)}</option>`;
-      const owners = workspace.members.filter(
-        (member) =>
-          member.active !== false && !member.role.startsWith('Former'),
-      );
+      const owners = workspace.members.filter(activeBudgetMember);
+      const unavailableOwner = !!value.owner && !owners.some((owner) => owner.id === value.owner);
+      const unavailableTask = !!value.taskId && !workspace.tasks.some((task) => task.id === value.taskId);
+      const ownerOptions = [
+        option('', 'No owner', !value.owner),
+        ...(unavailableOwner ? [option(value.owner, 'Unavailable owner (kept unless changed)', true)] : []),
+        ...owners.map((owner) => option(owner.id, owner.name, owner.id === value.owner)),
+      ].join('');
+      const taskOptions = [
+        option('', 'No task', !value.taskId),
+        ...(unavailableTask ? [option(value.taskId, 'Unavailable task (kept unless changed)', true)] : []),
+        ...workspace.tasks.map((task) => option(task.id, task.title, task.id === value.taskId)),
+      ].join('');
+      const historicalNote = !inactive && (unavailableOwner || unavailableTask)
+        ? '<p class="muted">Unavailable links can stay on this cost for reference. You can save other changes, or clear or replace the links here.</p>'
+        : '';
       const form = dialog(
         row ? 'Cost details' : 'Add cost',
         `<fieldset ${inactive ? 'disabled' : ''}><div class="form-grid"><label class="field full-width">Cost name<input name="title" required maxlength="120" value="${h(value.title)}" placeholder="e.g. School dance venue deposit"></label>${[
@@ -313,7 +330,7 @@
           )
           .join(
             '',
-          )}<label class="field">Owner<select name="owner">${option('', 'No owner', !value.owner)}${value.owner && !owners.some((owner) => owner.id === value.owner) ? option(value.owner, 'Former / unavailable member — choose a new owner', true) : ''}${owners.map((owner) => option(owner.id, owner.name, owner.id === value.owner)).join('')}</select></label><label class="field">Linked task<select name="taskId">${option('', 'No task', !value.taskId)}${value.taskId && !workspace.tasks.some((task) => task.id === value.taskId) ? option(value.taskId, 'Unavailable task — choose another', true) : ''}${workspace.tasks.map((task) => option(task.id, task.title, task.id === value.taskId)).join('')}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(value.dueDate)}"></label><label class="field">Status<select name="status">${option('active', 'Active', value.status === 'active')}${option('cancelled', 'Cancelled', value.status === 'cancelled')}</select></label></div></fieldset><p class="muted">Blank = not recorded, not zero. Enter plain numbers with up to ${B.currencies[budget.currency]} decimal places. Committed means an agreed cost; payment recorded means a payment you manually report. Record net paid after any refunds. Cancelling keeps recorded payments in totals.</p>${row ? `<button class="text-button" type="button" data-budget-archive>${inactive ? 'Restore cost' : 'Archive cost (still included in totals)'}</button>` : ''}`,
+          )}<label class="field">Owner<select name="owner">${ownerOptions}</select></label><label class="field">Linked task<select name="taskId">${taskOptions}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(value.dueDate)}"></label><label class="field">Status<select name="status">${option('active', 'Active', value.status === 'active')}${option('cancelled', 'Cancelled', value.status === 'cancelled')}</select></label></div></fieldset>${historicalNote}<p class="muted">Blank = not recorded, not zero. Enter plain numbers with up to ${B.currencies[budget.currency]} decimal places. Committed means an agreed cost; payment recorded means a payment you manually report. Record net paid after any refunds. Cancelling keeps recorded payments in totals.</p>${row ? `<button class="text-button" type="button" data-budget-archive>${inactive ? 'Restore cost' : 'Archive cost (still included in totals)'}</button>` : ''}`,
         (data) => ({ action: 'budgetItem', id: row?.id || '', item: data }),
         !inactive,
       );

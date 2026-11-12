@@ -9,6 +9,8 @@ async function harness(admin = true) {
     requests = [];
   let snapshot = { revision: 1, identity: { admin }, budget },
     form,
+    formMarkup,
+    workspace = { tasks: [], members: [] },
     fail = 0, failRead = false, loads = 0,
     closed = 0,
     poll,
@@ -79,13 +81,14 @@ async function harness(admin = true) {
   const ui = window.GatherBudgetUI.create({
     h: (value) => String(value),
     isDialogOpen: () => false,
-    getWorkspace: () => ({ tasks: [], members: [] }),
+    getWorkspace: () => workspace,
     onLoaded() { loads++; },
     toast() {},
     closeDialog: () => {
       closed++;
     },
-    openDialog() {
+    openDialog(_title, markup) {
+      formMarkup = markup;
       const error = { textContent: '', append() {} },
         close = { addEventListener() {} };
       form = {
@@ -116,10 +119,10 @@ async function harness(admin = true) {
   });
   ui.mount(host);
   await setImmediate();
-  const click = (attr) =>
+  const click = (attr, id) =>
     host.listeners.click({
       target: {
-        closest: () => ({ dataset: {}, hasAttribute: (key) => key === attr }),
+        closest: () => ({ dataset: id ? { budgetEdit: id } : {}, hasAttribute: (key) => key === attr }),
       },
     });
   return {
@@ -143,11 +146,17 @@ async function harness(admin = true) {
     setBudget(changes) {
       snapshot = { ...snapshot, budget: { ...budget, enabled: true, ...changes } };
     },
+    setWorkspace(value) {
+      workspace = value;
+    },
     failOnce() {
       fail = 1;
     },
     get form() {
       return form;
+    },
+    get formMarkup() {
+      return formMarkup;
     },
     get closed() {
       return closed;
@@ -248,4 +257,32 @@ test('partial Budget totals show paid-only deposits and a certain minimum overag
   assert.ok(h.host.innerHTML.includes(`<h2>Expected total</h2><strong>${money(55000)}</strong>`));
   assert.ok(h.host.innerHTML.includes(`<small>${money(5000)} below target</small>`));
   assert.doesNotMatch(h.host.innerHTML, /At least|still incomplete/);
+});
+test('cost details explain historical links and keep them selected and editable', async () => {
+  const h = await harness();
+  const stale = { id: 'cost-a', title: 'Fictional deposit', paid: 2000, estimate: null, committed: null,
+    status: 'active', owner: 'actor-former', taskId: 'task-removed', dueDate: '' };
+  h.setWorkspace({
+    tasks: [{ id: 'task-current', title: 'Current task' }],
+    members: [
+      { id: 'actor-former', name: 'Fictional former', role: 'Member', active: false },
+      { id: 'actor-current', name: 'Fictional current', role: 'Member' },
+    ],
+  });
+  h.setBudget({ items: [stale] });
+  await h.poll();
+  assert.match(h.host.innerHTML, /Fictional former \(former teammate\)/);
+  assert.match(h.host.innerHTML, /Linked task is no longer available/);
+  assert.doesNotMatch(h.host.innerHTML, /data-id="task-removed"/);
+  h.click('data-budget-edit', stale.id);
+  assert.match(h.formMarkup, /<option value="actor-former" selected>Unavailable owner \(kept unless changed\)<\/option>/);
+  assert.match(h.formMarkup, /<option value="task-removed" selected>Unavailable task \(kept unless changed\)<\/option>/);
+  assert.match(h.formMarkup, /<option value="" >No owner<\/option>/);
+  assert.match(h.formMarkup, /<option value="" >No task<\/option>/);
+  assert.match(h.formMarkup, /You can save other changes, or clear or replace the links here/);
+  const values = { title: stale.title, estimate: '', committed: '', paid: '50',
+    owner: stale.owner, taskId: stale.taskId, dueDate: '', status: 'active' };
+  await h.submit(values);
+  assert.deepEqual(h.requests[0].item, values);
+  assert.equal(h.requests[0].id, stale.id);
 });

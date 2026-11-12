@@ -324,15 +324,20 @@ export async function mutateInfo(context: Context, input: any) {
           if (input.id && (!existing || existing.archivedAt)) throw new Error('Cost not found in the active budget.');
           if (!existing && budget.items.length >= 500) throw new Error('This budget supports 500 costs, including archived costs.');
           const normalized = budgetModel.item(input.item, budget.currency);
-          // Link only to this project's current task/roster; guard their revision at commit.
+          // New links must point to this project's current task/roster. An
+          // unchanged link can remain as history on this cost only.
           const workspace = context.demoId
             ? await loadDemo(await administrator())
             : await loadWorkspace(context.authorization!, context.scope);
           if (context.demoId && context.demoId + ':' + workspace.store.getState().demoGeneration !== context.scope)
             throw new HttpError(409, 'The demo restarted. Reload the budget.');
           const current = workspace.store.getState();
-          if (normalized.taskId && !current.tasks.some((task: any) => task.id === normalized.taskId)) throw new Error('Choose a task from this project, or leave the task link blank.');
-          if (normalized.owner && !current.members.some((member: any) => member.id === normalized.owner && member.active !== false && !member.role.startsWith('Former'))) throw new Error('Choose a current project member, or leave the owner blank.');
+          if (normalized.taskId && normalized.taskId !== existing?.taskId &&
+              !current.tasks.some((task: any) => task.id === normalized.taskId))
+            throw new Error('Choose a task from this project, or leave the task link blank.');
+          if (normalized.owner && normalized.owner !== existing?.owner &&
+              !current.members.some((member: any) => member.id === normalized.owner && member.active !== false && !member.role.startsWith('Former')))
+            throw new Error('Choose a current project member, or leave the owner blank.');
           context.budgetWorkspaceRevision = workspace.row.revision;
           if (existing) Object.assign(existing, normalized, audit);
           else budget.items.push({ id: crypto.randomUUID(), ...normalized, ...audit, archivedAt: '' });
