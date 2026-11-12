@@ -96,7 +96,10 @@
     return result;
   }
   function validateIdentity(next) {
-    if (snapshot && (next.identity.actorId !== snapshot.identity.actorId || next.identity.role !== snapshot.identity.role)) { stopAccess();throw new Error('Your account changed. Return to Projects.'); }
+    if (snapshot && (next.identity.actorId !== snapshot.identity.actorId || next.identity.role !== snapshot.identity.role ||
+        (snapshot.reminderScope && next.reminderScope && snapshot.reminderScope !== next.reminderScope))) {
+      stopAccess();throw new Error('Your account changed. Return to Projects.');
+    }
     if (Boolean(next.demo) !== demo || (demo && next.identity.actorId !== actor) || (!demo && next.projectId !== projectId))
       throw new Error('The workspace identity changed. Reload to continue.');
   }
@@ -167,6 +170,7 @@
       getState: () => structuredClone(snapshot.state),
       getTimeZone: () => snapshot.state.event.timeZone || 'UTC',
       getSuggestions: () => structuredClone(snapshot.suggestions),
+      getReminderScope: () => demo || accessLost ? '' : snapshot.reminderScope,
       exportState: () => JSON.stringify(snapshot.exportState, null, 2),
       getSnapshotRevision: () => snapshot.revision,
       confirmSnapshotRevision: async expected => {

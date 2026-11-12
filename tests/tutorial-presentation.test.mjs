@@ -10,7 +10,7 @@ function fixture(checkpoints,{bound=true,focused=false,error=false}={}){
   const host={hidden:true,dataset:{},contains:()=>focused,set innerHTML(value){changes++;markup=value;}};
   const context=vm.createContext({
     $:selector=>selector==='#workspaceGuide'?host:{focus(){focuses++;}},
-    document:{activeElement:{}},guidedWorkspace:true,
+    document:{activeElement:{}},guidedWorkspace:true,guideTaskId:'',
     window:{GatherMode:{projectId:'p_fictional',projectUrl:()=>'/project?project=p_fictional'}},h:String,
     guideProgress:{projectId:bound?'p_fictional':'p_other',events:checkpoints.map(checkpoint=>({checkpoint}))},guideError:error,
   });
@@ -34,6 +34,16 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.equal(guide.changes(),2);assert.equal(guide.focuses(),2);
 });
 
+test('a committed task does not offer to create a duplicate while progress reloads',()=>{
+  const guide=fixture(['started','project_created','add_task_clicked']);guide.paint();
+  guide.context.guideTaskId='task_saved';guide.paint();
+  assert.match(guide.html(),/Your first task is saved/);
+  assert.match(guide.html(),/Loading the next guide step/);
+  assert.doesNotMatch(guide.html(),/guide-add-task/);
+  guide.context.guideProgress.events.push({checkpoint:'task_created'});guide.paint();
+  assert.match(guide.html(),/Open Budget/);
+});
+
 test('the finished solo state never represents an invitation as sent, and unrelated projects show no guide',()=>{
   const steps=['started','project_created','task_created','budget_viewed','event_details_viewed'];
   const last=fixture(steps);last.paint();
@@ -47,14 +57,43 @@ test('the finished solo state never represents an invitation as sent, and unrela
   assert.equal(unrelated.host.hidden,true);assert.equal(unrelated.changes(),0);
 });
 
-test('guided task form keeps the same save path with only the required title input',()=>{
+test('guided task form teaches where tasks go and saves the normal optional fields',()=>{
   const start=source.indexOf('  function newTaskDialog('), end=source.indexOf('  function followupDialog',start);
   let body;
-  const context=vm.createContext({canCreateTasks:()=>true,guidedWorkspace:true,openDialog:(_title,markup)=>{body=markup;}});
+  const context=vm.createContext({canCreateTasks:()=>true,guidedWorkspace:true,ownerOptions:()=>'<option>Unassigned</option>',options:()=>'<option>Guest care</option>',openDialog:(_title,markup)=>{body=markup;}});
   vm.runInContext(source.slice(start,end)+'newTaskDialog(true);',context);
-  assert.match(body,/id="newTaskForm"/);assert.match(body,/name="title" required/);assert.match(body,/Save first task/);
-  assert.doesNotMatch(body,/<select|name="dueDate"|<textarea/);
+  assert.match(body,/id="newTaskForm" data-guide-task="true"/);assert.match(body,/name="title" required/);assert.match(body,/Save first task/);
+  assert.match(body,/Shared tasks → All tasks/);assert.match(body,/<strong>To do<\/strong>/);
+  assert.match(body,/<details[^>]*><summary>Add optional details/);
+  for (const name of ['owner','dueDate','category','scope','note']) assert.match(body,new RegExp('name="'+name+'"'));
+  assert.equal((body.match(/\brequired\b/g)||[]).length,1);
+  assert.doesNotMatch(body,/name="status"/);
   const css=readFileSync('legacy/styles.css','utf8');
   assert.match(css,/\.workspace-guide\{[^}]*padding:clamp\(18px/);
   assert.match(css,/\.workspace-guide-actions \.btn,\.workspace-guide-pause\{min-height:44px/);
+});
+
+test('first-task walkthrough targets the returned task and offers optional real controls',()=>{
+  const start=source.indexOf('  function guideTaskPanel'),end=source.indexOf('  function assignmentCandidates',start);
+  const first={id:'first',title:'<Confirm the venue>',status:'todo'},other={id:'other',title:first.title,status:'todo'};
+  const focus=[];
+  const heading={focus:()=>focus.push('heading'),scrollIntoView(){}};
+  const control={dataset:{id:'first'},focus:()=>focus.push('completion'),scrollIntoView(){}};
+  const ui={tab:'mine',taskView:'map',owner:'someone',search:'else',view:'overview'};
+  const context=vm.createContext({guideTaskId:'first',guideTaskNeedsReveal:false,ui,window:{},
+    store:{getState:()=>({tasks:[other,first]})},navigate:view=>{ui.view=view;return true;},render(){},
+    $:()=>heading,$$:()=>[{dataset:{id:'other'}},control],h:value=>value.replaceAll('<','&lt;').replaceAll('>','&gt;'),
+    icon:()=>'',statusBadge:value=>value,
+  });
+  vm.runInContext(source.slice(start,end),context);
+  const html=vm.runInContext('guideTaskPanel(store.getState())',context);
+  assert.match(html,/&lt;Confirm the venue&gt;/);
+  assert.match(html,/data-action="task" data-id="first"/);
+  assert.match(html,/data-action="guide-task-completion"/);
+  assert.match(html,/data-action="guide-task-links" data-id="first"/);
+  assert.match(html,/These actions are optional/);
+  assert.doesNotMatch(html,/data-id="other"/);
+  vm.runInContext('revealGuideTask();revealGuideTask(true);',context);
+  assert.deepEqual(focus,['heading','completion']);
+  assert.equal(ui.view,'tasks');assert.equal(ui.tab,'all');assert.equal(ui.taskView,'list');assert.equal(ui.search,'');
 });

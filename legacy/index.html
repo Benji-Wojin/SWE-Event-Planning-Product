@@ -9,6 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css?v=coordination-1">
   <link rel="stylesheet" href="lovable-ui.css">
+  <link rel="stylesheet" href="notifications.css">
   <script src="theme.js"></script>
 </head>
 <body>
@@ -46,6 +47,7 @@
         <button class="icon-button mobile-menu" id="mobileMenu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu"></span></button>
         <div class="breadcrumb"><span>Field Day 2026</span><span aria-hidden="true">/</span><strong id="breadcrumbCurrent">Overview</strong></div>
         <div class="top-actions">
+          <button type="button" class="btn btn-secondary btn-small" id="notificationButton" data-action="notifications" aria-haspopup="dialog" hidden><span data-icon="bell"></span><span>Notifications</span><span class="notification-count" data-notification-count aria-hidden="true" hidden></span></button>
           <button class="btn btn-secondary btn-small" id="askWeftButton" disabled aria-disabled="true" title="Ask Weft is coming soon" hidden><span data-icon="spark"></span>Ask Weft · Coming soon</button>
           <button class="btn btn-secondary btn-small" data-action="quick-tour">Quick tour</button>
           <button class="demo-pill" data-action="demo-info">Local demo</button>

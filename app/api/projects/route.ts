@@ -2,6 +2,7 @@ import { body, json, principal, safe } from '@/lib/security';
 import { createProject, listProjects } from '@/lib/projects';
 import { readTutorialProgress } from '@/lib/guided-tutorial-store';
 import { tutorialResume } from '@/lib/guided-tutorial';
+import { notificationScope } from '@/lib/notification-scope';
 export const dynamic = 'force-dynamic';
 export async function GET() {
   return safe(async () => {
@@ -17,4 +18,10 @@ export async function GET() {
     return json({ projects, canCreateProjects: true, canUseDemo: user.role === 'admin', resumeGuide });
   });
 }
-export async function POST(request: Request) { return safe(async () => json(await createProject(await principal(), await body(request)), 201)); }
+export async function POST(request: Request) {
+  return safe(async () => {
+    const user = await principal();
+    const project = await createProject(user, await body(request));
+    return json({ ...project, reminderScope: notificationScope(user.userId, project.id) }, 201);
+  });
+}

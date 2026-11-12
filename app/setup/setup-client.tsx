@@ -7,16 +7,19 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 import { GuideStage } from '@/components/guide-stage';
+import { readReminderPreference, writeReminderPreference } from '@/legacy/notifications.cjs';
 
 type Details = {
   name: string; date: string; location: string; timeZone: string; guestCount: string;
   dietaryOutstanding: string; cateringDeadline: string; outdoor: boolean; transportNeeded: boolean; membersCanCreateTasks: boolean;
+  taskReminders: boolean;
 };
-const values = (event: any): Details => ({
+const values = (event: any, taskReminders = false): Details => ({
   name: event.name, date: event.date, location: event.location, timeZone: event.timeZone || '',
   guestCount: String(event.guestCount), dietaryOutstanding: String(event.dietaryOutstanding),
   cateringDeadline: event.cateringDeadline, outdoor: Boolean(event.outdoor), transportNeeded: Boolean(event.transportNeeded),
   membersCanCreateTasks: event.membersCanCreateTasks === true,
+  taskReminders,
 });
 async function workspaceRequest(projectId: string, body?: unknown) {
   const response = await fetch('/api/workspace?project=' + encodeURIComponent(projectId), {
@@ -37,12 +40,13 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   const [initial, setInitial] = useState(''), [error, setError] = useState('');
   const [conflict, setConflict] = useState(false), [busy, setBusy] = useState(false);
   const [createdId, setCreatedId] = useState('');
+  const [reminderNotice, setReminderNotice] = useState('');
   const createdHeading = useRef<HTMLHeadingElement>(null);
   const pending = useRef(false), leaving = useRef(false), errorBox = useRef<HTMLParagraphElement>(null);
   const dirty = Boolean(form && JSON.stringify(form) !== initial);
   async function load() {
     if (pending.current) return;
-    pending.current = true; setBusy(true); setError('');
+    pending.current = true; setBusy(true); setError(''); setReminderNotice('');
     try {
       if (isNew) {
         const next = values({name:'',date:'',location:'',timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,guestCount:0,dietaryOutstanding:0,cateringDeadline:'',outdoor:false,transportNeeded:false});
@@ -50,7 +54,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
       }
       const result = await workspaceRequest(projectId!);
       if (result.identity.role !== 'admin') throw new Error('Only the organizer can change project setup.');
-      const next = values(result.state.event);
+      const next = values(result.state.event, readReminderPreference(result.reminderScope));
       setProject(result); setForm(next); setInitial(JSON.stringify(next)); setConflict(false);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not load the project. Please try again.'); }
     finally { pending.current = false; setBusy(false); }
@@ -73,9 +77,10 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
     if (!form || !project || pending.current) return;
     const changingScheduleZone = Boolean(project.state?.tasks.some((task: any) => task.schedule) && form.timeZone !== project.state.event.timeZone);
     if (changingScheduleZone && !window.confirm('Change the event time zone? Existing activity dates and clock times will stay the same in the new zone.')) return;
-    pending.current = true; setBusy(true); setError(''); setConflict(false);
+    pending.current = true; setBusy(true); setError(''); setReminderNotice(''); setConflict(false);
     try {
-      const details = { ...form,
+      const { taskReminders, ...eventDetails } = form;
+      const details = { ...eventDetails,
         guestCount: Number(form.guestCount || 0), dietaryOutstanding: Number(form.dietaryOutstanding || 0),
         ...(changingScheduleZone ? {confirmScheduleTimeZone:true} : {}),
       };
@@ -85,11 +90,26 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
         const result: any = await response.json();
         if (!response.ok) throw new Error(result.error || 'Could not create the project. Your details are still here.');
         if (typeof result.id !== 'string' || !result.id) throw new Error('Could not confirm the new project. Retry to check the same save.');
+        if (taskReminders && !writeReminderPreference(result.reminderScope, true))
+          setReminderNotice('Project created. This browser did not save your reminder preference.');
         leaving.current = true;
         setInitial(JSON.stringify(form));
         setCreatedId(result.id);
         return;
-      } else await workspaceRequest(projectId!, { method:'completeSetup', args:[details], revision:project.revision });
+      } else {
+        const { taskReminders: originalReminders, ...originalEventDetails }: Details = JSON.parse(initial);
+        const changedReminders = taskReminders !== originalReminders;
+        const onlyReminderChange = changedReminders && !project.setupRequired &&
+          JSON.stringify(eventDetails) === JSON.stringify(originalEventDetails);
+        const updated = onlyReminderChange ? project : await workspaceRequest(projectId!, { method:'completeSetup', args:[details], revision:project.revision });
+        if (changedReminders && !writeReminderPreference(updated.reminderScope, taskReminders)) {
+          setProject(updated);
+          setInitial(JSON.stringify({ ...form, taskReminders: readReminderPreference(updated.reminderScope) }));
+          setReminderNotice((onlyReminderChange ? '' : 'Project settings saved. ') + 'This browser did not save your reminder preference.');
+          pending.current = false; setBusy(false);
+          return;
+        }
+      }
       leaving.current = true;
       window.location.assign(backUrl);
     } catch (e) {
@@ -106,6 +126,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
       {guided ? <GuideStage step={2} /> : <p className="text-sm font-medium text-primary">Project created · Next step</p>}
       <h2 ref={createdHeading} tabIndex={-1} className="text-2xl font-semibold">{guided ? 'Add your first task' : 'Bring someone into the plan'}</h2>
       <p className="text-muted-foreground">{guided ? 'Your project is ready. Add one real thing that needs doing to start your shared plan.' : `Invite a teammate to ${form?.name.trim()}. Once they have access to Weft, they can join and help you keep track of what needs doing.`}</p>
+      {(reminderNotice || form?.taskReminders) && <p role="status" className="text-sm text-muted-foreground">{reminderNotice || 'Task reminders are on for this browser. Find them under Notifications in your project.'}</p>}
       <div className="weft-guide-actions">
         {guided ? <a className={buttonVariants()} href={'/project' + query + '&guide=1'}>Continue to your project</a> : <a className={buttonVariants()} href={'/team' + query + '&start=1'}>Invite a teammate</a>}
         <a className={buttonVariants({ variant: 'outline' })} href={'/project' + query}>{guided ? 'Finish later' : 'Open project'}</a>
@@ -140,6 +161,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   return <>
     <form onSubmit={save} aria-busy={busy}>
       {errorMessage}
+      {reminderNotice && <p role="status" className="mb-4 rounded-lg border p-4 text-sm">{reminderNotice}</p>}
       {conflict && <Button type="button" variant="outline" className="mb-5 h-auto min-h-10 whitespace-normal" disabled={busy} onClick={() => {
         if (!dirty || window.confirm('Discard these unsaved details and load the current project setup?')) void load();
       }}>Reload saved details</Button>}
@@ -172,6 +194,13 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
             </div>
             </div>
           </details>
+          <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/35 p-4">
+            <div className="space-y-2">
+              <Label htmlFor="setup-taskReminders">In-app task reminders <span className="font-normal text-muted-foreground">(optional)</span></Label>
+              <p id="setup-reminders-help" className="text-sm text-muted-foreground">See reminders in Notifications when tasks assigned to you are due today or overdue. Only for you, on this browser. No email or push.</p>
+            </div>
+            <Switch id="setup-taskReminders" aria-describedby="setup-reminders-help" checked={form.taskReminders} onCheckedChange={checked => update('taskReminders', checked)} />
+          </div>
           <div className="border-t pt-5">
             <p className="mb-5 text-sm text-muted-foreground">{guided ? 'Up next: add one real task to your project. Nothing is sent to anyone.' : isNew ? 'Next: invite a teammate, or open your project and add the first task.' : 'Changes only this project’s settings.'}</p>
             <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>

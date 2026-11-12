@@ -31,7 +31,7 @@ export const TUTORIAL_MILESTONES = [
 ] as const satisfies readonly TutorialCheckpoint[];
 export const TUTORIAL_GUIDE_STEPS = [
   ['project_created', 'Set up your event', 'Create a project and give the event a name.'],
-  ['task_created', 'Add a real task', 'Name one concrete thing that needs to get done.'],
+  ['task_created', 'Add a real task', 'Save one task and learn where to find, finish, and link it.'],
   ['budget_viewed', 'Explore Budget', 'See how to track estimates and spending without moving money.'],
   ['event_details_viewed', 'Review Event info', 'See where teammates find the event details.'],
   ['invite_created', 'Invite a teammate', 'Use the email they sign in with to give them a way to join.'],

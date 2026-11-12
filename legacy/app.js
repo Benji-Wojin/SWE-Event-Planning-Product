@@ -14,8 +14,9 @@
   const guidedWorkspace = !!window.GatherMode && !window.GatherMode.demo &&
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
+  let guideTaskId = '', guideTaskNeedsReveal = false;
   const guideSteps = [
-    ['task_created', 2, 'Add your first task', 'Start with one real thing you need to get done. A title is enough; you can add an owner and a deadline later.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
+    ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
     ['event_details_viewed', 4, 'Review Event info', 'See where the team can find event details, guest information, and shared files.', 'guide-info', 'Open Event info', 'Take a look around. You don’t need to add guests or upload anything.'],
     ['invite_created', 5, 'Invite a teammate', 'Invite someone who can help plan or run the event. Use the email they’ll sign in with.', 'guide-invite', 'Open invitation form', 'Planning solo? Finish the guide and invite people whenever you’re ready.'],
@@ -37,7 +38,8 @@
     host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
-    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):next[0];
+    const waitingForTask=next?.[0]==='task_created'&&!!guideTaskId;
+    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):waitingForTask?'task-saved-pending':next[0];
     if(host.dataset.guideState===mode)return;
     const projectHref=h(window.GatherMode.projectUrl('/project'));
     host.dataset.guideState=mode;
@@ -45,7 +47,9 @@
       ? '<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started</p><h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="workspace-guide-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div></div>'
       : finished
         ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a></div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
-        : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(next[1],false,false)}`;
+        : waitingForTask
+          ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step 2 of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">Your first task is saved</h2><p role="status">Loading the next guide step…</p><div class="workspace-guide-actions"><a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(2,false,false)}`
+          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
   function syncGuide(checkpoint) {
@@ -76,6 +80,11 @@
     guideViewReady = view;
     void syncGuide(view==='budget'?'budget_viewed':'event_details_viewed');
   }
+  function guideExpectsTask() {
+    return guidedWorkspace&&!guideTaskId&&guideProgress?.projectId===window.GatherMode.projectId&&
+      guideProgress.events.some(event=>event.checkpoint==='project_created')&&
+      !guideProgress.events.some(event=>event.checkpoint==='task_created');
+  }
   const planSidebar=GatherPlanningUI.createSidebar({
     getUrl:(mode='suggestions')=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode='+mode+'&embed=1':window.GatherMode.projectUrl('/plan')+'&mode='+mode+'&embed=1',
     notify:message=>toast(message),
@@ -98,6 +107,7 @@
     menu:'M4 6h16M4 12h16M4 18h16',plus:'M12 5v14M5 12h14',
     arrow:'M4 12h16m-6-6 6 6-6 6',close:'m6 6 12 12M6 18 18 6',
     clock:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18M12 7v5l3 2',
+    bell:'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12a2 2 0 0 0 4 0',
     done:'m5 12 4 4L19 6',alert:'m12 3 10 18H2L12 3ZM12 9v5M12 17h.01',
     copy:'M8 8h12v13H8zM16 8V3H3v13h5',search:'M10 17a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm5-2 6 6',
   };
@@ -212,7 +222,7 @@
     const done = task.status==='done';
     let decision=null;
     if(ui.tab==='attention'&&isOrganizer()) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
-    return `<tr><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification||dependencyInfo(task).open.length?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
+    return `<tr${task.id===guideTaskId?' class="guide-first-task-row"':''}><td><button class="check-button ${done?'checked':''}" data-action="toggle-task" data-id="${h(task.id)}" aria-label="${isOrganizer()?(done?'Reopen':task.requiresVerification||dependencyInfo(task).open.length?'Review':'Complete'):'View'} ${h(task.title)}">${done?icon('done'):''}</button></td>
       <td><button class="task-name-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td>${!task.owner&&!done?`<button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(task.id)}">Claim task</button>`:`<button class="btn-ghost table-owner" data-action="task" data-id="${h(task.id)}">${person(task.owner)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
       <td>${statusBadge(task.status)}${(task.dependencies||[]).length?`<button class="task-link-summary" data-action="map-focus" data-id="${h(task.id)}">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td><td>${due(task)}</td>
@@ -237,7 +247,7 @@
     const days=s.event.date?Math.max(0,(Date.parse(s.event.date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${s.tasks.length&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${s.tasks.length?addButton():''}`)+setupNote+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${s.tasks.length&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${s.tasks.length?addButton():''}`)+setupNote+(guideTaskNeedsReveal?guideTaskPanel(s,true):'')+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
@@ -279,11 +289,52 @@
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',`${isOrganizer()?'<button class="btn btn-secondary" data-action="review-assignments">Assign tasks</button>':''}${addButton()}`)+`
+      ${guideTaskPanel(s)}
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
       <div class="toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table"><thead><tr><th><span class="sr-only">Completion</span></th><th scope="col">TASK</th><th scope="col">OWNER</th><th scope="col">STATUS</th><th scope="col">DUE</th><th scope="col">LATEST UPDATE</th><th><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
+  }
+  function guideTaskPanel(s,away=false) {
+    const task=guideTaskId&&s.tasks.find(item=>item.id===guideTaskId);
+    if(!task||window.GatherAccessLost)return '';
+    if(away)return `<section class="guide-task-result" aria-labelledby="guideTaskRevealHeading"><h2 id="guideTaskRevealHeading" tabindex="-1">Your task is saved</h2><p>Find ${h(task.title)} under Shared tasks → All tasks.</p><button class="btn btn-secondary" type="button" data-action="guide-task-reveal">Show in Shared tasks</button></section>`;
+    const done=task.status==='done';
+    return `<section class="guide-task-result" aria-labelledby="guideTaskSaved">
+      <div class="guide-task-result-top"><div><p class="guide-task-eyebrow">${icon('done')} Task saved · Shared tasks → All tasks</p><h2 id="guideTaskSaved" tabindex="-1">${h(task.title)}</h2></div>${statusBadge(task.status)}</div>
+      <p>Your team can find this task here. Open it to see the owner, due date, and what “done” means.</p>
+      <button class="btn btn-secondary" type="button" data-action="task" data-id="${h(task.id)}">Open task details</button>
+      <div class="guide-task-practice"><div><h3>Finish the work</h3><p>Use the checkbox next to the task when the work is actually done. Tasks that need verification or have unfinished prerequisites open for review instead.</p><button type="button" class="text-button" data-action="guide-task-completion">${done?'Find the reopen control':'Find the completion control'}</button></div>
+      <div><h3>Connect related work</h3><p>Use Related for work that can happen in parallel, or Required if the other task must finish first.</p>${done?'<p>Completed tasks must be reopened before adding links.</p>':`<button type="button" class="text-button" data-action="guide-task-links" data-id="${h(task.id)}">Show task relationships</button>`}</div></div>
+      <p class="guide-task-optional">These actions are optional. Pick up with the guide above whenever you’re ready.</p>
+    </section>`;
+  }
+  function revealGuideTask(focusCompletion=false) {
+    if(!guideTaskId||!store.getState().tasks.some(task=>task.id===guideTaskId)||window.GatherAccessLost)return;
+    const prior={tab:ui.tab,taskView:ui.taskView,mapFocus:ui.mapFocus,owner:ui.owner,status:ui.status,search:ui.search};
+    Object.assign(ui,{tab:'all',taskView:'list',mapFocus:'',owner:'',status:'',search:''});
+    if(!navigate('tasks')){
+      Object.assign(ui,prior);
+      guideTaskNeedsReveal=true;
+      render();
+    }else guideTaskNeedsReveal=false;
+    const control=focusCompletion&&ui.view==='tasks'&&$$('#taskRows [data-action="toggle-task"]').find(button=>button.dataset.id===guideTaskId);
+    const target=control||$(ui.view==='tasks'?'#guideTaskSaved':'#guideTaskRevealHeading');
+    target?.focus({preventScroll:true});
+    target?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+  }
+  function showGuideTaskLinks(id) {
+    if(id!==guideTaskId||window.GatherAccessLost)return;
+    taskDialog(id);
+    requestAnimationFrame(()=>{
+      if(ui.dialogKind!=='task'||ui.detailId!==id)return;
+      const existing=$('#relationshipAddForm select[name="taskId"]');
+      const disclosure=existing?.options.length>1?existing.closest('details'):$('#dialog .linked-task-create');
+      const target=disclosure?.querySelector('summary')||$('#dialog .task-dependencies h3');
+      if(disclosure)disclosure.open=true;
+      if(target){if(!disclosure)target.tabIndex=-1;target.focus({preventScroll:true});target.scrollIntoView({block:'start',behavior:'instant'});}
+    });
   }
   function assignmentCandidates(tasks) {
     return tasks.filter(task=>task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
@@ -378,6 +429,48 @@
     return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-task">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+GatherWrapUp.markup(s,{h,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card"><span class="memory-category">${h(m.category||'Team learning')}</span><h2>${h(m.change)}</h2>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button></article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
   }
 
+  function reminderScope() {
+    return window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost?store.getReminderScope?.():'';
+  }
+  function paintNotifications(state=store.getState(),today=dateKey()) {
+    const button=$('#notificationButton'), preferences=window.WeftNotifications, scope=reminderScope();
+    if(!button||!preferences)return;
+    button.hidden=!preferences.preferenceKey(scope);
+    if(button.hidden)return;
+    const enabled=preferences.readReminderPreference(scope);
+    const reminders=enabled?preferences.taskReminders(state.tasks,ui.actor,today):[];
+    const count=$('[data-notification-count]',button);
+    count.hidden=!reminders.length;
+    count.textContent=reminders.length>99?'99+':String(reminders.length);
+    button.setAttribute('aria-label',reminders.length?`Notifications, ${reminders.length} task ${reminders.length===1?'reminder':'reminders'}`:'Notifications');
+    if(ui.dialogKind!=='notifications')return;
+    const list=$('[data-notification-items]'), toggle=$('[data-action="toggle-task-reminders"]');
+    if(!list||!toggle)return;
+    const markup=reminders.length
+      ? `<ul class="notification-list" aria-label="Task reminders">${reminders.map(item=>`<li><button type="button" class="btn btn-secondary notification-task" data-action="task" data-id="${h(item.id)}"><strong class="notification-task-title">${h(item.title)}</strong><span class="notification-task-date">${item.overdue?'Overdue · '+h(dayLabel(item.dueDate)):'Due today'}</span></button></li>`).join('')}</ul>`
+      : `<p class="notice section-gap">${enabled?'No tasks that need your work are due today or overdue.':'Task reminders are off in this browser.'}</p>`;
+    const template=document.createElement('template');
+    template.innerHTML=markup;
+    if(list.innerHTML!==template.innerHTML){
+      const active=list.contains(document.activeElement)?document.activeElement:null;
+      list.replaceChildren(template.content);
+      if(active&&!restoreFocus(active,list))toggle.focus({preventScroll:true});
+    }
+    toggle.textContent=enabled?'Turn off reminders':'Turn on reminders';
+  }
+  function showNotifications() {
+    if(!window.WeftNotifications?.preferenceKey(reminderScope()))return;
+    openDialog('Notifications','<p class="muted">See tasks that need your work and are due today or overdue, based on the project’s time zone.</p><div data-notification-items></div><div class="notification-settings"><p class="muted">This project, this browser only. No email or push.</p><button type="button" class="btn btn-secondary" data-action="toggle-task-reminders"></button></div><p class="notification-status" role="status"></p>','',false,'notifications');
+    paintNotifications();
+  }
+  function toggleTaskReminders() {
+    if(ui.dialogKind!=='notifications'||window.GatherAccessLost)return;
+    const scope=reminderScope(), preferences=window.WeftNotifications;
+    const enabled=!preferences.readReminderPreference(scope);
+    const saved=preferences.writeReminderPreference(scope,enabled);
+    paintNotifications();
+    $('.notification-status').textContent=saved?(enabled?'Task reminders are on.':'Task reminders are off.'):'This browser did not save your reminder preference.';
+  }
   function render() {
     projectBudget?.unmount();
     const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
@@ -385,6 +478,7 @@
     ui.reviewDirty=false;
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const s=store.getState();
+    paintNotifications(s);
     $('.event-switcher strong').textContent=s.event.name;
     $('.event-symbol').textContent=s.event.name.split(/\s+/).filter(Boolean).slice(0,2).map(word=>word[0]).join('').toUpperCase();
     document.body.classList.toggle('participant',!isOrganizer());
@@ -398,7 +492,7 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    const markup=({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const markup=(guideTaskNeedsReveal&&!['tasks','overview'].includes(ui.view)?guideTaskPanel(s,true):'')+({overview,tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
@@ -701,7 +795,22 @@
   function newTaskDialog(firstTask=false) {
     if(!canCreateTasks())throw new Error('Only the organizer can add tasks.');
     if(firstTask&&guidedWorkspace){
-      openDialog('Add your first task','<p class="workspace-first-task-copy">Give one thing that needs doing a name. We’ll add it to your shared plan as To do. You can assign it or set a deadline afterward.</p><form id="newTaskForm"><label class="field section-gap">Task name<input name="title" required maxlength="180" placeholder="e.g. Confirm the venue"></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button class="btn btn-primary" type="submit">Save first task</button></div></form>');
+      openDialog('Add your first task',`<p class="workspace-first-task-copy">Start with one action. We’ll save it as <strong>To do</strong> and show it under <strong>Shared tasks → All tasks</strong>.</p>
+        <form id="newTaskForm" data-guide-task="true">
+          <label class="field">Task name <small>Required</small><input name="title" required maxlength="180" placeholder="e.g. Confirm the venue" aria-describedby="guideTaskNameHelp"></label>
+          <p class="guide-task-help" id="guideTaskNameHelp">Start with a verb so it’s clear what needs to happen.</p>
+          <details class="guide-task-fields"><summary>Add optional details</summary><p class="guide-task-help">Give it an owner, a due date, a category, or a clear outcome. You can fill these in later.</p>
+            <div class="form-grid">
+              <label class="field">Owner<select name="owner">${ownerOptions('')}</select><small>Who will take this on? Leave it unassigned if you’re not sure.</small></label>
+              <label class="field">Due date<input name="dueDate" type="date"><small>When does this work need to be done?</small></label>
+              <div data-owner-load class="full-width"></div>
+              <label class="field full-width">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(value=>[value,value]),'Guest care')}</select><small>Group it with similar work in the project.</small></label>
+              <label class="field full-width">Done when<textarea name="scope" rows="2" maxlength="3000" placeholder="e.g. The venue confirms the date in writing."></textarea><small>Describe the result, so anyone can tell when it’s finished.</small></label>
+              <label class="field full-width">Context<textarea name="note" rows="2" maxlength="3000" placeholder="What should the owner know before starting?"></textarea><small>Shared with the team. Don’t include private codes or credentials.</small></label>
+            </div>
+          </details>
+          <div class="form-actions"><button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button class="btn btn-primary" type="submit">Save first task</button></div>
+        </form>`);
       return;
     }
     const organizer=isOrganizer();
@@ -1016,7 +1125,7 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist');
+    replacesDialog.push('related-checklist','notifications');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -1024,13 +1133,17 @@
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
+      if(action==='notifications')showNotifications();
+      if(action==='toggle-task-reminders')toggleTaskReminders();
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
       if(action==='related-checklist')openRelatedBatch(id);
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
       }
       if(action==='move-event-plan')rescheduleDialog();
-      if(action==='add-task'||action==='guide-add-task'){newTaskDialog(action==='guide-add-task');void syncGuide('add_task_clicked');}
+      if(action==='add-task'||action==='guide-add-task'){newTaskDialog(guideExpectsTask());void syncGuide('add_task_clicked');}
+      if(action==='guide-task-reveal'||action==='guide-task-completion')revealGuideTask(action==='guide-task-completion');
+      if(action==='guide-task-links')showGuideTaskLinks(id);
       if(action==='guide-retry'){await syncGuide();if(guideViewReady===ui.view)recordLoadedGuideView(ui.view);}
       if(action==='guide-budget'||action==='guide-info'){
         if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
@@ -1242,8 +1355,11 @@
       }
       if(form.id==='newTaskForm'){
         const activity=form.dataset.scheduled==='true';
+        const firstTask=guidedWorkspace&&form.dataset.guideTask==='true';
         const taskData=activity?GatherScheduleUI.newActivityTask(data):data;
-        const task=store.addTask(taskData,ui.actor);closeDialog();render();
+        const task=store.addTask(taskData,ui.actor);closeDialog();
+        if(firstTask){guideTaskId=task.id;paintGuide();release();revealGuideTask();}
+        else render();
         if(activity&&task.schedule)taskDialog(task.id);
         toast(activity?(task.schedule?'Activity added.':'Activity added. Set its start time in Timeline.'): 'Task added.');
         void syncGuide();
@@ -1412,9 +1528,17 @@
   }
   function refreshAttentionDate() {
     refreshScheduleClock();
-    if(window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||unsavedReview()||attentionDay===dateKey())return;
-    attentionDay=dateKey();render();
+    if(window.GatherAccessLost||document.hidden||ui.pendingSave)return;
+    const today=dateKey();
+    if(attentionDay===today)return;
+    if(ui.dialogKind==='notifications')paintNotifications(store.getState(),today);
+    if(!$('#dialogBackdrop').hidden||unsavedReview())return;
+    attentionDay=today;render();
   }
+  window.addEventListener('storage',event=>{
+    const key=window.WeftNotifications?.preferenceKey(reminderScope());
+    if(key&&(event.key===key||event.key===null))paintNotifications();
+  });
   setInterval(refreshAttentionDate,60000);
   window.addEventListener('focus',refreshAttentionDate);
   window.addEventListener('pageshow',refreshAttentionDate);

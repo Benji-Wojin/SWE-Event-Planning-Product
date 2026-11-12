@@ -11,6 +11,7 @@ mkdirSync('public/gather-assets', { recursive: true });
 let html = readFileSync('legacy/index.html', 'utf8')
   .replace('favicon.svg', '/favicon.svg')
   .replace('href="lovable-ui.css"', 'href="/gather-assets/lovable-ui.css"')
+  .replace('href="notifications.css"', 'href="/gather-assets/notifications.css"')
   .replace('src="theme.js"', 'src="/gather-assets/theme.js"')
   .replace('styles.css?v=coordination-1', '/gather-assets/styles.css');
 html = html
@@ -43,7 +44,7 @@ html = html.replace(
   'Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.',
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
-html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/budget.js"></script><script src="/gather-assets/budget-ui.js"></script><script src="/gather-assets/hosted-store.js"></script>');
+html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/budget.js"></script><script src="/gather-assets/budget-ui.js"></script><script src="/gather-assets/notifications.js"></script><script src="/gather-assets/hosted-store.js"></script>');
 html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
 // The hosted shell has no project identity until the authenticated snapshot loads.
 html = html.replaceAll('Field Day 2026', 'Project')
@@ -59,6 +60,8 @@ writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recover
 writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
 writeFileSync('public/gather-assets/wrap-up.js',readFileSync('legacy/wrap-up.js','utf8'));
 writeFileSync('public/gather-assets/planning-ui.js',readFileSync('legacy/planning-ui.js','utf8'));
+writeFileSync('public/gather-assets/notifications.js',readFileSync('legacy/notifications.cjs','utf8'));
+writeFileSync('public/gather-assets/notifications.css',readFileSync('legacy/notifications.css','utf8'));
 writeFileSync('public/gather-assets/completion-ui.js',readFileSync('legacy/completion-ui.js','utf8'));
 writeFileSync('public/gather-assets/inbox.js',readFileSync('legacy/inbox.js','utf8'));
 writeFileSync('public/gather-assets/resources-ui.js',readFileSync('legacy/resources-ui.js','utf8'));
