@@ -395,7 +395,7 @@
     return `<div class="handoff-main"><div class="handoff-header"><div><p class="handoff-kicker">${welcome?'Getting started as a teammate':'Your work'}</p><h2 id="workspaceHandoffTitle" tabindex="-1">${heading}</h2></div>${welcome?'<button type="button" class="text-button handoff-dismiss" data-action="dismiss-handoff">Dismiss welcome</button>':''}</div>${welcome?`
       <div class="handoff-grid">
         <div><h3>Find your work</h3>${work}</div>
-        <div><h3>Get oriented</h3><p>Check where the event is, what’s on the schedule, and who else is planning it.</p><div class="handoff-actions"><button type="button" class="btn btn-secondary" data-view="info">Event info</button><button type="button" class="btn btn-secondary" data-view="timeline">Timeline</button><button type="button" class="btn btn-secondary" data-view="team">People</button></div></div>
+        <div><h3>Get oriented</h3><p>Check the date and location, see the schedule, and find out who’s planning with you.</p><div class="handoff-actions"><button type="button" class="btn btn-secondary" data-action="event-info" aria-haspopup="dialog">Event details</button><button type="button" class="btn btn-secondary" data-view="timeline">Timeline</button><button type="button" class="btn btn-secondary" data-view="team">People</button></div></div>
       </div><p class="handoff-note">As you work, open the task to share progress, ask for help, or report completion. The team can follow along there.</p>
       `:`<div class="handoff-work">${work}</div>`}</div>`;
   }
@@ -403,9 +403,9 @@
     const host=$('#workspaceHandoff');
     if(!host)return;
     const markup=isLiveTeammate()&&ui.view==='overview'?teammateHandoff(state,joinWelcome):'';
+    const previous=host.contains(document.activeElement)?document.activeElement:null;
     host.hidden=!markup;
     if(renderedTeammateHandoff!==markup){
-      const previous=host.contains(document.activeElement)?document.activeElement:null;
       renderedTeammateHandoff=markup;
       host.innerHTML=markup;
       if(previous&&(!markup||!restoreFocus(previous,host)))(markup?$('#workspaceHandoffTitle'):$('#viewRoot'))?.focus({preventScroll:true});
@@ -415,8 +415,8 @@
     if(!isLiveTeammate()||ui.view!=='overview'||!['review','mine','available'].includes(action))return;
     Object.assign(ui,{tab:action==='available'?'available':'mine',taskView:'list',owner:'',status:'',search:'',mapFocus:''});
     if(!navigate('tasks'))return;
+    skipToContent();
     if(action==='review'&&acceptanceCandidates(store.getState().tasks).length)acceptanceDialog();
-    else skipToContent();
   }
   function acceptanceDialog(fromEventReview=false) {
     if(window.GatherAccessLost)return;
@@ -424,7 +424,18 @@
     const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
     if(!tasks.length){toast('No unaccepted open tasks in this view.');return;}
     const source=fromEventReview?'this event review':'the current view';
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<div class="acceptance-choice"><label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}" aria-labelledby="accept-title-${h(task.id)}"><span><strong id="accept-title-${h(task.id)}">${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}</span>`:task.eventActivity===true?'<span>Planned activity · start time not set</span>':''}<span><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label><button type="button" class="text-button" data-action="task" data-id="${h(task.id)}" aria-label="Open task details for ${h(task.title)}">Open task details</button></div>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    const choices=tasks.map(task=>{
+      const key=h(task.id);
+      const when=task.schedule?`Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}`:task.eventActivity===true?'Planned activity · start time not set':'';
+      return `<div class="acceptance-choice">
+        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}" aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''} accept-outcome-${key}">
+        <span><strong id="accept-title-${key}">${h(task.title)}</strong><span id="accept-date-${key}">${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>
+        ${when?`<span id="accept-activity-${key}">${when}</span>`:''}<span id="accept-outcome-${key}"><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>
+        ${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label>
+        <button type="button" class="text-button" data-action="task" data-id="${key}" aria-label="Open task details for ${h(task.title)}">Open task details</button>
+      </div>`;
+    }).join('');
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
@@ -606,7 +617,15 @@
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
     document.body.style.overflow='hidden';
-    requestAnimationFrame(()=>{const controls=focusable($('#dialog'));(controls.find(el=>el.matches('input,select,textarea'))||controls[0]||$('#dialog')).focus();});
+    requestAnimationFrame(()=>{
+      const dialog=$('#dialog');
+      if(kind==='acceptance'&&ui.dialogKind==='acceptance'&&!$('#dialogBackdrop').hidden){
+        const heading=$('#dialogTitle',dialog);
+        if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});dialog.scrollTop=0;return;}
+      }
+      const controls=focusable(dialog);
+      (controls.find(el=>el.matches('input,select,textarea'))||controls[0]||dialog).focus();
+    });
   }
   function closeDialog() {
     $('#dialogBackdrop').hidden=true;
@@ -1198,8 +1217,14 @@
     openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until Jack confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}"><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`);
   }
   function contextDialog() {
+    if(window.GatherAccessLost)return;
     if(window.GatherMode&&!window.GatherMode.demo&&isOrganizer()){window.top.location.href=window.GatherMode.projectUrl('/setup');return;}
-    if(!isOrganizer()){const e=store.getState().event;openDialog('Event details',`<h3>${h(e.name)}</h3><p>${h(e.location)} · ${dayLabel(e.date)}</p><p>${e.guestCount} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;}
+    if(!isOrganizer()){
+      const e=store.getState().event;
+      const date=e.date?new Date(e.date+'T00:00:00Z'):null;
+      const day=date&&Number.isFinite(date.getTime())?new Intl.DateTimeFormat(undefined,{dateStyle:'long',timeZone:'UTC'}).format(date):'Not set yet';
+      openDialog('Event details',`<h3>${h(e.name)}</h3><dl class="task-facts"><div><dt>Event date</dt><dd>${h(day)}</dd></div><div><dt>Location</dt><dd>${h(e.location?.trim()||'Not set yet')}</dd></div></dl><p>${h(e.guestCount)} guests · ${e.outdoor?'Outdoors':'Indoors'} · ${e.transportNeeded?'Transport provided':'No organized transport'}</p>`);return;
+    }
     const e=store.getState().event;
     openDialog('Event details',`<form id="contextForm"><div class="form-grid">
       <label class="field full-width">Event time zone<input name="timeZone" list="context-time-zones" required maxlength="100" placeholder="America/Los_Angeles" value="${h(e.timeZone)}"><datalist id="context-time-zones">${['UTC',...Intl.supportedValuesOf('timeZone')].map(zone=>`<option value="${h(zone)}"></option>`).join('')}</datalist></label>
@@ -1217,12 +1242,21 @@
     if(!GatherReschedule.validDay(state.event.date))throw new Error('Set the current event date in Project settings before moving the plan.');
     openDialog('Move event plan',`<p>Current event date: <strong>${h(state.event.date)}</strong>. Choose the new date, then review which preparation deadlines and activities to move. Nothing changes until you save the review.</p><form id="rescheduleDateForm"><label class="field">New event date<input type="date" name="toDate" required></label><div class="form-actions"><button type="submit" class="btn btn-primary">Review proposed dates</button></div></form>`,'',false,'reschedule');
   }
+  function navigateFromViewControl(el) {
+    const view=el.dataset.view;
+    if(view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}
+    if(!confirmDiscard($('#dialog'),view!==ui.view?$('#emailReviewForm'):null))return;
+    if(!$('#dialogBackdrop').hidden)closeDialog();
+    const fromHandoff=el.closest('#workspaceHandoff')!==null;
+    recordGuideViewClick(view);
+    if(navigate(view)&&fromHandoff)skipToContent();
+  }
   document.addEventListener('click',async event=>{
     if(ui.pendingSave){event.preventDefault();return;}
     const el=event.target.closest('[data-action], [data-view]');
     if(!el)return;
     if(el.dataset.action==='skip-content'){event.preventDefault();skipToContent();return;}
-    if(el.dataset.view){event.preventDefault();if(el.dataset.view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}if(!confirmDiscard($('#dialog'),el.dataset.view!==ui.view?$('#emailReviewForm'):null))return;if(!$('#dialogBackdrop').hidden)closeDialog();recordGuideViewClick(el.dataset.view);navigate(el.dataset.view);return;}
+    if(el.dataset.view){event.preventDefault();navigateFromViewControl(el);return;}
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;

@@ -33,7 +33,8 @@ test('new teammates get orientation that accurately distinguishes no work, claim
   f.run('paintTeammateHandoff()');
   assert.match(f.host.innerHTML,/Welcome to Fictional &lt;School&gt; dance/);
   assert.match(f.host.innerHTML,/Nothing is assigned to you yet/);
-  assert.match(f.host.innerHTML,/Event info[\s\S]*Timeline[\s\S]*People/);
+  assert.match(f.host.innerHTML,/data-action="event-info" aria-haspopup="dialog">Event details[\s\S]*data-view="timeline">Timeline[\s\S]*data-view="team">People/);
+  assert.doesNotMatch(f.host.innerHTML,/data-view="info"/);
   assert.doesNotMatch(f.host.innerHTML,/Find unassigned tasks|Review assignments|Create a project/);
   f.state.tasks=[task('other-work','other'),task('ready-to-claim')];
   f.run('paintTeammateHandoff()');
@@ -62,17 +63,55 @@ test('the welcome is member-only and actual pending assignments surface on retur
 
 test('assignment handoff uses the real personal review without writing or selecting anything',()=>{
   const f=context([
-    task('review mine','maya',{scope:'Signed & confirmed',note:'Call before noon'}),
+    task('review-mine','maya',{title:'Review mine',scope:'Signed & confirmed',note:'Call before noon',dueDate:'2030-11-18',
+      schedule:{start:'2030-11-19T17:00'}}),
     task('ignore other','other',{scope:'Do not display'}),
   ]);
   f.run("openHandoffTasks('review')");
-  assert.deepEqual(f.actions,['tasks']);assert.equal(f.ctx.ui.tab,'mine');
+  assert.deepEqual(f.actions,['tasks','focus']);assert.equal(f.ctx.ui.tab,'mine');
   assert.equal(f.ctx.ui.taskView,'list');assert.equal(f.ctx.ui.search,'');
   const {markup}=f.dialog();
   assert.match(markup,/Done when:<\/strong> Signed &amp; confirmed/);
   assert.match(markup,/Latest update:<\/strong> Call before noon/);
-  assert.match(markup,/Open task details for review mine/);
+  assert.match(markup,/Open task details for Review mine/);
+  assert.match(markup,/aria-labelledby="accept-title-review-mine" aria-describedby="accept-date-review-mine accept-activity-review-mine accept-outcome-review-mine"/);
+  assert.match(markup,/id="accept-date-review-mine">To do · Due 2030-11-18/);
+  assert.match(markup,/id="accept-activity-review-mine">Activity starts 2030-11-19 17:00/);
+  assert.match(markup,/id="accept-outcome-review-mine">/);
   assert.doesNotMatch(markup,/\bchecked\b|ignore other|Do not display/);
+});
+
+test('read-only event details show the shared venue and date, with clear missing states',()=>{
+  const f=context();
+  f.ctx.isOrganizer=()=>false;
+  const a=source.indexOf('  function contextDialog('),b=source.indexOf('  function ',a+5);
+  vm.runInContext(source.slice(a,b),f.ctx);
+  f.run('contextDialog()');
+  assert.equal(f.dialog().title,'Event details');
+  assert.match(f.dialog().markup,/<dt>Event date<\/dt><dd>Not set yet/);
+  assert.match(f.dialog().markup,/<dt>Location<\/dt><dd>Not set yet/);
+  assert.doesNotMatch(f.dialog().markup,/No due date|<form/);
+  Object.assign(f.state.event,{date:'2030-11-23',location:'Fictional <Park>'});
+  f.run('contextDialog()');
+  assert.match(f.dialog().markup,/<dt>Event date<\/dt><dd>[^<]*2030/);
+  assert.match(f.dialog().markup,/<dt>Location<\/dt><dd>Fictional &lt;Park&gt;/);
+});
+
+test('orienting from the welcome moves focus to the destination only after navigation succeeds',()=>{
+  const a=source.indexOf('  function navigateFromViewControl('),b=source.indexOf("  document.addEventListener('click'",a);
+  for(const [fromHandoff,valid,consent,expected] of [
+    [true,true,true,['navigate:timeline','focus']],
+    [true,false,true,['navigate:timeline']],
+    [false,true,true,['navigate:timeline']],
+    [true,true,false,[]],
+  ]){
+    const actions=[];
+    const ctx=vm.createContext({ui:{view:'overview'},$:()=>({hidden:true}),confirmDiscard:()=>consent,
+      recordGuideViewClick:()=>{},navigate:view=>{actions.push('navigate:'+view);return valid;},
+      skipToContent:()=>actions.push('focus'),control:{dataset:{view:'timeline'},closest:()=>fromHandoff?{}:null}});
+    vm.runInContext(source.slice(a,b)+'navigateFromViewControl(control);',ctx);
+    assert.deepEqual(actions,expected);
+  }
 });
 
 test('welcome navigation consumes only the one-time scalar flag in the frame and outer project',()=>{

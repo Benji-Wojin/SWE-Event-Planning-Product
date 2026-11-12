@@ -61,6 +61,19 @@ test('dialog entry chooses a visible field or close control, never a collapsed f
   vm.runInContext('openDialog("Task","body");',f.ctx);assert.equal(f.input.focused,true);assert.equal(f.close.focused,false);
 });
 
+test('assignment review starts on the heading so the explanation is not skipped',()=>{
+  const f=fixture(),backdrop={hidden:true,dataset:{},classList:{add(){}}},ui={};
+  f.details.open=true;
+  const dialog={className:'',innerHTML:'',scrollTop:420};
+  const heading={focus(options){this.options=options;}};
+  Object.assign(f.ctx,{ui,document:{activeElement:{},body:{style:{}}},tour:{close(){}},h:String,icon:()=>'',requestAnimationFrame:fn=>fn(),
+    $:selector=>({'#sidebar':{classList:{contains:()=>false}},'#dialogBackdrop':backdrop,'#dialog':dialog,'#appShell':{},'#dialogTitle':heading})[selector]});
+  const start=source.indexOf('  function openDialog('),end=source.indexOf('  function closeDialog(',start);
+  vm.runInContext(source.slice(start,end)+'openDialog("Accept assignments","body","",false,"acceptance");',f.ctx);
+  assert.equal(heading.tabIndex,-1);assert.equal(heading.options.preventScroll,true);assert.equal(dialog.scrollTop,0);
+  assert.notEqual(f.input.focused,true);
+});
+
 test('restoration refuses a connected field hidden by collapse but can restore its summary',()=>{
   const f=fixture();assert.equal(f.ctx.restore(f.input,f.root),false);assert.notEqual(f.input.focused,true);
   assert.equal(f.ctx.restore(f.summary,f.root),true);assert.equal(f.summary.focused,true);
