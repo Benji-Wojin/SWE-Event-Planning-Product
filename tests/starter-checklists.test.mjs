@@ -32,6 +32,26 @@ test('formal events get deeper delivery checks while celebrations stay proportio
   assert.match(titles(starterChecklist('trip')),/flexible itinerary/);
   assert.match(titles(starterChecklist('anniversary')),/personal touches/);
 });
+test('opt-in event-day activities are useful for each event type without inventing a schedule',()=>{
+  const activities=kind=>starterChecklist(kind,undefined,true).items.filter(item=>item.kind==='activity');
+  for(const kind of eventKinds){
+    const original=starterChecklist(kind), enriched=starterChecklist(kind,{eventDate:'2028-03-12',endDate:'2028-03-14',today:'2028-01-01'},true);
+    assert.doesNotThrow(()=>parsePlanItems(enriched.items));
+    assert.equal(enriched.items.filter(item=>item.kind==='preparation').length,original.items.length);
+    assert.ok(enriched.items.filter(item=>item.kind==='preparation').every(item=>item.dueDate));
+    assert.ok(activities(kind).length>=3);
+    for(const item of enriched.items.filter(item=>item.kind==='activity')){
+      for(const field of ['dueDate','start','end','location'])assert.equal(item[field],'');
+      assert.equal(item.owner,undefined);
+      assert.ok(item.scope.length>30);
+      assert.deepEqual(item.dependsOn,[]);
+    }
+    assert.match(enriched.assumptions.join(' '),/start times.*run sheet/);
+  }
+  assert.match(activities('school').map(i=>i.title).join(' '),/check-in.*release/);
+  assert.match(activities('corporate').map(i=>i.title).join(' '),/AV handoff.*sessions/);
+  assert.ok(activities('school').length>activities('party').length);
+});
 test('starter outputs are fresh copies and prototype keys cannot select a checklist',()=>{
   const plan=starterChecklist('school');plan.items[0].title='Changed';plan.items[0].scope='Changed outcome';plan.items.find(i=>i.dependsOn.length).dependsOn.push('made-up');
   const fresh=starterChecklist('school');assert.notEqual(fresh.items[0].title,'Changed');assert.doesNotThrow(()=>parsePlanItems(fresh.items));

@@ -250,7 +250,7 @@ async function saveDraft(c: Context, input: any) {
 }
 async function createStarter(c: Context, input: any) {
   if (c.purpose !== 'plan') throw new HttpError(400, 'Starter checklists belong in the event plan, not a conversation or suggestions review.');
-  if (!exact(input, ['action', 'revision', 'workspaceRevision', 'requestId', 'brief', 'replace', 'suggestDates']) || !uuid(input.requestId) || typeof input.replace !== 'boolean' || input.suggestDates !== undefined && typeof input.suggestDates !== 'boolean')
+  if (!exact(input, ['action', 'revision', 'workspaceRevision', 'requestId', 'brief', 'replace', 'suggestDates', 'includeActivities']) || !uuid(input.requestId) || typeof input.replace !== 'boolean' || input.suggestDates !== undefined && typeof input.suggestDates !== 'boolean' || input.includeActivities !== undefined && typeof input.includeActivities !== 'boolean')
     throw new HttpError(400, 'Review the starter checklist request.');
   let brief;
   try {
@@ -259,7 +259,8 @@ async function createStarter(c: Context, input: any) {
   const previous = await read(c.id), oldData = await decode(previous);
   // Keep undated request fingerprints compatible. A retry never recalculates
   // yesterday's reviewed suggestions just because the local day has changed.
-  const fingerprint = await hash({action:'starter', version:input.suggestDates ? 2 : 1, source:c.source, brief});
+  const fingerprint = await hash({action:'starter', version:input.suggestDates ? 2 : 1, source:c.source, brief,
+    ...(input.includeActivities ? {includeActivities:true} : {})});
   if (previous?.request_id === input.requestId) {
     if (previous.request_hash !== fingerprint) throw new HttpError(409, 'This request was already used for different event details.');
     return snapshot(c);
@@ -273,13 +274,13 @@ async function createStarter(c: Context, input: any) {
     output = starterChecklist(brief.kind, input.suggestDates ? {
       eventDate:c.state.event.date, endDate:brief.endDate,
       today:(globalThis as any).GatherCalendar.dayKey(new Date(),c.state.event.timeZone),
-    } : undefined);
+    } : undefined, input.includeActivities === true);
   } catch (error) { throw new HttpError(400,(error as Error).message); }
   const reviewed = output.items.map(item => ({...item, owner:'', included:true}));
   const {matches} = planSelection(reviewed, existingPlanTasks(c));
   const draft = {
     ...output,
-    source:'starter', starterVersion:input.suggestDates ? 4 : 3,
+    source:'starter', starterVersion:input.includeActivities ? 5 : input.suggestDates ? 4 : 3,
     ...(input.suggestDates ? {starterDates:{eventDate:c.state.event.date,endDate:brief.endDate || c.state.event.date}} : {}),
     items:reviewed.map(item=>({...item, included:matches.get(item.id)!.length===0})),
     duplicateSuggestions:duplicateSuggestions(reviewed,existingPlanTasks(c).slice(0,200)),

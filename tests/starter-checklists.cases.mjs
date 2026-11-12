@@ -31,6 +31,37 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       const next=await ready(project);assert.equal(next.draft.items[0].included,false,'exact existing work is not preselected');
       assert.equal(JSON.parse(ws(project).data).tasks.length,1);
     });
+    await t.test('opt-in event-day drafts add activities only after review and schedule only supplied times',async()=>{
+      const project=await setup();
+      const context=await workspace.GET(new Request('https://gather.example/api/workspace?project='+project));
+      const updated=await workspace.POST(request('/api/workspace?project='+project,{method:'updateEvent',args:[{date:'2100-03-14',timeZone:'America/New_York'}],revision:(await context.json()).revision}));
+      assert.equal(updated.status,200);
+      const before=ws(project), initial=await read(project);
+      assert.equal((await post(project,input(initial,{includeActivities:'yes'}))).status,400);
+      const payload=input(initial,{includeActivities:true});
+      const result=await post(project,payload);assert.equal(result.status,200,await result.clone().text());
+      const snap=await result.json();
+      assert.deepEqual(ws(project),before);
+      assert.deepEqual((await (await post(project,payload)).json()).draft,snap.draft);
+      assert.equal((await post(project,{...payload,includeActivities:false})).status,409);
+      assert.equal(snap.draft.starterVersion,5);
+      const days=snap.draft.items.filter(item=>item.kind==='activity');
+      assert.equal(days.length,4);
+      assert.ok(days.every(item=>!item.start&&!item.end&&!item.owner&&!item.dueDate));
+      const items=snap.draft.items.map(item=>({...item,included:['day_arrivals','day_programme'].includes(item.id)}));
+      const arrival=items.find(item=>item.id==='day_arrivals');
+      Object.assign(arrival,{start:'2100-03-14T17:30',end:'2100-03-14T18:00',location:'Fictional lobby',owner:'jack'});
+      const applied=await post(project,{action:'apply',revision:snap.revision,workspaceRevision:snap.workspaceRevision,generation:snap.draft.generation,items,confirm:true});
+      assert.equal(applied.status,200,await applied.clone().text());
+      const tasks=JSON.parse(ws(project).data).tasks;
+      assert.equal(tasks.length,2);
+      const scheduled=tasks.find(task=>task.title===arrival.title);
+      assert.equal(scheduled.schedule.start,arrival.start);
+      assert.equal(scheduled.schedule.end,arrival.end);
+      assert.equal(scheduled.schedule.location,arrival.location);
+      assert.equal(scheduled.status,'todo');
+      assert.equal(tasks.find(task=>task.id!==scheduled.id).schedule,null);
+    });
     await t.test('dated starter is opt-in, requires dated project context, and applies only reviewed deadlines',async()=>{
       const project=await setup(),blank=await read(project);
       assert.equal((await post(project,input(blank,{suggestDates:true}))).status,400);

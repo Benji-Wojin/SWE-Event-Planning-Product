@@ -71,6 +71,49 @@ const checklists: Record<string, Entry[]> = {
   other: [shared.purpose, shared.venue, shared.budget, shared.needs, shared.programme, shared.roles, shared.cleanup, shared.feedback],
 };
 
+// Optional day-of activities are draft rows, not scheduled appointments.
+// Chronological order alone is not a prerequisite for task completion.
+type Activity = [id:string,title:string,category:string,note:string,scope:string];
+const dayOf: Record<string, Activity[]> = {
+  school: [
+    ['day_setup','Open the venue and brief the event team','Venue','Confirm the venue is available, walk the setup with the responsible organizer and hand over the agreed roles and contact route.','The venue contact and event lead have confirmed the setup handoff, and unresolved issues have an owner.'],
+    ['day_arrivals','Run attendee check-in','Guest care','Use the school’s agreed arrival process. Have the check-in lead tell the event organizer about exceptions without posting personal attendee details in shared notes.','The check-in lead has handed off attendance and unresolved exceptions through the school’s agreed process.'],
+    ['day_programme','Run the main programme and transitions','Program','Follow the reviewed order and have the named leads hand off each transition. If the order changes, let the next lead know.','Activity leads have handled transitions and communicated any changes affecting the next part of the programme.'],
+    ['day_release','Hand off attendee release and venue close','Guest care','Use the agreed release process and hand remaining issues to the school’s responsible organizer. Confirm who stays for equipment return and venue close.','The responsible organizer has received outstanding release issues and the venue contact has a named closeout lead.'],
+  ],
+  corporate: [
+    ['day_setup','Open rooms and confirm AV handoff','Venue','Check room access, the presentation setup and any remote participation with the people responsible before handing over to the delivery lead.','Room and AV leads have handed over the setup or named a fallback for unresolved issues.'],
+    ['day_arrivals','Welcome and check in attendees','Guest care','Brief the welcome team on the arrival route, access support and who should handle exceptions.','The welcome lead has handled arrival handoffs and escalated unresolved access issues.'],
+    ['day_programme','Deliver the sessions and announce changes','Program','Use the reviewed agenda. Confirm the next facilitator is ready before each transition and share changes with affected roles.','Facilitators have handed off sessions and the delivery lead has recorded changes requiring follow-up.'],
+    ['day_close','Close the event and hand off decisions','Program','Capture decisions and owners before people leave; hand unresolved venue or supplier issues to the responsible organizer.','The organizer has the action owners and the venue contact has an agreed closeout lead.'],
+  ],
+  offsite: [
+    ['day_arrivals','Meet the group and check in','Transport','Use the agreed meeting point and check-in plan. Tell the group how to reconnect if arrival times change.','The arrival lead knows who has joined and has passed on delays or changes.'],
+    ['day_programme','Run the main off-site activity','Program','Review the aim, time available and next meeting point with the group before handing over to the activity lead.','The activity lead has communicated timing changes and the next meeting point.'],
+    ['day_close','Confirm departure arrangements','Transport','Confirm how everyone is leaving and what follow-ups remain before the group separates.','The group has a departure plan and a named contact for outstanding arrangements.'],
+  ],
+  trip: [
+    ['day_arrivals','Meet at the agreed departure point','Transport','Check in with the group and share any change in departure plans or the fallback meeting point.','The group has checked in and knows where to meet if plans change.'],
+    ['day_programme','Run the main outing','Program','Confirm the next activity and meeting point with the group. Adjust for actual delays, breaks and availability.','The group knows any change to the outing and where to meet afterward.'],
+    ['day_close','Regroup before the return or next stop','Transport','Confirm the next transfer or stop and who will update people if plans change.','The group has confirmed the next stop or return plan and a contact for delays.'],
+  ],
+  party: [
+    ['day_setup','Set up and welcome guests','Guest care','Check the arrival area and hand over food, music or greeting duties to the people helping.','The welcome area is ready and the helpers know their roles.'],
+    ['day_programme','Run the main celebration moment','Program','Check in with the people helping before the main activity or toast. Leave room for timing changes.','The main activity is complete or the helpers know the revised plan.'],
+    ['day_close','Close up and return the space','Venue','Check who will clear up, return shared items and close the space with the person responsible.','Cleanup and any outstanding returns have been handed over.'],
+  ],
+  anniversary: [
+    ['day_arrivals','Welcome guests and check the personal touches','Guest care','Check that the agreed photos, music or messages are ready and that helpers know who will lead the welcome.','The welcome lead and personal-touch helpers are ready or have agreed an alternative.'],
+    ['day_programme','Share the main anniversary moment','Program','Check with the people involved before starting the planned toast, meal or shared memories. Adapt if preferences or timing change.','The main moment has taken place or the group has agreed an alternative.'],
+    ['day_close','Close the gathering and thank helpers','Program','Confirm any cleanup and item returns, and thank the people who helped.','Cleanup is handed over and outstanding items have an owner.'],
+  ],
+  other: [
+    ['day_setup','Check setup and welcome attendees','Guest care','Confirm the space and hand over arrival responsibilities to the people doing the work.','The arrival lead has confirmed setup or named the remaining issue.'],
+    ['day_programme','Run the main activity','Program','Use the reviewed running order and let the next lead know about changes.','The activity lead has communicated timing changes and the next handoff.'],
+    ['day_close','Hand off cleanup and follow-ups','Venue','Confirm who finishes cleanup and who will handle open decisions or returns.','The team has named owners for cleanup and remaining work.'],
+  ],
+};
+
 // Proposed results for human review, not evidence of approval or completion.
 const outcomes: Record<string,string> = {
   purpose:'The team has recorded the intended audience, purpose and useful result, with open decisions identified.',
@@ -121,7 +164,7 @@ function shiftDay(day: string, offset: number) {
   if (!value || !validPlanDate(value)) throw new Error('The suggested dates fall outside the supported calendar range. Leave dates unset or choose another event date.');
   return value;
 }
-export function starterChecklist(kind: string, dates?: PreparationDates): PlanOutput {
+export function starterChecklist(kind: string, dates?: PreparationDates, includeActivities = false): PlanOutput {
   if (!Object.hasOwn(checklists, kind)) throw new Error('Choose a supported event type.');
   if (dates && (!dates.eventDate || !dates.today || !validPlanDate(dates.eventDate) || !validPlanDate(dates.today) || !validPlanDate(dates.endDate) || dates.eventDate < dates.today || dates.endDate && dates.endDate < dates.eventDate))
     throw new Error('Use a current or future event date and check the last day, or leave preparation dates unset.');
@@ -133,13 +176,16 @@ export function starterChecklist(kind: string, dates?: PreparationDates): PlanOu
     if (proposed < dates.today) { compressed.push(title); return dates.today; }
     return proposed;
   };
-  const items = checklists[kind].map(([id, title, category, note, dependsOn]) => ({
+  const items: PlanItem[] = checklists[kind].map(([id, title, category, note, dependsOn]) => ({
     id, title, category, note, scope: outcomes[id], kind: 'preparation', dueDate: due(id, title), start: '', end: '', location: '', dependsOn: [...(dependsOn || [])], existingTaskIndex: null,
   } satisfies PlanItem));
+  if (includeActivities) items.push(...dayOf[kind].map(([id,title,category,note,scope]):PlanItem => ({
+    id,title,category,note,scope,kind:'activity',dueDate:'',start:'',end:'',location:'',dependsOn:[],existingTaskIndex:null,
+  })));
   return {
     items,
     questions: ['Which items fit your event, and who will own them?', 'What dates, confirmations and details still need a decision?'],
-    assumptions: ['Product-authored starter checklist, not AI-generated or tailored to your brief.', dates ? `Preparation deadlines are editable lead-time suggestions anchored to ${dates.eventDate}; wrap-up uses ${dates.endDate || dates.eventDate}. They are not confirmed deadlines. Owners and activity times remain unset; nothing is booked, approved, sent or completed.` : 'Nothing is booked, approved, sent or completed. Dates, times and owners are intentionally unset.', 'A starting point, not a complete safety, legal or organizational-policy checklist. Review it for your event.'],
+    assumptions: ['Product-authored starter checklist, not AI-generated or tailored to your brief.', dates ? `Preparation deadlines are editable lead-time suggestions anchored to ${dates.eventDate}; wrap-up uses ${dates.endDate || dates.eventDate}. They are not confirmed deadlines. Owners and activity times remain unset; nothing is booked, approved, sent or completed.` : 'Nothing is booked, approved, sent or completed. Dates, times and owners are intentionally unset.', 'A starting point, not a complete safety, legal or organizational-policy checklist. Review it for your event.', ...(includeActivities ? ['Event-day activities are optional. Add reviewed start times before including them in the run sheet; an item without a start time remains an unscheduled task.'] : [])],
     ...(compressed.length ? {scheduleWarnings:[`Short notice: ${compressed.length} suggested preparation deadlines would fall before ${dates!.today}, so they are proposed for today instead. Review what is feasible, reduce scope or change dates before adding tasks: ${compressed.join('; ')}.`]} : {}),
   };
 }

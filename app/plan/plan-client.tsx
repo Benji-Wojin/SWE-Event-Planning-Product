@@ -72,6 +72,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
   const [taskContext,setTaskContext]=useState<TaskBreakdownContext|null>(null);
   const [batchOwner,setBatchOwner]=useState('');
   const [suggestStarterDates,setSuggestStarterDates]=useState(false);
+  const [includeStarterActivities,setIncludeStarterActivities]=useState(false);
   const [researchBusy,setResearchBusy]=useState(false);
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
@@ -255,6 +256,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           action:'starter', revision:latest.revision, workspaceRevision:latest.workspaceRevision,
           requestId:crypto.randomUUID(), replace:!!latest.draft,
           suggestDates:suggestStarterDates,
+          ...(includeStarterActivities ? {includeActivities:true} : {}),
           brief:{...brief,description:brief.description.trim() || data.event.name || names[brief.kind]},
         };
       }
@@ -509,6 +511,10 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" className="mt-1" checked={suggestStarterDates} disabled={!data.event.date || !data.event.timeZone} onChange={e=>{setSuggestStarterDates(e.target.checked);starterRequest.current=null;}} />
                 <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
+                <span>Add event-day activities <span className="block text-muted-foreground">Get a short set of activities for this event type. Give them start times in the draft to put them on the run sheet, or leave them as unscheduled tasks.</span></span>
               </label>
               <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
                 {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
