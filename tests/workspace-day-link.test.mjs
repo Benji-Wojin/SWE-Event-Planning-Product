@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 
-test('the signed-in project wrapper forwards a valid day through sign-in and into its workspace',async()=>{
+test('the signed-in project wrapper forwards valid workspace hints through sign-in without mixing join and deep links',async()=>{
   const stub={
     '@/app/chatgpt-auth':'export async function requireChatGPTUser(path){ globalThis.__returnPath=path; if(globalThis.__signedOut) throw Error("sign-in"); }',
     '@/components/app-open':'export function AppOpen(){ throw Error("Not needed for this test"); }',
@@ -33,6 +33,19 @@ test('the signed-in project wrapper forwards a valid day through sign-in and int
       assert.equal(globalThis.__returnPath,'/project?project=school&message=mail-1');
       assert.equal(body.props.children[1].props.src,'/workspace.html?project=school&message=mail-1#inbox');
     }
+    const landing = async params => {
+      const page = await Project({searchParams:Promise.resolve(params)});
+      return (await page.type(page.props)).props.children[1].props.src;
+    };
+    assert.equal(await landing({project:'school',welcome:'1',invite:'not-forwarded'}),'/workspace.html?project=school&welcome=1');
+    assert.equal(globalThis.__returnPath,'/project?project=school&welcome=1');
+    for (const welcome of [['1'],['1','1'],'0','true','']) {
+      assert.equal(await landing({project:'school',welcome}),'/workspace.html?project=school');
+    }
+    assert.equal(await landing({project:['school','other'],welcome:'1'}),'/workspace.html?project=main');
+    assert.equal(await landing({welcome:'1'}),'/workspace.html?project=main');
+    assert.equal(await landing({project:'school',welcome:'1',guide:'1'}),'/workspace.html?project=school&guide=1');
+    assert.equal(await landing({project:'school',welcome:'1',task:'task-123',message:'mail-1',day:'2032-02-29'}),'/workspace.html?project=school&message=mail-1&day=2032-02-29&task=task-123#tasks');
   }finally{
     delete globalThis.__returnPath;
     delete globalThis.__signedOut;

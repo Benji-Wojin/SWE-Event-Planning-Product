@@ -766,6 +766,10 @@ form[aria-busy="true"]{cursor:progress}
 @media(max-width:1100px){.workspace-guide{grid-template-columns:minmax(0,1fr);gap:13px}.workspace-guide-track{grid-row:1;justify-self:start;padding:0}}
 @media(max-width:640px){.workspace-guide{width:calc(100% - 32px);margin-top:14px}.workspace-guide-track{width:100%;gap:4px}.workspace-guide-track li{font-size:.67rem}.workspace-guide-marker{width:26px;height:26px}}
 .workspace-guide[hidden]{display:none}
+.workspace-guide-plan{display:grid;justify-items:start;gap:6px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.workspace-guide-plan p{margin:0;color:var(--muted);font-size:.85rem;line-height:1.5}
+.workspace-guide-plan p strong{color:var(--ink)}
+.workspace-guide-plan .btn{min-height:44px;white-space:normal}
 .workspace-first-task-copy{max-width:55ch;color:var(--muted);line-height:1.6}
 .workspace-first-task-copy strong{color:var(--ink)}
 .guide-task-help{margin:7px 0 0;color:var(--muted);font-size:.86rem;line-height:1.5}
@@ -798,3 +802,23 @@ form[aria-busy="true"]{cursor:progress}
 .breakdown-ai .form-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:0}
 .breakdown-ai .form-actions .btn{min-height:44px;white-space:normal}
 .breakdown-ai [role=status]:empty{display:none}
+.workspace-handoff{width:calc(100% - 64px);max-width:1120px;margin:24px auto 0;padding:clamp(18px,2.8vw,28px);border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--green-soft) 24%,var(--white));color:var(--ink)}
+.workspace-handoff[hidden]{display:none}
+.handoff-main{display:grid;gap:14px;min-width:0}
+.handoff-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px 16px;flex-wrap:wrap}
+.handoff-header>div{min-width:0}
+.handoff-main h2{margin:4px 0 0;font-size:clamp(1.28rem,2.4vw,1.7rem);line-height:1.25;overflow-wrap:anywhere}
+.handoff-main h3{margin:0;font-size:1rem}
+.handoff-main p{margin:0;color:var(--muted);font-size:.9rem;line-height:1.55}
+.handoff-main p strong,.handoff-main .handoff-kicker{color:var(--ink)}
+.handoff-main .handoff-kicker{font-size:.8rem;font-weight:750}
+.handoff-main .handoff-note{font-size:.82rem}
+.handoff-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.handoff-grid>div,.handoff-work{display:grid;align-content:start;justify-items:start;gap:8px;min-width:0}
+.handoff-grid>div{padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--white)}
+.handoff-actions{display:flex;gap:6px;flex-wrap:wrap}
+.workspace-handoff .btn,.handoff-dismiss{min-height:44px;white-space:normal;text-align:left}
+.acceptance-choice{display:grid;justify-items:start;gap:0;border:1px solid var(--line);border-radius:8px;min-width:0}
+.acceptance-choice .acceptance-item{width:100%;border:0}
+.acceptance-choice .text-button{margin:0 14px 8px 40px;min-height:44px;text-align:left}
+@media(max-width:640px){.workspace-handoff{width:calc(100% - 32px);margin-top:14px}.handoff-grid{grid-template-columns:minmax(0,1fr)}}

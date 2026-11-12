@@ -11,7 +11,7 @@ function fixture(checkpoints,{bound=true,focused=false,error=false}={}){
   const context=vm.createContext({
     $:selector=>selector==='#workspaceGuide'?host:{focus(){focuses++;}},
     document:{activeElement:{}},guidedWorkspace:true,guideTaskId:'',
-    window:{GatherMode:{projectId:'p_fictional',projectUrl:()=>'/project?project=p_fictional'}},h:String,
+    window:{GatherMode:{projectId:'p_fictional',projectUrl:path=>path+'?project=p_fictional'}},h:String,
     guideProgress:{projectId:bound?'p_fictional':'p_other',events:checkpoints.map(checkpoint=>({checkpoint}))},guideError:error,
   });
   vm.runInContext(renderer,context);
@@ -31,6 +31,8 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.equal(guide.changes(),1);assert.equal(guide.focuses(),1);
   guide.context.guideProgress.events.push({checkpoint:'task_created'});guide.paint();
   assert.match(guide.html(),/Step 3 of 5/);assert.match(guide.html(),/No amounts are required/);
+  assert.match(guide.html(),/href="\/plan\?project=p_fictional&guide=1"[^>]+>Try drafting a plan with AI/);
+  assert.match(guide.html(),/Open Budget/);
   assert.equal(guide.changes(),2);assert.equal(guide.focuses(),2);
 });
 

@@ -38,6 +38,17 @@
         return viewFrom(host.location.hash) || viewFrom(frame.location.hash) || (initialScheduleDate()?'timeline':'overview');
       },
       initialScheduleDate,
+      takeJoinWelcome() {
+        const hints=new URLSearchParams(frame.location.search).getAll('welcome');
+        if(!hints.length)return false;
+        for(const target of new Set([frame,host])){
+          const url=new URL(target.location.href);
+          if(!url.searchParams.has('welcome'))continue;
+          url.searchParams.delete('welcome');
+          target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+        }
+        return hints.length===1&&hints[0]==='1';
+      },
       takeInitialTask() {
         const search=new URLSearchParams(frame.location.search);
         if(!search.has('task'))return '';

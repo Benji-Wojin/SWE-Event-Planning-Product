@@ -58,7 +58,7 @@ async function api(query: string, body?: unknown) {
     );
   return data;
 }
-export function PlanReview({ query, embedded = false }: { query: string; embedded?: boolean }) {
+export function PlanReview({ query, embedded = false, guided = false }: { query: string; embedded?: boolean; guided?: boolean }) {
   const [data, setData] = useState<any>(null),
     [brief, setBrief] = useState<PlanBrief>(emptyBrief),
     [items, setItems] = useState<ReviewedItem[]>([]);
@@ -120,6 +120,8 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
     return ()=>window.removeEventListener('message',receive);
   },[embedded,assistant]);
   const projectParams = new URLSearchParams(query); projectParams.delete('mode');
+  const guideReturn = guided && !demo && !embedded && !suggestions && !assistant;
+  if (guideReturn) projectParams.set('guide','1');
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
     locked = busy || waiting || researchBusy,
@@ -400,8 +402,8 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
             Try again
           </Button>
         )}
-        <a href="/" target={embedded ? '_top' : undefined} className="mt-5 block text-sm underline">
-          All projects
+        <a href={guideReturn ? projectUrl : '/'} target={embedded ? '_top' : undefined} className="mt-5 block text-sm underline">
+          {guideReturn ? 'Return to your guide' : 'All projects'}
         </a>
       </section>
     );
@@ -429,7 +431,7 @@ export function PlanReview({ query, embedded = false }: { query: string; embedde
           {demo ? ' · Demo' : ''}
         </p>
         <a href={projectUrl} className="text-primary underline">
-          {applied ? 'Open project' : 'Skip / open project'}
+          {guideReturn ? 'Return to your guide' : applied ? 'Open project' : 'Skip / open project'}
         </a>
       </div>}
       {data.issue && (

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest } from '@/lib/account-request';
+import { invitationProjectHref } from '@/lib/invitation-project-link';
 import { Button } from '@/components/ui/button';
 import type { PendingInvitation } from '@/lib/team';
 export function Invitations() {
@@ -9,6 +10,7 @@ export function Invitations() {
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState('');
   const pending = useRef(false),
+    navigating = useRef(false),
     epoch = useRef(0);
   async function load() {
     if (pending.current) return;
@@ -35,11 +37,19 @@ export function Invitations() {
     const refresh = () => {
       if (!document.hidden) void load();
     };
+    const restore = (event: PageTransitionEvent) => {
+      if (!event.persisted || !navigating.current) return;
+      navigating.current = pending.current = false;
+      setBusy('');
+      void load();
+    };
     window.addEventListener('focus', refresh);
+    window.addEventListener('pageshow', restore);
     document.addEventListener('visibilitychange', refresh);
     return () => {
       epoch.current++;
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('pageshow', restore);
       document.removeEventListener('visibilitychange', refresh);
     };
   }, []);
@@ -57,10 +67,12 @@ export function Invitations() {
         '/api/invitations',
         { action, id: invite.id },
       );
-      if (action === 'accept' && result.projectId) {
-        window.location.assign(
-          '/project?project=' + encodeURIComponent(result.projectId),
-        );
+      if (action === 'accept') {
+        if (typeof result?.projectId !== 'string' || !result.projectId)
+          throw new Error('Could not confirm project access. Reload to check before trying again.');
+        window.location.assign(invitationProjectHref(result.projectId, true));
+        navigating.current = true;
+        setInvitations(current => current.filter(item => item.id !== invite.id));
         return;
       }
       setInvitations((current) =>
@@ -69,8 +81,10 @@ export function Invitations() {
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Please retry.');
     } finally {
-      pending.current = false;
-      setBusy('');
+      if (!navigating.current) {
+        pending.current = false;
+        setBusy('');
+      }
     }
   }
   if (!loading && !error && !invitations.length) return null;

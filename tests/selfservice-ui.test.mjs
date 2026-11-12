@@ -1,12 +1,12 @@
 import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-let TeamClient, Invitations, CreateAccountButton;
+let TeamClient, Invitations, CreateAccountButton, JoinClient;
 before(async () => {
   const result = await build({
     stdin: {
       contents:
-        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client';",
+        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client'; export {JoinClient} from './app/join/join-client';",
       resolveDir: process.cwd(),
       loader: 'tsx',
     },
@@ -28,7 +28,7 @@ before(async () => {
             loader: 'js',
             contents:
               args.path === 'react'
-                ? 'export const useState=v=>globalThis.__selfserviceState(v),useRef=v=>({current:v}),useEffect=()=>{};'
+                ? 'export const useState=v=>globalThis.__selfserviceState(v),useRef=v=>({current:v}),useEffect=fn=>globalThis.__selfserviceEffects?.push(fn);'
                 : args.path === 'react/jsx-runtime'
                   ? 'export const jsx=(type,props)=>({type,props}),jsxs=jsx,Fragment="fragment";'
                   : 'export const Button="button",Input="input",Label="label";',
@@ -37,7 +37,7 @@ before(async () => {
       },
     ],
   });
-  ({ TeamClient, Invitations, CreateAccountButton } = await import(
+  ({ TeamClient, Invitations, CreateAccountButton, JoinClient } = await import(
     'data:text/javascript;base64,' +
       Buffer.from(result.outputFiles[0].text).toString('base64')
   ));
@@ -71,7 +71,10 @@ function render(component, props, values = []) {
       },
     ];
   };
-  return { tree: nodes(component(props)), state };
+  const effects = [];
+  globalThis.__selfserviceEffects = effects;
+  try { return { tree: nodes(component(props)), state, effects }; }
+  finally { delete globalThis.__selfserviceEffects; }
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 test('invitation states remain textual, distinct and recoverable with scanable badges', () => {
@@ -307,7 +310,10 @@ test('invitation accept uses its ID once and navigates only after server confirm
       id: invite.id,
       action: 'accept',
     });
-    assert.deepEqual(destinations, ['/project?project=p_confirmed']);
+    assert.deepEqual(destinations, ['/project?project=p_confirmed&welcome=1']);
+    button.props.onClick();
+    await settle();
+    assert.equal(calls.length, 1, 'keep the accept control pending until navigation completes');
     calls.length = 0;
     destinations.length = 0;
     globalThis.fetch = async () =>
@@ -320,10 +326,81 @@ test('invitation accept uses its ID once and navigates only after server confirm
     assert.deepEqual(destinations, []);
     assert.equal(failed.state[1], 'Invitation expired.');
     assert.equal(failed.state[0].length, 1);
+    globalThis.fetch = async () => Response.json({});
+    const unconfirmed = render(Invitations, {}, [[invite], '', false, '']);
+    unconfirmed.tree.find((n) => n.type === 'button' && text(n) === 'Join project').props.onClick();
+    await settle();
+    assert.deepEqual(destinations, []);
+    assert.equal(unconfirmed.state[0].length, 1, 'do not remove an invitation when project access was not confirmed');
+    assert.match(unconfirmed.state[1], /Could not confirm project access/);
   } finally {
     Object.assign(globalThis, previous);
     delete globalThis.__selfserviceState;
   }
+});
+
+test('a direct invite starts the welcome after confirmed acceptance, but reopening does not repeat it', async () => {
+  const previous = { fetch: globalThis.fetch, window: globalThis.window };
+  const calls = [], destinations = [];
+  const token = 'fixture-invitation-token';
+  const invite = { projectId: 'p_preview', name: 'Fictional event', email: 'teammate@example.com' };
+  try {
+    globalThis.window = { location: { assign: url => destinations.push(url) } };
+    globalThis.fetch = async (url, options) => {
+      calls.push({url, method:options.method, body:JSON.parse(options.body)});
+      return Response.json({ projectId: 'p_confirmed' });
+    };
+    for (const [joined, label] of [[false, 'Join project'], [true, 'Open project']]) {
+      const { tree } = render(JoinClient, { token }, [{ ...invite, joined }, '', false]);
+      const click = tree.find(n => n.type === 'button' && text(n) === label).props.onClick;
+      await click();
+      await click();
+    }
+    assert.deepEqual(calls, Array.from({ length: 2 }, () => ({ url:'/api/join', method:'POST', body:{token} })));
+    assert.deepEqual(destinations, ['/project?project=p_confirmed&welcome=1', '/project?project=p_confirmed']);
+    globalThis.fetch = async () => Response.json({ error: 'Invitation revoked.' }, { status:410 });
+    const failed = render(JoinClient, { token }, [{ ...invite, joined:false }, '', false]);
+    await failed.tree.find(n => n.type === 'button' && text(n) === 'Join project').props.onClick();
+    assert.equal(failed.state[1], 'Invitation revoked.');
+    assert.equal(failed.state[2], false);
+    assert.equal(destinations.length, 2);
+  } finally {
+    Object.assign(globalThis, previous);
+    delete globalThis.__selfserviceState;
+  }
+});
+
+test('restoring either invitation page from browser history clears the navigation lock and reloads membership',async()=>{
+  const previous={window:globalThis.window,document:globalThis.document,fetch:globalThis.fetch};
+  const invite={id:'i_fixture',projectId:'p_fixture',name:'Fictional event',organizer:'Organizer',email:'teammate@example.com',expiresAt:Date.now()+5000,joined:false};
+  try{
+    for(const direct of [true,false]){
+      const listeners=new Map(),methods=[];
+      const listenerSurface={addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:type=>listeners.delete(type)};
+      globalThis.window={...listenerSurface,location:{assign(){}}};globalThis.document={...listenerSurface,hidden:false};
+      let joined=false;
+      globalThis.fetch=async(_url,{method})=>{
+        methods.push(method);
+        if(method==='POST'){joined=true;return Response.json({projectId:invite.projectId});}
+        return Response.json(direct?{...invite,joined}:{invitations:joined?[]:[invite]});
+      };
+      const rendered=direct?render(JoinClient,{token:'fictional-token'},[invite,'',false])
+        :render(Invitations,{},[[invite],'',false,'']);
+      const cleanup=rendered.effects[0]();
+      await settle();
+      rendered.tree.find(n=>n.type==='button'&&text(n)==='Join project').props.onClick();
+      await settle();
+      assert.equal(rendered.state[direct?2:3],direct?true:invite.id);
+      listeners.get('pageshow')({persisted:false});await settle();
+      assert.deepEqual(methods,['GET','POST']);
+      listeners.get('pageshow')({persisted:true});await settle();
+      assert.deepEqual(methods,['GET','POST','GET']);
+      assert.equal(rendered.state[direct?2:3],direct?false:'');
+      if(direct)assert.equal(rendered.state[0].joined,true);
+      else assert.deepEqual(rendered.state[0],[]);
+      cleanup();
+    }
+  }finally{Object.assign(globalThis,previous);delete globalThis.__selfserviceState;}
 });
 
 test('signup recovers from a stalled request without retrying or navigating', async (t) => {

@@ -1,0 +1,100 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+
+const source=readFileSync('legacy/app.js','utf8');
+const start=source.indexOf('  function acceptanceCandidates(');
+const end=source.indexOf('  function syncAcceptanceSelection(',start);
+const task=(id,owner='',fields={})=>({id,owner,title:id,status:'todo',revision:1,...fields});
+const escape=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={}){
+  const host={hidden:true,innerHTML:'',contains:()=>false};
+  const state={event:{name:'Fictional <School> dance'},tasks};
+  const actions=[];
+  let dialog;
+  const ctx=vm.createContext({
+    ui:{actor:'maya',view:'overview',search:'old',taskView:'map'},
+    window:{GatherMode:{demo},GatherIdentity:{role},GatherAccessLost:lost},
+    joinWelcome:welcome,renderedTeammateHandoff:'',document:{activeElement:null},
+    $:selector=>selector==='#workspaceHandoff'?host:null,store:{getState:()=>state},
+    h:escape,statuses:{todo:'To do'},dayLabel:value=>value,
+    navigate:view=>{ctx.ui.view=view;actions.push(view);return true;},
+    filteredTasks:()=>state.tasks.filter(item=>item.owner==='maya'),
+    skipToContent:()=>actions.push('focus'),toast:message=>actions.push(message),
+    openDialog:(title,markup)=>{dialog={title,markup};},
+  });
+  vm.runInContext(source.slice(start,end),ctx);
+  return {ctx,host,state,actions,run:js=>vm.runInContext(js,ctx),dialog:()=>dialog};
+}
+
+test('new teammates get orientation that accurately distinguishes no work, claimable work and assigned work',()=>{
+  const f=context();
+  f.run('paintTeammateHandoff()');
+  assert.match(f.host.innerHTML,/Welcome to Fictional &lt;School&gt; dance/);
+  assert.match(f.host.innerHTML,/Nothing is assigned to you yet/);
+  assert.match(f.host.innerHTML,/Event info[\s\S]*Timeline[\s\S]*People/);
+  assert.doesNotMatch(f.host.innerHTML,/Find unassigned tasks|Review assignments|Create a project/);
+  f.state.tasks=[task('other-work','other'),task('ready-to-claim')];
+  f.run('paintTeammateHandoff()');
+  assert.match(f.host.innerHTML,/Find unassigned tasks/);
+  f.state.tasks.push(task('already accepted','maya',{acceptedAt:'2031-01-01'}));
+  f.run('paintTeammateHandoff()');
+  assert.match(f.host.innerHTML,/Open My tasks/);
+  assert.doesNotMatch(f.host.innerHTML,/other-work/);
+});
+
+test('the welcome is member-only and actual pending assignments surface on returning Overview',()=>{
+  for(const options of [{role:'admin'},{demo:true},{lost:true}]){
+    const f=context([task('mine','maya')],options);
+    f.run('paintTeammateHandoff()');assert.equal(f.host.hidden,true);
+  }
+  const f=context([task('another teammate','other'),task('past report','maya',{reportedAt:'2031-01-01'})],{welcome:false});
+  f.run('paintTeammateHandoff()');assert.equal(f.host.hidden,true);
+  f.state.tasks.push(task('actual assignment','maya'));
+  f.run('paintTeammateHandoff()');
+  assert.equal(f.host.hidden,false);
+  assert.match(f.host.innerHTML,/1 assignment is ready/);
+  assert.doesNotMatch(f.host.innerHTML,/Dismiss welcome|another teammate|past report/);
+  f.state.tasks.at(-1).acceptedAt='2031-01-01';
+  f.run('paintTeammateHandoff()');assert.equal(f.host.hidden,true);
+});
+
+test('assignment handoff uses the real personal review without writing or selecting anything',()=>{
+  const f=context([
+    task('review mine','maya',{scope:'Signed & confirmed',note:'Call before noon'}),
+    task('ignore other','other',{scope:'Do not display'}),
+  ]);
+  f.run("openHandoffTasks('review')");
+  assert.deepEqual(f.actions,['tasks']);assert.equal(f.ctx.ui.tab,'mine');
+  assert.equal(f.ctx.ui.taskView,'list');assert.equal(f.ctx.ui.search,'');
+  const {markup}=f.dialog();
+  assert.match(markup,/Done when:<\/strong> Signed &amp; confirmed/);
+  assert.match(markup,/Latest update:<\/strong> Call before noon/);
+  assert.match(markup,/Open task details for review mine/);
+  assert.doesNotMatch(markup,/\bchecked\b|ignore other|Do not display/);
+});
+
+test('welcome navigation consumes only the one-time scalar flag in the frame and outer project',()=>{
+  const navigation=readFileSync('legacy/navigation.js','utf8');
+  const ctx=vm.createContext({URL,URLSearchParams});
+  vm.runInContext(navigation,ctx);
+  function surface(url){
+    const state={existing:true};
+    const page={location:new URL(url),history:{state,replaceState(next,_unused,target){
+      assert.equal(next,state);page.location=new URL(target,page.location.href);
+    }}};
+    return page;
+  }
+  const host=surface('https://fixture.example/project?project=fictional&welcome=1#overview');
+  const frame=surface('https://fixture.example/workspace.html?project=fictional&welcome=1#tasks');
+  frame.parent=host;
+  const route=ctx.GatherNavigation.create(frame);
+  assert.equal(route.takeJoinWelcome(),true);
+  assert.equal(route.takeJoinWelcome(),false);
+  assert.equal(host.location.href,'https://fixture.example/project?project=fictional#overview');
+  assert.equal(frame.location.href,'https://fixture.example/workspace.html?project=fictional#tasks');
+  const duplicate=surface('https://fixture.example/workspace.html?project=fictional&welcome=1&welcome=1&guide=1');
+  assert.equal(ctx.GatherNavigation.create(duplicate).takeJoinWelcome(),false);
+  assert.equal(duplicate.location.search,'?project=fictional&guide=1');
+});

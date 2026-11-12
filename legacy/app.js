@@ -15,6 +15,7 @@
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   let guideTaskId = '', guideTaskNeedsReveal = false;
+  let joinWelcome = false, renderedTeammateHandoff = '';
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
@@ -49,8 +50,12 @@
         ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a></div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
         : waitingForTask
           ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step 2 of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">Your first task is saved</h2><p role="status">Loading the next guide step…</p><div class="workspace-guide-actions"><a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(2,false,false)}`
-          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(next[1],false,false)}`;
+          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${next[0]==='budget_viewed'?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
+  }
+  function guidePlanTip() {
+    const href=h(window.GatherMode.projectUrl('/plan')+'&guide=1');
+    return `<aside class="workspace-guide-plan" aria-label="Optional AI plan walkthrough"><p><strong>Want help drafting the rest of the plan?</strong> Open the planner to describe your event and review suggested tasks before adding any.</p><a class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a></aside>`;
   }
   function syncGuide(checkpoint) {
     if (!guidedWorkspace) return Promise.resolve();
@@ -366,7 +371,52 @@
     queueMicrotask(()=>{if(ui.view==='tasks'&&document.activeElement===document.body)skipToContent();});
   }
   function acceptanceCandidates(tasks) {
-    return tasks.filter(task=>task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
+    return tasks.filter(waitsForAcceptance).slice(0,100);
+  }
+  function waitsForAcceptance(task) {
+    return task.owner===ui.actor&&!task.acceptedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&!task.archivedAt;
+  }
+  function isLiveTeammate() {
+    return !!(window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost&&window.GatherIdentity?.role==='member');
+  }
+  function teammateHandoff(s,welcome) {
+    const pending=s.tasks.filter(waitsForAcceptance).length;
+    if(!welcome&&!pending)return '';
+    const mine=s.tasks.some(task=>task.owner===ui.actor&&task.status!=='done'&&!task.archivedAt);
+    const claimable=s.tasks.some(task=>!task.owner&&task.status!=='done'&&!task.archivedAt);
+    const heading=welcome?'Welcome to '+h(s.event.name):'Review your task assignments';
+    const message=pending
+      ? `<strong>${pending} ${pending===1?'assignment is':'assignments are'} ready for your review.</strong> Check what’s expected and accept only the work you can take on.`
+      : mine?'Your assignments are in My tasks. Open a task to see what’s expected, check its due date, or share an update.'
+      : claimable?'Nothing is assigned to you yet. You can browse unassigned tasks and claim one if you’re able to take it on.'
+      :'Nothing is assigned to you yet. Start with the event details and schedule, or see who’s planning with you.';
+    const primary=pending?['review','Review assignments']:mine?['mine','Open My tasks']:claimable?['available','Find unassigned tasks']:null;
+    const work=`<p>${message}</p>${pending?'<p class="handoff-note">Accepting records responsibility. It doesn’t mark a task done.</p>':''}${primary?`<button type="button" class="btn btn-primary" data-action="handoff-tasks" data-id="${primary[0]}">${primary[1]}</button>`:''}`;
+    return `<div class="handoff-main"><div class="handoff-header"><div><p class="handoff-kicker">${welcome?'Getting started as a teammate':'Your work'}</p><h2 id="workspaceHandoffTitle" tabindex="-1">${heading}</h2></div>${welcome?'<button type="button" class="text-button handoff-dismiss" data-action="dismiss-handoff">Dismiss welcome</button>':''}</div>${welcome?`
+      <div class="handoff-grid">
+        <div><h3>Find your work</h3>${work}</div>
+        <div><h3>Get oriented</h3><p>Check where the event is, what’s on the schedule, and who else is planning it.</p><div class="handoff-actions"><button type="button" class="btn btn-secondary" data-view="info">Event info</button><button type="button" class="btn btn-secondary" data-view="timeline">Timeline</button><button type="button" class="btn btn-secondary" data-view="team">People</button></div></div>
+      </div><p class="handoff-note">As you work, open the task to share progress, ask for help, or report completion. The team can follow along there.</p>
+      `:`<div class="handoff-work">${work}</div>`}</div>`;
+  }
+  function paintTeammateHandoff(state=store.getState()) {
+    const host=$('#workspaceHandoff');
+    if(!host)return;
+    const markup=isLiveTeammate()&&ui.view==='overview'?teammateHandoff(state,joinWelcome):'';
+    host.hidden=!markup;
+    if(renderedTeammateHandoff!==markup){
+      const previous=host.contains(document.activeElement)?document.activeElement:null;
+      renderedTeammateHandoff=markup;
+      host.innerHTML=markup;
+      if(previous&&(!markup||!restoreFocus(previous,host)))(markup?$('#workspaceHandoffTitle'):$('#viewRoot'))?.focus({preventScroll:true});
+    }
+  }
+  function openHandoffTasks(action) {
+    if(!isLiveTeammate()||ui.view!=='overview'||!['review','mine','available'].includes(action))return;
+    Object.assign(ui,{tab:action==='available'?'available':'mine',taskView:'list',owner:'',status:'',search:'',mapFocus:''});
+    if(!navigate('tasks'))return;
+    if(action==='review'&&acceptanceCandidates(store.getState().tasks).length)acceptanceDialog();
+    else skipToContent();
   }
   function acceptanceDialog(fromEventReview=false) {
     if(window.GatherAccessLost)return;
@@ -374,7 +424,7 @@
     const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
     if(!tasks.length){toast('No unaccepted open tasks in this view.');return;}
     const source=fromEventReview?'this event review':'the current view';
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites. Open any task first if you need to clarify its scope.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}"><span><strong>${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}</span>`:task.eventActivity===true?'<span>Planned activity · start time not set</span>':''}<span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<div class="acceptance-choice"><label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${h(task.id)}" data-revision="${task.revision}" aria-labelledby="accept-title-${h(task.id)}"><span><strong id="accept-title-${h(task.id)}">${h(task.title)}</strong><span>${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>${task.schedule?`<span>Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}</span>`:task.eventActivity===true?'<span>Planned activity · start time not set</span>':''}<span><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label><button type="button" class="text-button" data-action="task" data-id="${h(task.id)}" aria-label="Open task details for ${h(task.title)}">Open task details</button></div>`).join('')}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
@@ -479,6 +529,7 @@
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const s=store.getState();
     paintNotifications(s);
+    paintTeammateHandoff(s);
     $('.event-switcher strong').textContent=s.event.name;
     $('.event-symbol').textContent=s.event.name.split(/\s+/).filter(Boolean).slice(0,2).map(word=>word[0]).join('').toUpperCase();
     document.body.classList.toggle('participant',!isOrganizer());
@@ -1186,6 +1237,10 @@
       if(action==='close-dialog')closeDialog();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
+      if(action==='handoff-tasks')openHandoffTasks(id);
+      if(action==='dismiss-handoff'&&isLiveTeammate()&&joinWelcome){
+        joinWelcome=false;paintTeammateHandoff();
+      }
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
       if(action==='related-checklist')openRelatedBatch(id);
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
@@ -1600,8 +1655,11 @@
   setDrawer(false);
   ui.scheduleDate=navigation.initialScheduleDate();
   const initialTask=navigation.takeInitialTask();
+  const welcomeHint=navigation.takeJoinWelcome();
   if(initialTask)ui.tab='all';
+  joinWelcome=welcomeHint&&!initialTask&&navigation.initial()==='overview'&&isLiveTeammate();
   navigate(initialTask?'tasks':navigation.initial());
+  if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   void syncGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if(initialTask&&!window.GatherAccessLost){

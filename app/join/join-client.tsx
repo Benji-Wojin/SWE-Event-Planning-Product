@@ -2,19 +2,35 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { accountRequest } from '@/lib/account-request';
+import { invitationProjectHref } from '@/lib/invitation-project-link';
 import type { InviteView } from '@/lib/team';
 export function JoinClient({ token }: { token: string }) {
   const [invite, setInvite] = useState<InviteView | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  const navigating = useRef(false);
   useEffect(() => {
-    accountRequest<InviteView>('/api/join?invite=' + encodeURIComponent(token))
-      .then(setInvite)
-      .catch((e) => setError(e.message));
+    let active = true;
+    function load() {
+      setInvite(null);
+      setError('');
+      accountRequest<InviteView>('/api/join?invite=' + encodeURIComponent(token))
+        .then(value => { if (active) setInvite(value); })
+        .catch(e => { if (active) setError(e.message); });
+    }
+    function restore(event: PageTransitionEvent) {
+      if (!event.persisted || !navigating.current) return;
+      navigating.current = pending.current = false;
+      setBusy(false);
+      load();
+    }
+    load();
+    window.addEventListener('pageshow', restore);
+    return () => { active = false; window.removeEventListener('pageshow', restore); };
   }, [token]);
   async function accept() {
-    if (pending.current) return;
+    if (!invite || pending.current) return;
     pending.current = true;
     setBusy(true);
     setError('');
@@ -22,14 +38,17 @@ export function JoinClient({ token }: { token: string }) {
       const result = await accountRequest<{ projectId: string }>('/api/join', {
         token,
       });
-      location.assign(
-        '/project?project=' + encodeURIComponent(result.projectId),
-      );
+      if (typeof result?.projectId !== 'string' || !result.projectId)
+        throw new Error('Could not confirm project access. Reload to check before trying again.');
+      window.location.assign(invitationProjectHref(result.projectId, !invite.joined));
+      navigating.current = true;
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      pending.current = false;
-      setBusy(false);
+      if (!navigating.current) {
+        pending.current = false;
+        setBusy(false);
+      }
     }
   }
   return (
@@ -42,7 +61,7 @@ export function JoinClient({ token }: { token: string }) {
         <>
           <h2 className="text-xl font-semibold">{invite.name}</h2>
           <p className="break-all text-sm text-muted-foreground">
-            Joining as {invite.email}
+            Signed in as {invite.email}
           </p>
           <p className="text-sm">
             You can claim tasks, report progress, comment, and contribute event
