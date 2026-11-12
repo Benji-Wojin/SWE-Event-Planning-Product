@@ -370,7 +370,8 @@
           </div>`).join('')}</div>
         </form>
         <p class="muted" id="guestAgendaSelectionStatus" role="status">Select at least one activity.</p>
-        <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly></textarea></label>`;
+        <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
+        <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
     return {view,details,picker,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
   }

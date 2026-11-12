@@ -139,7 +139,7 @@ After adding a reviewed plan, open a task directly from the receipt. The organiz
 
 Use **Wrap up → Reuse tasks for another event** to choose and edit titles for that importer. Only reviewed titles carry forward; the source event and its task history are unchanged.
 
-Organizers can use **Draft guest agenda** to turn selected activities into plain text for guests. Review the guest-facing titles and add any locations you want to share. Owners, internal notes, and saved locations are not included. The draft is not saved or sent; copying checks that the schedule is still current.
+Organizers can use **Draft guest agenda** to turn selected activities into plain text for guests. Review the guest-facing titles and add any locations you want to share. Owners, internal notes, and saved locations are not included. The draft is not saved or sent. Use **Copy guest agenda** to check the current schedule first. If automatic copy is unavailable, the checked text can be copied manually once. If a check can’t finish, retry without losing your edits; if a newer plan is found, start a fresh agenda from the updated schedule.
 
 Run sheets label an inactive assigned person as **Inactive teammate** and a missing assigned member as **Assigned owner unavailable**, rather than calling either unassigned. A scoped warning calls out unresolved activities with either responsibility gap; completed, verified work keeps its historical owner label without an open-work warning. Confirm responsibility with the organizer. The snapshot does not reassign work or expose member identifiers or contact details.
 

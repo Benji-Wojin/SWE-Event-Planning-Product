@@ -259,7 +259,7 @@ function runSheetHarness(){
     openDialog(title,body,footer,wide,kind){fixture.opens.push({body,footer});assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;},
     $:selector=>({'#eventRunSheet':fixture.exists?printable:null,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback,'#runSheetRefresh':refreshButton,'#runSheetRefreshStatus':refreshStatus,'#runSheetPrintBlocked':printBlocked,'#dialogTitle':heading,'#dialogBackdrop':backdrop})[selector],
     $$:()=>[{setAttribute:(key,value)=>attrs.set(key,value)}]});
-  const helperStart=source.indexOf('  let staleRunSheetRevision');
+  const helperStart=source.indexOf('  let staleScheduleRevision');
   assert.ok(helperStart>=0);
   vm.runInContext(source.slice(helperStart,source.indexOf('  function dependencyInfo(',helperStart)),context);
   const run=action=>{

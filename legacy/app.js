@@ -715,9 +715,9 @@
     });
   }
   function showPendingUpdate(newerRevision) {
-    if(Number.isSafeInteger(newerRevision))rememberStaleRunSheet(ui.runSheet,newerRevision);
+    if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
-    if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){ui.guestAgenda.stale=true;updateGuestAgendaWarning();return;}
+    if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
@@ -725,15 +725,15 @@
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
   }
-  let staleRunSheetRevision=null;
+  let staleScheduleRevision=null;
   const busyRunSheetRevisions=new Set();
-  function rememberStaleRunSheet(snapshot,newerRevision) {
+  function rememberNewerSchedule(snapshot,newerRevision) {
     if(!Number.isSafeInteger(newerRevision))return;
     if(snapshot&&snapshot.revision<newerRevision)snapshot.stale=true;
-    staleRunSheetRevision=Math.max(staleRunSheetRevision??-1,newerRevision-1);
+    staleScheduleRevision=Math.max(staleScheduleRevision??-1,newerRevision-1);
   }
-  function runSheetRevisionIsStale(revision) {
-    return staleRunSheetRevision!==null&&Number.isSafeInteger(revision)&&revision<=staleRunSheetRevision;
+  function scheduleRevisionIsStale(revision) {
+    return staleScheduleRevision!==null&&Number.isSafeInteger(revision)&&revision<=staleScheduleRevision;
   }
   function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
@@ -753,7 +753,7 @@
   function currentRunSheet() {
     const snapshot=ui.runSheet;
     if(!snapshot||ui.dialogKind!=='run-sheet'||!$('#eventRunSheet')||window.GatherAccessLost)return null;
-    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||runSheetRevisionIsStale(snapshot.revision)||
+    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||scheduleRevisionIsStale(snapshot.revision)||
       (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
@@ -769,7 +769,7 @@
     if(!snapshot||!store.confirmSnapshotRevision)return;
     busyRunSheetRevisions.add(snapshot.revision);currentRunSheet();
     try {
-      const current=await store.confirmSnapshotRevision(snapshot.revision,newer=>rememberStaleRunSheet(snapshot,newer));
+      const current=await store.confirmSnapshotRevision(snapshot.revision,newer=>rememberNewerSchedule(snapshot,newer));
       if(window.GatherAccessLost)return;
       if(!current){snapshot.stale=true;currentRunSheet();}
       else if(ui.runSheet===snapshot&&!snapshot.stale)toast('No newer plan found. This copy is still a snapshot.');
@@ -792,19 +792,19 @@
     currentRunSheet();
     try {
       const result=await store.refresh(stillOpen);
-      if(result.pending&&!window.GatherAccessLost)rememberStaleRunSheet(snapshot,result.newerRevision);
+      if(result.pending&&!window.GatherAccessLost)rememberNewerSchedule(snapshot,result.newerRevision);
       if(!stillOpen())return;
       const revision=store.getSnapshotRevision?.();
-      if(result.pending||!Number.isSafeInteger(revision)||runSheetRevisionIsStale(revision))
+      if(result.pending||!Number.isSafeInteger(revision)||scheduleRevisionIsStale(revision))
         throw new Error('A newer snapshot is not ready.');
       // A successful publish already read an authorized revision. If the
       // cache was advanced elsewhere, check it before clearing the warning.
       if(!result.changed&&(!store.confirmSnapshotRevision||
-          !await store.confirmSnapshotRevision(revision,newer=>rememberStaleRunSheet({revision},newer)))){
+          !await store.confirmSnapshotRevision(revision,newer=>rememberNewerSchedule({revision},newer)))){
         throw new Error('This revision could not be confirmed.');
       }
       if(!stillOpen())return;
-      if(store.getSnapshotRevision()!==revision||runSheetRevisionIsStale(revision))
+      if(store.getSnapshotRevision()!==revision||scheduleRevisionIsStale(revision))
         throw new Error('The plan changed again.');
       const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
       ui.toolUpdatePending=false;
@@ -1138,7 +1138,7 @@
   function updateGuestAgendaWarning() {
     if(ui.dialogKind!=='guest-agenda'||!ui.guestAgenda)return false;
     const draft=ui.guestAgenda, sync=$('#workspaceSyncNotice');
-    const stale=draft.stale||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
+    const stale=draft.stale||scheduleRevisionIsStale(draft.revision)||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
     const offline=window.navigator?.onLine===false;
     const message=window.GatherAccessLost||!isOrganizer()?'Project access changed. This agenda cannot be copied.':
       stale?'The shared plan changed. Close this draft and open a new agenda from the current schedule.':
@@ -1147,7 +1147,14 @@
     if(notice){if(notice.textContent!==message)notice.textContent=message;notice.hidden=!message;}
     const preview=$('#guestAgendaText');
     const text=message?'':draft.text;
+    if(message)draft.manualCopy=null;
     if(preview&&preview.value!==text)preview.value=text;
+    const help=$('#guestAgendaCopyHelp');
+    if(help){
+      const hint=draft.manualCopy?'Automatic copying was unavailable. Copy the selected text now; if you edit the draft, use Copy guest agenda again.':
+        'Use Copy guest agenda to check the schedule before copying. Nothing is sent.';
+      if(help.textContent!==hint)help.textContent=hint;
+    }
     $('[data-action="copy-guest-agenda"]')?.setAttribute('aria-disabled',String(!!message||!draft.text||draft.copying));
     return !!message;
   }
@@ -1159,7 +1166,7 @@
     if(!activities.length){toast('No scheduled activities in this view. Choose a different day or activity filter.');return;}
     if(activities.length>80){toast('Choose a day or My activities to review at most 80 activities at a time.');return;}
     if(!GatherScheduleUI.momentKey(Date.now(),timeZone)){toast('Set the event time zone in Project settings before drafting an agenda.');return;}
-    ui.guestAgenda={snapshot,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false};
+    ui.guestAgenda={snapshot,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false,manualCopy:null,copyEpoch:0};
     openDialog('Draft guest agenda',schedule.guestAgendaForm(snapshot,state.event.name),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="copy-guest-agenda" aria-disabled="true">Copy guest agenda</button>',true,'guest-agenda');
     updateGuestAgendaWarning();
@@ -1174,12 +1181,38 @@
       if(fields)fields.hidden=!included;
       return {included,title:field('title-'+index)?.value,location:field('location-'+index)?.value};
     });
-    draft.text=GatherScheduleUI.guestAgenda(draft.snapshot,field('agendaTitle')?.value,choices);
+    const text=GatherScheduleUI.guestAgenda(draft.snapshot,field('agendaTitle')?.value,choices);
+    if(draft.text!==text){draft.manualCopy=null;draft.copyEpoch++;}
+    draft.text=text;
     const status=$('#guestAgendaSelectionStatus'), count=choices.filter(choice=>choice.included).length;
     if(status){
       const text=!count?'Select at least one activity.':draft.text?count+' '+(count===1?'activity':'activities')+' in the preview.':'Enter an agenda title and a guest-facing title for each selected activity.';
       if(status.textContent!==text)status.textContent=text;
     }
+    updateGuestAgendaWarning();
+  }
+  function guardGuestAgendaPreviewCopy(event) {
+    const preview=$('#guestAgendaText');
+    if(!preview||event.target!==preview||ui.dialogKind!=='guest-agenda')return;
+    const draft=ui.guestAgenda;
+    const form=$('#guestAgendaForm');
+    if(draft&&form)syncGuestAgenda(form);
+    const approved=draft?.manualCopy;
+    const ready=draft&&!updateGuestAgendaWarning()&&!draft.copying&&approved&&
+      approved===draft.manualCopy&&approved.expiresAt>Date.now()&&
+      approved.text===preview.value&&approved.text===draft.text&&
+      preview.selectionStart===0&&preview.selectionEnd===approved.text.length;
+    if(draft)draft.manualCopy=null;
+    if(!ready){
+      event.preventDefault();
+      toast('Use Copy guest agenda to check the schedule before copying.');
+    }
+    updateGuestAgendaWarning();
+  }
+  function resetGuestAgendaManualCopy() {
+    if(!ui.guestAgenda||ui.dialogKind!=='guest-agenda')return;
+    ui.guestAgenda.manualCopy=null;
+    ui.guestAgenda.copyEpoch++;
     updateGuestAgendaWarning();
   }
   async function copyGuestAgenda() {
@@ -1191,30 +1224,41 @@
     if(!draft.text){toast('Select an activity and review the agenda preview before copying.');return;}
     if(shown!==draft.text){toast('The preview changed. Review it before copying again.');return;}
     const text=draft.text;
-    draft.copying=true;updateGuestAgendaWarning();
+    const epoch=draft.copyEpoch;
+    draft.manualCopy=null;draft.copying=true;updateGuestAgendaWarning();
     try {
       // Confirm against an authenticated workspace read, without applying a newer snapshot over this form.
       if(store.confirmSnapshotRevision){
         let current;
-        try{current=await store.confirmSnapshotRevision(draft.revision);}
+        try{current=await store.confirmSnapshotRevision(draft.revision,newer=>{
+          rememberNewerSchedule(draft,newer);
+          if(ui.guestAgenda)updateGuestAgendaWarning();
+        });}
         catch{
           if(ui.guestAgenda===draft&&!window.GatherAccessLost)toast('Could not confirm the latest schedule. Reconnect or try again before copying.');
           return;
         }
         if(ui.guestAgenda!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
-        if(!current)draft.stale=true;
         if(updateGuestAgendaWarning()){toast('This agenda is not current. Check the warning before copying.');return;}
-        if(draft.text!==text){toast('The preview changed. Review it before copying again.');return;}
+        if(!current){toast('Could not confirm the latest schedule. Try again before copying.');return;}
+        if(draft.copyEpoch!==epoch||draft.text!==text){toast('Review the current preview and try copying again.');return;}
       }
       const copied=await copyText(text);
       if(ui.guestAgenda!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
       const stale=updateGuestAgendaWarning();
-      if(stale||draft.text!==text){
+      if(stale||draft.copyEpoch!==epoch||draft.text!==text){
         if(copied)toast(stale?'An older agenda was copied. Don’t share it; open a new draft from the current schedule.':
           'An older agenda was copied. Review the current preview and copy it again before sharing.');
         else toast(stale?'The agenda is no longer current. Open a new draft before copying.':'The preview changed. Review it before copying again.');
       }else if(copied)toast('Guest agenda copied. Nothing was sent.');
-      else {preview.focus();preview.select();toast('Copy the selected preview manually. Nothing was sent.');}
+      else {
+        const approved={text,expiresAt:Date.now()+30000};
+        draft.manualCopy=approved;
+        setTimeout(()=>{
+          if(ui.guestAgenda===draft&&draft.manualCopy===approved)resetGuestAgendaManualCopy();
+        },30000);
+        preview.focus();preview.select();toast('Copy the selected preview manually. Nothing was sent.');
+      }
     } finally {
       draft.copying=false;
       if(ui.guestAgenda===draft)updateGuestAgendaWarning();
@@ -1727,6 +1771,10 @@
     }
   });
   $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop')&&confirmDiscard($('#dialog')))closeDialog();});
+  document.addEventListener('copy',guardGuestAgendaPreviewCopy);
+  window.addEventListener('offline',resetGuestAgendaManualCopy);
+  window.addEventListener('online',resetGuestAgendaManualCopy);
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)resetGuestAgendaManualCopy();});
   document.addEventListener('keydown',event=>{
     if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden){if(confirmDiscard($('#dialog')))closeDialog();}else setDrawer(false);}
     const scope=!$('#dialogBackdrop').hidden?$('#dialog'):matchMedia('(max-width:800px)').matches&&$('#sidebar').classList.contains('open')?$('#sidebar'):null;
