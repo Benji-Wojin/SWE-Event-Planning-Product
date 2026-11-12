@@ -55,10 +55,13 @@ test('explicitly planned but untimed activities stay visible in the right scope,
   const groups=GatherScheduleUI.reviewItems(input,now,mine);
   assert.deepEqual(groups.find(group=>group.key==='activity-time').tasks.map(task=>task.id),['pending']);
   assert.deepEqual(groups.find(group=>group.key==='preparation').tasks.map(task=>task.id),['prep']);
-  assert.doesNotMatch(view.runSheet(input,now,mine),/Guest welcome/);
+  assert.doesNotMatch(view.runSheet(input,now,mine),/Guest welcome|Other team activity/);
+  assert.match(view.runSheet(input,now,mine),/1 planned activity is not shown/);
+  assert.match(view.runSheet(input,now),/2 planned activities are not shown/);
   input.tasks[0].schedule={start:'2026-11-20T17:30',end:'',location:''};
   assert.doesNotMatch(view.view(input,true,now,mine),/Activities need a start time/);
   assert.match(view.runSheet(input,now,mine),/Guest welcome &lt;desk&gt;/);
+  assert.doesNotMatch(view.runSheet(input,now,mine),/planned activit.*not shown/);
 });
 
 test('run sheet retains blocked/completed/review states and warns about entered owner overlaps',()=>{

@@ -814,9 +814,11 @@
         store.acceptTasks(data.selections,ui.actor);closeDialog();render();toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);focusAfterAcceptance();
       }
       if(form.id==='newTaskForm'){
-        let taskData=data;
-        if(form.dataset.scheduled==='true'){const {start,end,location,...fields}=data;taskData={...fields,schedule:{start,end,location}};}
-        const task=store.addTask(taskData,ui.actor);closeDialog();render();if(form.dataset.scheduled==='true')taskDialog(task.id);toast(form.dataset.scheduled==='true'?'Activity added.':'Task added.');
+        const activity=form.dataset.scheduled==='true';
+        const taskData=activity?GatherScheduleUI.newActivityTask(data):data;
+        const task=store.addTask(taskData,ui.actor);closeDialog();render();
+        if(activity&&task.schedule)taskDialog(task.id);
+        toast(activity?(task.schedule?'Activity added.':'Activity added. Set its start time in Timeline.'): 'Task added.');
       }
       if(form.id==='scheduleForm'||form.id==='schedulePickerForm'){
         const taskId=form.dataset.id||data.taskId;

@@ -73,6 +73,28 @@ test('multi-day and overnight activities keep explicit dates; zone changes requi
 
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ui=GatherScheduleUI.create({h,options:items=>items.map(([value,label])=>`<option value="${h(value)}">${h(label)}</option>`).join(''),person:id=>h(id),statusBadge:status=>h(status)});
+test('manual activities can be created without a time zone or date and keep their identity after scheduling',()=>{
+  const store=GatherStore.createStore({storage:null,now});
+  const form=ui.newActivity(store.getState());
+  assert.match(form,/Activity name/);assert.match(form,/set its start time later/);assert.doesNotMatch(form,/name="start"/);
+  const create=GatherScheduleUI.newActivityTask;
+  const data={title:'Guest arrivals',owner:'maya',note:'Open the east doors.'};
+  const activity=store.addTask(create(data));
+  assert.deepEqual([activity.schedule,activity.eventActivity,activity.owner,activity.note,activity.status],[null,true,'maya',data.note,'todo']);
+  assert.equal(task(reload(store.exportState()),activity.id).eventActivity,true);
+  store.completeSetup({timeZone:'America/Los_Angeles',membersCanCreateTasks:true});
+  assert.match(ui.newActivity(store.getState()),/Starts \(optional\)<input name="start" type="datetime-local" step=/);
+  assert.match(ui.picker(store.getState(),activity.id),/name="start" type="datetime-local" required/);
+  for(const partial of [{end:slot.end},{location:slot.location}])assert.throws(()=>create({...data,...partial}),/Enter a start time/);
+  const timed=store.addTask(create({...data,title:'Main programme',...slot}));
+  assert.deepEqual(timed.schedule,slot);assert.equal(timed.eventActivity,true);
+  store.setTaskSchedule(timed.id,null);
+  assert.equal(task(store,timed.id).eventActivity,true);assert.equal(task(store,timed.id).status,'todo');
+  const before=store.exportState();
+  assert.throws(()=>store.addTask(create(data),'maya'),/Teammates can add a task name/);
+  assert.equal(store.exportState(),before);
+});
+
 test('schedule uses the same tasks, includes completed/verification rows, and escapes user content',()=>{
   const store=create();store.setTaskSchedule('venue',slot);store.setTaskSchedule('dietary',slot);
   store.updateTask('dietary',{requiresVerification:true});store.reportCompletion('dietary','Ready','maya');
@@ -102,7 +124,7 @@ test('hosted schedule save awaits success and keeps the draft intact on failure'
     const pending=new Promise((_resolve,no)=>{reject=no;});
     const fields={...slot,taskId:'dietary',title:'Activity'};
     const form={id,dataset:{id:'dietary',scheduled:'true'},isConnected:true,closest(){return this;}};
-    const context=vm.createContext({document:{addEventListener:(_type,handler)=>{submit=handler;}},ui:{actor:'jack'},
+    const context=vm.createContext({document:{addEventListener:(_type,handler)=>{submit=handler;}},ui:{actor:'jack'},GatherScheduleUI,
       FormData:class {constructor(){return Object.entries(fields);}},$:()=>null,
       saveLock:()=>{locked=true;return()=>{locked=false;}},store:{setTaskSchedule:()=>pending,addTask:()=>pending},
       formError:(_form,error)=>events.push('error:'+error.message),toast:text=>events.push(text),
