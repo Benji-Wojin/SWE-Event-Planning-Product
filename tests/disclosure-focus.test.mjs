@@ -61,7 +61,7 @@ test('dialog entry chooses a visible field or close control, never a collapsed f
   vm.runInContext('openDialog("Task","body");',f.ctx);assert.equal(f.input.focused,true);assert.equal(f.close.focused,false);
 });
 
-test('assignment review starts on the heading so the explanation is not skipped',()=>{
+test('assignment review and linked task details start on the heading rather than an editable field',()=>{
   const f=fixture(),backdrop={hidden:true,dataset:{},classList:{add(){}}},ui={};
   f.details.open=true;
   const dialog={className:'',innerHTML:'',scrollTop:420};
@@ -70,6 +70,10 @@ test('assignment review starts on the heading so the explanation is not skipped'
     $:selector=>({'#sidebar':{classList:{contains:()=>false}},'#dialogBackdrop':backdrop,'#dialog':dialog,'#appShell':{},'#dialogTitle':heading})[selector]});
   const start=source.indexOf('  function openDialog('),end=source.indexOf('  function closeDialog(',start);
   vm.runInContext(source.slice(start,end)+'openDialog("Accept assignments","body","",false,"acceptance");',f.ctx);
+  assert.equal(heading.tabIndex,-1);assert.equal(heading.options.preventScroll,true);assert.equal(dialog.scrollTop,0);
+  assert.notEqual(f.input.focused,true);
+  heading.tabIndex=0;heading.options=null;dialog.scrollTop=420;
+  vm.runInContext('openDialog("Task from receipt","body","",false,"task",true);',f.ctx);
   assert.equal(heading.tabIndex,-1);assert.equal(heading.options.preventScroll,true);assert.equal(dialog.scrollTop,0);
   assert.notEqual(f.input.focused,true);
 });

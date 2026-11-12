@@ -15,7 +15,7 @@
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   let guideTaskId = '', guideTaskNeedsReveal = false;
-  let joinWelcome = false, renderedTeammateHandoff = '';
+  let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
@@ -310,9 +310,22 @@
     if(!window.confirm('This task has a fixed external deadline. Has the vendor or external deadline also changed?'))return false;
     data.confirmHardDeadline=true;return true;
   }
+  function taskLinkNotice() {
+    return taskLinkUnavailable?`<section class="task-link-notice" id="taskLinkNotice" aria-labelledby="taskLinkUnavailableTitle">
+      <div><h2 id="taskLinkUnavailableTitle" tabindex="-1" aria-describedby="taskLinkUnavailableHelp">This task is no longer available</h2><p id="taskLinkUnavailableHelp">The link doesn’t match a task in this project. You can search the current task list instead.</p></div>
+      <button type="button" class="btn btn-secondary" data-action="continue-task-search">Go to task search</button>
+    </section>`:'';
+  }
+  function continueFromTaskLinkNotice() {
+    if(!taskLinkUnavailable||ui.view!=='tasks'||window.GatherAccessLost)return;
+    taskLinkUnavailable=false;
+    $('#taskLinkNotice')?.remove();
+    $('#taskSearch')?.focus();
+  }
   function tasksView(s) {
     const tasks=filteredTasks(s);
     return pageHeading('','Tasks','',`${isOrganizer()?'<button class="btn btn-secondary" data-action="review-assignments">Assign tasks</button>':''}${addButton()}`)+`
+      ${taskLinkNotice()}
       ${guideTaskPanel(s)}
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${s.tasks.filter(t=>t.owner===ui.actor&&dependencyInfo(t,s).ready).map(t=>`<div class="dependency-prompt" role="status"><span><strong>Ready to resume:</strong> ${h(t.title)}</span><button class="btn btn-secondary btn-small" data-action="task" data-id="${h(t.id)}">Review results</button></div>`).join('')}
@@ -611,6 +624,7 @@
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
     if (ui.view!==view) guideViewReady='';
+    if(view!=='tasks')taskLinkUnavailable=false;
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
     navigation.replace(view);
@@ -636,7 +650,7 @@
     if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';$('#sidebar').focus({preventScroll:true});}
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
-  function openDialog(title,body,footer='',wide=false,kind='') {
+  function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if(kind!=='run-sheet')ui.runSheet=null;
@@ -653,7 +667,7 @@
     document.body.style.overflow='hidden';
     requestAnimationFrame(()=>{
       const dialog=$('#dialog');
-      if(kind==='acceptance'&&ui.dialogKind==='acceptance'&&!$('#dialogBackdrop').hidden){
+      if((kind==='acceptance'||focusHeading)&&ui.dialogKind===kind&&!$('#dialogBackdrop').hidden){
         const heading=$('#dialogTitle',dialog);
         if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});dialog.scrollTop=0;return;}
       }
@@ -901,7 +915,7 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false) {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
@@ -929,7 +943,7 @@
       ${window.GatherResourcesUI?.markup()||''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
       ${priorityMarkup(task,organizer)}
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details><div class="task-delete-action"><button type="button" class="text-button danger-button" data-action="delete-task" data-id="${h(id)}">Delete task…</button></div>`:''}`, '',false,'task');
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details><div class="task-delete-action"><button type="button" class="text-button danger-button" data-action="delete-task" data-id="${h(id)}">Delete task…</button></div>`:''}`, '',false,'task',focusHeading);
     if(sameTask){
       for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.files){const transfer=new DataTransfer();for(const file of draft.files)transfer.items.add(file);input.files=transfer.files;}else if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
@@ -1303,6 +1317,7 @@
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
+      if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
       if(action==='handoff-tasks')openHandoffTasks(id);
@@ -1725,7 +1740,10 @@
   ui.scheduleDate=navigation.initialScheduleDate();
   const initialTask=navigation.takeInitialTask();
   const welcomeHint=navigation.takeJoinWelcome();
-  if(initialTask)ui.tab='all';
+  if(initialTask){
+    ui.tab='all';
+    taskLinkUnavailable=!store.getState().tasks.some(task=>task.id===initialTask);
+  }
   joinWelcome=welcomeHint&&!initialTask&&navigation.initial()==='overview'&&isLiveTeammate();
   navigate(initialTask?'tasks':navigation.initial());
   if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
@@ -1733,8 +1751,14 @@
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
   if(initialTask&&!window.GatherAccessLost){
-    $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
-    taskDialog(initialTask);
+    if(taskLinkUnavailable){
+      const title=$('#taskLinkUnavailableTitle');
+      title?.focus({preventScroll:true});
+      title?.scrollIntoView({block:'center',behavior:'instant'});
+    }else{
+      $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
+      taskDialog(initialTask,'',false,true);
+    }
   }
   if((!window.GatherMode||window.GatherMode.demo)&&ui.view==='overview'&&$('#dialogBackdrop').hidden)tour.offer();
 })();

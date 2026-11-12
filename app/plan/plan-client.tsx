@@ -464,7 +464,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           )}
           {receiptTasks.length>0 && <ol className="list-decimal space-y-1 ps-5 text-sm">
             {receiptTasks.map(({id,title,handoff})=>{
-              const href=planReceiptTaskHref(params,id);
+              const href=planReceiptTaskHref(params,id,guideReturn);
               return <li key={id} className="break-words">
                 {href?<a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a>:title}
                 {showHandoff&&handoff&&<span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}

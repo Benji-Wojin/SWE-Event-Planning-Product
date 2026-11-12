@@ -100,7 +100,7 @@ function nodes(node) {
       ? node.flatMap(nodes)
       : [node, ...nodes(node.props?.children)];
 }
-function harness(server, initial = fixture(), query = 'project=p_example', embedded = false) {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -186,7 +186,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query, embedded });
+    tree = PlanReview({ query, embedded, guided });
     const next = effects;
     effects = [];
     next.forEach((callback) => callback());
@@ -443,6 +443,28 @@ test('the plan receipt links only current created tasks in order and reports una
       assert.ok(links.every(node=>node.props.target===(embedded?'_top':undefined)));
       if(!embedded)assert.equal(text(links[2]),'View tasks and schedule');
       assert.doesNotMatch(text(receipt),/Approve venue|task-missing/);
+    }finally{app.dispose();}
+  }
+});
+test('only a guided organizer plan keeps the guide on individual receipt task links',async()=>{
+  for(const [query,embedded,guided,expected] of [
+    ['project=p_school',false,true,'/project?project=p_school&task=task-a&guide=1'],
+    ['project=p_school',false,false,'/project?project=p_school&task=task-a'],
+    ['project=p_school&mode=suggestions',false,true,'/project?project=p_school&task=task-a'],
+    ['project=p_school',true,true,'/project?project=p_school&task=task-a'],
+    ['demo=1&project=not-shared',false,true,'/demo?as=jack&task=task-a'],
+  ]){
+    const initial=fixture();
+    initial.status='applied';
+    initial.receipt={taskIds:['task-a']};
+    initial.receiptTasks=[{id:'task-a',title:'Check signage'}];
+    const app=harness(null,initial,query,embedded,guided);
+    try{
+      await app.start();
+      const receipt=nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='plan-receipt-heading');
+      const link=nodes(receipt).find(node=>node.type==='a'&&text(node)==='Check signage');
+      assert.equal(link?.props.href,expected);
+      assert.ok(app.requests.every(request=>request.action==='get'));
     }finally{app.dispose();}
   }
 });

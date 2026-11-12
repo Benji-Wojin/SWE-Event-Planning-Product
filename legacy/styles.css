@@ -108,6 +108,10 @@ button.stat-card:hover{border-color:#c4d2b7;box-shadow:0 3px 12px rgba(34,55,44,
 .workspace-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);align-items:start;gap:23px}
 .workspace-grid>*{min-width:0}
 .panel{border:1px solid var(--line);border-radius:var(--radius);background:#fff;overflow:hidden;box-shadow:0 2px 3px rgba(34,55,44,.015)}
+.task-link-notice{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px 20px;margin-bottom:18px;padding:clamp(14px,2vw,20px);border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);color:var(--ink)}
+.task-link-notice h2{margin:0 0 5px;font-size:1rem;line-height:1.3}
+.task-link-notice p{margin:0;max-width:55ch;color:var(--muted);font-size:.9rem;line-height:1.5}
+.task-link-notice .btn{min-height:44px;white-space:normal}
 .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:22px 23px 18px}
 .section-title{display:flex;align-items:center;gap:8px;margin:0;font-family:'Manrope',sans-serif;font-size:16px;line-height:1.45;font-weight:700;letter-spacing:-.4px}
 .section-title svg{width:18px;height:18px;color:#7e8e72}

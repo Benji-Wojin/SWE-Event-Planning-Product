@@ -24,6 +24,10 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
     const guided=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29'})});
     assert.equal((await guided.type(guided.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29#timeline');
     const receipt=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29',task:'task-123'})});
+    globalThis.__signedOut=true;
+    await assert.rejects(receipt.type(receipt.props),/sign-in/);
+    assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&day=2032-02-29&task=task-123');
+    globalThis.__signedOut=false;
     assert.equal((await receipt.type(receipt.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29&task=task-123#tasks');
     const invalidTask=await Project({searchParams:Promise.resolve({project:'school',day:'2032-02-29',task:['a','b']})});
     assert.equal((await invalidTask.type(invalidTask.props)).props.children[1].props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
