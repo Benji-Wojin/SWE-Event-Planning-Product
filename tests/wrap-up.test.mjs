@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/wrap-up.js';
@@ -77,4 +78,74 @@ test('hosted and local entry points load the versioned wrap-up renderer and pres
   const html=readFileSync('public/workspace.html','utf8');assert.match(html,/\/gather-assets\/versioned\/[a-f0-9]{20}-wrap-up\.js/);
   const app=readFileSync('public/gather-assets/app.js','utf8');assert.match(app,/GatherWrapUp\.markup\(/);assert.match(app,/action==='wrap-up-scope'/);
   assert.match(readFileSync('legacy/navigation.js','utf8'),/'memory'/);
+});
+test('the reuse picker projects only titles and display groups, and copies chosen text in source order',()=>{
+  const s=state([
+    row('internal-one',{title:'2. Confirm\nmain entrance',note:'PRIVATE_NOTE',dueDate:'2030-01-01',schedule:{location:'PRIVATE_LOCATION'}}),
+    row('internal-two',{title:'</textarea><script>example</script>',status:'done',completionEvidence:{note:'PRIVATE_RESULT'}}),
+    row('internal-three',{title:'Other task',owner:'jack'}),
+    row('long',{title:'x'.repeat(200),status:'todo'}),
+  ]);
+  const before=structuredClone(s),rows=GatherWrapUp.reusableTitles(s,{mine:true,actor:'maya'});
+  assert.deepEqual(rows.map(x=>x.title),['2. Confirm main entrance','x'.repeat(200),'</textarea><script>example</script>']);
+  assert.deepEqual(Object.keys(rows[0]).sort(),['group','title']);
+  const html=GatherWrapUp.reusablePicker(rows,{mine:true});
+  assert.match(html,/My tasks/);assert.match(html,/maxlength="180"/);
+  assert.doesNotMatch(html,/PRIVATE_|2030-|internal-|Other task|<script>|\bchecked\b/);
+  assert.match(html,/&lt;script&gt;example/);
+  const choices=[{index:2,title:'[x] Pack supplies'},{index:0,title:rows[0].title}];
+  assert.equal(GatherWrapUp.reusableChecklist(rows,choices),'- [ ] 2. Confirm main entrance\n- [ ] [x] Pack supplies');
+  for(const bad of [[],[{index:1,title:rows[1].title}],[{index:5,title:'Outside scope'}],[choices[0],choices[0]],
+    Array.from({length:25},(_,i)=>({index:i,title:'Task '+i}))])
+    assert.equal(GatherWrapUp.reusableChecklist(rows,bad),'');
+  assert.deepEqual(s,before);
+});
+
+test('reusable checklist keeps selection through search, guards copying, and falls back to selection',async()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const code=source.slice(source.indexOf('  function updateReuseChecklistWarning('),source.indexOf('  function updateGuestAgendaWarning('));
+  const controls=[{checked:false,value:'0'},{checked:false,value:'1'}],edits=[{},{}],rows=[{},{}];
+  const titles=[{value:'Signage'},{value:'Room layout'}];
+  const status={},search={value:''},warning={},none={},button={setAttribute(k,v){this[k]=v;}};
+  const actions=[],preview={value:'',isConnected:true,focus(){actions.push('focus');},select(){actions.push('select');}};
+  const sync={hidden:true};
+  let revision=1,organizer=false,copied=true,duringCopy,opened,newer=false;
+  const context=vm.createContext({GatherWrapUp,h,ui:{view:'memory',wrapMine:true,actor:'maya'},
+    window:{navigator:{onLine:true}},isOrganizer:()=>organizer,
+    store:{getState:()=>state([row('a',{title:'Signage'}),row('b',{title:'Room layout'})]),getSnapshotRevision:()=>revision,confirmSnapshotRevision:async expected=>!newer&&expected===revision},
+    $:id=>({'#reuseChecklistWarning':warning,'#reuseChecklistPreview':preview,'#reuseChecklistSearch':search,
+      '#reuseChecklistCount':status,'#reuseChecklistNoMatches':none,'#workspaceSyncNotice':sync,
+      '[data-action="copy-reuse-checklist"]':button})[id],
+    $$:id=>({'[data-reuse-choice]':controls,'[data-reuse-edit]':edits,'[data-reuse-row]':rows,'[data-reuse-title]':titles})[id],
+    openDialog(_title,html,_footer,_wide,kind){context.ui.dialogKind=kind;opened=html;},
+    toast:message=>actions.push(message),copyText:async text=>{actions.push(text);duringCopy?.();return copied;},
+  });
+  vm.runInContext(code,context);
+  context.reuseChecklistDialog();assert.equal(opened,undefined);
+  organizer=true;context.reuseChecklistDialog();assert.match(opened,/Choose reusable tasks/);
+  assert.equal(button['aria-disabled'],'true');assert.equal(preview.value,'');
+  controls[0].checked=true;context.syncReuseChecklist();
+  assert.equal(edits[0].hidden,false);assert.equal(edits[1].hidden,true);
+  search.value='layout';context.filterReuseChecklist();
+  assert.equal(rows[0].hidden,true);assert.equal(rows[1].hidden,false);
+  controls[1].checked=true;context.syncReuseChecklist();
+  assert.equal(preview.value,'- [ ] Signage\n- [ ] Room layout');
+  titles[1].value='';context.syncReuseChecklist();
+  assert.equal(preview.value,'');assert.match(status.textContent,/1 to 180/);
+  titles[1].value='Check room layout';context.syncReuseChecklist();
+  await context.copyReuseChecklist();
+  assert.deepEqual(actions.splice(0),['- [ ] Signage\n- [ ] Check room layout','Checklist copied. Paste it in the next event’s private plan.']);
+  copied=false;
+  await context.copyReuseChecklist();assert.deepEqual(actions.splice(0),[preview.value,'focus','select','Copy the selected preview manually. Nothing was sent.']);
+  context.window.navigator.onLine=false;await context.copyReuseChecklist();
+  assert.equal(preview.value,'');assert.match(warning.textContent,/Reconnect/);assert.deepEqual(actions,[]);
+  context.window.navigator.onLine=true;context.syncReuseChecklist();
+  duringCopy=()=>{revision=2;};copied=true;
+  await context.copyReuseChecklist();assert.match(actions.pop(),/changed while copying/);
+  assert.equal(preview.value,'');assert.match(warning.textContent,/shared plan changed/);
+  actions.length=0;await context.copyReuseChecklist();assert.deepEqual(actions,[]);
+  duringCopy=undefined;context.reuseChecklistDialog();context.syncReuseChecklist();
+  newer=true;await context.copyReuseChecklist();
+  assert.deepEqual(actions,[]);assert.equal(preview.value,'');assert.match(warning.textContent,/shared plan changed/);
+  context.window.GatherAccessLost=true;context.updateReuseChecklistWarning();assert.match(warning.textContent,/access changed/);
 });

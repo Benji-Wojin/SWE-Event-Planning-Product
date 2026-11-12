@@ -1,4 +1,5 @@
 // Fictional events only. Provider calls are mocked; no API credentials or emails are used.
+import '../legacy/wrap-up.js';
 export async function eventPlanTests({
   t,
   assert,
@@ -1430,6 +1431,30 @@ export async function eventPlanTests({
       const shared=(await (await realRead(project)).json()).state.tasks;
       assert.deepEqual(shared.map(item=>item.title).sort(),['Confirm venue access','Recruit volunteers']);
       assert.notEqual(shared.find(item=>item.title==='Recruit volunteers').status,'done');
+      assert.equal(calls.length,0);
+    });
+    await t.test('a source event checklist round-trips into another event without copying shared task data',async(test)=>{
+      const source=await setup(),project=await newTeamProject('Fictional next school evening');
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id IN (?,?)').run(source,project));
+      await change(source,'addTask',[{title:'2. Review venue access',note:'Exclude original note',owner:'jack',dueDate:'2030-10-02'}]);
+      await change(source,'addTask',[{title:'Excluded original task'}]);
+      const original=(await (await realRead(source)).json());
+      const destination=(await (await realRead(project)).json());
+      const rows=GatherWrapUp.reusableTitles(original.state);
+      const index=rows.findIndex(row=>row.title==='2. Review venue access');
+      const checklist=GatherWrapUp.reusableChecklist(rows,[{index,title:rows[index].title}]);
+      assert.equal(checklist,'- [ ] 2. Review venue access');
+      const snap=await read(project);
+      const response=await post(project,paste(snap,checklist,{brief:{...snap.brief,description:snap.event.name}}));
+      assert.equal(response.status,200,await response.clone().text());
+      const imported=await response.json();
+      assert.deepEqual(imported.draft.items.map(({title,note,owner,dueDate,included})=>({title,note,owner,dueDate,included})),
+        [{title:'2. Review venue access',note:'',owner:'',dueDate:'',included:false}]);
+      for(const [id,before] of [[source,original],[project,destination]]){
+        const after=await (await realRead(id)).json();
+        assert.equal(after.revision,before.revision);
+        assert.deepEqual(after.state.tasks,before.state.tasks);
+      }
       assert.equal(calls.length,0);
     });
     await t.test('pasting keeps reviewed edits and rejects stale, invalid or oversized imports atomically',async(test)=>{

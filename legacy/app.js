@@ -358,7 +358,9 @@
     return pageHeading('','Activity','',`<button class="btn btn-secondary" data-action="digest">${icon('copy')} Summary</button>`)+`<div class="workspace-grid"><section class="panel"><div class="panel-heading"><h2 class="section-title">Team activity</h2><span class="chip">${s.activity.length} updates</span></div><div class="activity-list">${s.activity.map(a=>activityItem(a,taskIds)).join('')||empty('No activity yet.','')}</div></section><aside class="panel"><div class="panel-heading"><div><h2 class="section-title">Follow-up drafts</h2></div></div>${s.drafts.length?s.drafts.map(d=>`<article class="source-card"><span class="source-label">DRAFT · ${timeLabel(d.at)}</span><p>${h(d.text)}</p><div class="inline"><button class="text-button" data-action="copy-draft" data-id="${h(d.id)}">${icon('copy')} Copy draft</button><button class="text-button" data-action="task" data-id="${h(d.taskId)}">Open task</button></div></article>`).join(''):empty('No drafts.','Create a draft from a task. Messages are not sent automatically.')}</aside></div>`;
   }
   function memoryView(s) {
-    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-task">Add follow-up task</button>':''}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+GatherWrapUp.markup(s,{h,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card"><span class="memory-category">${h(m.category||'Team learning')}</span><h2>${h(m.change)}</h2>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button></article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
+    const reuse=isOrganizer()&&s.tasks.some(task=>!ui.wrapMine||task.owner===ui.actor)
+      ?'<button class="btn btn-secondary" data-action="reuse-checklist">Reuse tasks for another event</button>':'';
+    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-task">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+GatherWrapUp.markup(s,{h,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card"><span class="memory-category">${h(m.category||'Team learning')}</span><h2>${h(m.change)}</h2>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button></article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
   }
 
   function render() {
@@ -431,6 +433,7 @@
   }
   function openDialog(title,body,footer='',wide=false,kind='') {
     if(kind!=='guest-agenda')ui.guestAgenda=null;
+    if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
@@ -453,6 +456,7 @@
     $('#dialog').replaceChildren();
     ui.dialogKind='';
     ui.guestAgenda=null;
+    ui.reuseChecklist=null;
     if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
@@ -472,6 +476,7 @@
   function showPendingUpdate() {
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){ui.guestAgenda.stale=true;updateGuestAgendaWarning();return;}
+    if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
@@ -608,6 +613,90 @@
   }
   function digestText(s) {
     return `${s.event.name} — ${new Date().toLocaleDateString()}\n\nCOMPLETED\n${completed(s).map(t=>`• ${t.title} — ${completionText(t)} (${timeLabel(t.completedAt)})`).join('\n')||'No completed tasks yet.'}\n\nNEEDS ATTENTION\n${attention(s).map(t=>`• ${t.title} — ${member(t.owner).name}; ${reason(t).label}. ${t.note||''}`).join('\n')||'No outstanding attention items.'}\n\nEMAIL TO REVIEW\n${pending(s).map(m=>`• ${m.subject} — ${m.sender}`).join('\n')||'All messages reviewed.'}`;
+  }
+  function updateReuseChecklistWarning() {
+    const draft=ui.reuseChecklist;
+    if(!draft||ui.dialogKind!=='reuse-checklist')return false;
+    const sync=$('#workspaceSyncNotice');
+    const changed=draft.stale||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
+    const offline=window.navigator?.onLine===false;
+    const message=window.GatherAccessLost||!isOrganizer()?'Project access changed. This checklist cannot be copied.':
+      changed?'The shared plan changed. Close this checklist and reopen it from Wrap up after checking for updates.':
+      offline?'Couldn’t check the shared plan. Reconnect before copying this checklist.':'';
+    const warning=$('#reuseChecklistWarning'),preview=$('#reuseChecklistPreview');
+    if(warning){if(warning.textContent!==message)warning.textContent=message;warning.hidden=!message;}
+    const visible=message?'':draft.text;
+    if(preview&&preview.value!==visible)preview.value=visible;
+    $('[data-action="copy-reuse-checklist"]')?.setAttribute('aria-disabled',String(!!message||!visible||draft.copying));
+    return !!message;
+  }
+  function reuseChecklistDialog() {
+    if(ui.view!=='memory'||!isOrganizer()||window.GatherAccessLost)return;
+    const rows=GatherWrapUp.reusableTitles(store.getState(),{mine:ui.wrapMine,actor:ui.actor});
+    if(!rows.length){toast('There are no reusable task titles in this view.');return;}
+    ui.reuseChecklist={rows,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false};
+    openDialog('Reuse tasks for another event',GatherWrapUp.reusablePicker(rows,{mine:ui.wrapMine,h}),
+      '<button class="btn btn-secondary" data-action="close-dialog">Back to Wrap up</button><button class="btn btn-primary" data-action="copy-reuse-checklist" aria-disabled="true">Copy checklist</button>',true,'reuse-checklist');
+    updateReuseChecklistWarning();
+  }
+  function filterReuseChecklist() {
+    const draft=ui.reuseChecklist;
+    if(!draft||ui.dialogKind!=='reuse-checklist')return;
+    const query=($('#reuseChecklistSearch')?.value||'').trim().toLocaleLowerCase();
+    let matches=0;
+    $$('[data-reuse-row]').forEach((row,index)=>{
+      row.hidden=!draft.rows[index]?.title.toLocaleLowerCase().includes(query);
+      if(!row.hidden)matches++;
+    });
+    const empty=$('#reuseChecklistNoMatches');
+    if(empty)empty.hidden=matches>0;
+  }
+  function syncReuseChecklist() {
+    const draft=ui.reuseChecklist;
+    if(!draft||ui.dialogKind!=='reuse-checklist')return;
+    const controls=$$('[data-reuse-choice]'),picked=controls.filter(control=>control.checked);
+    const edits=$$('[data-reuse-edit]'),titles=$$('[data-reuse-title]');
+    controls.forEach((control,index)=>{if(edits[index])edits[index].hidden=!control.checked;});
+    draft.text=GatherWrapUp.reusableChecklist(draft.rows,picked.map(control=>({index:Number(control.value),title:titles[Number(control.value)]?.value})));
+    controls.forEach(control=>{control.disabled=!control.checked&&picked.length>=GatherWrapUp.reuseLimit;});
+    const count=$('#reuseChecklistCount');
+    const text=picked.length+' of '+GatherWrapUp.reuseLimit+' selected.'+(picked.length&&!draft.text?' Each selected title needs 1 to 180 characters. Clear the search to see all selected titles.':
+      picked.length>=GatherWrapUp.reuseLimit?' Clear a selection to choose another.':'');
+    if(count&&count.textContent!==text)count.textContent=text;
+    updateReuseChecklistWarning();
+  }
+  async function copyReuseChecklist() {
+    const draft=ui.reuseChecklist,preview=$('#reuseChecklistPreview');
+    if(!draft||!preview||draft.copying||ui.dialogKind!=='reuse-checklist'||!isOrganizer()||window.GatherAccessLost)return;
+    const shown=preview.value;
+    syncReuseChecklist();
+    if(updateReuseChecklistWarning()||!draft.text)return;
+    if(shown!==draft.text){toast('The preview changed. Review it before copying again.');return;}
+    const text=draft.text;
+    draft.copying=true;updateReuseChecklistWarning();
+    try {
+      if(store.confirmSnapshotRevision){
+        let current;
+        try{current=await store.confirmSnapshotRevision(draft.revision);}
+        catch{
+          if(ui.reuseChecklist===draft&&!window.GatherAccessLost)toast('Could not confirm the latest plan. Try again before copying.');
+          return;
+        }
+        if(ui.reuseChecklist!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
+        if(!current)draft.stale=true;
+        if(updateReuseChecklistWarning())return;
+        if(draft.text!==text){toast('The preview changed. Review it before copying again.');return;}
+      }
+      const copied=await copyText(text);
+      if(ui.reuseChecklist!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
+      if(updateReuseChecklistWarning()||draft.text!==text){
+        if(copied)toast('The checklist changed while copying. Don’t paste the old copy; review the current plan first.');
+      }else if(copied)toast('Checklist copied. Paste it in the next event’s private plan.');
+      else {preview.focus();preview.select();toast('Copy the selected preview manually. Nothing was sent.');}
+    } finally {
+      draft.copying=false;
+      if(ui.reuseChecklist===draft)updateReuseChecklistWarning();
+    }
   }
   function updateGuestAgendaWarning() {
     if(ui.dialogKind!=='guest-agenda'||!ui.guestAgenda)return false;
@@ -822,7 +911,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -843,6 +932,8 @@
       if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
       if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState(),id));
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
+      if(action==='reuse-checklist')reuseChecklistDialog();
+      if(action==='copy-reuse-checklist')await copyReuseChecklist();
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
       if(action==='jump-schedule-date'&&!window.GatherAccessLost){
@@ -1106,6 +1197,7 @@
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
     if(el.closest('#guestAgendaForm'))syncGuestAgenda(el.closest('#guestAgendaForm'));
+    if(el.matches('[data-reuse-choice]'))syncReuseChecklist();
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
     if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'));
     if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
@@ -1137,6 +1229,8 @@
     if(ui.taskView==='map')$('#taskMap').innerHTML=GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members);
   }
   document.addEventListener('input',event=>{
+    if(event.target.id==='reuseChecklistSearch')filterReuseChecklist();
+    if(event.target.matches('[data-reuse-title]'))syncReuseChecklist();
     if(event.target.closest('#guestAgendaForm'))syncGuestAgenda(event.target.closest('#guestAgendaForm'));
     if(event.target.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(event.target.id==='taskSearch'){
