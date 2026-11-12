@@ -36,7 +36,7 @@ test('unknown ends never become assumed current activities; completed and report
   const later=GatherScheduleUI.timing(tasks,zone,'2026-10-04T17:00:00Z');
   assert.deepEqual(later.current,[]);assert.equal(later.labels.get('unknown'),'Start time reached · no end set');
   const html=ui.view({tasks,event:{timeZone:zone}},false,at);
-  assert.match(html,/Awaiting verification/);assert.match(html,/data-id="done"/);assert.doesNotMatch(html,/<form/);
+  assert.match(html,/Awaiting verification/);assert.match(html,/data-id="done"/);assert.doesNotMatch(html,/<form(?! id="scheduleDateForm")/);
 });
 
 test('clock uses the event zone across viewer zones, midnight, overnight activities and DST',()=>{
@@ -78,7 +78,7 @@ test('minute refresh updates only clock cues, restores activity focus, preserves
   const badge={dataset:{schedulePhase:'current'},textContent:'Next',hidden:false};
   const backdrop={hidden:true};
   const context=vm.createContext({window:{},document:{hidden:false,activeElement:{},createElement(){return {innerHTML:'',get content(){return this.innerHTML;}};}},
-    ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,actor:'maya'},store:{getState(){reads++;return {}; }},schedule:{clock(state,now,scope){assert.deepEqual({...scope},{mine:context.ui.scheduleMine,actor:context.ui.actor});return {markup:'new',labels:new Map([['current','Scheduled now']])};}},
+    ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},store:{getState(){reads++;return {}; }},schedule:{clock(state,now,scope){assert.deepEqual({...scope},{mine:context.ui.scheduleMine,actor:context.ui.actor,date:context.ui.scheduleDate});return {markup:'new',labels:new Map([['current','Scheduled now']])};}},
     $:selector=>selector==='#dialogBackdrop'?backdrop:target,$$:()=>[badge],restoreFocus(previous,scope){assert.equal(previous,context.document.activeElement);assert.equal(scope,target);restores++;}});
   vm.runInContext(fragment+'globalThis.refresh=refreshScheduleClock;',context);
   context.refresh();assert.equal(reads,1);assert.equal(replacements,1);assert.equal(badge.textContent,'Scheduled now');

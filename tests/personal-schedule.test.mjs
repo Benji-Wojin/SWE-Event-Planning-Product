@@ -21,7 +21,7 @@ test('personal schedule filters timetable and current/next cues without changing
   assert.deepEqual([...new Set(ids(html))],['mine-now','mine-next']);
   assert.match(html,/aria-pressed="true" data-action="schedule-scope" data-id="mine"/);
   assert.deepEqual(new Set(ids(schedule.view(state,false,now))),new Set(state.tasks.map(t=>t.id)));
-  assert.deepEqual(state,before);assert.doesNotMatch(html,/<form|data-action="(?:claim|toggle-task)"/);
+  assert.deepEqual(state,before);assert.doesNotMatch(html,/<form(?! id="scheduleDateForm")|data-action="(?:claim|toggle-task)"/);
 });
 
 test('empty personal schedules are truthful and offer a return to all activities',()=>{
@@ -56,7 +56,7 @@ test('focus cards expose safe owner, location and status with no extra actions',
   const markup=schedule.clock({event,members:[{id:item.owner}],tasks:[item]},now).markup;
   assert.match(markup,/&lt;Maya&gt;/);assert.match(markup,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(markup,/status-badge">blocked/);assert.match(markup,/data-id="id&quot;&lt;&gt;"/);
-  assert.doesNotMatch(markup,/<img|<script|<form/);assert.deepEqual(ids(markup),['id&quot;&lt;&gt;']);
+  assert.doesNotMatch(markup,/<img|<script|<form(?! id="scheduleDateForm")/);assert.deepEqual(ids(markup),['id&quot;&lt;&gt;']);
 });
 
 test('saved ownership and completion changes immediately recompute a personal timetable',()=>{
@@ -77,11 +77,11 @@ test('timeline view and live refresh use the current profile and the same scope'
   const start=source.indexOf('  function timelineView(s)');
   const fragment=source.slice(start,source.indexOf('  function updatesView(s)',start));
   const calls=[];
-  const context=vm.createContext({ui:{timelineMode:'schedule',scheduleMine:true,actor:'maya'},isOrganizer:()=>false,
+  const context=vm.createContext({ui:{timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},isOrganizer:()=>false,
     pageHeading:()=>'',schedule:{view(state,organizer,now,scope){calls.push({state,organizer,scope});return 'timetable';}}});
   vm.runInContext(fragment+'globalThis.view=timelineView;',context);
   const state={tasks:[],event};assert.match(context.view(state),/timetable/);
-  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya'});assert.equal(calls[0].state,state);
+  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya',date:'2026-10-04'});assert.equal(calls[0].state,state);
   context.ui.actor='dev';context.view(state);assert.equal(calls[1].scope.actor,'dev');
   context.ui.scheduleMine=false;context.view(state);assert.equal(calls[2].scope.mine,false);
   assert.match(source,/if\(action==='schedule-scope'\)\{ui\.scheduleMine=id==='mine';render\(\);\}/);

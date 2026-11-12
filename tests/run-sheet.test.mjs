@@ -202,8 +202,8 @@ test('run-sheet controls preserve scope, open a snapshot, and print only the act
   const end=source.indexOf("      if(action==='task')",start);
   assert.ok(start>=0&&end>start);
   let prints=0,opens=0,exists=true;
-  const context=vm.createContext({action:'run-sheet',window:{print(){prints++;}},ui:{dialogKind:'',scheduleMine:true,actor:'maya'},Date,
-    store:{getState:()=>({fixture:true})},schedule:{runSheet(s,time,scope){assert.equal(s.fixture,true);assert.deepEqual({...scope},{mine:true,actor:'maya'});return 'snapshot';}},
+  const context=vm.createContext({action:'run-sheet',window:{print(){prints++;}},ui:{dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,
+    store:{getState:()=>({fixture:true})},schedule:{runSheet(s,time,scope){assert.equal(s.fixture,true);assert.deepEqual({...scope},{mine:true,actor:'maya',date:'2026-11-21'});return 'snapshot';}},
     openDialog(title,body,footer,wide,kind){opens++;assert.equal(body,'snapshot');assert.match(footer,/Print \/ save PDF/);assert.equal(wide,true);context.ui.dialogKind=kind;},$:()=>exists});
   const run=()=>vm.runInContext(source.slice(start,end),context);
   run();assert.equal(opens,1);assert.equal(prints,0);

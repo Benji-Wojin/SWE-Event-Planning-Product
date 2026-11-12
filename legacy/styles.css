@@ -623,6 +623,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .owner-load{font-size:14px;color:var(--muted);line-height:1.5}.owner-load summary{cursor:pointer}.owner-load ul{padding-left:18px}
 .agreed-scope{padding:14px 16px;border-left:3px solid var(--green);margin-bottom:20px}
 .schedule-switch{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.schedule-date-filter,.schedule-date-shortcuts{display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin-bottom:8px}
+.schedule-date-filter .field{width:min(100%,14rem);margin:0}
+.schedule-date-filter input,.schedule-date-filter .btn,.schedule-date-shortcuts .btn{min-height:44px}
+.schedule-date-help{margin:0 0 14px}
 .schedule-panel{padding:22px}.schedule-zone{font-size:.875rem;line-height:1.5;margin:0 0 18px;overflow-wrap:anywhere}
 .schedule-pending{margin:20px 0 24px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}
 .schedule-pending h2{font-size:1rem;margin:0 0 8px}.schedule-pending p{font-size:.875rem}

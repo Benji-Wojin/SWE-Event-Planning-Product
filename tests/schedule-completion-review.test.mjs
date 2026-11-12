@@ -23,7 +23,7 @@ test('live focus exposes pending activity verification separately from clock and
   assert.match(html,/only the organizer can verify or request changes/);
   for(const id of ['Review arrival','Legacy done'])assert.equal(live.labels.has(id),false);
   assert.equal(live.labels.get('Unreported work'),'Past scheduled end');
-  assert.doesNotMatch(html,/Verified|No verification needed|Unscheduled preparation|<form|data-action="verify-task"/);
+  assert.doesNotMatch(html,/Verified|No verification needed|Unscheduled preparation|<form(?! id="scheduleDateForm")|data-action="verify-task"/);
   assert.deepEqual(input,before);
 });
 

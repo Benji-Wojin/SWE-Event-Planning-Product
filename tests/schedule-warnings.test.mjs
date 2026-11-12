@@ -17,7 +17,7 @@ test('live clock and dated cards retain responsibility and prerequisite warnings
   const before=structuredClone(input);
   for(const html of render(input,{mine:true,actor:'maya'})){
     assert.match(html,/Scheduled now/);assert.match(html,/Acceptance not recorded/);assert.match(html,/Required work not complete/);
-    assert.doesNotMatch(html,/PRIVATE-PREREQUISITE|PRIVATE-NOTE|data-action="(?:accept|complete|verify|claim)|<form/);
+    assert.doesNotMatch(html,/PRIVATE-PREREQUISITE|PRIVATE-NOTE|data-action="(?:accept|complete|verify|claim)|<form(?! id="scheduleDateForm")/);
   }
   assert.deepEqual(input,before);
   input.tasks[0].acceptedAt=now;

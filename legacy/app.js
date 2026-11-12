@@ -6,7 +6,7 @@
   const h = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const store = GatherStore.createStore();
   const navigation = GatherNavigation.create(window);
-  const ui = { view:'overview', actor:'jack', tab:'all', taskView:'list', mapFocus:'', timelineMode:'schedule', scheduleMine:false, wrapMine:false, owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
+  const ui = { view:'overview', actor:'jack', tab:'all', taskView:'list', mapFocus:'', timelineMode:'schedule', scheduleMine:false, scheduleDate:'', wrapMine:false, owner:'', status:'', search:'', messageId:'', lastFocus:null, dialogKind:'', detailId:'', privateRecords:[],privateSession:null,privateState:'loading',privateConfigured:false };
   const labels = { overview:'Overview',tasks:'Shared tasks',inbox:'Email briefing',updates:'Team updates',team:'People',info:'Event info',budget:'Budget',timeline:'Timeline',memory:'Wrap up',details:'Private details' };
   const statuses = { todo:'To do', progress:'In progress', blocked:'Blocked', done:'Done' };
   const isOrganizer = () => window.GatherIdentity ? window.GatherIdentity.role === 'admin' : ui.actor === 'jack';
@@ -349,7 +349,7 @@
     const scheduled=ui.timelineMode!=='deadlines';
     const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
     const heading=pageHeading('','Timeline','','<button class="btn btn-secondary" data-action="before-event-review">Before the event</button>'+controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
-    if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor});
+    if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
     return heading+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'No deadline'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}</div></section>`;
   }
@@ -757,7 +757,15 @@
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
-      if(action==='run-sheet'&&!window.GatherAccessLost)openDialog('Event run sheet',schedule.runSheet(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor}),'<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
+      if(action==='jump-schedule-date'&&!window.GatherAccessLost){
+        const days=schedule.activityDays(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
+        if(Object.hasOwn(days,id)&&days[id]&&days[id]!==ui.scheduleDate){
+          ui.scheduleDate=days[id];render();
+          (document.getElementById(el.id)||$('#scheduleDate'))?.focus({preventScroll:true});
+        }
+      }
+      if(action==='clear-schedule-date'&&!window.GatherAccessLost){ui.scheduleDate='';render();($('#scheduleDate')||$('[data-action="timeline-mode"][data-id="schedule"]'))?.focus();}
+      if(action==='run-sheet'&&!window.GatherAccessLost)openDialog('Event run sheet',schedule.runSheet(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate}),'<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet');
       if(action==='before-event-review')beforeEventReview();
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
       if(action==='print-run-sheet'&&ui.dialogKind==='run-sheet'&&$('#eventRunSheet')&&!window.GatherAccessLost)window.print();
@@ -878,6 +886,14 @@
     if(!form.id)return;
     event.preventDefault();
     if(ui.pendingSave||form.dataset.saving==='true')return;
+    if(form.id==='scheduleDateForm'){
+      const input=form.elements.namedItem('scheduleDate');
+      if(!window.GatherAccessLost&&input.validity.valid&&input.value&&input.value!==ui.scheduleDate){
+        ui.scheduleDate=input.value;render();
+        $('#scheduleDate')?.focus();
+      }
+      return;
+    }
     const data=Object.fromEntries(new FormData(form));
     const isSubmission=form.id==='completionEvidenceForm'||form.id==='responseForm'&&(event.submitter?.value||data.response)==='completed';
     // Snapshot before saveLock disables fields. Choosing a file never uploads it.
@@ -1057,7 +1073,7 @@
   function refreshScheduleClock() {
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;
     const target=$('[data-schedule-clock]');if(!target)return;
-    const live=schedule.clock(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor});
+    const live=schedule.clock(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
     // The timetable stays put; follow keyboard focus to the same activity when
     // it moves from Next to Now, or from the focus strip into the full timetable.
     const active=target.contains(document.activeElement)?document.activeElement:null;
