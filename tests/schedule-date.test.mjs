@@ -117,6 +117,31 @@ test('only an explicit valid submission applies a date, and clearing restores fo
   assert.deepEqual(locations,['2026-11-21','']);
 });
 
+test('passive Timeline renders keep an unsubmitted date without changing the committed filter',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf('  function captureScheduleDateDraft('),end=source.indexOf('  function render() {',start);
+  assert.ok(start>=0&&end>start);
+  for(const [base,value,nextBase,view,mode,expected] of [
+    ['', '2026-11-21', '', 'timeline', 'schedule', '2026-11-21'],
+    ['2026-11-20','', '2026-11-20', 'timeline', 'schedule', ''],
+    ['2026-11-20','2026-11-21','2026-11-22','timeline','schedule','2026-11-22'],
+    ['2026-11-20','2026-11-21','', 'timeline','schedule',''],
+    ['2026-11-20','2026-11-21','2026-11-20','overview','schedule','2026-11-20'],
+    ['2026-11-20','2026-11-21','2026-11-20','timeline','deadlines','2026-11-20'],
+  ]){
+    let field={defaultValue:base,value};
+    const ui={scheduleDate:base,view:'timeline',timelineMode:'schedule'};
+    const ctx=vm.createContext({ui,$:id=>id==='#scheduleDate'?field:null});
+    vm.runInContext(source.slice(start,end)+'globalThis.draft=captureScheduleDateDraft();',ctx);
+    field={defaultValue:nextBase,value:nextBase};
+    Object.assign(ui,{scheduleDate:nextBase,view,timelineMode:mode});
+    vm.runInContext('restoreScheduleDateDraft(draft);',ctx);
+    assert.equal(field.value,expected);
+    assert.equal(ui.scheduleDate,nextBase,'a passive render cannot commit the input');
+  }
+  assert.match(source,/const scheduleDateDraft=captureScheduleDateDraft\(\);[\s\S]*restoreScheduleDateDraft\(scheduleDateDraft\);/);
+});
+
 test('untimed activities remain visible across dates without becoming run-sheet entries',()=>{
   const fixture={...state,tasks:[...state.tasks,
     {id:'own-untimed',title:'My unscheduled briefing',owner:'maya',eventActivity:true,status:'todo'},

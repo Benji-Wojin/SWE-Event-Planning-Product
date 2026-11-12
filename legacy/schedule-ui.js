@@ -76,6 +76,11 @@
   const canReviewAssignment = task => task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
   const assignmentIssue = (task,members) => !task.owner?'unassigned':
     members.some(member=>member.id===task.owner&&member.active!==false)?'':'owner-unavailable';
+  function scheduleOwnerLabel(id,members=[]) {
+    if(!id)return 'Unassigned';
+    const owner=members.find(member=>member.id===id);
+    return owner?owner.name+(owner.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
+  }
   function newActivityTask({title,owner,note,start='',end='',location=''}) {
     if(!start&&(end||location.trim()))throw new Error('Enter a start time to save an end time or activity location, or clear those fields to set the time later.');
     return {title,owner,note,category:'Program',status:'todo',eventActivity:true,
@@ -167,14 +172,13 @@
     ];
   }
 
-  function create({h,options,person,statusBadge}) {
+  function create({h,options,statusBadge}) {
     function carriedOver(task,day) {
       const start=task.schedule.start.slice(0,10);
       return start<day?`<span class="muted">Continues from ${h(dateLabel(start))}</span>`:'';
     }
     function liveOwner(task,state) {
-      return task.owner&&!state.members?.some(member=>member.id===task.owner)
-        ? '<span class="person-chip">Assigned owner unavailable</span>' : person(task.owner);
+      return `<span class="person-chip schedule-owner-label">${h(scheduleOwnerLabel(task.owner,state.members))}</span>`;
     }
     // Use the same saved-fact predicates as Before event and the run sheet.
     // A clock cue is never a readiness decision or an automatic status change.
@@ -287,11 +291,7 @@
       const untimed=visible.filter(needsActivityTime).length;
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
       const days=new Map();
-      const name=id=>{
-        if(!id)return 'Unassigned';
-        const owner=state.members.find(member=>member.id===id);
-        return owner?owner.name+(owner.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
-      };
+      const name=id=>scheduleOwnerLabel(id,state.members);
       const unavailable=tasks.filter(task=>task.owner&&!resolved(task)&&!state.members.some(member=>member.id===task.owner&&member.active!==false)).length;
       const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
       const byId=new Map(state.tasks.map(task=>[task.id,task]));

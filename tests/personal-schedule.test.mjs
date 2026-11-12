@@ -9,7 +9,7 @@ import '../legacy/schedule-ui.js';
 const now='2026-10-03T16:30:00Z',event={timeZone:'America/Los_Angeles'};
 const task=(id,owner,start='09:00',end='10:00',extra={})=>({id,title:id,owner,status:'todo',schedule:{start:'2026-10-03T'+start,end:'2026-10-03T'+end,location:'Main hall'},...extra});
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const schedule=GatherScheduleUI.create({h,options:()=>'',person:id=>'<span class="person-chip">'+h(id||'Unassigned')+'</span>',statusBadge:status=>'<span class="status-badge">'+h(status)+'</span>'});
+const schedule=GatherScheduleUI.create({h,options:()=>'',statusBadge:status=>'<span class="status-badge">'+h(status)+'</span>'});
 const ids=html=>[...html.matchAll(/data-action="task" data-id="([^"]+)"/g)].map(match=>match[1]);
 
 test('personal schedule filters timetable and current/next cues without changing task data',()=>{
@@ -51,12 +51,12 @@ test('personal schedules retain completed/review work and only their own overlap
 });
 
 test('focus cards expose safe owner, location and status with no extra actions',()=>{
-  const item=task('id"<>','<Maya>','09:00','10:00',{title:'<img src=x onerror=alert(1)>',status:'blocked'});
+  const item=task('id"<>','private-maya-id','09:00','10:00',{title:'<img src=x onerror=alert(1)>',status:'blocked'});
   item.schedule.location='<script>alert(1)</script>';
-  const markup=schedule.clock({event,members:[{id:item.owner}],tasks:[item]},now).markup;
+  const markup=schedule.clock({event,members:[{id:item.owner,name:'<Maya>'}],tasks:[item]},now).markup;
   assert.match(markup,/&lt;Maya&gt;/);assert.match(markup,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(markup,/status-badge">blocked/);assert.match(markup,/data-id="id&quot;&lt;&gt;"/);
-  assert.doesNotMatch(markup,/<img|<script|<form(?! id="scheduleDateForm")/);assert.deepEqual(ids(markup),['id&quot;&lt;&gt;']);
+  assert.doesNotMatch(markup,/<img|<script|private-maya-id|<form(?! id="scheduleDateForm")/);assert.deepEqual(ids(markup),['id&quot;&lt;&gt;']);
 });
 
 test('saved ownership and completion changes immediately recompute a personal timetable',()=>{

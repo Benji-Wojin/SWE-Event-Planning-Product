@@ -8,7 +8,7 @@ const now='2026-10-03T16:30:00Z',event={timeZone:'America/Los_Angeles'};
 const task=(id,start,end,extra={})=>({id,title:id,owner:'maya',status:'todo',schedule:{start:'2026-10-03T'+start,end:end?'2026-10-03T'+end:'',location:'Main hall'},...extra});
 const ids=tasks=>tasks.map(t=>t.id);
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const ui=GatherScheduleUI.create({h,options:()=>'',person:h,statusBadge:h});
+const ui=GatherScheduleUI.create({h,options:()=>'',statusBadge:h});
 
 test('past slots and reached starts without ends stay visible for explicit progress follow-up',()=>{
   const tasks=[task('past','08:00','09:00'),task('no-end','09:00',''),task('blocked-past','07:00','08:00',{status:'blocked'}),
@@ -33,14 +33,14 @@ test('exact time boundaries move unresolved activities into follow-up without as
 });
 
 test('follow-up shows truthful reasons and owner links, not automatic status controls or private notes',()=>{
-  const item=task('id"<>','08:00','09:00',{title:'<img src=x onerror=alert(1)>',owner:'<Maya>',note:'HIDDEN_PRIVATE_NOTE'});
+  const item=task('id"<>','08:00','09:00',{title:'<img src=x onerror=alert(1)>',owner:'private-maya-id',note:'HIDDEN_PRIVATE_NOTE'});
   item.schedule.location='<script>hall</script>';
-  const html=ui.clock({event,members:[{id:item.owner},{id:'maya'}],tasks:[item,task('unknown','09:00','')]},now).markup;
+  const html=ui.clock({event,members:[{id:item.owner,name:'<Maya>'},{id:'maya',name:'Maya Alvarez'}],tasks:[item,task('unknown','09:00','')]},now).markup;
   assert.match(html,/Check progress/);assert.match(html,/Check with the owner/);
   assert.match(html,/Past scheduled end/);assert.match(html,/Start time reached · no end set/);
   assert.match(html,/data-action="task" data-id="id&quot;&lt;&gt;"/);
   assert.match(html,/&lt;img/);assert.match(html,/&lt;Maya&gt;/);assert.match(html,/&lt;script&gt;hall/);
-  assert.doesNotMatch(html,/<img|<script|HIDDEN_PRIVATE_NOTE|<form|data-action="(?:toggle-task|claim|complete)/);
+  assert.doesNotMatch(html,/<img|<script|private-maya-id|HIDDEN_PRIVATE_NOTE|<form|data-action="(?:toggle-task|claim|complete)/);
 });
 
 test('personal follow-up never includes another owner or unassigned activities',()=>{

@@ -292,7 +292,7 @@
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
-  const schedule = GatherScheduleUI.create({h,options,person,statusBadge});
+  const schedule = GatherScheduleUI.create({h,options,statusBadge});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('info')});
   const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('budget')});
   function confirmFixedDate(taskId,data) {
@@ -542,8 +542,22 @@
     paintNotifications();
     $('.notification-status').textContent=saved?(enabled?'Task reminders are on.':'Task reminders are off.'):'This browser did not save your reminder preference.';
   }
+  function captureScheduleDateDraft() {
+    if(ui.view!=='timeline'||ui.timelineMode==='deadlines')return null;
+    const input=$('#scheduleDate');
+    // Keep a draft through a passive render, never through Apply, Clear, or a
+    // shortcut that changed the committed filter before this render.
+    return input&&input.defaultValue===ui.scheduleDate&&input.value!==input.defaultValue
+      ? {base:input.defaultValue,value:input.value}:null;
+  }
+  function restoreScheduleDateDraft(draft) {
+    if(!draft||ui.view!=='timeline'||ui.timelineMode==='deadlines'||ui.scheduleDate!==draft.base)return;
+    const input=$('#scheduleDate');
+    if(input?.defaultValue===draft.base)input.value=draft.value;
+  }
   function render() {
     projectBudget?.unmount();
+    const scheduleDateDraft=captureScheduleDateDraft();
     const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
     const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
     ui.reviewDirty=false;
@@ -568,6 +582,7 @@
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
+    restoreScheduleDateDraft(scheduleDateDraft);
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
     if(ui.view==='info')projectInfo?.mount($('#eventInfo'));

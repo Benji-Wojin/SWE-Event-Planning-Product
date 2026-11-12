@@ -6,9 +6,12 @@ import '../legacy/schedule-ui.js';
 
 const now='2026-11-20T17:15:00Z';
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const ui=GatherScheduleUI.create({h,options:()=>'',person:id=>`<span>${h(id||'Unassigned')}</span>`,statusBadge:status=>`<span>${h(status)}</span>`});
+const ui=GatherScheduleUI.create({h,options:()=>'',statusBadge:status=>`<span>${h(status)}</span>`});
 const activity=(id,extra={})=>({id,title:id,status:'todo',owner:'maya',schedule:{start:'2026-11-20T09:00',end:'2026-11-20T09:30',location:'Fictional hall'},...extra});
-const state=tasks=>({event:{timeZone:'America/Los_Angeles'},members:[{id:'maya',active:true},{id:'jack',active:true},{id:'former',active:false}],tasks});
+const state=tasks=>({event:{timeZone:'America/Los_Angeles'},members:[
+  {id:'maya',name:'Maya Chen',active:true},{id:'jack',name:'Maya Ortiz',active:true},
+  {id:'former',name:'Fictional <Former>',email:'PRIVATE-OWNER-EMAIL',active:false},
+],tasks});
 const render=(input,scope={})=>[ui.clock(input,now,scope).markup,ui.view(input,false,now,scope)];
 
 test('live clock and dated cards retain responsibility and prerequisite warnings without changing saved progress',()=>{
@@ -31,12 +34,25 @@ test('live owner presentation distinguishes inactive, missing and unassigned wit
   const input=state([activity('Former owner',{owner:'former'}),activity('Missing owner',{owner:'PRIVATE-MISSING-ID'}),activity('Unassigned',{owner:''})]);
   for(const [index,html] of render(input).entries()){
     assert.equal((html.match(/Assigned owner unavailable/g)||[]).length,index===0?2:4,'dated view includes focus and dated cards');
-    assert.match(html,/former/);assert.match(html,/Unassigned/);assert.doesNotMatch(html,/PRIVATE-MISSING-ID|Acceptance not recorded/);
+    assert.match(html,/Fictional &lt;Former&gt; · Inactive teammate/);assert.match(html,/Unassigned/);
+    assert.doesNotMatch(html,/PRIVATE-MISSING-ID|PRIVATE-OWNER-EMAIL|Acceptance not recorded|<Former>/);
   }
   input.members.find(member=>member.id==='former').active=true;
   for(const html of render(input,{mine:true,actor:'former'})){
-    assert.doesNotMatch(html,/Assigned owner unavailable|Missing owner/);assert.match(html,/Acceptance not recorded/);
+    assert.doesNotMatch(html,/Assigned owner unavailable|Missing owner|Inactive teammate/);assert.match(html,/Acceptance not recorded/);
   }
+});
+
+test('clock, Timeline and run sheet agree on full owner names and distinguish teammates with the same first name',()=>{
+  const input=state([activity('Welcome desk'),activity('Sound check',{owner:'jack'}),
+    activity('Old assignment',{owner:'former'}),activity('Unknown assignment',{owner:'PRIVATE-MISSING-ID'})]);
+  const before=structuredClone(input);
+  for(const html of [...render(input),ui.runSheet(input,now)]){
+    for(const name of ['Maya Chen','Maya Ortiz','Fictional &lt;Former&gt; · Inactive teammate','Assigned owner unavailable'])
+      assert.ok(html.includes(name),name+' is shown');
+    assert.doesNotMatch(html,/PRIVATE-OWNER-EMAIL|PRIVATE-MISSING-ID/);
+  }
+  assert.deepEqual(input,before);
 });
 
 test('warnings preserve required versus related semantics, selected scope and completion verification',()=>{
