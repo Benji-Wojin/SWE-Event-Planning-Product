@@ -174,6 +174,47 @@
     if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
   }
+  function focusScheduleTarget(target) {
+    if(!target)return false;
+    target.focus({preventScroll:true});
+    if(document.activeElement!==target)return false;
+    const rect=target.getBoundingClientRect(),header=Math.max(0,$('.topbar')?.getBoundingClientRect().bottom||0);
+    const bottom=window.innerHeight;
+    if(bottom<=header)return true;
+    if(rect.top>=header&&rect.bottom<=bottom)return true;
+    const height=rect.bottom-rect.top;
+    if(height>bottom-header){
+      // An unusually long card can't fit. Keep its beginning below the
+      // sticky header rather than centering an already clipped control.
+      if(rect.top<header||rect.top>=bottom)window.scrollBy({top:rect.top-header-8,behavior:'instant'});
+    }else window.scrollBy({top:(rect.top+rect.bottom-header-bottom)/2,behavior:'instant'});
+    return true;
+  }
+  function isScheduleControl(element) {
+    return !!(element?.classList?.contains('schedule-focus-task')||element?.classList?.contains('schedule-row'));
+  }
+  function restoreScheduleFocus(previous,root) {
+    if(!previous||!root||ui.view!=='timeline'||ui.timelineMode==='deadlines'||window.GatherAccessLost||
+      root.closest('[hidden],[inert]')||!previous.dataset.id)return false;
+    const card=previous.classList.contains('schedule-focus-task'),row=previous.classList.contains('schedule-row');
+    if(!card&&!row)return false;
+    const panel=root.matches('.schedule-panel')?root:$('.schedule-panel',root);
+    if(!panel||panel.closest('[hidden],[inert]'))return false;
+    const controls=focusable(panel),id=previous.dataset.id;
+    if(card){
+      const exact=controls.find(el=>el.classList.contains('schedule-focus-task')&&el.dataset.id===id&&
+        el.dataset.action===previous.dataset.action&&el.dataset.reviewKind===previous.dataset.reviewKind&&
+        el.dataset.scheduleFocusKind===previous.dataset.scheduleFocusKind);
+      if(exact&&focusScheduleTarget(exact))return true;
+    }
+    const rows=controls.filter(el=>el.classList.contains('schedule-row')&&el.dataset.action==='task'&&el.dataset.id===id);
+    const day=previous.dataset.scheduleDay||previous.dataset.scheduleFocusDay;
+    const scope=controls.find(el=>el.dataset.action==='schedule-scope'&&el.getAttribute('aria-pressed')==='true');
+    for(const target of new Set([rows.find(el=>el.dataset.scheduleDay===day),...rows,scope]))
+      if(focusScheduleTarget(target))return true;
+    const heading=$('#schedulePanelHeading',panel);
+    return !!heading&&heading.getClientRects().length>0&&!heading.closest('[hidden],[inert]')&&focusScheduleTarget(heading);
+  }
   function sameNextUpPanel(oldPanel,newPanel) {
     return !!oldPanel&&!!newPanel&&oldPanel.dataset.nextUpPanel===newPanel.dataset.nextUpPanel&&
       oldPanel.dataset.nextUpActor===newPanel.dataset.nextUpActor;
@@ -216,6 +257,8 @@
   }
   function restoreViewFocus(previous,root) {
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
+    if(isScheduleControl(previous))
+      return restoreScheduleFocus(previous,root);
     if(!previous.dataset.taskFocus)return restoreFocus(previous,root);
     if(ui.view!=='tasks'||ui.taskView!=='list'||root.closest('[hidden],[inert]'))return false;
     if(restoreFocus(previous,root))return true;
@@ -844,7 +887,9 @@
     ui.relatedChecklistDraft=null;
     ui.relatedBatch=null;
     const view=$('#viewRoot');
-    if(!restoreFocus(ui.lastFocus)&&!restoreViewFocus(ui.lastFocus,view))view.querySelector('button')?.focus();
+    const scheduleOpener=isScheduleControl(ui.lastFocus);
+    if(!(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
+      view.querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
@@ -2384,7 +2429,7 @@
     const template=document.createElement('template');template.innerHTML=live.markup;
     if(target.innerHTML!==template.innerHTML){
       target.replaceChildren(template.content);
-      if(active)restoreFocus(active,$('.schedule-panel'));
+      if(active&&document.activeElement===document.body)restoreScheduleFocus(active,$('.schedule-panel'));
     }
     $$('[data-schedule-phase]').forEach(node=>{
       const id=node.dataset.schedulePhase;

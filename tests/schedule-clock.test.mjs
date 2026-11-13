@@ -74,18 +74,19 @@ test('minute refresh updates only clock cues, restores activity focus, preserves
   const source=readFileSync('legacy/app.js','utf8');
   const fragment=source.slice(source.indexOf('  function refreshScheduleClock()'),source.indexOf('  function refreshAttentionDate()'));
   let reads=0,replacements=0,focused=false,restores=0;
-  const target={innerHTML:'old',contains:()=>focused,replaceChildren(content){this.innerHTML=content;replacements++;}};
+  const oldCard={},body={};
+  const target={innerHTML:'old',contains:el=>focused&&el===oldCard,replaceChildren(content){this.innerHTML=content;replacements++;if(focused)context.document.activeElement=body;}};
   const badge={dataset:{schedulePhase:'current',schedulePhaseDay:'2026-10-04'},textContent:'Next',hidden:false};
   const otherDay={dataset:{schedulePhase:'current',schedulePhaseDay:'2026-10-03'},textContent:'Scheduled now',hidden:false};
   const backdrop={hidden:true};
-  const context=vm.createContext({window:{},document:{hidden:false,activeElement:{},createElement(){return {innerHTML:'',get content(){return this.innerHTML;}};}},
+  const context=vm.createContext({window:{},document:{body,hidden:false,activeElement:body,createElement(){return {innerHTML:'',get content(){return this.innerHTML;}};}},
     isOrganizer:()=>true,ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},store:{getState(){reads++;return {}; }},schedule:{clock(state,now,scope,organizer){assert.equal(organizer,true);assert.deepEqual({...scope},{mine:context.ui.scheduleMine,actor:context.ui.actor,date:context.ui.scheduleDate});return {markup:'new',labels:new Map([['current','Scheduled now']]),rowDays:new Map([['current',scope.date]])};}},
-    $:selector=>selector==='#dialogBackdrop'?backdrop:target,$$:()=>[badge,otherDay],restoreFocus(previous,scope){assert.equal(previous,context.document.activeElement);assert.equal(scope,target);restores++;}});
+    $:selector=>selector==='#dialogBackdrop'?backdrop:target,$$:()=>[badge,otherDay],restoreScheduleFocus(previous,scope){assert.equal(previous,oldCard);assert.equal(scope,target);restores++;}});
   vm.runInContext(fragment+'globalThis.refresh=refreshScheduleClock;',context);
   context.refresh();assert.equal(reads,1);assert.equal(replacements,1);assert.equal(badge.textContent,'Scheduled now');
   assert.equal(otherDay.hidden,true);assert.equal(otherDay.textContent,'');
   context.refresh();assert.equal(replacements,1,'unchanged markup is not replaced');
-  target.innerHTML='old';focused=true;context.refresh();assert.equal(replacements,2,'clock groups stay current even with a focused link');assert.equal(restores,1,'focus follows the same activity');
+  target.innerHTML='old';focused=true;context.document.activeElement=oldCard;context.refresh();assert.equal(replacements,2,'clock groups stay current even with a focused link');assert.equal(restores,1,'focus follows the same activity');
   focused=false;backdrop.hidden=false;context.refresh();assert.equal(reads,3,'dialog and its draft are not read or replaced');
   backdrop.hidden=true;
   for(const [object,key,value]of [[context.window,'GatherAccessLost',true],[context.document,'hidden',true],[context.ui,'pendingSave',true],[context.ui,'view','tasks'],[context.ui,'timelineMode','deadlines']]){
