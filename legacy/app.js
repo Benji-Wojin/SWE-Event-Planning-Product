@@ -1261,8 +1261,11 @@
   }
   async function refreshRunSheet() {
     const snapshot=ui.runSheet;
-    const stillOpen=()=>ui.runSheet===snapshot&&ui.dialogKind==='run-sheet'&&ui.view==='timeline'&&
-      ui.timelineMode!=='deadlines'&&!ui.pendingSave&&!window.GatherAccessLost;
+    const title=$('#dialogTitle'),project=window.GatherMode?.projectId,actor=ui.actor;
+    const sameWorkspace=()=>!window.GatherAccessLost&&ui.actor===actor&&window.GatherMode?.projectId===project;
+    const sameReview=()=>sameWorkspace()&&ui.runSheet===snapshot&&ui.dialogKind==='run-sheet'&&ui.view==='timeline'&&
+      ui.timelineMode!=='deadlines'&&!$('#dialogBackdrop').hidden&&!!title&&$('#dialogTitle')===title;
+    const stillOpen=()=>sameReview()&&!ui.pendingSave&&!document.hidden;
     if(!snapshot||!stillOpen()||busyRunSheetRevisions.has(snapshot.revision)||!store.refresh||!$('#eventRunSheet'))return;
     if(currentRunSheet())return;
     const status=$('#runSheetRefreshStatus');
@@ -1270,28 +1273,23 @@
     if(status)status.textContent='Refreshing run sheet…';
     currentRunSheet();
     try {
-      const result=await store.refresh(stillOpen);
-      if(result.pending&&!window.GatherAccessLost)rememberNewerSchedule(snapshot,result.newerRevision);
-      if(!stillOpen())return;
-      const revision=store.getSnapshotRevision?.();
-      if(result.pending||!Number.isSafeInteger(revision)||scheduleRevisionIsStale(revision))
-        throw new Error('A newer snapshot is not ready.');
-      // A successful publish already read an authorized revision. If the
-      // cache was advanced elsewhere, check it before clearing the warning.
-      if(!result.changed&&(!store.confirmSnapshotRevision||
-          !await store.confirmSnapshotRevision(revision,newer=>rememberNewerSchedule({revision},newer)))){
-        throw new Error('This revision could not be confirmed.');
+      const result=await store.refresh(revision=>stillOpen()&&Number.isSafeInteger(revision)&&
+        !scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(result.pending&&sameWorkspace())rememberNewerSchedule(snapshot,result.newerRevision);
+      if(!stillOpen()){
+        if(sameReview()&&status)status.textContent='Refresh paused. Try again before exporting.';
+        return;
       }
-      if(!stillOpen())return;
-      if(store.getSnapshotRevision()!==revision||scheduleRevisionIsStale(revision))
-        throw new Error('The plan changed again.');
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||scheduleRevisionIsStale(revision))
+        throw new Error('A newer snapshot is not ready.');
       const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
       ui.toolUpdatePending=false;
       render();
       openRunSheet(snapshot.scope,true);
       toast('Run sheet refreshed. This copy is still a snapshot.');
     } catch {
-      if(stillOpen()&&status)status.textContent='Could not refresh the run sheet. Try again before exporting.';
+      if(sameReview()&&status)status.textContent=stillOpen()?'Could not refresh the run sheet. Try again before exporting.':'Refresh paused. Try again before exporting.';
     } finally {
       busyRunSheetRevisions.delete(snapshot.revision);
       currentRunSheet();

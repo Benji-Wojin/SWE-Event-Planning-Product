@@ -423,6 +423,10 @@
       const untimed=visible.filter(needsActivityTime).length;
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
       const name=id=>scheduleOwnerLabel(id,state.members);
+      const unassigned=tasks.filter(task=>!task.owner&&!resolved(task)).length;
+      const unassignedNotice=unassigned?`${unassigned} ${unassigned===1?'activity has':'activities have'} no owner assigned. Confirm who will cover the work with the organizer.`:'';
+      const invalidTimes=tasks.filter(task=>wallTimeIssue(task,state.event.timeZone)).length;
+      const invalidTimeNotice=invalidTimes?`${invalidTimes} ${invalidTimes===1?'activity has a saved time that needs':'activities have saved times that need'} correction. Do not rely on the flagged times until the organizer confirms them in Timeline.`:'';
       const unavailable=tasks.filter(task=>task.owner&&!resolved(task)&&!state.members.some(member=>member.id===task.owner&&member.active!==false)).length;
       const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
       const byId=new Map(state.tasks.map(task=>[task.id,task]));
@@ -451,7 +455,7 @@
           statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
-        cautions:[untimedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
+        cautions:[invalidTimeNotice,untimedNotice,unassignedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',
@@ -462,7 +466,7 @@
     function runSheetMarkup(model) {
       const {title,scopeLabel,timestamp,timeZone,cautions,locationWarning,days,empty}=model;
       const spans=(values)=>values.filter(Boolean).map(value=>`<span>${h(value)}</span>`).join('');
-      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(timeZone)}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. ${snapshotDisclaimer}</p><p class="muted">${sharingDisclaimer}</p></header>${cautions.map(warning=>`<p class="notice">${h(warning)}</p>`).join('')}${locationWarning?`<p class="schedule-overlap-summary">${h(locationWarning)}</p>`:''}${days.map(({label,rows})=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(label)}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(label)}<span>${h(scopeLabel)} · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${rows.map(row=>`<tr><td data-label="Time">${h(row.range)}${row.openEnded?'<span>No end time set</span>':''}</td><th scope="row">${h(row.title)}${row.continues?`<span class="muted">${h(row.continues)}</span>`:''}${spans([row.location,...row.activityWarnings])}</th><td data-label="Owner">${h(row.owner)}${spans([row.acceptance])}</td><td data-label="Status at snapshot">${h(row.status)}${spans(row.statusWarnings)}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${h(empty)}</p>`}</article>`;
+      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(timeZone)}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. ${snapshotDisclaimer}</p><p class="muted">${sharingDisclaimer}</p></header>${cautions.map(warning=>`<p class="notice">${h(warning)}</p>`).join('')}${locationWarning?`<p class="schedule-overlap-summary">${h(locationWarning)}</p>`:''}${days.map(({label,rows})=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(label)}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(label)}<span>${h(scopeLabel)} · All activity times: ${h(timeZone)}</span><span>Team only · Not live · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${rows.map(row=>`<tr><td data-label="Time">${h(row.range)}${row.openEnded?'<span>No end time set</span>':''}</td><th scope="row">${h(row.title)}${row.continues?`<span class="muted">${h(row.continues)}</span>`:''}${spans([row.location,...row.activityWarnings])}</th><td data-label="Owner">${h(row.owner)}${spans([row.acceptance])}</td><td data-label="Status at snapshot">${h(row.status)}${spans(row.statusWarnings)}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${h(empty)}</p>`}</article>`;
     }
     function runSheetText(model) {
       // User-entered fields stay on one line so they cannot masquerade as

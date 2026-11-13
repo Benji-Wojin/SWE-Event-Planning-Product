@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
 import '../legacy/schedule-ui.js';
 
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -32,6 +33,32 @@ test('personal run sheets contain only the signed-in actor schedule, with truthf
   assert.match(html,/My activities · Maya Chen/);assert.match(html,/Check-in/);assert.doesNotMatch(html,/Sound check/);
   for(const actor of ['other','',undefined])assert.match(ui.runSheet(input,now,{mine:true,actor}),/No scheduled activities in this view/);
   assert.match(ui.runSheet({...input,tasks:[]},now),/No scheduled activities in this view/);
+});
+
+test('offline copies call out uncovered activities and unusable local times without revealing other scopes',()=>{
+  const input=state(),date='2026-11-01',open=activity('Uncovered','',date+'T00:10',date+'T00:30');
+  input.tasks=[open,activity('Already finished','',date+'T00:30',date+'T00:40',{status:'done'}),
+    activity('Repeated clock','maya',date+'T01:30',date+'T02:15'),
+    activity('Other team repeated clock','dev',date+'T01:35',date+'T02:20'),
+    activity('Another day uncovered','','2026-11-02T09:00')];
+  const snapshot=structuredClone(input);
+  const output=scope=>{
+    const model=ui.runSheetModel(input,now,scope);
+    return [ui.runSheetMarkup(model),ui.runSheetText(model)];
+  };
+  for(const copy of output({date})){
+    assert.match(copy,/1 activity has no owner assigned/);
+    assert.match(copy,/2 activities have saved times that need correction/);
+    assert.match(copy,/Do not rely on the flagged times/);
+    assert.match(copy,/Start time 2026-11-01 01:30 occurs twice/);
+    assert.doesNotMatch(copy,/Another day uncovered/);
+  }
+  for(const copy of output({date,mine:true,actor:'maya'})){
+    assert.match(copy,/1 activity has a saved time that needs correction/);
+    assert.match(copy,/Repeated clock/);
+    assert.doesNotMatch(copy,/no owner assigned|Uncovered|Other team repeated clock/);
+  }
+  assert.deepEqual(input,snapshot);
 });
 
 test('a carryover row only warns about overlaps that actually reach its displayed date',()=>{
@@ -262,13 +289,15 @@ function runSheetHarness(){
         if(fixture.inconclusiveChecks>0){fixture.inconclusiveChecks--;return false;}
         return expected===fixture.remote;
       },
-      async refresh(canApply){
+      async refresh(canApply,{requireFresh}){
         fixture.refreshes++;
+        assert.equal(requireFresh,true);
         if(fixture.waitForRefresh)await fixture.waitForRefresh;
-        if(fixture.remote===fixture.revision)return {changed:false};
-        if(!canApply())return {pending:true,newerRevision:fixture.remote};
+        if(!canApply(fixture.remote))return {pending:true,newerRevision:fixture.remote};
+        if(fixture.inconclusiveChecks>0){fixture.inconclusiveChecks--;return {changed:false};}
+        if(fixture.remote===fixture.revision)return {changed:false,verified:true};
         fixture.revision=fixture.remote;
-        return {changed:true};
+        return {changed:true,verified:true};
       },
     },schedule:{
       runSheetModel(s,time,scope){return {days:[{}],...scope,day:scope.date,revision:s.revision};},
@@ -377,10 +406,10 @@ test('an inconclusive run-sheet check can recover by re-confirming the same revi
   assert.equal(staleNotice.hidden,false);assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
   await run('download-run-sheet');assert.equal(fixture.downloads,0);
   await run('refresh-run-sheet');
-  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,2,1,1]);
+  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,1,1,1]);
   assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
   await run('refresh-run-sheet');
-  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,3,2,2]);
+  assert.deepEqual([fixture.revision,fixture.reads,fixture.refreshes,fixture.opens.length],[1,1,2,2]);
   assert.equal(staleNotice.hidden,true);assert.equal(fallback.hidden,false);assert.equal(blocksNativePrint(),false);
   await run('download-run-sheet');assert.equal(fixture.downloads,1);
 });
@@ -460,6 +489,8 @@ test('every printed continuation header identifies event, day, scope and snapsho
   for(const head of heads){
     assert.match(head,/run-sheet-repeat-heading/);assert.match(head,/School dance/);
     assert.match(head,/My activities · Maya Chen/);assert.match(head,/2026-11-20 · 15:00 · America\/Los_Angeles/);
+    assert.match(head,/All activity times: America\/Los_Angeles/);
+    assert.match(head,/Team only · Not live · Snapshot:/);
   }
   assert.match(heads[0],/Fri, Nov 20, 2026/);assert.match(heads[1],/Sat, Nov 21, 2026/);
   const css=readFileSync('legacy/styles.css','utf8');
