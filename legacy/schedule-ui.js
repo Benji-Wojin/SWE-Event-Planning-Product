@@ -135,10 +135,21 @@
     (task.dependencies||[]).some(link=>link.kind!=='related')&&!unfinishedRequiredWork(task,byId);
   const wallTimeIssue=(task,zone)=>zone&&root.GatherCalendar?.scheduleTimeIssue(task.schedule,zone);
   const usableWallTimes=(tasks,zone)=>tasks.filter(task=>!wallTimeIssue(task,zone));
-  const wallTimeWarning=(task,zone)=>{
+  const wallTimeWarning=(task,zone,nextStep)=>{
     const issue=wallTimeIssue(task,zone);
-    return issue?root.GatherCalendar.scheduleTimeMessage(issue,zone):'';
+    return issue?root.GatherCalendar.scheduleTimeMessage(issue,zone,nextStep):'';
   };
+  function activitySummary(task,zone) {
+    const slot=task.schedule;
+    if (!slot?.start) return task.eventActivity===true
+      ? {timing:'Start time not set',location:'',warning:''}
+      : null;
+    return {
+      timing:[dateLabel(slot.start),range(slot),zone||'Time zone not set',slot.end?'':'No end time set'].filter(Boolean).join(' · '),
+      location:slot.location||'Location not set',
+      warning:wallTimeWarning(task,zone,'Confirm the time with the organizer before relying on it.'),
+    };
+  }
   const clockFormatters = new Map();
   function momentKey(now,timeZone) {
     if(!timeZone)return null;
@@ -513,5 +524,5 @@
     }
     return {view,details,picker,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

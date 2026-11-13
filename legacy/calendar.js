@@ -69,10 +69,10 @@
     }
     return null;
   }
-  function scheduleTimeMessage(issue,timeZone) {
+  function scheduleTimeMessage(issue,timeZone,nextStep='Choose a different local time.') {
     const label=issue.field==='start'?'Start time':'End time';
     const reason=issue.state==='missing'?'does not exist':issue.state==='repeated'?'occurs twice':'is not valid';
-    return `${label} ${issue.value.replace('T',' ')} ${reason} in ${timeZone}. Choose a different local time.`;
+    return `${label} ${issue.value.replace('T',' ')} ${reason} in ${timeZone}. ${nextStep}`;
   }
   root.GatherCalendar = { dayKey,localTimeState,scheduleTimeIssue,scheduleTimeMessage };
 })(typeof window !== 'undefined' ? window : globalThis);

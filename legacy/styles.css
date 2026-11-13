@@ -624,8 +624,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .task-priority form{margin-top:14px;display:grid;grid-template-columns:minmax(0,1fr);align-items:start}
 .task-priority .check-field{font-size:14px}
 .next-up-panel{margin:0 0 22px}.next-up-list{padding:0 22px 18px}
-.next-up-list article{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+.next-up-list article{display:flex;justify-content:space-between;align-items:baseline;gap:6px 16px;padding:12px 0;border-top:1px solid var(--line);flex-wrap:wrap}
 .next-up-list .text-button{font-size:16px;text-align:left;overflow-wrap:anywhere}
+.next-up-activity{flex:1 0 100%;min-width:0;display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--muted);font-size:.85rem;line-height:1.5;overflow-wrap:anywhere}
+.next-up-activity strong{color:var(--ink)}.next-up-activity-warning{flex-basis:100%}
 .organizer-review{padding-bottom:16px}
 .organizer-review>p,.organizer-review>ul,.organizer-review>button{margin-inline:22px}
 .organizer-review>ul{list-style:none;padding:0;margin-block:12px}

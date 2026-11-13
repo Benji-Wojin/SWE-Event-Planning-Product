@@ -56,19 +56,30 @@
       const waiting=[...requests.values()].filter(({task})=>!alreadyShown.has(task.id));
       const waitingLabel=request=>request.kind==='date'?'Date proposal awaiting review':'Help request awaiting review';
       const requestBadge=task=>requests.has(task.id)?' · '+waitingLabel(requests.get(task.id).request):'';
-      const personalRow=(task,detail)=>{
+      const personalRow=(task,{detail='',showDeadline=false,link}={})=>{
         const request=requests.get(task.id)?.request;
-        return '<article>'+taskLink(task,{nextUp:true,request:!!request})+'<span class="muted">'+h(detail)+requestBadge(task)+'</span></article>';
+        const activity=root.GatherScheduleUI?.activitySummary(task,s.event.timeZone);
+        const facts=activity?'<div class="next-up-activity"><span><strong>'+(activity.warning?'Saved activity time:':'Activity:')+'</strong> '+h(activity.timing)+'</span>'+
+          (activity.location?'<span><strong>Location:</strong> '+h(activity.location)+'</span>':'')+
+          (task.dueDate?'<span><strong>Prep due</strong> '+h(dayLabel(task.dueDate))+'</span>':'')+
+          (activity.warning?'<span class="next-up-activity-warning"><strong>Check schedule:</strong> '+h(activity.warning)+'</span>':'')+'</div>':'';
+        const status=(showDeadline&&!activity?dayLabel(task.dueDate):detail);
+        const label=status?h(status)+requestBadge(task):request?waitingLabel(request):'';
+        return '<article>'+(link||taskLink(task,{nextUp:true,request:!!request}))+
+          (label?'<span class="muted">'+label+'</span>':'')+facts+'</article>';
       };
       const waitingMarkup=waiting.length?'<section class="section-gap" aria-label="Requests awaiting organizer review"><h3>Waiting for the organizer</h3>'+
-        waiting.map(({task,request})=>'<article>'+taskLink(task,{nextUp:true,request:true})+'<span class="muted">'+waitingLabel(request)+'</span></article>').join('')+'</section>':'';
-      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>'<article><button type="button" class="text-button" data-action="review-returned-completion" data-next-up-origin="returned" data-id="'+h(t.id)+'">'+h(t.title)+'</button><span class="muted">Review and revise'+(committed.has(t.id)?' · Committed':'')+requestBadge(t)+'</span></article>').join('')+'</section>':'';
+        waiting.map(({task})=>personalRow(task)).join('')+'</section>':'';
+      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>personalRow(t,{
+        link:'<button type="button" class="text-button" data-action="review-returned-completion" data-next-up-origin="returned" data-id="'+h(t.id)+'">'+h(t.title)+'</button>',
+        detail:'Review and revise'+(committed.has(t.id)?' · Committed':''),
+      })).join('')+'</section>':'';
       const empty=suggested.length?'Choose up to three tasks to work on next.':hasOwned?(overview?'Nothing ready to start. Open My tasks to review blockers, reports or requests.':'Nothing ready to start. Review your open tasks below.'):'No open tasks assigned to you.';
       const heading=overview?'Your next steps':'Next up';
       const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
       const help=overview?'<p class="muted">Your returned reports, commitments, and suggested tasks. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
-      const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>personalRow(t,t.acceptedAt?'Accepted · Not committed':'Review assignment')).join('')+'</details>':'';
-      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,dayLabel(t.dueDate))).join('')+(active.length||(returned.length||waiting.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
+      const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>personalRow(t,{detail:t.acceptedAt?'Accepted · Not committed':'Review assignment'})).join('')+'</details>':'';
+      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,{showDeadline:true})).join('')+(active.length||(returned.length||waiting.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();

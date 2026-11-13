@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
+import '../legacy/schedule-ui.js';
 import '../legacy/recovery-ui.js';
 
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -16,6 +17,10 @@ const suggestions=html=>{
   return [...section.matchAll(/<article>[\s\S]*?data-id="([^"]+)"[\s\S]*?<\/article>/g)]
     .map(([markup,id])=>({id,markup}));
 };
+const activityRow=(html,id)=>[...html.matchAll(/<article>\s*[\s\S]*?<\/article>/g)].map(([markup])=>markup)
+  .find(markup=>markup.includes(`data-id="${id}"`))||'';
+const activityCount=markup=>(markup.match(/class="next-up-activity"/g)||[]).length;
+const text=markup=>markup.replace(/<[^>]*>/g,'');
 
 test('empty Next up exposes up to three ranked ready tasks but never commits or assigns them',()=>{
   const tasks=[task('later',{dueDate:'2099-10-03'}),task('important',{priority:'high'}),task('third'),task('fourth'),
@@ -211,4 +216,69 @@ test('Overview next steps are personal, read-only and link to My tasks without a
   assert.match(html,/data-id="mine"/);assert.doesNotMatch(html,/data-id="other"|data-id="waiting"|<form|data-action="accept-task"/);
   assert.deepEqual(s,before);
   assert.doesNotMatch(recovery.nextUpPanel(s),/Your next steps|View my tasks|committed/);
+});
+
+test('both personal panels show saved activity facts without losing deadlines, review states or task scope',()=>{
+  const committed='2026-11-01T20:00:00Z';
+  const s=state([
+    task('scheduled',{nextUpAt:committed,schedule:{start:'2099-11-20T16:30',end:'2099-11-20T17:15',location:'<Loading & hall>'}}),
+    task('untimed',{nextUpAt:committed,eventActivity:true,dueDate:'2099-11-19'}),
+    task('ordinary',{nextUpAt:committed,dueDate:'2099-11-17'}),
+    task('waiting',{eventActivity:true,dueDate:'2099-11-18',recoveryRequests:[{kind:'date',status:'pending',createdBy:'maya',proposedDate:'2099-12-01',note:'Private request text'}]}),
+    task('returned',{requiresVerification:true,completionReview:{note:'Private returned evidence'},schedule:{start:'2099-11-21T10:00',end:'',location:''}}),
+    task('nonowned',{owner:'dev',nextUpAt:committed,schedule:{start:'2099-11-20T16:30',end:'',location:'Other owner location'}}),
+  ]);
+  const before=structuredClone(s);
+  for(const overview of [false,true]){
+    const html=panel(s,'maya',overview);
+    const scheduled=activityRow(html,'scheduled');
+    assert.equal(activityCount(scheduled),1);
+    assert.match(scheduled,/Nov(?:ember)?\s+20,?\s+2099/);
+    assert.match(scheduled,/(?:4:30|16:30).*?(?:5:15|17:15)/s);
+    assert.match(scheduled,/America\/Los_Angeles/);
+    assert.match(scheduled,/&lt;Loading &amp; hall&gt;/);
+    assert.doesNotMatch(scheduled,/<Loading|No due date|Prep due|No end time set/);
+
+    const untimed=activityRow(html,'untimed');
+    assert.equal(activityCount(untimed),1);
+    assert.match(untimed,/Start time not set/);
+    assert.match(text(untimed),/Prep due\s+2099-11-19/);
+    const ordinary=activityRow(html,'ordinary');
+    assert.equal(activityCount(ordinary),0);
+    assert.match(ordinary,/2099-11-17/);
+    assert.doesNotMatch(ordinary,/Prep due/);
+
+    const waiting=activityRow(html,'waiting');
+    assert.equal(activityCount(waiting),1);
+    assert.match(waiting,/data-open-recovery/);
+    assert.match(waiting,/Date proposal awaiting review/);
+    assert.match(waiting,/Start time not set/);
+    assert.match(text(waiting),/Prep due\s+2099-11-18/);
+
+    const returned=activityRow(html,'returned');
+    assert.equal(activityCount(returned),1);
+    assert.match(returned,/data-action="review-returned-completion"/);
+    assert.match(returned,/Review and revise/);
+    assert.match(returned,/Location not set/);
+    assert.match(returned,/No end time set/);
+    assert.doesNotMatch(html,/Other owner location|data-id="nonowned"|Private request text|Private returned evidence|2099-12-01|<form|data-action="(?:claim|accept-task|toggle-task)"/);
+  }
+  assert.deepEqual(s,before);
+});
+
+test('a suggested scheduled activity retains its review label and exposes a saved-time warning',()=>{
+  // 01:30 occurs twice on this date in the event zone; existing saved rows
+  // can contain it even though new schedule writes reject repeated times.
+  const s=state([task('suggested',{acceptedAt:'2026-10-01T12:00:00Z',dueDate:'2026-10-31',
+    schedule:{start:'2026-11-01T01:30',end:'2026-11-01T02:30',location:'Main gate'}})]);
+  for(const overview of [false,true]){
+    const [{markup}]=suggestions(panel(s,'maya',overview));
+    assert.equal(activityCount(markup),1);
+    assert.match(markup,/Accepted · Not committed/);
+    assert.match(text(markup),/Prep due\s+2026-10-31/);
+    assert.match(markup,/Start time 2026-11-01 01:30 occurs twice in America\/Los_Angeles/);
+    assert.match(markup,/Saved activity time:.*Confirm the time with the organizer before relying on it/s);
+    assert.match(markup,/Main gate/);
+    assert.doesNotMatch(markup,/<form|data-action="(?:claim|accept-task|toggle-task)"/);
+  }
 });
