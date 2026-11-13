@@ -6,10 +6,12 @@ import { build } from 'esbuild';
 
 const browserModule = readFileSync(new URL('../legacy/notifications.cjs', import.meta.url), 'utf8');
 const calendar = readFileSync(new URL('../legacy/calendar.js', import.meta.url), 'utf8');
+const schedule = readFileSync(new URL('../legacy/schedule-ui.js', import.meta.url), 'utf8');
 function browser(storage) {
   const window = {};
   Object.defineProperty(window, 'localStorage', { get: () => storage() });
   runInNewContext(calendar, { window });
+  runInNewContext(schedule, { window });
   runInNewContext(browserModule, { window });
   return window;
 }
@@ -104,6 +106,45 @@ test('returned completion reminders take precedence over due reminders and expos
   assert.deepEqual(tasks,before);
 });
 
+const reminderActor = 'maya';
+const scheduleChange = { owner: reminderActor, timeZone: 'America/Los_Angeles',
+  previous: { start: '2026-11-09T11:00', end: '', location: 'PRIVATE PREVIOUS HALL' } };
+const changedTask = (id, overrides = {}) => ({
+  id, title: 'Fictional ' + id, owner: reminderActor, status: 'todo', dueDate: '',
+  scheduleReconfirmation: scheduleChange, schedule: { start: '2026-11-12T15:00', end: '', location: 'PRIVATE CURRENT HALL' },
+  note: 'PRIVATE TASK NOTE', ...overrides,
+});
+const taskReminder = (id, kind) => ({ id, title: 'Fictional ' + id, kind });
+
+test('schedule reminders are date-independent, deduplicated after returned completion and before due tasks, and identity-only', () => {
+  const { WeftNotifications, GatherScheduleUI } = browser(() => { throw new Error('Reminder projection cannot access preferences'); });
+  const today = '2026-11-12';
+  const tasks = [
+    changedTask('needs-time-review'),
+    changedTask('future', { dueDate: '2026-11-14' }),
+    changedTask('overdue', { dueDate: '2026-11-09', status: 'blocked' }),
+    changedTask('returned', { dueDate: today, completionReview: { note: 'PRIVATE RETURNED FEEDBACK' } }),
+    changedTask('ordinary-due', { dueDate: today, scheduleReconfirmation: undefined }),
+    changedTask('different-owner', { owner: 'dev', scheduleReconfirmation: { ...scheduleChange, owner: 'dev' } }),
+    changedTask('previous-owner', { scheduleReconfirmation: { ...scheduleChange, owner: 'dev' } }),
+    changedTask('accepted', { acceptedAt: '2026-11-10T00:00:00Z' }),
+    changedTask('archived', { archivedAt: '2026-11-10T00:00:00Z' }),
+    changedTask('done', { status: 'done' }),
+    changedTask('reported', { reportedAt: '2026-11-10T00:00:00Z', requiresVerification: true }),
+    changedTask('verified', { verifiedAt: '2026-11-10T00:00:00Z' }),
+  ];
+  const before = structuredClone(tasks);
+  const result = (actor, day, ...extra) => JSON.parse(JSON.stringify(WeftNotifications.taskReminders(tasks, actor, day, ...extra)));
+  const nondue = [taskReminder('returned', 'completion-changes'),
+    ...['future', 'needs-time-review', 'overdue'].map(id => taskReminder(id, 'schedule-reconfirmation'))];
+  assert.deepEqual(result(reminderActor, today), [...nondue,
+    { id: 'ordinary-due', title: 'Fictional ordinary-due', dueDate: today, overdue: false }]);
+  assert.deepEqual(result(reminderActor, 'invalid-date', GatherScheduleUI.pendingReconfirmation), nondue);
+  assert.deepEqual(result('dev', today), [taskReminder('different-owner', 'schedule-reconfirmation')]);
+  assert.deepEqual(result('', today), []);
+  assert.deepEqual(tasks, before);
+});
+
 test('the real notification dialog labels and links returned work without exposing feedback, and honors opt-out', () => {
   const app=readFileSync(new URL('../legacy/app.js',import.meta.url),'utf8');
   const scope='c'.repeat(64),local=new Map(),writes=[];
@@ -176,4 +217,124 @@ test('the real notification dialog labels and links returned work without exposi
   assert.equal(count.hidden,true);
   assert.deepEqual(writes,['set','remove']);
   assert.equal(local.size,0);
+});
+
+test('opted-in Notifications show one safe link for a schedule change and repaint after reconfirmation', () => {
+  const app = readFileSync(new URL('../legacy/app.js', import.meta.url), 'utf8');
+  const scope = 'd'.repeat(64), stored = new Map(), writes = [];
+  const window = browser(() => ({
+    getItem: key => stored.get(key), setItem: (key, value) => { writes.push('set'); stored.set(key, value); },
+    removeItem: key => { writes.push('remove'); stored.delete(key); },
+  }));
+  window.GatherMode = { demo: false };
+  const today = '2026-11-12', activity = changedTask('schedule-to-review', { title: 'Check <stage> & gate' });
+  const tasks = [activity, changedTask('private-other', { owner: 'dev' })];
+  const document = { activeElement: null, createElement: () => ({ get content() { return this.innerHTML; } }) };
+  const button = { setAttribute(name, value) { this[name] = value; } }, count = {};
+  const toggle = { focus() { document.activeElement = this; } };
+  const list = { innerHTML: '', rows: [], contains(node) { return this.rows.includes(node); }, replaceChildren(content) {
+    this.innerHTML = content;
+    this.rows = [...content.matchAll(/<button\b([^>]+)>/g)].map(([, attrs]) => ({
+      dataset: { id: attrs.match(/data-id="([^"]+)"/)?.[1] },
+      hasAttribute: attr => attrs.includes(' ' + attr), focus() { document.activeElement = this; },
+    }));
+  } };
+  const selectors = { '#notificationButton': button, '[data-notification-count]': count, '[data-notification-items]': list,
+    '[data-action="toggle-task-reminders"]': toggle, '.notification-status': {} };
+  const ui = { actor: reminderActor }, dialog = {};
+  const api = runInNewContext(app.match(/^  const h = .*;$/m)[0]+app.slice(app.indexOf('  function reminderScope('),app.indexOf('  function captureScheduleDateDraft('))+'\n({paintNotifications,showNotifications,toggleTaskReminders})', {
+    window, ui, document, $: selector => selectors[selector], dateKey: () => today, dayLabel: value => value,
+    store: { getState: () => ({ tasks }), getReminderScope: () => scope }, focusable: node => node.rows,
+    openDialog: (_title, body, _footer, _wide, kind) => { dialog.body = body; ui.dialogKind = kind; },
+  });
+  api.showNotifications();
+  assert.match(dialog.body, /schedule changes/i);
+  assert.match(dialog.body, /No email or push/);
+  assert.match(list.innerHTML, /Task reminders are off/);
+  assert.equal(count.hidden, true);
+  api.toggleTaskReminders();
+  assert.equal(count.textContent, '1');
+  assert.equal(list.rows.length, 1);
+  assert.match(list.innerHTML, /data-notification-task[^>]*data-action="review-schedule-reconfirmation"[^>]*data-id="schedule-to-review"/);
+  assert.match(list.innerHTML, /Check &lt;stage&gt; &amp; gate[\s\S]*Schedule change to review/);
+  assert.doesNotMatch(list.innerHTML, /PRIVATE|2026-11-09T11:00|2026-11-12T15:00|private-other|<stage>/);
+  list.rows[0].focus();
+  activity.acceptedAt = today;
+  api.paintNotifications();
+  assert.equal(count.hidden, true);
+  assert.equal(list.rows.length, 0);
+  assert.equal(document.activeElement, toggle);
+  assert.deepEqual(writes, ['set']);
+  api.toggleTaskReminders();
+  assert.deepEqual(writes, ['set', 'remove']);
+});
+
+function notificationRoute() {
+  const app = readFileSync(new URL('../legacy/app.js', import.meta.url), 'utf8');
+  const from = app.indexOf('  function openScheduleReconfirmation('), to = app.indexOf('  function timelineOverlapIntent(', from);
+  assert.ok(from >= 0 && to > from);
+  const scope = 'e'.repeat(64), values = new Map(), calls = [], frames = [];
+  const window = browser(() => ({ getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }));
+  window.GatherMode = { projectId: 'fixture-project' };
+  window.WeftNotifications.writeReminderPreference(scope, true);
+  const task = changedTask('exact-notification');
+  const bell = { isConnected: true, hidden: false }, priorFocus = {};
+  const ui = { actor: reminderActor, view: 'timeline', dialogKind: 'notifications', lastFocus: priorFocus };
+  const dialog = {}, title = {}, heading = { id: 'taskScheduleReconfirmation' }, backdrop = { hidden: false };
+  let pending = false, inside = true;
+  const opener = { isConnected: true, dataset: { action: 'review-schedule-reconfirmation', id: task.id, notificationTask: '' },
+    closest: () => null, hasAttribute: attr => attr === 'data-notification-task' };
+  const list = { contains: node => inside && node === opener };
+  const api = runInNewContext(app.slice(from,to)+'\n({openScheduleReconfirmation})', {
+    window, ui, GatherScheduleUI: window.GatherScheduleUI, store: { getState: () => ({ tasks: [task] }) },
+    $: (selector, parent) => {
+      if (['[data-notification-items]', '#dialogTitle', '#taskScheduleReconfirmation'].includes(selector) && parent !== undefined)
+        assert.equal(parent, dialog);
+      return ({ '#notificationButton': bell, '#dialogBackdrop': backdrop, '#dialog': dialog, '#dialogTitle': title, '[data-notification-items]': list,
+        '#taskScheduleReconfirmation': heading })[selector];
+    },
+    reminderScope: () => scope, dateKey: () => '2026-11-12',
+    workspaceUpdatesPending: () => pending, showPendingUpdate: () => calls.push(['pending']),
+    render: () => calls.push(['render']), paintNotifications: () => calls.push(['paint']), toast: message => calls.push(['toast', message]),
+    currentNextUpPanel() { assert.fail('Notifications should not require a My tasks panel'); },
+    taskDialog(...args) { calls.push(['open', ...args]); ui.detailId = args[0]; ui.dialogKind = 'task'; },
+    requestAnimationFrame: callback => frames.push(callback),
+    focusTaskDialogControl: (target, container) => calls.push(['focus', target, container]),
+  });
+  return { window, ui, task, bell, priorFocus, calls, frames, opener, dialog, heading, backdrop,
+    set pending(value) { pending = value; }, set inside(value) { inside = value; },
+    optOut: () => window.WeftNotifications.writeReminderPreference(scope, false),
+    open: (id = task.id, button = opener) => api.openScheduleReconfirmation(id, button),
+    flush: () => { for (const frame of frames.splice(0)) frame(); },
+  };
+}
+
+test('a notification opens only the exact live opted-in review and keeps the bell as its return target', () => {
+  const f = notificationRoute();
+  assert.equal(f.open(), true);
+  assert.deepEqual(f.calls[0].slice(0,-1), ['open', f.task.id, '', false, true, '', undefined, '']);
+  assert.equal(f.calls[0].at(-1).readOnly, true);
+  assert.equal(f.ui.lastFocus, f.bell);
+  f.flush();
+  assert.deepEqual(f.calls[1], ['focus', f.heading, f.dialog]);
+  for (const unavailable of [{ isConnected: false }, { hidden: true }]) {
+    const r = notificationRoute();
+    Object.assign(r.bell, unavailable);
+    assert.equal(r.open(), true);
+    assert.equal(r.ui.lastFocus, r.priorFocus);
+  }
+  for (const invalidate of [
+    r => r.optOut(), r => { r.inside = false; }, r => { r.opener.isConnected = false; },
+    r => { r.opener.hasAttribute = () => false; delete r.opener.dataset.notificationTask; },
+    r => { r.ui.actor = 'other-person'; }, r => { r.task.acceptedAt = '2026-11-12'; },
+    r => { r.task.completionReview = { note: 'Private return takes precedence' }; }, r => { r.pending = true; },
+    r => { r.window.GatherAccessLost = true; }, r => { r.backdrop.hidden = true; },
+  ]) {
+    const r = notificationRoute();
+    invalidate(r);
+    assert.equal(r.open(), false);
+    assert.ok(r.calls.every(([action]) => action !== 'open'));
+    assert.equal(r.ui.lastFocus, r.priorFocus);
+    assert.equal(r.frames.length, 0);
+  }
 });

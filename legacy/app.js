@@ -890,10 +890,12 @@
     const markup=reminders.length
       ? `<ul class="notification-list" aria-label="Task reminders">${reminders.map(item=>{
         const returned=item.kind==='completion-changes';
-        const label=returned?'Completion changes requested':item.overdue?'Overdue · '+h(dayLabel(item.dueDate)):'Due today';
-        return `<li><button type="button" class="btn btn-secondary notification-task" data-notification-task data-action="${returned?'review-returned-completion':'task'}" data-id="${h(item.id)}"><strong class="notification-task-title">${h(item.title)}</strong><span class="notification-task-date">${label}</span></button></li>`;
+        const changed=item.kind==='schedule-reconfirmation';
+        const label=returned?'Completion changes requested':changed?'Schedule change to review':item.overdue?'Overdue · '+h(dayLabel(item.dueDate)):'Due today';
+        const action=returned?'review-returned-completion':changed?'review-schedule-reconfirmation':'task';
+        return `<li><button type="button" class="btn btn-secondary notification-task" data-notification-task data-action="${action}" data-id="${h(item.id)}"><strong class="notification-task-title">${h(item.title)}</strong><span class="notification-task-date">${label}</span></button></li>`;
       }).join('')}</ul>`
-      : `<p class="notice section-gap">${enabled?'No returned completion reports or tasks due today or overdue for you.':'Task reminders are off in this browser.'}</p>`;
+      : `<p class="notice section-gap">${enabled?'No returned completion reports, schedule changes to review, or tasks due today or overdue for you.':'Task reminders are off in this browser.'}</p>`;
     const template=document.createElement('template');
     template.innerHTML=markup;
     if(list.innerHTML!==template.innerHTML){
@@ -908,7 +910,7 @@
   }
   function showNotifications() {
     if(!window.WeftNotifications?.preferenceKey(reminderScope()))return;
-    openDialog('Notifications','<p class="muted">See your returned completion reports and tasks due today or overdue in the project’s time zone.</p><div data-notification-items></div><div class="notification-settings"><p class="muted">This project, this browser only. No email or push.</p><button type="button" class="btn btn-secondary" data-action="toggle-task-reminders"></button></div><p class="notification-status" role="status"></p>','',false,'notifications');
+    openDialog('Notifications','<p class="muted">See your returned completion reports, schedule changes to review, and tasks due today or overdue in the project’s time zone.</p><div data-notification-items></div><div class="notification-settings"><p class="muted">This project, this browser only. No email or push.</p><button type="button" class="btn btn-secondary" data-action="toggle-task-reminders"></button></div><p class="notification-status" role="status"></p>','',false,'notifications');
     paintNotifications();
   }
   function toggleTaskReminders() {
@@ -1024,6 +1026,7 @@
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
+    if(kind!=='task')ui.notificationScheduleReview=null;
     if(kind!=='first-schedule')ui.firstScheduleEditor=null;
     if(!['related-checklist','related-review'].includes(kind))ui.relatedChecklistDraft=null;
     if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.relatedBatch=null;
@@ -1070,6 +1073,7 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
+    ui.notificationScheduleReview=null;
     ui.firstScheduleEditor=null;
     ui.overlapReviewDay='';
     ui.overlapComparison=null;
@@ -1167,23 +1171,42 @@
     else if(rect.bottom>bottom)dialog.scrollTop+=rect.bottom-bottom;
   }
   function openScheduleReconfirmation(id,opener) {
+    const notifications=ui.dialogKind==='notifications'&&!$('#dialogBackdrop').hidden;
     const panelKind=ui.view==='overview'?'overview':ui.view==='tasks'&&ui.tab==='mine'?'mine':'';
-    if(!panelKind||window.GatherAccessLost||!$('#dialogBackdrop').hidden||!opener?.isConnected||
-      opener.dataset.nextUpOrigin!=='schedule-change'||opener.dataset.action!=='review-schedule-reconfirmation'||
+    if(window.GatherAccessLost||!opener?.isConnected||opener.dataset.action!=='review-schedule-reconfirmation'||
       opener.dataset.id!==id||opener.closest('[hidden],[inert]'))return false;
-    const panel=currentNextUpPanel($('#viewRoot'));
-    if(panel?.dataset.nextUpPanel!==panelKind||panel.dataset.nextUpActor!==ui.actor||!panel.contains(opener))return false;
-    if(workspaceUpdatesPending()){
-      toast('New project updates are available. Refresh the project before reviewing this schedule change.');return false;
+    if(notifications){
+      const list=$('[data-notification-items]',$('#dialog')),preferences=window.WeftNotifications;
+      if(!opener.hasAttribute('data-notification-task')||!list?.contains(opener))return false;
+      const scope=reminderScope();
+      if(!preferences?.readReminderPreference(scope)){
+        paintNotifications();return false;
+      }
+    }else{
+      if(!panelKind||!$('#dialogBackdrop').hidden||opener.dataset.nextUpOrigin!=='schedule-change')return false;
+      const panel=currentNextUpPanel($('#viewRoot'));
+      if(panel?.dataset.nextUpPanel!==panelKind||panel.dataset.nextUpActor!==ui.actor||!panel.contains(opener))return false;
     }
-    const task=store.getState().tasks.find(item=>item.id===id);
-    if(!GatherScheduleUI.pendingReconfirmation(task,ui.actor)){
-      render();toast('This schedule change no longer needs your review.');return false;
+    if(workspaceUpdatesPending()){
+      const message=notifications?'New project updates are available. Close Notifications and refresh the project before reviewing this schedule change.':
+        'New project updates are available. Refresh the project before reviewing this schedule change.';
+      toast(message);return false;
+    }
+    const state=store.getState(),task=state.tasks.find(item=>item.id===id);
+    if(!GatherScheduleUI.pendingReconfirmation(task,ui.actor)||(notifications&&
+      !window.WeftNotifications.taskReminders(state.tasks,ui.actor,dateKey()).some(item=>item.id===id&&item.kind==='schedule-reconfirmation'))){
+      if(notifications)paintNotifications(state);else render();
+      toast(notifications?'This schedule reminder is no longer current.':'This schedule change no longer needs your review.');return false;
     }
     const actor=ui.actor,project=window.GatherMode?.projectId;
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
     if(ui.dialogKind!=='task'||ui.detailId!==id)return false;
-    ui.lastFocus=opener;
+    if(notifications){
+      ui.notificationScheduleReview={id,actor,project};
+      const bell=$('#notificationButton');
+      if(bell?.isConnected&&!bell.hidden)ui.lastFocus=bell;
+    }
+    else ui.lastFocus=opener;
     const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
     requestAnimationFrame(()=>{
       if(!title||window.GatherAccessLost||ui.actor!==actor||window.GatherMode?.projectId!==project||
@@ -1934,6 +1957,7 @@
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
+    if(!sameTask)ui.notificationScheduleReview=null;
     if(ui.overlapComparison&&(!overlapComparisonInScope(ui.overlapComparison)||ui.overlapComparison.peerId!==id))ui.overlapComparison=null;
     ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
@@ -1986,7 +2010,9 @@
       currentWrapFollowUp(taskState)?.id===id;
     const fromBudget=ui.view==='budget'&&ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.lastFocus.dataset.id===id;
     const fromScheduleReceipt=ui.view==='timeline'&&ui.lastFocus?.id==='scheduleFirstReceiptOpen'&&ui.lastFocus.dataset.id===id;
-    const fromScheduleReconfirmation=ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id;
+    const notificationReview=ui.notificationScheduleReview;
+    const fromScheduleReconfirmation=(ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id)||
+      (notificationReview?.id===id&&notificationReview.actor===ui.actor&&notificationReview.project===window.GatherMode?.projectId);
     window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }

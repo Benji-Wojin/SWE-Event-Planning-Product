@@ -20,7 +20,7 @@
       return true;
     } catch (_) { return false; }
   }
-  function taskReminders(tasks, actor, today) {
+  function taskReminders(tasks, actor, today, pendingReconfirmation=root.GatherScheduleUI?.pendingReconfirmation) {
     if (!actor) return [];
     const open = tasks.filter(task => task.owner === actor && task.status !== 'done' &&
       !task.archivedAt && !(task.reportedAt && task.requiresVerification && !task.verifiedAt));
@@ -28,11 +28,14 @@
     const returned = open.filter(task => !task.reportedAt && task.completionReview);
     const returnedIds = new Set(returned.map(task => task.id));
     const revisions = returned.map(({ id, title }) => ({ id, title, kind: 'completion-changes' })).sort(byTitle);
-    if (!dayFormat.test(today)) return revisions;
-    const due = open.filter(task => !returnedIds.has(task.id) && dayFormat.test(task.dueDate) && task.dueDate <= today)
+    const schedules = open.filter(task => !returnedIds.has(task.id) && pendingReconfirmation?.(task,actor))
+      .map(({id,title})=>({id,title,kind:'schedule-reconfirmation'})).sort(byTitle);
+    if (!dayFormat.test(today)) return [...revisions,...schedules];
+    const scheduleIds = new Set(schedules.map(task=>task.id));
+    const due = open.filter(task => !returnedIds.has(task.id) && !scheduleIds.has(task.id) && dayFormat.test(task.dueDate) && task.dueDate <= today)
       .map(({ id, title, dueDate }) => ({ id, title, dueDate, overdue: dueDate < today }))
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || byTitle(a, b));
-    return [...revisions, ...due];
+    return [...revisions, ...schedules, ...due];
   }
   const api = Object.freeze({ preferenceKey, readReminderPreference, writeReminderPreference, taskReminders });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
