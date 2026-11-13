@@ -845,6 +845,12 @@
   }
   function openOrganizerReview(id,kind,eventGroup='',quietFallback=false) {
     if(!isOrganizer()||window.GatherAccessLost)return false;
+    if(ui.dialogKind==='before-event-review'&&(kind==='help'||kind==='date')&&workspaceUpdatesPending()){
+      const refresh=$('[data-action="refresh-event-review"]',$('#dialog'));
+      if(refresh?.getAttribute('aria-disabled')==='true')refresh.focus();
+      else beforeEventReview(eventGroup||'plan-requests');
+      return false;
+    }
     const review=GatherRecoveryUI.organizerReviews(store.getState().tasks).find(row=>row.task.id===id&&row.kind===kind);
     if(!review){
       if(!quietFallback){
@@ -891,15 +897,28 @@
   function eventReviewScope() {
     return {mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
   }
+  function workspaceUpdatesPending() {
+    const notice=$('#workspaceSyncNotice');
+    return (!!notice&&!notice.hidden)||recoveryConflictPending();
+  }
+  function recoveryConflictPending() {
+    const revision=store.getSnapshotRevision?.();
+    return Number.isSafeInteger(ui.recoveryConflictRevision)&&Number.isSafeInteger(revision)&&revision<=ui.recoveryConflictRevision;
+  }
+  function eventReviewRefreshNotice(group) {
+    const refresh=store.refresh
+      ? '<button type="button" class="btn btn-secondary" data-action="refresh-event-review" data-id="'+h(group)+'">Refresh event review</button>'
+      : '<button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button>';
+    return '<p role="status" id="eventReviewRefreshStatus">Newer project changes are available. This review shows the last loaded plan. Refresh before responding to a request.</p>'+refresh;
+  }
   function beforeEventReview(group='') {
     if(window.GatherAccessLost)return;
-    const sync=$('#workspaceSyncNotice');
-    const pending=sync&&!sync.hidden
-      ? '<div id="dialogStaleNotice" class="notice"><p role="status">Newer project changes are available. This review shows the last loaded plan.</p><button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button></div>':'';
+    const pending=workspaceUpdatesPending()?'<div id="dialogStaleNotice" class="notice">'+eventReviewRefreshNotice(group)+'</div>':'';
     openDialog('Before the event',pending+schedule.preparationReview(store.getState(),Date.now(),eventReviewScope(),isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
     const title=$('#dialogTitle');
     requestAnimationFrame(()=>{
       if(!title||ui.dialogKind!=='before-event-review'||window.GatherAccessLost||$('#dialogTitle')!==title)return;
+      if(pending&&store.refresh)$('[data-action="refresh-event-review"]',$('#dialog'))?.focus();
       if(group){
         const detail=$$('[data-event-review-group]',$('#dialog')).find(item=>item.dataset.eventReviewGroup===group);
         const summary=detail?.querySelector('summary');
@@ -910,6 +929,38 @@
         }
       }
     });
+  }
+  async function refreshBeforeEventReview(group='') {
+    const title=$('#dialogTitle'),scope=eventReviewScope(),mode=ui.timelineMode,date=ui.scheduleDate;
+    const sameReview=()=>!!title&&!window.GatherAccessLost&&!ui.pendingSave&&ui.view==='timeline'&&
+      ui.dialogKind==='before-event-review'&&$('#dialogTitle')===title&&ui.timelineMode===mode&&ui.scheduleDate===date&&
+      ui.actor===scope.actor&&eventReviewScope().mine===scope.mine;
+    const stillOpen=()=>!document.hidden&&sameReview();
+    if(!store.refresh||ui.syncing||!stillOpen()||!workspaceUpdatesPending())return;
+    const status=$('#eventReviewRefreshStatus');
+    const button=$('[data-action="refresh-event-review"]',$('#dialog'));
+    ui.syncing=true;
+    if(button)button.setAttribute('aria-disabled','true');
+    if(status)status.textContent='Refreshing event review…';
+    try{
+      const result=await store.refresh(stillOpen);
+      if(!stillOpen()){
+        if(sameReview()&&status)status.textContent='Refresh paused while this tab was hidden. Try again.';
+        return;
+      }
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()))
+        throw new Error('A newer project snapshot is not ready.');
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();beforeEventReview(group);
+      toast('Event review refreshed.');
+    }catch{
+      if(sameReview()&&status)status.textContent='Could not refresh the event review. Your current view is unchanged. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button?.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   function returnToEventTaskReview() {
     const source=ui.eventTaskReview;
@@ -926,8 +977,18 @@
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
-    note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
+    const group=ui.dialogKind==='before-event-review'?document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
+    note.innerHTML=ui.dialogKind==='before-event-review'?eventReviewRefreshNotice(group):
+      '<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
+  }
+  function showRecoveryWriteConflict() {
+    const current=store.getSnapshotRevision?.();
+    if(Number.isSafeInteger(current)){
+      ui.recoveryConflictRevision=current;
+      rememberNewerSchedule(null,current+1);
+    }
+    showPendingUpdate();
   }
   let staleScheduleRevision=null;
   const busyRunSheetRevisions=new Set();
@@ -1700,6 +1761,7 @@
       }
       if(action==='run-sheet')openRunSheet();
       if(action==='before-event-review')beforeEventReview();
+      if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
       if(action==='print-run-sheet'&&currentRunSheet())window.print();
       if(action==='check-run-sheet')await checkRunSheet();
@@ -1936,6 +1998,10 @@
       }
       if(form.id==='recoveryDecisionForm'){
         const id=form.dataset.id;
+        if(workspaceUpdatesPending()){
+          showPendingUpdate();
+          throw new Error('Refresh the project before confirming this decision. Your draft is unchanged.');
+        }
         store.resolveRecovery(id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);
         render();taskDialog(id,form.id);
         if(data.requestId)focusTaskRecovery(id,'#recoveryReplyHeading');
@@ -2003,7 +2069,7 @@
         const ticket=privateEpoch;
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
-    }catch(error){if(error.status===409)showPendingUpdate();if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
+    }catch(error){if(error.status===409){if(form.id==='recoveryDecisionForm')showRecoveryWriteConflict();else showPendingUpdate();}if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
     finally{release();if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 

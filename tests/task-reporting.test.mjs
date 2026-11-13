@@ -518,6 +518,31 @@ test('task recovery focuses the current request or reply, never a different or c
   }
 });
 
+test('known stale recovery decisions retain the draft and never attempt a hosted write',async()=>{
+  const source=readFileSync('public/gather-assets/app.js','utf8');
+  const start=source.indexOf("      if(form.id==='recoveryDecisionForm'){");
+  const end=source.indexOf("      if(form.id==='commentForm')",start);
+  assert.ok(start>=0&&end>start);
+  let stale=true,finish;
+  const calls=[],data={requestId:'request-a',action:'checkin',note:'Fictional draft',reviewAfter:'2099-12-02'};
+  const ctx=vm.createContext({
+    data,form:{id:'recoveryDecisionForm',dataset:{id:'task-a'}},ui:{actor:'jack'},
+    workspaceUpdatesPending:()=>stale,showPendingUpdate:()=>calls.push('warning'),
+    store:{resolveRecovery:(id,patch,actor)=>{calls.push(['save',id,patch.note,actor]);return new Promise(resolve=>{finish=resolve;});}},
+    render:()=>calls.push('render'),taskDialog:()=>calls.push('dialog'),focusTaskRecovery:()=>calls.push('focus reply'),toast:message=>calls.push(message),
+  });
+  const run=()=>vm.runInContext('(async()=>{'+source.slice(start,end)+'})()',ctx);
+  await assert.rejects(run(),/draft is unchanged/);
+  assert.deepEqual(calls.splice(0),['warning']);
+  assert.equal(data.note,'Fictional draft');
+  stale=false;
+  const pending=run();
+  assert.deepEqual(calls,[['save','task-a','Fictional draft','jack']]);
+  finish();
+  await pending;
+  assert.deepEqual(calls.slice(1),['render','dialog','focus reply','Organizer response saved to the task.']);
+});
+
 test('an event-day request link rechecks the task before focusing recovery and keeps its origin',()=>{
   const source=readFileSync('legacy/app.js','utf8');
   const start=source.indexOf("      if(action==='task'){\n        const requestLink");

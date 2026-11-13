@@ -84,7 +84,7 @@ function preparedRefresh(demo=false) {
   let result;
   let next=0;
   vm.runInNewContext(source+'\nbindWorkspaceRefresh();',{
-    store,ui,window,document,busyRunSheetRevisions,showPendingUpdate(){calls.push('pending');},
+    store,ui,window,document,busyRunSheetRevisions,recoveryConflictPending:()=>false,showPendingUpdate(){calls.push('pending');},
     render(){calls.push('render');},paintNotifications(){calls.push('notifications');},
     refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
     $:selector=>({'#dialogBackdrop':backdrop,'#workspaceSyncNotice':notice,'#inboxSyncNotice':inboxNotice})[selector],

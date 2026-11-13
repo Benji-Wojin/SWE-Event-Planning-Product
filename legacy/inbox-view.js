@@ -93,7 +93,7 @@
       }
       const updated=result.changed||result.suggestionsChanged||toolUpdate;
       if(updated){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
-      const pending=!!(result.pending||ui.toolUpdatePending);
+      const pending=!!(result.pending||ui.toolUpdatePending||recoveryConflictPending());
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!pending;
       if(pending){showPendingUpdate(result.newerRevision);const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
       else if(manual&&!updated)toast('You have the latest updates.');
