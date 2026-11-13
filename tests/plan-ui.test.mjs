@@ -203,6 +203,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     const context = {
       input,
       url,
+      signal: options.signal,
       saved,
       get value() {
         return saved;
@@ -858,6 +859,143 @@ test('the organizer receipt flags untimed activities in place and ignores a regr
     assert.deepEqual(app.requests,Array.from({length:4},()=>({action:'get'})));
   }finally{app.dispose();}
 });
+test('a stalled handoff refresh stays in place, times out, and retries only on an explicit GET', async () => {
+  const initial = fixture();
+  initial.status = 'applied';
+  initial.receipt = { taskIds: ['task-welcome'], generation: 'prior-generation', approvalHash: 'prior-approval' };
+  initial.receiptTasks = [{ id: 'task-welcome', title: 'Welcome attendees', handoff: { state: 'needs-owner' } }];
+  const originalTimeout = AbortSignal.timeout;
+  const deadlines = [];
+  const controllers = [];
+  AbortSignal.timeout = duration => {
+    deadlines.push(duration);
+    const controller = new AbortController();
+    controllers.push(controller);
+    return controller.signal;
+  };
+  let reads = 0, heldSignal;
+  const app = harness(context => {
+    assert.equal(context.input, null);
+    if (++reads === 2) {
+      heldSignal = context.signal;
+      return new Promise((_, reject) => heldSignal?.addEventListener('abort', () => reject(heldSignal.reason), { once: true }));
+    }
+    if (reads === 3) {
+      const next = copy(context.saved);
+      next.workspaceRevision++;
+      next.receiptTasks[0].handoff = { state: 'accepted', ownerName: 'Fictional Planner' };
+      context.value = next;
+    }
+  }, initial, 'project=p_school', false, true);
+  const button = () => planButton(app.tree, 'Refresh task handoff');
+  const status = () => app.find('plan-handoff-refresh-status');
+  const currentTitle = () => planLink(app.tree, 'Welcome attendees');
+  let held;
+  try {
+    await app.start();
+    assert.equal(status()?.props.role, 'status');
+    assert.ok(currentTitle());
+    assert.match(text(app.tree), /Unassigned · choose an owner/);
+    held = app.click('Refresh task handoff');
+    await app.start();
+    assert.deepEqual(deadlines, [15000]);
+    assert.equal(heldSignal, controllers[0].signal);
+    assert.equal(status().props.role, 'status');
+    assert.match(text(status()), /check|refresh/i);
+    assert.equal(button().props.disabled, true);
+    assert.equal(button().props.focusableWhenDisabled, true);
+    assert.ok(currentTitle());
+    await button().props.onClick(); // A duplicate activation cannot start another request.
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }]);
+
+    controllers[0].abort(new DOMException('Fictional handoff timeout', 'TimeoutError'));
+    await held;
+    assert.match(text(status()), /Could not refresh the task handoff.*last loaded task details are still shown.*Try again/);
+    assert.match(text(app.tree), /Unassigned · choose an owner/);
+    assert.ok(currentTitle());
+    assert.equal(button().props.disabled, false);
+    assert.deepEqual(app.focused, [], 'a refresh must not move focus away from its control');
+    await app.click('Refresh task handoff');
+    assert.match(text(status()), /Task handoff refreshed from the project/);
+    assert.match(text(app.tree), /Accepted by Fictional Planner/);
+    assert.ok(currentTitle());
+    assert.deepEqual(deadlines, [15000, 15000]);
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }, { action: 'get' }]);
+  } finally {
+    for (const controller of controllers) controller.abort();
+    AbortSignal.timeout = originalTimeout;
+    app.dispose();
+  }
+});
+
+test('the handoff refresh also times out while reading a response body', async () => {
+  const initial = fixture();
+  initial.status = 'applied';
+  initial.receipt = { taskIds: ['task-welcome'] };
+  initial.receiptTasks = [{ id: 'task-welcome', title: 'Welcome attendees', handoff: { state: 'needs-owner' } }];
+  const originalTimeout = AbortSignal.timeout;
+  const controller = new AbortController();
+  AbortSignal.timeout = () => controller.signal;
+  let reads = 0, bodyStarted = false;
+  const app = harness(context => {
+    if (++reads !== 2) return;
+    const body = new ReadableStream({
+      start(stream) {
+        bodyStarted = true;
+        controller.signal.addEventListener('abort', () => stream.error(controller.signal.reason), { once: true });
+      },
+    });
+    assert.equal(context.signal, controller.signal);
+    return new Response(body, { status: 200 });
+  }, initial, 'project=p_school', false, true);
+  try {
+    await app.start();
+    const held = app.click('Refresh task handoff');
+    await app.start();
+    assert.equal(bodyStarted, true);
+    assert.equal(planButton(app.tree, 'Refresh task handoff').props.disabled, true);
+    controller.abort(new DOMException('Fictional body timeout', 'TimeoutError'));
+    await held;
+    assert.match(text(app.find('plan-handoff-refresh-status')), /Could not refresh the task handoff.*last loaded task details are still shown/);
+    assert.equal(planButton(app.tree, 'Refresh task handoff').props.disabled, false);
+    assert.ok(planLink(app.tree, 'Welcome attendees'));
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }]);
+  } finally {
+    controller.abort();
+    AbortSignal.timeout = originalTimeout;
+    app.dispose();
+  }
+});
+
+test('handoff refresh rejects a different receipt and clears private data on access loss', async () => {
+  for (const denied of [401, 403, 404]) {
+    const initial = fixture();
+    initial.status = 'applied';
+    initial.receipt = { taskIds: ['task-one'], generation: 'prior-generation', approvalHash: 'prior-approval' };
+    initial.receiptTasks = [{ id: 'task-one', title: 'Private receipt task', handoff: { state: 'needs-owner' } }];
+    let reads = 0;
+    const app = harness(context => {
+      if (++reads === 2) return Response.json({ ...context.saved, workspaceRevision: context.saved.workspaceRevision + 1,
+        receipt: { ...context.saved.receipt, approvalHash: 'other-approval' },
+        receiptTasks: [{ ...context.saved.receiptTasks[0], title: 'Different receipt task' }] });
+      if (reads === 3) return Response.json({ error: 'Project access changed.' }, { status: denied });
+    }, initial, 'project=p_school', false, true);
+    try {
+      await app.start();
+      await app.click('Refresh task handoff');
+      assert.match(text(app.find('plan-handoff-refresh-status')), /Could not confirm the latest handoff/);
+      assert.ok(planLink(app.tree, 'Private receipt task'));
+      assert.equal(planLink(app.tree, 'Different receipt task'), undefined);
+
+      await app.click('Refresh task handoff');
+      assert.match(text(app.tree), /Project access changed/);
+      assert.doesNotMatch(text(app.tree), /Private receipt task|Different receipt task/);
+      assert.equal(app.find('plan-receipt-heading'), undefined);
+      assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }, { action: 'get' }]);
+    } finally { app.dispose(); }
+  }
+});
+
 test('only a guided organizer plan keeps the guide on individual receipt task links',async()=>{
   for(const [query,embedded,guided,expected] of [
     ['project=p_school',false,true,'/project?project=p_school&task=task-a&guide=1'],

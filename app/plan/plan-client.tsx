@@ -50,6 +50,7 @@ function existingTaskLink(task: ExistingPlanTask, params: URLSearchParams, guide
   ) : <strong className="break-words">{task.title}</strong>;
 }
 const approvalTimeout = 15_000;
+const handoffRefreshTimeout = 15_000;
 type ApprovalCheck = {
   kind: 'uncertain' | 'conflict';
   generation: string;
@@ -95,6 +96,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     checklistRequest = useRef<{key:string;requestId:string}|null>(null),
     focusNotice = useRef(false),
     focusReceipt = useRef(false),
+    handoffLinkFocus = useRef(''),
     errorBox = useRef<HTMLParagraphElement>(null),
     noticeBox = useRef<HTMLParagraphElement>(null),
     receiptHeading = useRef<HTMLHeadingElement>(null);
@@ -107,6 +109,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const [suggestStarterDates,setSuggestStarterDates]=useState(false);
   const [includeStarterActivities,setIncludeStarterActivities]=useState(false);
   const [researchBusy,setResearchBusy]=useState(false);
+  const [handoffRefreshing,setHandoffRefreshing]=useState(false);
+  const [handoffStatus,setHandoffStatus]=useState('');
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
   const dirty = draftDirty || chatDirty || !!checklist.trim();
@@ -149,7 +153,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
     checkingLocked = busy || waiting || researchBusy,
-    locked = checkingLocked || !!approvalCheck,
+    locked = checkingLocked || handoffRefreshing || !!approvalCheck,
     applied = !!data?.receipt && !chatStartingNew;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
     !data?.configured ? 'starter' : brief.description.trim() ? 'generate' : 'brief';
@@ -168,7 +172,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':'';
     const href = planTaskHref(params,id,guideReturn,review);
     return <li key={id} className="break-words">
-      {href ? <a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
+      {href ? <a href={href} data-handoff-task={showHandoff ? id : undefined} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
       {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
       {showHandoff && needsStartTime && <span className="block font-medium">Needs a start time</span>}
     </li>;
@@ -178,6 +182,15 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     focusReceipt.current=false;
     receiptHeading.current?.focus();
   },[applied]);
+  useEffect(()=>{
+    const id=handoffLinkFocus.current;
+    handoffLinkFocus.current='';
+    const heading=receiptHeading.current;
+    if(!id||!heading||document.activeElement!==document.body)return;
+    const links=heading.closest('section')?.querySelectorAll<HTMLAnchorElement>('a[data-handoff-task]');
+    const link=links&&Array.from(links).find(candidate=>candidate.dataset.handoffTask===id);
+    (link||heading).focus();
+  },[data?.receiptTasks]);
   const existingTasks: ExistingPlanTask[] = data?.existingTasks || [];
   const existingById = new Map(existingTasks.map(task => [task.id, task]));
   const {
@@ -197,6 +210,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const missingDependencies = missing.length > 0;
   const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
   function accept(result: any, restoreActivityPreference = true) {
+    setHandoffStatus('');
     checklistRequest.current=null;
     setApprovalCheck(null);
     setChatStartingNew(false);
@@ -211,6 +225,20 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     }
     setInitial(editable(result.brief, result.draft?.items || []));
   }
+  function handlePlanError(e: unknown) {
+    if (isAccessError((e as { status?: number } | null)?.status || 0)) {
+      setData(null);
+      setBrief(emptyBrief);
+      setItems([]);
+      setInitial('');
+      request.current = null;
+      starterRequest.current = null;
+      checklistRequest.current=null;
+      setChecklist('');
+      setApprovalCheck(null);
+    }
+    setError(e instanceof Error ? e.message : 'Could not save. Your edits are still here.');
+  }
   async function run(operation: () => Promise<void>) {
     if (pending.current) return;
     pending.current = true;
@@ -220,22 +248,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     try {
       await operation();
     } catch (e) {
-      if (isAccessError((e as { status?: number }).status || 0)) {
-        setData(null);
-        setBrief(emptyBrief);
-        setItems([]);
-        setInitial('');
-        request.current = null;
-        starterRequest.current = null;
-        checklistRequest.current=null;
-        setChecklist('');
-        setApprovalCheck(null);
-      }
-      setError(
-        e instanceof Error
-          ? e.message
-          : 'Could not save. Your edits are still here.',
-      );
+      handlePlanError(e);
     } finally {
       pending.current = false;
       setBusy(false);
@@ -436,6 +449,52 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       );
     });
   }
+  async function refreshTaskHandoff() {
+    if(!showHandoff||locked||pending.current)return;
+    pending.current=true;
+    setHandoffRefreshing(true);
+    setHandoffStatus('Checking for task updates…');
+    setError('');
+    setNotice('');
+    try {
+      const signal=AbortSignal.timeout(handoffRefreshTimeout);
+      const result=await api(query,undefined,signal);
+      signal.throwIfAborted();
+      if (result.revision !== data.revision) {
+        setHandoffStatus('The saved plan changed. Use Reload saved draft to see it. This handoff is unchanged.');
+        return;
+      }
+      const current=data.receipt, next=result.receipt;
+      const currentIds=new Set<string>(current.taskIds);
+      const rows=result.receiptTasks;
+      if (!next || next.generation!==current.generation || next.approvalHash!==current.approvalHash ||
+        !Array.isArray(next.taskIds) || next.taskIds.length!==current.taskIds.length ||
+        !current.taskIds.every((id: string,index: number)=>id===next.taskIds[index]) ||
+        !Array.isArray(rows) || rows.some(row=>!currentIds.has(row?.id)||typeof row.title!=='string') ||
+        new Set(rows.map(row=>row.id)).size!==rows.length ||
+        !Number.isSafeInteger(result.workspaceRevision) || result.workspaceRevision<data.workspaceRevision) {
+        setHandoffStatus('Could not confirm the latest handoff. Your last loaded task details are still shown. Try again.');
+        return;
+      }
+      const active=document.activeElement;
+      if(active?.matches('a[data-handoff-task]') && receiptHeading.current?.closest('section')?.contains(active))
+        handoffLinkFocus.current=(active as HTMLAnchorElement).dataset.handoffTask||'';
+      // Adopt the verified project metadata together. The private draft
+      // revision is unchanged, and locally edited controls are left alone.
+      setData(result);
+      request.current=null;
+      starterRequest.current=null;
+      setHandoffStatus('Task handoff refreshed from the project.');
+    } catch (e) {
+      if (isAccessError((e as {status?: number}|null)?.status || 0)) {
+        setHandoffStatus('');
+        handlePlanError(e);
+      } else setHandoffStatus('Could not refresh the task handoff. Your last loaded task details are still shown. Try again.');
+    } finally {
+      pending.current=false;
+      setHandoffRefreshing(false);
+    }
+  }
   function matchingReceipt(result: any, attempted: ApprovalCheck) {
     return result.receipt?.generation === attempted.generation &&
       result.receipt.approvalHash === attempted.hash && Array.isArray(result.receipt.taskIds);
@@ -562,8 +621,10 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
             <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-medium">Team handoff</h3>
-                <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={refreshContext}>Refresh task handoff</Button>
+                <Button type="button" variant="outline" className="min-h-11 aria-disabled:opacity-50" disabled={locked} focusableWhenDisabled
+                  aria-describedby="plan-handoff-refresh-status" onClick={refreshTaskHandoff}>Refresh task handoff</Button>
               </div>
+              <p id="plan-handoff-refresh-status" role="status" className="text-muted-foreground empty:sr-only">{handoffStatus}</p>
               <p>For tasks added from this draft. Assignment does not record acceptance.</p>
               {handoffGroups.map(group => (
                 <section key={group.id} aria-labelledby={'handoff-' + group.id} className="rounded-lg border p-3">
@@ -1356,14 +1417,14 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
         aria-label="Draft navigation"
         className="mt-6 flex flex-wrap gap-4 text-sm"
       >
-        <button
+        {!showHandoff && <button
           type="button"
           disabled={locked}
           onClick={refreshContext}
           className="text-primary underline disabled:opacity-50"
         >
           Refresh project context
-        </button>
+        </button>}
         <button
           type="button"
           disabled={locked}
