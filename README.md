@@ -145,6 +145,8 @@ Print the run sheet or **Download text (.txt)** for an offline team copy. If dow
 
 Choose a date in Timeline or jump to the first, previous or next activity day. The date applies to the schedule and run sheet in either team scope. On a selected date, every activity still in progress past midnight appears with its original times. **All dates** also shows carryovers on displayed days, including their first and last continuation days; select a date to see an otherwise unlisted day in the middle of a long activity. Untimed activities stay in a separate list until scheduled.
 
+From that untimed list, **Set start time** opens the named activity only. A confirmed save returns to the same Timeline view, shows the saved time, and explains if the selected date or **My activities** hides that row. **Open activity** still works from the confirmation without changing either filter.
+
 New or changed activity times must occur exactly once in the event time zone. A time skipped or repeated when clocks change needs a different local time. Project settings won't switch to a zone that makes a saved slot ambiguous or nonexistent. Older affected slots remain visible and editable, with warnings in Timeline, Before the event and the team run sheet. They don't get live clock cues and are excluded from new guest agendas until corrected. AI drafts keep the activity but leave invalid proposed times blank for review; approval rejects invalid times before adding any tasks.
 
 Use **Copy day link** to share the live project date with a teammate. It does not grant access or send a message, and it does not copy your personal activity filter.

@@ -91,9 +91,9 @@ test('explicitly planned but untimed activities stay visible in the right scope,
   const mine={mine:true,actor:'maya'};
   const organizer=view.view(input,true,now,mine),participant=view.view(input,false,now,mine);
   assert.match(organizer,/Activities need a start time · 1/);
-  assert.match(organizer,/data-action="schedule-task" data-id="pending" aria-label="Set start time for Guest welcome &lt;desk&gt;"/);
+  assert.match(organizer,/data-action="schedule-set-start" data-id="pending" aria-label="Set start time for Guest welcome &lt;desk&gt;"/);
   assert.match(participant,/Guest welcome &lt;desk&gt;/);
-  assert.doesNotMatch(participant,/data-action="schedule-task"|Other team activity|Finished activity|Order signs|No activities assigned/);
+  assert.doesNotMatch(participant,/data-action="schedule-set-start"|Other team activity|Finished activity|Order signs|No activities assigned/);
   assert.match(view.details(input.tasks[0],false,input.event),/Planned activity · no start time/);
   assert.match(view.picker(input,'pending'),/value="pending" selected/);
   assert.doesNotMatch(view.picker(input,'foreign'),/value="pending" selected/);

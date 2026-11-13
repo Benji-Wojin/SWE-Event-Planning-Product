@@ -733,11 +733,79 @@
   function teamView(s) {
     return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
+  function timelineScheduleScope() {
+    return {mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate};
+  }
+  function scheduleWorkspaceKey() {
+    return JSON.stringify([window.GatherMode?.projectId,window.GatherMode?.demo,store.getState().demoGeneration,ui.actor]);
+  }
+  function inOrganizerTimeline() {
+    return isOrganizer()&&!window.GatherAccessLost&&ui.view==='timeline'&&ui.timelineMode!=='deadlines';
+  }
+  function openFirstSchedule(id,opener) {
+    if(!inOrganizerTimeline()||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.dataset.id!==id||!$('.schedule-pending')?.contains(opener))return;
+    const scope=timelineScheduleScope(),state=store.getState();
+    const body=schedule.firstTimeForm(state,id,scope);
+    if(!body){toast('This activity is no longer waiting for a start time. Check Timeline again.');return;}
+    ui.firstScheduleEditor={id,scope,key:scheduleWorkspaceKey(),zone:state.event.timeZone};
+    openDialog('Set activity start time',body,'<button type="button" class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>',false,'first-schedule');
+    ui.lastFocus=opener;
+  }
+  async function saveFirstSchedule(form,data) {
+    const editor=ui.firstScheduleEditor;
+    const sameEditor=()=>!!editor&&ui.firstScheduleEditor===editor&&inOrganizerTimeline()&&
+      ui.dialogKind==='first-schedule'&&!$('#dialogBackdrop').hidden&&$('#firstScheduleForm')===form&&
+      editor.id===form.dataset.id&&editor.key===scheduleWorkspaceKey()&&
+      editor.scope.date===ui.scheduleDate&&editor.scope.mine===ui.scheduleMine;
+    if(!sameEditor())throw new Error('Reopen the activity from the current Timeline to set its start time.');
+    const state=store.getState();
+    const before=schedule.firstTimeTask(state,editor.id,editor.scope);
+    if(!before||String(before.revision)!==form.dataset.revision||state.event.timeZone!==editor.zone)
+      throw new Error('This activity changed. Your edits are still here. Reopen the activity before saving.');
+    const saved=store.setTaskSchedule(editor.id,{start:data.start,end:data.end,location:data.location},ui.actor);
+    if(!sameEditor())return;
+    if(saved?.id!==editor.id||saved.schedule?.start!==data.start||!Number.isSafeInteger(saved.revision))
+      throw new Error('We couldn’t confirm the saved start time. Check the schedule before trying again.');
+    ui.firstScheduleReceipt={id:saved.id,key:editor.key,revision:saved.revision,zone:editor.zone,
+      reconfirm:!!((before.acceptedAt||before.nextUpAt)&&!saved.acceptedAt&&!saved.nextUpAt)};
+    render();
+    closeDialog($('#scheduleFirstReceiptTitle'));
+  }
+  function currentFirstScheduleReceipt(state) {
+    const receipt=ui.firstScheduleReceipt;
+    if(!receipt||!inOrganizerTimeline()||receipt.key!==scheduleWorkspaceKey()||receipt.zone!==state.event.timeZone)return null;
+    const task=state.tasks.find(task=>task.id===receipt.id);
+    return task?.schedule&&task.revision===receipt.revision?task:null;
+  }
+  function openFirstScheduleReceipt(id,opener) {
+    if(!$('#dialogBackdrop').hidden||!opener?.isConnected||opener!==$('#scheduleFirstReceiptOpen'))return;
+    const task=currentFirstScheduleReceipt(store.getState());
+    if(!task||task.id!==id)return;
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    ui.lastFocus=opener;
+  }
+  function firstScheduleReceiptMarkup(state) {
+    const task=currentFirstScheduleReceipt(state);
+    if(!task)return '';
+    const {outsideDate,outsideMine}=GatherScheduleUI.activityVisibility(task,timelineScheduleScope());
+    const activity=GatherScheduleUI.activitySummary(task,state.event.timeZone);
+    const filters=[outsideDate?'the selected date':'',outsideMine?'My activities':''].filter(Boolean);
+    const location=activity.location?' · '+h(activity.location):'';
+    return `<section id="scheduleFirstReceipt" class="notice schedule-first-receipt" aria-labelledby="scheduleFirstReceiptTitle">
+      <h2 id="scheduleFirstReceiptTitle" tabindex="-1">Schedule saved: ${h(task.title)}</h2>
+      <p>${h(activity.timing)}${location}</p>
+      ${activity.warning?`<p><strong>Check schedule:</strong> ${h(activity.warning)}</p>`:''}
+      <p>${filters.length?'Not shown below because of '+filters.join(' and ')+'. Your filters haven’t changed.':'Find this activity in the schedule below.'}</p>
+      ${ui.firstScheduleReceipt.reconfirm?'<p>The owner needs to accept again. Progress is unchanged.</p>':''}
+      <button id="scheduleFirstReceiptOpen" type="button" class="btn btn-secondary" data-action="open-first-schedule-receipt" data-id="${h(task.id)}">Open activity</button>
+    </section>`;
+  }
   function timelineView(s) {
     const scheduled=ui.timelineMode!=='deadlines';
     const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?(s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="draft-guest-agenda">Draft guest agenda</button>':'')+'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
     const heading=pageHeading('','Timeline','','<button class="btn btn-secondary" data-action="before-event-review">Before the event</button>'+controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
-    if(scheduled)return heading+schedule.view(s,isOrganizer(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate,shareDay:!!window.GatherMode&&!window.GatherMode.demo});
+    if(scheduled)return heading+firstScheduleReceiptMarkup(s)+schedule.view(s,isOrganizer(),Date.now(),{...timelineScheduleScope(),shareDay:!!window.GatherMode&&!window.GatherMode.demo});
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
     return heading+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'No deadline'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}</div></section>`;
   }
@@ -919,7 +987,7 @@
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
-    if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;}
+    if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;ui.firstScheduleReceipt=null;}
     if(view!=='tasks')taskLinkUnavailable=false;
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
@@ -956,6 +1024,7 @@
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
+    if(kind!=='first-schedule')ui.firstScheduleEditor=null;
     if(!['related-checklist','related-review'].includes(kind))ui.relatedChecklistDraft=null;
     if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.relatedBatch=null;
     if(kind!=='guest-agenda')ui.guestAgenda=null;
@@ -993,7 +1062,7 @@
       (controls.find(el=>el.matches('input,select,textarea'))||controls[0]||dialog).focus();
     });
   }
-  function closeDialog() {
+  function closeDialog(focusTarget) {
     $('#dialogBackdrop').hidden=true;
     $('#dialogBackdrop').classList.remove('open');
     delete $('#dialogBackdrop').dataset.dialogKind;
@@ -1001,6 +1070,7 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
+    ui.firstScheduleEditor=null;
     ui.overlapReviewDay='';
     ui.overlapComparison=null;
     ui.eventTaskReview=null;
@@ -1015,7 +1085,8 @@
     const lessonOpener=ui.lastFocus?.dataset?.action==='draft-lesson-follow-up';
     const receiptOpener=ui.lastFocus?.id==='wrapFollowUpOpen';
     const budgetOpener=ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.view==='budget';
-    if(!(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):wrapOpener?restoreWrapReviewFocus(ui.lastFocus,view):
+    if(!(focusTarget?.isConnected&&view.contains(focusTarget)&&focusScheduleTarget(focusTarget))&&
+      !(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):wrapOpener?restoreWrapReviewFocus(ui.lastFocus,view):
       lessonOpener?restoreLessonFollowUpFocus(ui.lastFocus,view):receiptOpener?focusWrapFollowUpReceipt(ui.lastFocus.dataset.id,view,ui.lastFocus.dataset.action):
       budgetOpener?projectBudget?.restoreLinkedTaskFocus(ui.lastFocus):
       restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
@@ -1884,7 +1955,8 @@
     const fromWrapReceipt=ui.lastFocus?.id==='wrapFollowUpOpen'&&ui.lastFocus.dataset.id===id&&
       currentWrapFollowUp(taskState)?.id===id;
     const fromBudget=ui.view==='budget'&&ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.lastFocus.dataset.id===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget});
+    const fromScheduleReceipt=ui.view==='timeline'&&ui.lastFocus?.id==='scheduleFirstReceiptOpen'&&ui.lastFocus.dataset.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt});
     if((batch||ui.overlapComparison||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -2327,7 +2399,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
@@ -2392,6 +2464,8 @@
       }
       if(action==='add-activity'&&isOrganizer())openDialog('Add activity',schedule.newActivity(store.getState()));
       if(action==='schedule-task'&&isOrganizer())openDialog('Schedule existing task',schedule.picker(store.getState(),id));
+      if(action==='schedule-set-start')openFirstSchedule(id,el);
+      if(action==='open-first-schedule-receipt')openFirstScheduleReceipt(id,el);
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
       if(action==='reuse-checklist')reuseChecklistDialog();
       if(action==='copy-reuse-checklist')await copyReuseChecklist();
@@ -2646,6 +2720,7 @@
         toast(activity?(task.schedule?'Activity added.':'Activity added. Set its start time in Timeline.'): 'Task added.');
         void syncGuide();
       }
+      if(form.id==='firstScheduleForm')await saveFirstSchedule(form,data);
       if(form.id==='scheduleForm'||form.id==='schedulePickerForm'){
         const taskId=form.dataset.id||data.taskId;
         const before=store.getState().tasks.find(task=>task.id===taskId),remove=event.submitter?.value==='remove';

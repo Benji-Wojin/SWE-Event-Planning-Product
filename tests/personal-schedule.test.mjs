@@ -76,7 +76,7 @@ test('saved ownership and completion changes immediately recompute a personal ti
 
 test('timeline view and live refresh use the current profile and the same scope',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const start=source.indexOf('  function timelineView(s)');
+  const start=source.indexOf('  function timelineScheduleScope()');
   const fragment=source.slice(start,source.indexOf('  function updatesView(s)',start));
   const calls=[];
   const context=vm.createContext({ui:{timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},isOrganizer:()=>false,
