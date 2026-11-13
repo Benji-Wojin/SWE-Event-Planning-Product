@@ -96,7 +96,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     checklistRequest = useRef<{key:string;requestId:string}|null>(null),
     focusNotice = useRef(false),
     focusReceipt = useRef(false),
-    handoffLinkFocus = useRef(''),
+    handoffLinkFocus = useRef<{id:string; intent:string}|null>(null),
     errorBox = useRef<HTMLParagraphElement>(null),
     noticeBox = useRef<HTMLParagraphElement>(null),
     receiptHeading = useRef<HTMLHeadingElement>(null);
@@ -172,10 +172,15 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':
       !embedded&&(state==='needs-owner'||state==='needs-reassignment')?'owner':'';
     const href = planTaskHref(params,id,guideReturn,review);
+    const scheduleHref=showHandoff&&needsStartTime&&!embedded&&!demo?planTaskHref(params,id,guideReturn,'schedule'):'';
     return <li key={id} className="break-words">
       {href ? <a href={href} data-handoff-task={showHandoff ? id : undefined} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
       {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
-      {showHandoff && needsStartTime && <span className="block font-medium">Needs a start time</span>}
+      {showHandoff && needsStartTime && <span className="flex flex-wrap items-center gap-x-3 font-medium">
+        <span>Needs a start time</span>
+        {scheduleHref && <a href={scheduleHref} data-handoff-task={id} data-handoff-intent="schedule" aria-label={`Set start time for ${title}`}
+          className="inline-flex min-h-11 items-center text-primary underline">Set start time</a>}
+      </span>}
     </li>;
   }
   useEffect(()=>{
@@ -184,12 +189,13 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     receiptHeading.current?.focus();
   },[applied]);
   useEffect(()=>{
-    const id=handoffLinkFocus.current;
-    handoffLinkFocus.current='';
+    const previous=handoffLinkFocus.current;
+    handoffLinkFocus.current=null;
     const heading=receiptHeading.current;
-    if(!id||!heading||document.activeElement!==document.body)return;
+    if(!previous||!heading||document.activeElement!==document.body)return;
     const links=heading.closest('section')?.querySelectorAll<HTMLAnchorElement>('a[data-handoff-task]');
-    const link=links&&Array.from(links).find(candidate=>candidate.dataset.handoffTask===id);
+    const taskLinks=Array.from(links||[]).filter(candidate=>candidate.dataset.handoffTask===previous.id);
+    const link=taskLinks.find(candidate=>(candidate.dataset.handoffIntent||'')===previous.intent)||taskLinks[0];
     (link||heading).focus();
   },[data?.receiptTasks]);
   const existingTasks: ExistingPlanTask[] = data?.existingTasks || [];
@@ -478,8 +484,10 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
         return;
       }
       const active=document.activeElement;
-      if(active?.matches('a[data-handoff-task]') && receiptHeading.current?.closest('section')?.contains(active))
-        handoffLinkFocus.current=(active as HTMLAnchorElement).dataset.handoffTask||'';
+      if(active?.matches('a[data-handoff-task]') && receiptHeading.current?.closest('section')?.contains(active)){
+        const {handoffTask,handoffIntent}=(active as HTMLAnchorElement).dataset;
+        if(handoffTask)handoffLinkFocus.current={id:handoffTask,intent:handoffIntent||''};
+      }
       // Adopt the verified project metadata together. The private draft
       // revision is unchanged, and locally edited controls are left alone.
       setData(result);

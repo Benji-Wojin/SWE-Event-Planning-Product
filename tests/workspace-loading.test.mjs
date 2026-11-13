@@ -44,6 +44,7 @@ test('iframe reauthentication keeps only a valid real-project task review hint',
     ['?project=school&task=task-123&review=completion&guide=1&day=2032-02-29','/project?day=2032-02-29&guide=1&task=task-123&review=completion&project=school'],
     ['?project=school&task=task-123&review=amendment&review=completion','/project?task=task-123&project=school'],
     ['?project=school&task=task-123&review=owner&guide=1','/project?guide=1&task=task-123&review=owner&project=school'],
+    ['?project=school&task=task-123&review=schedule&guide=1','/project?guide=1&task=task-123&review=schedule&project=school'],
     ['?project=school&review=completion','/project?project=school'],
     ['?demo=1&as=jack&task=task-123&review=amendment','/demo?as=jack&task=task-123'],
   ]){

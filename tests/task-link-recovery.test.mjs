@@ -7,10 +7,11 @@ const source=readFileSync('legacy/app.js','utf8');
 const part=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
 const notice=part('  function taskLinkNotice()', '  function tasksView(s)');
 const bootstrap=part('  const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
-const ownerLink=part('  function openTaskOwnerLink(', '  function openScheduleReconfirmation(');
+const handoffLink=part('  function openTaskHandoffLink(', '  function openScheduleReconfirmation(');
 function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false}={}){
   const events=[];
   const ui={tab:'mine',actor:'fictional-actor'},title={},frames=[],document={activeElement:title};
+  let updatesPending=false;
   const elements={
     '#taskLinkUnavailableTitle':{focus(){events.push('notice focus');},scrollIntoView(){events.push('notice visible');}},
     '#taskLinkNotice':{remove(){events.push('dismissed');}},
@@ -29,10 +30,12 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     navigate(view){ui.view=view;events.push(view);},syncGuide(){},$:selector=>elements[selector],
     taskDialog(...args){if(args[7])args[7]={...args[7]};events.push(args);},
     requestAnimationFrame(fn){frames.push(fn);},focusTaskOwnerEditor(id){events.push(['owner focus',id]);},
+    schedule:{firstTimeTask:(state,id)=>state.tasks.find(task=>task.id===id&&task.eventActivity&&!task.schedule&&!(task.status==='done'&&(!task.requiresVerification||task.verifiedAt)))},
+    workspaceUpdatesPending:()=>updatesPending,focusTaskScheduleEditor(id,setup){events.push(['schedule focus',id,setup]);},
     openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
   });
-  vm.runInContext(notice+'\n'+ownerLink+'\n'+bootstrap,context);
-  return {ui,events,context,document,elements,frames,markup:()=>vm.runInContext('taskLinkNotice()',context)};
+  vm.runInContext(notice+'\n'+handoffLink+'\n'+bootstrap,context);
+  return {ui,events,context,document,elements,frames,pending(){updatesPending=true;},markup:()=>vm.runInContext('taskLinkNotice()',context)};
 }
 
 test('an unavailable task link lands on All tasks with a persistent, focused explanation and a search action',()=>{
@@ -50,6 +53,32 @@ test('an unavailable task link lands on All tasks with a persistent, focused exp
   assert.equal(view.markup(),'');
   assert.deepEqual(view.events.slice(-2),['dismissed','search focus']);
   assert.match(source,/if\(view!=='tasks'\)taskLinkUnavailable=false/);
+});
+
+test('start time shortcuts keep the exact live task and fall back when the activity or view changed',()=>{
+  const id='activity',options={review:'schedule',organizer:true,mode:{demo:false,projectId:'fixture'}};
+  const task={id,eventActivity:true,status:'todo'};
+  const opened=[id,'',false,true,'',undefined,'',{readOnly:true}];
+  const live=land(id,[task],options);
+  assert.deepEqual(live.events.at(-1),opened);
+  live.frames[0]();assert.deepEqual(live.events.at(-1),['schedule focus',id,true]);
+  for(const extra of [{schedule:{start:'2027-01-01T10:00'}},{eventActivity:false},{status:'done'},{archivedAt:'archived'}]){
+    const stale=land(id,[{...task,...extra}],options);
+    assert.deepEqual(stale.events.at(-1),opened);assert.equal(stale.frames.length,0);
+  }
+  for(const opts of [{organizer:false},{mode:{demo:true}},{mode:undefined}]){
+    const ordinary=land(id,[task],{...options,...opts});
+    assert.deepEqual(ordinary.events.at(-1),opened);assert.equal(ordinary.frames.length,0);
+  }
+  for(const late of ['updates','slot','focus','project']){
+    const copy={...task},view=land(id,[copy],{...options,mode:{...options.mode}});
+    if(late==='updates')view.pending();
+    if(late==='slot')copy.schedule={start:'2027-01-01T10:00'};
+    if(late==='focus')view.document.activeElement={};
+    if(late==='project')view.context.window.GatherMode.projectId='other';
+    view.frames[0]();assert.deepEqual(view.events.at(-1),opened,late);
+  }
+  assert.deepEqual(land(id,[],options).events,['tasks','ready','notice focus','notice visible']);
 });
 
 test('owner receipt hints focus only a still-actionable task in the same live organizer dialog',()=>{

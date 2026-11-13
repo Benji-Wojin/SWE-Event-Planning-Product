@@ -1381,21 +1381,30 @@
     const owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
     if(details){details.open=true;focusTaskDialogControl(owner,dialog);}
   }
-  function openTaskOwnerLink(id) {
+  function focusTaskScheduleEditor(id,allowZoneSetup=false) {
+    if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
+    const dialog=$('#dialog'),details=$('details.task-schedule',dialog),form=details&&$('#scheduleForm',details);
+    const target=form?.dataset.id===id?$('input[name="start"]',form):
+      !form&&details&&allowZoneSetup?$('[data-action="event-context"]',details):null;
+    if(target){details.open=true;focusTaskDialogControl(target,dialog);}
+  }
+  function openTaskHandoffLink(id,kind) {
     const actor=ui.actor,project=window.GatherMode?.projectId;
-    const canFocusOwner=()=>{
+    const canFocusEditor=()=>{
       if(!window.GatherMode||window.GatherMode.demo||!isOrganizer()||window.GatherAccessLost||ui.actor!==actor||window.GatherMode.projectId!==project)return false;
       const state=store.getState(),task=state.tasks.find(item=>item.id===id);
+      if(kind==='schedule')return !!task&&!task.archivedAt&&!workspaceUpdatesPending()&&!!schedule.firstTimeTask(state,id,{});
       return !!task&&!task.archivedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&
         (!task.owner||!state.members.some(member=>member.id===task.owner&&member.active!==false&&!member.role?.includes('· example')));
     };
-    const eligible=canFocusOwner();
+    const eligible=canFocusEditor();
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
     if(!eligible)return;
     const title=$('#dialogTitle',$('#dialog'));
     requestAnimationFrame(()=>{
-      if(!title||$('#dialogTitle',$('#dialog'))!==title||document.activeElement!==title||!canFocusOwner())return;
-      focusTaskOwnerEditor(id);
+      if(!title||$('#dialogTitle',$('#dialog'))!==title||document.activeElement!==title||!canFocusEditor())return;
+      if(kind==='schedule')focusTaskScheduleEditor(id,true);
+      else focusTaskOwnerEditor(id);
     });
   }
   function openScheduleReconfirmation(id,opener) {
@@ -3673,10 +3682,7 @@
         toast('Task deleted.');
       }
       if(action==='review-task-owner')focusTaskOwnerEditor(id);
-      if(action==='review-overlap-schedule'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
-        const dialog=$('#dialog'),form=$('#scheduleForm',dialog),start=form?.dataset.id===id?$('input[name="start"]',form):null,details=start?form.closest('details'):null;
-        if(details){details.open=true;focusTaskDialogControl(start,dialog);}
-      }
+      if(action==='review-overlap-schedule')focusTaskScheduleEditor(id);
       if(action==='quick-tour'){if(confirmCloseDialog()&&confirmDiscard($('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
       if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}
@@ -4189,7 +4195,7 @@
       // first so keyboard users can see where focus will return.
       opener?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
       opener?.focus({preventScroll:true});
-      if(initialTaskReview==='owner')openTaskOwnerLink(initialTask);
+      if(initialTaskReview==='owner'||initialTaskReview==='schedule')openTaskHandoffLink(initialTask,initialTaskReview);
       else if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))
         taskDialog(initialTask,'',false,true);
     }

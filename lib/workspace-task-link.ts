@@ -5,7 +5,7 @@ export function workspaceTaskId(value: unknown): string {
 }
 
 export function workspaceTaskReview(value: unknown) {
-  return value==='completion'||value==='amendment'||value==='owner'?value:'';
+  return value==='completion'||value==='amendment'||value==='owner'||value==='schedule'?value:'';
 }
 
 export function planTaskHref(params: URLSearchParams, id: string, guided = false, review = ''): string {

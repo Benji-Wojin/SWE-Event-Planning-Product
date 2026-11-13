@@ -58,7 +58,7 @@ test('missing owners never masquerade as Unassigned or expose IDs; pending repor
 
 test('Review owner opens and focuses only the current organizer task form, preserving drafts without writes',()=>{
   const begin=source.indexOf('  function focusTaskOwnerEditor(');
-  const handler=source.slice(begin,source.indexOf('  function openTaskOwnerLink(',begin));
+  const handler=source.slice(begin,source.indexOf('  function focusTaskScheduleEditor(',begin));
   assert.match(source,/if\(action==='review-task-owner'\)focusTaskOwnerEditor\(id\)/);
   for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details','closed']){
     let focused=0;const details={open:false},field={value:'unsaved-owner',focus(){focused++;}};
@@ -74,18 +74,21 @@ test('Review owner opens and focuses only the current organizer task form, prese
 });
 
 test('Review overlap schedule opens only the current organizer edit form without saving or resetting it',()=>{
-  const begin=source.indexOf("      if(action==='review-overlap-schedule'");
-  const handler=source.slice(begin,source.indexOf("      if(action==='quick-tour'",begin));
-  for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details']){
+  const begin=source.indexOf('  function focusTaskScheduleEditor(');
+  const handler=source.slice(begin,source.indexOf('  function openTaskHandoffLink(',begin));
+  assert.match(source,/if\(action==='review-overlap-schedule'\)focusTaskScheduleEditor\(id\)/);
+  for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details','closed','settings']){
     const details={open:false},start={value:'2026-11-20T14:15'},focus=[];
     const form={dataset:{id:mode==='stale-form'?'other':'activity'},closest:()=>mode==='missing-details'?null:details};
-    const dialog={};
+    const dialog={},settings={};
     const context=vm.createContext({action:'review-overlap-schedule',id:'activity',window:{GatherAccessLost:mode==='lost'},isOrganizer:()=>mode!=='member',
       ui:{dialogKind:mode==='other-dialog'?'other':'task',detailId:mode==='other-task'?'other':'activity'},
       focusTaskDialogControl:(target,root)=>focus.push([target,root]),
-      $:(selector,root)=>selector==='#dialog'?dialog:root===dialog&&mode!=='missing-form'?form:root===form?start:null});
-    vm.runInContext(handler,context);
-    assert.equal(details.open,mode==='allowed');assert.deepEqual(focus,mode==='allowed'?[[start,dialog]]:[]);
+      $:(selector,root)=>selector==='#dialog'?dialog:selector==='#dialogBackdrop'?{hidden:mode==='closed'}:
+        selector==='details.task-schedule'&&mode!=='missing-details'?details:selector==='#scheduleForm'&&root===details&&!['missing-form','settings'].includes(mode)?form:
+        root===form?start:root===details&&selector==='[data-action="event-context"]'?settings:null});
+    vm.runInContext(handler+`\nfocusTaskScheduleEditor('activity',${mode==='settings'});`,context);
+    assert.equal(details.open,['allowed','settings'].includes(mode));assert.deepEqual(focus,mode==='allowed'?[[start,dialog]]:mode==='settings'?[[settings,dialog]]:[]);
     assert.equal(start.value,'2026-11-20T14:15');
   }
   assert.doesNotMatch(handler,/store\.|fetch|render\(|taskDialog\(|closeDialog\(|reset\(/);

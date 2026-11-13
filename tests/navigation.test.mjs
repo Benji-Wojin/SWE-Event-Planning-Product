@@ -76,12 +76,14 @@ test('review hints need a single valid task, a supported kind and a non-demo wor
   for(const [query,id,review] of [
     ['task=current','current',''],['task=current&review=amendment','current','amendment'],
     ['task=current&review=owner','current','owner'],['task=current&review=owner&review=owner','current',''],
+    ['task=current&review=schedule','current','schedule'],['task=current&review=schedule&review=owner','current',''],
     ['task=current&review=completion&review=completion','current',''],['task=current&review=','current',''],
     ['task=current&review=help','current',''],['task=current&review=%22%3E','current',''],
     ['task=first&task=second&review=completion','',''],['task=%22%3E&review=completion','',''],
     ['task=&review=completion','',''],['review=completion','',''],
     ['demo=1&as=jack&task=current&review=amendment','current',''],
     ['demo=1&as=jack&task=current&review=owner','current',''],
+    ['demo=1&as=jack&task=current&review=schedule','current',''],
   ]){
     const host=surface('https://weft.example/project?project=school&'+query+'#timeline');
     const frame=surface('https://weft.example/workspace.html?project=school&'+query+'#tasks');

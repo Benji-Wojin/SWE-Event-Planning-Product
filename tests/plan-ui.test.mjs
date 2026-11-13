@@ -839,22 +839,29 @@ test('the organizer receipt flags untimed activities in place and ignores a regr
   },initial,'project=p_school',false,true);
   const receipt=()=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='plan-receipt-heading');
   const link=label=>nodes(receipt()).find(node=>node.type==='a'&&text(node)===label);
-  const tagged=()=>nodes(receipt()).filter(node=>node.type==='li'&&text(node).includes('Needs a start time')).map(text);
+  const tagged=()=>nodes(receipt()).filter(node=>node.type==='li'&&text(node).includes('Needs a start time'))
+    .map(row=>nodes(row).find(node=>node.type==='a'&&node.props['data-handoff-task'])?.props['data-handoff-task']);
   try{
     await app.start();
     assert.match(text(receipt()),/2 activities need start times.*before they can appear on the run sheet/);
-    assert.deepEqual(tagged(),['Fictional welcomeUnassigned · choose an ownerNeeds a start time','Fictional cleanupOwner acceptedNeeds a start time']);
+    assert.deepEqual(tagged(),['one','two']);
     assert.equal(link('Open Timeline')?.props.href,'/project?project=p_school&guide=1#timeline');
     assert.equal(link('Open Shared tasks')?.props.href,'/project?project=p_school&guide=1#tasks');
-    assert.equal(nodes(receipt()).filter(node=>node.type==='a'&&node.props.href.includes('&task=')).length,3);
+    assert.equal(nodes(receipt()).filter(node=>node.type==='a'&&node.props['data-handoff-task']&&!node.props['data-handoff-intent']).length,3);
+    assert.deepEqual(nodes(receipt()).filter(node=>node.type==='a'&&text(node)==='Set start time').map(node=>node.props.href),[
+      '/project?project=p_school&task=one&guide=1&review=schedule',
+      '/project?project=p_school&task=two&guide=1&review=schedule',
+    ]);
     await app.click('Refresh task handoff');
     assert.match(text(app.tree),/Could not confirm the latest handoff/);
     assert.equal(tagged().length,2);
     await app.click('Refresh task handoff');
     assert.match(text(receipt()),/1 activity needs a start time.*before it can appear on the run sheet/);
     assert.equal(tagged().length,1);
+    assert.deepEqual(nodes(receipt()).filter(node=>node.type==='a'&&text(node)==='Set start time').map(node=>node.props['aria-label']),['Set start time for Fictional cleanup']);
     await app.click('Refresh task handoff');
     assert.equal(tagged().length,0);
+    assert.equal(link('Set start time'),undefined);
     assert.doesNotMatch(text(receipt()),/run sheet/);
     assert.deepEqual(app.requests,Array.from({length:4},()=>({action:'get'})));
   }finally{app.dispose();}
@@ -1213,6 +1220,50 @@ test('owner review links are limited to real standalone plan receipts and preser
         `${query}, embedded=${embedded}, guided=${guided}: ${task.handoff.state}`);
         assert.equal(link.props.target, embedded ? '_top' : undefined);
         assert.equal(link.props.onClick, undefined);
+      }
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+    } finally { app.dispose(); }
+  }
+});
+
+test('untimed activity shortcuts are separate from task review links and limited to real standalone plans', async () => {
+  for (const [query, embedded, guided, shortcut] of [
+    ['project=p_school', false, false, true],
+    ['project=p_school', false, true, true],
+    ['project=p_school', true, true, false],
+    ['project=p_school&mode=suggestions', false, true, false],
+    ['project=p_school&mode=assistant', false, true, false],
+    ['demo=1', false, true, false],
+  ]) {
+    const initial = fixture();
+    initial.receiptTasks = [
+      { id: 'task-unassigned', title: 'Fictional welcome desk', needsStartTime: true, handoff: { state: 'needs-owner' } },
+      { id: 'task-review', title: 'Fictional rehearsal', needsStartTime: true, handoff: { state: 'needs-review' } },
+      { id: 'task-scheduled', title: 'Fictional scheduled activity', handoff: { state: 'accepted' } },
+      { id: 'bad task', title: 'Fictional invalid activity', needsStartTime: true, handoff: { state: 'needs-owner' } },
+    ];
+    initial.receipt = { taskIds: initial.receiptTasks.map(task => task.id) };
+    const app = harness(undefined, initial, query, embedded, guided);
+    try {
+      await app.start();
+      const links = nodes(app.tree).filter(node => node.type === 'a' && text(node) === 'Set start time');
+      assert.equal(links.length, shortcut ? 2 : 0, `${query}, embedded=${embedded}, guided=${guided}`);
+      if (shortcut) {
+        const base = '/project?project=p_school&task=';
+        const suffix = guided ? '&guide=1' : '';
+        for (const [id, title, review] of [
+          ['task-unassigned', 'Fictional welcome desk', 'owner'],
+          ['task-review', 'Fictional rehearsal', 'completion'],
+        ]) {
+          const task = planLink(app.tree, title);
+          const schedule = links.find(node => node.props['aria-label'] === `Set start time for ${title}`);
+          assert.equal(task?.props.href, base + id + suffix + '&review=' + review);
+          assert.equal(task.props['data-handoff-task'], id);
+          assert.equal(schedule?.props.href, base + id + suffix + '&review=schedule');
+          assert.equal(schedule.props['data-handoff-task'], id);
+          assert.equal(schedule.props['data-handoff-intent'], 'schedule', 'secondary link retains its distinct focus intent');
+          assert.equal(schedule.props.onClick, undefined);
+        }
       }
       assert.deepEqual(app.requests, [{ action: 'get' }]);
     } finally { app.dispose(); }
