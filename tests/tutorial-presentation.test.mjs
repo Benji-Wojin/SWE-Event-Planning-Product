@@ -41,6 +41,10 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.equal(guide.changes(),2);assert.equal(guide.focuses(),2);
   guide.context.guideProgress.events.push({checkpoint:'budget_viewed'});guide.paint();
   assert.match(guide.html(),/Step 4 of 5/);
+  assert.match(guide.html(),/Open Event info[\s\S]*<section[^>]+aria-labelledby="workspaceGuidePlanTitle"/);
+  assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
+  guide.context.guideProgress.events.push({checkpoint:'event_details_viewed'});guide.paint();
+  assert.match(guide.html(),/Step 5 of 5[\s\S]*Invite a teammate/);
   assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
 });
 
@@ -49,7 +53,7 @@ test('a committed task does not offer to create a duplicate while progress reloa
   guide.context.guideTaskId='task_saved';guide.paint();
   assert.match(guide.html(),/Your first task is saved/);
   assert.match(guide.html(),/Loading the next guide step/);
-  assert.doesNotMatch(guide.html(),/guide-add-task/);
+  assert.doesNotMatch(guide.html(),/guide-add-task|workspaceGuidePlanTitle/);
   guide.context.guideProgress.events.push({checkpoint:'task_created'});guide.paint();
   assert.match(guide.html(),/Open Budget/);
 });

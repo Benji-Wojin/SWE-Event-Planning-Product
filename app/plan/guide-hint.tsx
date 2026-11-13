@@ -5,7 +5,7 @@ const steps = [
   },
   {
     title: 'Generate a private draft',
-    instruction: <>Read the note about what goes to Groq, then choose <strong>Generate draft</strong>. Opening this page alone doesn’t send anything to AI. If AI isn’t available, try <strong>Use starter checklist</strong>.</>,
+    instruction: <>Read the note about what goes to Groq, then choose <strong>Generate draft</strong> (or <strong>Generate another draft</strong> if you already have one). Opening this page alone doesn’t send anything to AI. You can also start from a checklist without using AI.</>,
   },
   {
     title: 'Choose what goes into the project',
@@ -26,6 +26,9 @@ export function PlanGuideHint() {
         <p className="leading-relaxed text-muted-foreground">{instruction}</p>
         {index === 0 && <p className="mt-2 rounded-lg border bg-muted/40 px-3 py-2 text-muted-foreground">
           <strong className="text-foreground">Example:</strong> “A two-hour welcome night for 40 people. We need a check-in table, a short intro, and time to clean up.”
+        </p>}
+        {index === 1 && <p className="mt-2 rounded-lg border bg-muted/40 px-3 py-2 text-muted-foreground">
+          <strong className="text-foreground">Example suggestions:</strong> Set up the check-in table, choose a greeter, and schedule cleanup. Your draft will depend on your brief.
         </p>}
       </li>)}
     </ol>
