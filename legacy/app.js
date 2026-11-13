@@ -735,13 +735,14 @@
   }
   function openOrganizerReview(id,kind) {
     if(!isOrganizer()||window.GatherAccessLost)return;
-    if(!GatherRecoveryUI.organizerReviews(store.getState().tasks).some(row=>row.task.id===id&&row.kind===kind)){
+    const review=GatherRecoveryUI.organizerReviews(store.getState().tasks).find(row=>row.task.id===id&&row.kind===kind);
+    if(!review){
       render();toast('This review is no longer pending.');return;
     }
     taskDialog(id);
     requestAnimationFrame(()=>{
       if(ui.dialogKind!=='task'||ui.detailId!==id)return;
-      const section=kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
+      const section=review.waitingOnRequiredWork?'.task-dependencies':kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
       $(section+' h3',$('#dialog'))?.focus();
     });
   }
@@ -976,7 +977,7 @@
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
     const dependents=state.tasks.filter(t=>(t.dependencies||[]).some(link=>link.taskId===task.id));
     const owner=info.ready&&state.members.find(person=>person.id===task.owner&&person.active!==false);
-    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3>Task relationships</h3><button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button></div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
+    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 tabindex="-1">Task relationships</h3><button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button></div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
       ${info.open.length&&task.status!=='done'?'<p class="notice">Finish required work before completing this task. Unlink anything no longer needed.</p>':''}
       ${info.ready?`<div class="dependency-prompt"><div><strong>Ready to resume</strong><p>Required linked work is complete. Review the results below and check for other blockers before resuming.</p></div>${manage?`<button class="btn btn-primary" data-action="resume-task" data-id="${h(task.id)}">Resume task</button>`:owner?`<span>${h(owner.name)} can resume this task.</span>`:'<span>Ask the organizer to assign an active owner.</span>'}</div>`:''}
       ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
@@ -1053,7 +1054,9 @@
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
       ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked})||''}
-      ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}" ${completionBlocked?'disabled':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" data-id="${h(id)}" class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
+      ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.
+        ${completionBlocked?`<p id="verificationRequiredWork">Verification is waiting on required work. See Task relationships below.${organizer?' You can still request changes to this report.':''}</p>`:''}
+        ${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}" ${completionBlocked?'disabled aria-describedby="verificationRequiredWork"':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" data-id="${h(id)}" class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
       ${recovery.recoveryMarkup(task,organizer)}
       ${dependencyMarkup(task)}
       ${handoffMarkup(task)}

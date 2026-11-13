@@ -422,13 +422,57 @@ test('task dialogs explain prerequisites and offer completion only when required
   store.reportCompletion('catering','Menu approved.','maya');
   store.updateTask('dietary',{status:'progress'});
   html=taskDialogHtml('jack','catering',undefined,store);
-  assert.match(html,/data-action="verify-task"[^>]*disabled/);
+  assert.match(html,/data-action="verify-task"[^>]*disabled aria-describedby="verificationRequiredWork"/);
+  assert.match(html,/id="verificationRequiredWork">Verification is waiting on required work\. See Task relationships below\. You can still request changes to this report\./);
+  assert.match(html,/<h3 tabindex="-1">Task relationships<\/h3>/);
+  assert.match(html,/<summary>Request changes<\/summary><form id="returnCompletionForm"/);
   assert.match(html,/Finish required work/);
+  const teammate=taskDialogHtml('maya','catering',undefined,store);
+  assert.match(teammate,/Verification is waiting on required work/);
+  assert.doesNotMatch(teammate,/data-action="verify-task"|returnCompletionForm|You can still request changes/);
   const data=JSON.parse(store.exportState());
   data.tasks=data.tasks.filter(task=>task.id!=='dietary');
   const missing=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?JSON.stringify(data):null,setItem(){}}});
   assert.match(taskDialogHtml('maya','catering',undefined,missing),/Remove unavailable link/);
   assert.doesNotMatch(taskDialogHtml('dev','catering',undefined,missing),/Remove unavailable link/);
+});
+
+test('organizer review opens the section for the current task state without mutating the report', () => {
+  const source=readFileSync('legacy/app.js','utf8'),store=create(),id='catering';
+  const start=source.indexOf('  function openOrganizerReview('),end=source.indexOf('  function openReturnedCompletion(',start);
+  const ui={dialogKind:'',detailId:''},window={},dialog={},frames=[],calls=[];
+  let organizer=true;
+  const context=vm.createContext({
+    isOrganizer:()=>organizer, window, store, GatherRecoveryUI, ui,
+    taskDialog(taskId){calls.push(taskId);ui.dialogKind='task';ui.detailId=taskId;},
+    requestAnimationFrame:fn=>frames.push(fn),
+    $(selector,root){if(selector==='#dialog')return dialog;assert.equal(root,dialog);return {focus:()=>calls.push(selector)};},
+    render:()=>calls.push('render'),toast:message=>calls.push(message),
+  });
+  vm.runInContext(source.slice(start,end),context);
+  const open=(kind='completion')=>context.openOrganizerReview(id,kind);
+  const frame=()=>frames.shift()();
+  store.reportCompletion('dietary','All responses collected.','maya');
+  store.updateTask(id,{requiresVerification:true});
+  store.reportCompletion(id,'Menu approved.','maya');
+  const ready=store.exportState();
+  open();frame();
+  assert.deepEqual(calls.splice(0),[id,'.completion-evidence h3']);
+  assert.equal(store.exportState(),ready);
+  store.updateTask('dietary',{status:'progress'});
+  const blocked=store.exportState();
+  open();frame();
+  assert.deepEqual(calls.splice(0),[id,'.task-dependencies h3']);
+  assert.equal(store.exportState(),blocked);
+  open();ui.detailId='other';frame();
+  assert.deepEqual(calls.splice(0),[id],'a replaced dialog never steals focus');
+  organizer=false;open();
+  organizer=true;window.GatherAccessLost=true;open();
+  assert.deepEqual(calls,[]);
+  window.GatherAccessLost=false;open('amendment');
+  assert.deepEqual(calls,['render','This review is no longer pending.']);
+  assert.equal(frames.length,0);
+  assert.equal(store.exportState(),blocked);
 });
 
 test('ready-to-resume task dialogs distinguish required results and unavailable ownership', () => {

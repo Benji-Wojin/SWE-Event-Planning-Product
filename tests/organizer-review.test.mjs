@@ -57,6 +57,74 @@ test('review moves through actual request, verification, and amendment transitio
   assert.equal(state().tasks[0].verifiedAt,verifiedAt);
 });
 
+test('a pending verification keeps its review route when required work reopens, and becomes verifiable again',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const required=store.addTask({title:'Fictional required route check',owner:'maya',requiresVerification:true});
+  const related=store.addTask({title:'Fictional parallel setup',owner:'maya'});
+  const task=store.addTask({title:'Confirm fictional handover',owner:'maya',requiresVerification:true,dependencies:[
+    {taskId:required.id,kind:'dependency',reason:'Needs the checked route.'},
+    {taskId:related.id,kind:'related',reason:'Shares the same handover.'},
+  ]});
+  const state=()=>store.getState();
+  const review=()=>GatherRecoveryUI.organizerReviews(state().tasks).find(row=>row.task.id===task.id);
+  const route=new RegExp(`data-action="review-organizer-item"[^>]*data-id="${task.id}"[^>]*data-review-kind="completion"`);
+  const verify=/aria-label="Verify completion: Confirm fictional handover"/;
+  const waiting=/aria-label="Review required work: Confirm fictional handover"/;
+  store.reportCompletion(required.id,'Route checked.','maya');
+  store.verifyTask(required.id,'jack');
+  store.reportCompletion(task.id,'FICTIONAL_PRIVATE_PARENT_REPORT','maya');
+  const reportedAt=review().at;
+  assert.match(panel(state()),route);
+  assert.match(panel(state()),verify,'open related work does not block verification');
+
+  store.updateTask(required.id,{status:'todo'},'jack');
+  const snapshot=store.exportState(),blocked=panel(state());
+  assert.match(blocked,route);
+  assert.match(blocked,waiting);
+  assert.match(blocked,/Verification waiting on required work/);
+  assert.doesNotMatch(blocked,/FICTIONAL_PRIVATE_PARENT_REPORT/);
+  assert.doesNotMatch(blocked,verify);
+  assert.equal(review().kind,'completion');
+  assert.equal(review().at,reportedAt);
+  assert.equal(review().task.reportedAt,reportedAt);
+  assert.throws(()=>store.verifyTask(task.id,'jack'),/Finish or verify required work/);
+  assert.equal(store.exportState(),snapshot);
+
+  store.reportCompletion(required.id,'Route rechecked.','maya');
+  assert.match(panel(state()),waiting,'a prerequisite report is not organizer verification');
+  store.verifyTask(required.id,'jack');
+  assert.match(panel(state()),route);
+  assert.match(panel(state()),verify);
+  assert.doesNotMatch(panel(state()),waiting);
+  assert.equal(review().at,reportedAt);
+  assert.equal(store.verifyTask(task.id,'jack').status,'done');
+  assert.equal(review(),undefined);
+});
+
+test('a reopened prerequisite does not change an already verified task’s evidence amendment review',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const required=store.addTask({title:'Fictional required access check',owner:'maya'});
+  const task=store.addTask({title:'Fictional confirmed handover',owner:'maya',requiresVerification:true,dependencies:[
+    {taskId:required.id,kind:'dependency',reason:'Confirm access before the handover.'},
+  ]});
+  store.reportCompletion(required.id,'Access checked.','maya');
+  store.reportCompletion(task.id,'Original handover report.','maya');
+  const verified=store.verifyTask(task.id,'jack');
+  store.updateTask(required.id,{status:'todo'},'jack');
+  const amended=store.setCompletionEvidence(task.id,{note:'FICTIONAL_PRIVATE_AMENDMENT'},'maya');
+  const state=()=>store.getState();
+  assert.deepEqual(reviews(state()),[[task.id,'amendment']]);
+  assert.match(panel(state()),/data-review-kind="amendment" aria-label="Review amended evidence: Fictional confirmed handover"/);
+  assert.doesNotMatch(panel(state()),/Review required work|Verification waiting on required work|FICTIONAL_PRIVATE_AMENDMENT/);
+  const acknowledged=store.reviewCompletionEvidence(task.id,amended.revision,'jack');
+  assert.equal(acknowledged.status,'done');
+  assert.equal(acknowledged.verifiedAt,verified.verifiedAt);
+  assert.equal(acknowledged.verifiedBy,verified.verifiedBy);
+  assert.equal(acknowledged.completionEvidenceReviewAt,verified.verifiedAt);
+  assert.equal(state().tasks.find(item=>item.id===required.id).status,'todo');
+  assert.equal(panel(state()),'');
+});
+
 test('overview lists five reviews by default with access to all, escapes titles, and has no write controls',()=>{
   const tasks=Array.from({length:7},(_,i)=>row('t'+i,{title:i===0?'<img "test">':'Task '+i,recoveryRequests:[pending('help','2026-11-01')]}));
   const state={tasks,members:[{id:'maya',name:'Former <owner>',active:false}]};

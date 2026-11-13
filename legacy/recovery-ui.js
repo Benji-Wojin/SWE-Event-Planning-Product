@@ -11,7 +11,7 @@
         if(!task.reportedAt)return [];
       }
       if(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)
-        return [{task,kind:'completion',at:task.reportedAt}];
+        return [{task,kind:'completion',at:task.reportedAt,waitingOnRequiredWork:root.GatherPriorities.unresolved(task,tasks).length>0}];
       if(task.status==='done')return [];
       const request=root.GatherPriorities.pendingRequest(task);
       return request&&(request.kind==='date'||request.kind==='help')?[{task,kind:request.kind,at:request.createdAt}]:[];
@@ -30,10 +30,11 @@
       return `<section class="panel organizer-review" aria-labelledby="organizerReviewTitle">
         <div class="panel-heading"><h2 class="section-title" id="organizerReviewTitle">Waiting for your review <span class="muted">${rows.length}</span></h2></div>
         <p class="muted">Team requests and completion decisions, oldest first. Open a task to review it; nothing changes until you confirm a decision.</p>
-        <ul id="organizerReviewList">${(expanded?rows:rows.slice(0,limit)).map(({task,kind})=>{
-          const label=reviewLabels[kind],owner=members.get(task.owner);
+        <ul id="organizerReviewList">${(expanded?rows:rows.slice(0,limit)).map(({task,kind,waitingOnRequiredWork})=>{
+          const label=waitingOnRequiredWork?'Review required work':reviewLabels[kind],owner=members.get(task.owner);
+          const status=waitingOnRequiredWork?'Verification waiting on required work':label;
           const ownership=owner?owner.name+(owner.active===false?' · inactive':''):task.owner?'Unavailable owner':'Unassigned';
-          return `<li><button class="text-button" data-action="review-organizer-item" data-id="${h(task.id)}" data-review-kind="${kind}" aria-label="${h(label+': '+task.title)}">${h(task.title)}</button><span><strong>${label}</strong> · ${h(ownership)}</span></li>`;
+          return `<li><button class="text-button" data-action="review-organizer-item" data-id="${h(task.id)}" data-review-kind="${kind}" aria-label="${h(label+': '+task.title)}">${h(task.title)}</button><span><strong>${status}</strong> · ${h(ownership)}</span></li>`;
         }).join('')}</ul>
         ${rows.length>limit?`<button class="text-button" data-action="expand-organizer-reviews" aria-expanded="${expanded}" aria-controls="organizerReviewList">${expanded?'Show fewer reviews':'Show all '+rows.length+' reviews'}</button>`:''}
       </section>`;

@@ -91,7 +91,7 @@ In **Edit task details** and **Email briefing**, changing or removing the owner 
 
 Owners can commit to up to three actionable Next up tasks, propose a date or ask for help without changing the agreed plan. Organizer decisions stay in Needs attention. Decisions record a check-in, deadline history and an owner-visible comment; fixed external dates require explicit confirmation. Ranking considers essential work and downstream deadlines, not only overdue age. Waiting parents route attention to their prerequisites. These are in-app prompts, not background email reminders.
 
-**Overview → Waiting for your review** brings pending teammate requests, completion reports and amended completion evidence together for the organizer. The oldest items appear first; expand to see the entire queue. Each item opens the relevant task section. Acknowledging an amendment does not reopen or reverify the task, and opening the queue never changes records.
+**Overview → Waiting for your review** brings pending teammate requests, completion reports and amended completion evidence together for the organizer. The oldest items appear first; expand to see the entire queue. If required work reopens, the completion report stays in the queue and opens **Task relationships**. The organizer can still request changes to the report, but can’t verify completion until the required work is resolved. Acknowledging an amendment does not reopen or reverify the task, and opening the queue never changes records.
 
 When Next up is empty, ready tasks are shown directly; unavailable work and no assignments have distinct empty states. Reassignment advice considers active teammates only.
 
