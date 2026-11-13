@@ -121,6 +121,16 @@ test('empty plans and missing context are explicit, not an all-clear',()=>{
   assert.deepEqual(linked(html),[]);assert.doesNotMatch(html,/100%|All clear|Everything is ready/);
 });
 
+test('every event review disclosure carries its stable group key, including empty groups',()=>{
+  const s=state([task('fictional-preparation'),task('fictional-pending',{reportedAt:now,requiresVerification:true,status:'progress'})]);
+  const html=ui.preparationReview(s,now,{mine:true,actor:'jack'},true);
+  const keys=[...html.matchAll(/<details\b[^>]*\bdata-event-review-group="([^"]+)"/g)].map(([,key])=>key);
+  assert.deepEqual(keys,GatherScheduleUI.reviewItems(s,now,{mine:true,actor:'jack'}).map(group=>group.key));
+  assert.equal(new Set(keys).size,keys.length);
+  assert.match(html,/<details[^>]*data-event-review-group="verification"[^>]*\bopen(?:\s|>)[\s\S]*?Completion needs verification · 1/);
+  assert.match(html,/<details[^>]*data-event-review-group="evidence-amendments"[^>]*><summary>Evidence amended after verification · 0/);
+});
+
 test('organizer review offers direct scheduling only for scoped activities that still need details',()=>{
   const pending=task('pending',{title:'Arrival <desk>',owner:'maya',eventActivity:true,revision:4});
   const partial=task('partial',{owner:'maya',revision:2,schedule:slot('09:30','','')});
@@ -184,7 +194,7 @@ test('real store changes recompute the review only from recorded acceptance and 
 test('review handler uses current scope, blocks lost access, and participates in dialog discard protection',()=>{
   const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function eventReviewScope(');
   const fragment=source.slice(start,source.indexOf('  function showPendingUpdate(',start));const calls=[];
-  const context=vm.createContext({action:'before-event-review',window:{GatherAccessLost:false},Date,
+  const context=vm.createContext({action:'before-event-review',window:{GatherAccessLost:false},Date,$:()=>null,
     requestAnimationFrame:()=>{},isOrganizer:()=>false,
     ui:{timelineMode:'schedule',scheduleMine:true,actor:'maya'},store:{getState:()=>({marker:true})},
     schedule:{preparationReview(s,now,scope,organizer){calls.push({...scope});assert.equal(s.marker,true);assert.equal(organizer,false);return 'review';}},
@@ -193,4 +203,99 @@ test('review handler uses current scope, blocks lost access, and participates in
   context.ui.timelineMode='deadlines';vm.runInContext('beforeEventReview();',context);assert.deepEqual(calls[1],{mine:false,actor:'maya'});
   context.window.GatherAccessLost=true;vm.runInContext('beforeEventReview();',context);assert.equal(calls.length,2);
   assert.match(source,/replacesDialog=\[[^\n]*'schedule-review-activity'[^\n]*'before-event-review'/);assert.match(source,/data-action="before-event-review">Before the event/);
+});
+
+test('returning to an event review opens and focuses the original group on current scoped facts',()=>{
+  const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function eventReviewScope(');
+  const fragment=source.slice(start,source.indexOf('  function showPendingUpdate(',start));
+  const store=GatherStore.createStore({storage:null});store.completeSetup(event);
+  const item=store.addTask({title:'Fictional hall handover',owner:'maya',requiresVerification:true});
+  store.reportCompletion(item.id,'Hall checked.','maya');
+  const other=store.addTask({title:'Other owner’s fictional handover',owner:'jack',requiresVerification:true});
+  store.reportCompletion(other.id,'Other hall checked.','jack');
+  const activeUI={timelineMode:'schedule',scheduleMine:true,actor:'maya',dialogKind:'task'};
+  const frames=[],dialog={},sync={hidden:true};
+  let activeElement,markup='',groupsInDialog=[],title;
+  const focusable=(textContent)=>({textContent,focus(){activeElement=this;},scrollIntoView(options){this.scrollOptions=options;}});
+  const context=vm.createContext({window:{GatherAccessLost:false},ui:activeUI,store,schedule:ui,Date,
+    isOrganizer:()=>false,requestAnimationFrame:frame=>frames.push(frame),
+    $(selector,root){if(selector==='#dialog')return dialog;if(selector==='#workspaceSyncNotice')return sync;assert.equal(selector,'#dialogTitle');if(root)assert.equal(root,dialog);return title;},
+    $$(selector,root){assert.equal(selector,'[data-event-review-group]');assert.equal(root,dialog);return groupsInDialog;},
+    openDialog(label,body,_footer,_wide,kind,focusHeading){
+      assert.equal(label,'Before the event');assert.equal(kind,'before-event-review');
+      activeUI.dialogKind=kind;markup=body;title=focusable(label);
+      assert.equal(focusHeading,true);
+      const openedTitle=title;
+      frames.push(()=>{if(title===openedTitle&&activeUI.dialogKind===kind)title.focus();});
+      groupsInDialog=[...body.matchAll(/<details\b([^>]*)\bdata-event-review-group="([^"]+)"([^>]*)><summary>([^<]*)<\/summary>/g)]
+        .map(([,before,key,after,text])=>{
+          const summary=focusable(text);
+          return {dataset:{eventReviewGroup:key},open:/\bopen\b/.test(before+after),summary,querySelector(selector){assert.equal(selector,'summary');return summary;}};
+        });
+    },
+  });
+  vm.runInContext(fragment,context);
+  const group=key=>groupsInDialog.find(row=>row.dataset.eventReviewGroup===key);
+  const nextFrame=()=>{for(const frame of frames.splice(0))frame();};
+  context.beforeEventReview();nextFrame();
+  assert.equal(activeElement,title);
+  assert.match(markup,/My tasks · Maya/);
+  assert.match(markup,/Fictional hall handover/);
+  assert.doesNotMatch(markup,/dialogStaleNotice/);
+  assert.doesNotMatch(markup,/Other owner’s fictional handover/);
+  assert.equal(group('verification').open,true);
+
+  store.verifyTask(item.id,'jack');
+  const beforeReturn=store.exportState();
+  context.beforeEventReview('verification');nextFrame();
+  assert.match(markup,/My tasks · Maya/);
+  assert.doesNotMatch(markup,/Other owner’s fictional handover|Fictional hall handover/);
+  assert.equal(group('verification').open,true,'the original group reopens even if it is now empty');
+  assert.equal(activeElement,group('verification').summary);
+  assert.equal(activeElement.textContent,'Completion needs verification · 0');
+  assert.equal(activeElement.scrollOptions.block,'center');
+  assert.equal(store.exportState(),beforeReturn);
+
+  sync.hidden=false;
+  context.beforeEventReview('verification');nextFrame();
+  assert.match(markup,/id="dialogStaleNotice"[\s\S]*Newer project changes are available\. This review shows the last loaded plan\./);
+  assert.match(markup,/data-action="reload-workspace">Reload project/);
+  assert.equal(activeElement,title,'the pending update notice stays in view instead of jumping below it');
+  assert.equal(group('verification').open,true);
+  assert.equal(store.exportState(),beforeReturn);
+  sync.hidden=true;
+  context.beforeEventReview('unknown-group');nextFrame();
+  assert.equal(activeElement,title);
+  assert.equal(group('verification').open,false);
+  context.beforeEventReview('verification');
+  activeUI.dialogKind='task';const replacement=focusable('Different dialog');replacement.focus();
+  nextFrame();assert.equal(activeElement,replacement,'a superseded review callback must not steal focus');
+  context.beforeEventReview('verification');context.beforeEventReview();
+  nextFrame();assert.equal(activeElement,title);assert.equal(group('verification').open,false,'an older callback cannot reopen the group in a newer review');
+});
+
+test('Back to event review obeys the delegated discard prompt and never leaves a different task context',async()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf("  document.addEventListener('click',async event=>{");
+  const end=source.indexOf("      if(action==='continue-task-search')",start);
+  const returnStart=source.indexOf('  function returnToEventTaskReview(');
+  const calls=[],dialog={},ui={view:'timeline',actor:'maya',dialogKind:'task',eventTaskReview:{actor:'maya',group:'verification'}};
+  const button={dataset:{action:'return-to-event-task-review'},closest:()=>dialog};
+  let click,allow=false;
+  const context=vm.createContext({ui,window:{},$:(selector)=>selector==='#dialog'?dialog:null,
+    document:{addEventListener(type,handler){assert.equal(type,'click');click=handler;}},
+    confirmDiscard(root,other){assert.equal(root,dialog);assert.equal(other,null);calls.push('confirm');return allow;},
+    beforeEventReview(group){calls.push(group);ui.dialogKind='before-event-review';ui.eventTaskReview=null;},
+  });
+  vm.runInContext(source.slice(returnStart,source.indexOf('  function showPendingUpdate(',returnStart))+
+    source.slice(start,end)+'} finally {release();}});',context);
+  const back=()=>click({target:{closest:()=>button}});
+  await back();assert.deepEqual(calls.splice(0),['confirm']);assert.equal(ui.dialogKind,'task');assert.equal(ui.eventTaskReview.group,'verification');
+  allow=true;
+  for(const [object,key,value] of [[context.window,'GatherAccessLost',true],[ui,'actor','jack'],[ui,'view','overview'],[ui,'dialogKind','notifications']]){
+    const previous=object[key];object[key]=value;
+    assert.equal(context.returnToEventTaskReview(),false);assert.deepEqual(calls,[]);
+    object[key]=previous;
+  }
+  await back();assert.deepEqual(calls,['confirm','verification']);assert.equal(ui.dialogKind,'before-event-review');assert.equal(ui.eventTaskReview,null);
 });

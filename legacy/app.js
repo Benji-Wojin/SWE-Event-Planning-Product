@@ -698,13 +698,16 @@
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if(kind!=='run-sheet')ui.runSheet=null;
+    if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.eventTaskReview=null;
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
     ui.dialogKind=kind;
     $('#dialogBackdrop').dataset.dialogKind=kind;
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
-    $('#dialog').innerHTML=`<div class="dialog-header"><h2 id="dialogTitle">${h(title)}</h2><button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
+    const heading=`<h2 id="dialogTitle">${h(title)}</h2>`;
+    const reviewBack=kind==='task'&&ui.eventTaskReview&&ui.eventTaskReview.actor===ui.actor&&!window.GatherAccessLost;
+    $('#dialog').innerHTML=`<div class="dialog-header">${reviewBack?`<div class="event-review-task-heading">${heading}<button type="button" class="text-button" data-action="return-to-event-task-review">← Back to event review</button></div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
@@ -727,6 +730,7 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
+    ui.eventTaskReview=null;
     ui.guestAgenda=null;
     ui.reuseChecklist=null;
     ui.runSheet=null;
@@ -735,15 +739,15 @@
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
-  function openOrganizerReview(id,kind) {
+  function openOrganizerReview(id,kind,eventGroup='') {
     if(!isOrganizer()||window.GatherAccessLost)return;
     const review=GatherRecoveryUI.organizerReviews(store.getState().tasks).find(row=>row.task.id===id&&row.kind===kind);
     if(!review){
-      if(ui.dialogKind==='before-event-review')beforeEventReview();
+      if(ui.dialogKind==='before-event-review')beforeEventReview(eventGroup);
       else render();
       toast('This review is no longer pending.');return;
     }
-    taskDialog(id);
+    taskDialog(id,'',false,false,eventGroup);
     requestAnimationFrame(()=>{
       if(ui.dialogKind!=='task'||ui.detailId!==id)return;
       const section=review.waitingOnRequiredWork?'.task-dependencies':kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
@@ -772,14 +776,32 @@
   function eventReviewScope() {
     return {mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
   }
-  function beforeEventReview() {
+  function beforeEventReview(group='') {
     if(window.GatherAccessLost)return;
-    openDialog('Before the event',schedule.preparationReview(store.getState(),Date.now(),eventReviewScope(),isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review');
+    const sync=$('#workspaceSyncNotice');
+    const pending=sync&&!sync.hidden
+      ? '<div id="dialogStaleNotice" class="notice"><p role="status">Newer project changes are available. This review shows the last loaded plan.</p><button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button></div>':'';
+    openDialog('Before the event',pending+schedule.preparationReview(store.getState(),Date.now(),eventReviewScope(),isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
+    const title=$('#dialogTitle');
     requestAnimationFrame(()=>{
-      if(ui.dialogKind!=='before-event-review')return;
-      const title=$('#dialogTitle');
-      title.tabIndex=-1;title.focus();
+      if(!title||ui.dialogKind!=='before-event-review'||window.GatherAccessLost||$('#dialogTitle')!==title)return;
+      if(group){
+        const detail=$$('[data-event-review-group]',$('#dialog')).find(item=>item.dataset.eventReviewGroup===group);
+        const summary=detail?.querySelector('summary');
+        if(summary){
+          detail.open=true;
+          // Keep the warning in view when a newer plan is already known.
+          if(!pending){summary.focus({preventScroll:true});summary.scrollIntoView({block:'center',inline:'nearest'});}
+        }
+      }
     });
+  }
+  function returnToEventTaskReview() {
+    const source=ui.eventTaskReview;
+    if(!source||source.actor!==ui.actor||window.GatherAccessLost||ui.view!=='timeline'||
+      !['task','delete-task'].includes(ui.dialogKind))return false;
+    beforeEventReview(source.group);
+    return true;
   }
   function showPendingUpdate(newerRevision) {
     if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
@@ -1038,9 +1060,10 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false) {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='') {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
+    if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
@@ -1478,14 +1501,17 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist','notifications');
+    replacesDialog.push('related-checklist','notifications','return-to-event-task-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
+    const eventReviewGroup=(action==='task'||action==='review-organizer-item')&&ui.dialogKind==='before-event-review'
+      ? el.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
     const saveRoot=el.closest('#dialog')||el.closest('form')||el;
     const release=writes.includes(action)?saveLock(saveRoot):()=>{};
     try {
       if(action==='close-dialog')closeDialog();
+      if(action==='return-to-event-task-review')returnToEventTaskReview();
       if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
@@ -1493,7 +1519,7 @@
       if(action==='dismiss-handoff'&&isLiveTeammate()&&joinWelcome){
         joinWelcome=false;paintTeammateHandoff();
       }
-      if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
+      if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind,eventReviewGroup);
       if(action==='review-returned-completion')openReturnedCompletion(id);
       if(action==='related-checklist')openRelatedBatch(id);
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
@@ -1546,7 +1572,7 @@
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
-      if(action==='task')taskDialog(id);
+      if(action==='task')taskDialog(id,'',false,false,eventReviewGroup);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
         const task=store.getState().tasks.find(task=>task.id===id);
         if(!task)throw new Error('That task is no longer available.');
@@ -1555,7 +1581,7 @@
       if(action==='confirm-delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='delete-task'&&ui.detailId===id){
         await store.deleteTask(id,Number(el.dataset.revision),ui.actor);
         if(ui.mapFocus===id)ui.mapFocus='';
-        render();closeDialog();ui.detailId='';
+        render();if(!returnToEventTaskReview())closeDialog();ui.detailId='';
         toast('Task deleted.');
       }
       if(action==='review-task-owner'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -1743,7 +1769,7 @@
         if(!confirmFixedDate(form.dataset.id,data)||!confirmTaskOwnerChange(before,data))return;
         store.updateTask(form.dataset.id,data,ui.actor);
         const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;
-        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();
+        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else if(!returnToEventTaskReview())closeDialog();
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
       }

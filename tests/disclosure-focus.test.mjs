@@ -78,6 +78,30 @@ test('assignment review and linked task details start on the heading rather than
   assert.notEqual(f.input.focused,true);
 });
 
+test('the event review return stays visible during task drilldown and clears on unrelated dialogs and close',()=>{
+  const f=fixture(),backdrop={hidden:true,dataset:{},classList:{add(){},remove(){}}};
+  const dialog={className:'',innerHTML:'',replaceChildren(){this.innerHTML='';}};
+  const ui={actor:'maya',eventTaskReview:{actor:'maya',group:'verification'}},window={};
+  Object.assign(f.ctx,{ui,window,store:{},document:{activeElement:{},body:{style:{}}},tour:{close(){}},h:String,icon:()=>'',requestAnimationFrame:()=>{},
+    $:selector=>({'#sidebar':{classList:{contains:()=>false}},'#dialogBackdrop':backdrop,'#dialog':dialog,'#appShell':{},'#viewRoot':{querySelector:()=>null}})[selector],
+    restoreFocus:()=>true});
+  const start=source.indexOf('  function openDialog('),end=source.indexOf('  function openOrganizerReview(',start);
+  vm.runInContext(source.slice(start,end),f.ctx);
+  const open=kind=>f.ctx.openDialog('Task title','Body','',false,kind);
+  const back=/class="dialog-header"[\s\S]*data-action="return-to-event-task-review"[^>]*>.*Back to event review[\s\S]*class="dialog-body"/;
+  open('task');assert.match(dialog.innerHTML,back);
+  for(const kind of ['delete-task','related-checklist','related-review']){
+    open(kind);assert.doesNotMatch(dialog.innerHTML,back);
+    open('task');assert.match(dialog.innerHTML,back);
+  }
+  window.GatherAccessLost=true;open('task');assert.doesNotMatch(dialog.innerHTML,back);
+  window.GatherAccessLost=false;ui.actor='other';open('task');assert.doesNotMatch(dialog.innerHTML,back);
+  ui.actor='maya';open('notifications');assert.equal(ui.eventTaskReview,null);
+  open('task');assert.doesNotMatch(dialog.innerHTML,back);
+  ui.eventTaskReview={actor:'maya',group:'verification'};
+  f.ctx.closeDialog();assert.equal(ui.eventTaskReview,null);
+});
+
 test('Tab and Shift+Tab from the programmatically focused dialog heading stay in the dialog',()=>{
   let active,handler,prevented;
   const heading={},first={focus(){active=first;}},last={focus(){active=last;}};

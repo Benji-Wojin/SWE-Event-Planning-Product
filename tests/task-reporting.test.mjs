@@ -444,7 +444,7 @@ test('organizer review opens the section for the current task state without muta
   let organizer=true;
   const context=vm.createContext({
     isOrganizer:()=>organizer, window, store, GatherRecoveryUI, ui,
-    taskDialog(taskId){calls.push(taskId);ui.dialogKind='task';ui.detailId=taskId;},
+    taskDialog(taskId,_form,_discard,_heading,group){calls.push(taskId);if(group)calls.push(group);ui.dialogKind='task';ui.detailId=taskId;},
     requestAnimationFrame:fn=>frames.push(fn),
     $(selector,root){if(selector==='#dialog')return dialog;assert.equal(root,dialog);return {focus:()=>calls.push(selector)};},
     beforeEventReview:()=>calls.push('refresh event review'),render:()=>calls.push('render'),toast:message=>calls.push(message),
@@ -459,6 +459,8 @@ test('organizer review opens the section for the current task state without muta
   open();frame();
   assert.deepEqual(calls.splice(0),[id,'.completion-evidence h3']);
   assert.equal(store.exportState(),ready);
+  ui.dialogKind='before-event-review';context.openOrganizerReview(id,'completion','verification');frame();
+  assert.deepEqual(calls.splice(0),[id,'verification','.completion-evidence h3']);
   store.updateTask('dietary',{status:'progress'});
   const blocked=store.exportState();
   open();frame();
