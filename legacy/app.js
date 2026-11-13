@@ -313,6 +313,8 @@
       return restoreWrapReviewFocus(previous,root);
     if(previous.dataset.action==='draft-lesson-follow-up')
       return restoreLessonFollowUpFocus(previous,root);
+    if(previous.dataset.action==='open-lesson-linked-task')
+      return restoreLessonLinkedTaskFocus(previous,root);
     if(previous.id==='wrapFollowUpHeading'||previous.id==='wrapFollowUpOpen'||previous.id==='wrapFollowUpDismiss')
       return focusWrapFollowUpReceipt(previous.dataset.id,root,previous.dataset.action);
     if(previous.dataset.wrapLesson||previous.id==='wrapUpLessons')
@@ -1010,13 +1012,60 @@
     return pageHeading('','Activity','',`<button class="btn btn-secondary" data-action="digest">${icon('copy')} Summary</button>`)+`<div class="workspace-grid"><section class="panel"><div class="panel-heading"><h2 class="section-title">Team activity</h2><span class="chip">${s.activity.length} updates</span></div><div class="activity-list">${s.activity.map(a=>activityItem(a,taskIds)).join('')||empty('No activity yet.','')}</div></section><aside class="panel"><div class="panel-heading"><div><h2 class="section-title">Follow-up drafts</h2></div></div>${s.drafts.length?s.drafts.map(d=>`<article class="source-card"><span class="source-label">DRAFT · ${timeLabel(d.at)}</span><p>${h(d.text)}</p><div class="inline"><button class="text-button" data-action="copy-draft" data-id="${h(d.id)}">${icon('copy')} Copy draft</button><button class="text-button" data-action="task" data-id="${h(d.taskId)}">Open task</button></div></article>`).join(''):empty('No drafts.','Create a draft from a task. Messages are not sent automatically.')}</aside></div>`;
   }
   const wrapLessonHeadingId=id=>'wrap-lesson-'+String(id).replace(/[^a-zA-Z0-9-]/g,value=>'_'+value.charCodeAt(0).toString(16)+'_');
+  function lessonLinkedTasksMarkup(lessonId,tasks,receiptTaskId) {
+    const visible=tasks?.filter(task=>task.id!==receiptTaskId);
+    if(!visible?.length)return '';
+    const lessonHeading=h(wrapLessonHeadingId(lessonId));
+    return `<div class="wrap-lesson-tasks" data-wrap-lesson-tasks><h4>Tasks linked to this lesson</h4><ul>${visible.map((task,index)=>{
+      const statusId=lessonHeading+'-task-state-'+index;
+      const status=GatherWrapUp.awaitingVerification(task)?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status);
+      return `<li><button type="button" class="text-button" data-action="open-lesson-linked-task" data-id="${h(task.id)}" data-lesson-id="${h(lessonId)}" aria-describedby="${lessonHeading} ${statusId}">${h(task.title)}</button><span id="${statusId}">${status}</span></li>`;
+    }).join('')}</ul></div>`;
+  }
   function memoryView(s) {
     const receipt=ui.wrapFollowUpReceipt,receiptMarkup=receipt?wrapFollowUpReceiptMarkup(s):'';
     const lessonHasReceipt=receiptMarkup&&s.memories.some(lesson=>lesson.id===receipt.lessonId);
     const mayDraft=canCreateTasks()&&!window.GatherAccessLost;
     const reuse=isOrganizer()&&s.tasks.some(task=>!ui.wrapMine||task.owner===ui.actor)
       ?'<button class="btn btn-secondary" data-action="reuse-checklist">Reuse tasks for another event</button>':'';
-    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-wrap-follow-up">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+(receipt&&!lessonHasReceipt?receiptMarkup:'')+GatherWrapUp.markup(s,{h,organizer:isOrganizer(),demo:!window.GatherMode||window.GatherMode.demo,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons" tabindex="-1">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card" data-wrap-lesson-card data-id="${h(m.id)}"><span class="memory-category">${h(m.category||'Team learning')}</span><h3 class="wrap-up-lesson-title" id="${h(wrapLessonHeadingId(m.id))}" data-wrap-lesson="${h(m.id)}" tabindex="-1">${h(m.change)}</h3>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button>${mayDraft&&isActionableLesson(m)?`<button type="button" class="text-button" data-action="draft-lesson-follow-up" data-id="${h(m.id)}" aria-describedby="${h(wrapLessonHeadingId(m.id))}">Draft follow-up task</button>`:''}${lessonHasReceipt&&receipt.lessonId===m.id?receiptMarkup:''}</article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
+    const linked=new Map();
+    if(!window.GatherAccessLost)for(const task of s.tasks){
+      if(!task.memoryId||task.archivedAt)continue;
+      if(!linked.has(task.memoryId))linked.set(task.memoryId,[]);
+      linked.get(task.memoryId).push(task);
+    }
+    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-wrap-follow-up">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+(receipt&&!lessonHasReceipt?receiptMarkup:'')+GatherWrapUp.markup(s,{h,organizer:isOrganizer(),demo:!window.GatherMode||window.GatherMode.demo,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons" tabindex="-1">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>{
+      const hasReceipt=lessonHasReceipt&&receipt.lessonId===m.id;
+      return `<article class="memory-card" data-wrap-lesson-card data-id="${h(m.id)}"><span class="memory-category">${h(m.category||'Team learning')}</span><h3 class="wrap-up-lesson-title" id="${h(wrapLessonHeadingId(m.id))}" data-wrap-lesson="${h(m.id)}" tabindex="-1">${h(m.change)}</h3>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button>${mayDraft&&isActionableLesson(m)?`<button type="button" class="text-button" data-action="draft-lesson-follow-up" data-id="${h(m.id)}" aria-describedby="${h(wrapLessonHeadingId(m.id))}">Draft follow-up task</button>`:''}${hasReceipt?receiptMarkup:''}${lessonLinkedTasksMarkup(m.id,linked.get(m.id),hasReceipt?receipt.taskId:'')}</article>`;
+    }).join('')||empty('No lessons saved yet.','')}</div></section>`;
+  }
+  function lessonLinkedTaskCard(button,root) {
+    const group=button?.closest('[data-wrap-lesson-tasks]'),card=group?.closest('[data-wrap-lesson-card]');
+    return card?.dataset.id===button?.dataset.lessonId&&root?.contains(card)?card:null;
+  }
+  function currentLessonLinkedTask(id,lessonId) {
+    const state=store.getState();
+    return lessonId&&state.memories.some(lesson=>lesson.id===lessonId)&&
+      state.tasks.find(task=>task.id===id&&task.memoryId===lessonId&&!task.archivedAt);
+  }
+  function openLessonLinkedTask(id,opener) {
+    if(ui.view!=='memory'||window.GatherAccessLost||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.dataset.action!=='open-lesson-linked-task'||opener.dataset.id!==id||
+      opener.matches(':disabled')||opener.closest('[hidden],[inert]')||!lessonLinkedTaskCard(opener,$('#viewRoot')))return false;
+    if(!currentLessonLinkedTask(id,opener.dataset.lessonId)){
+      render();toast('This linked task is no longer available.');return false;
+    }
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(ui.dialogKind==='task'&&ui.detailId===id){ui.lastFocus=opener;return true;}
+    return false;
+  }
+  function restoreLessonLinkedTaskFocus(previous,root) {
+    if(ui.view!=='memory'||window.GatherAccessLost||!root||root.closest('[hidden],[inert]'))return false;
+    const {id,lessonId}=previous.dataset;
+    const button=currentLessonLinkedTask(id,lessonId)&&$$('[data-action="open-lesson-linked-task"]',root).find(el=>
+      el.dataset.id===id&&el.dataset.lessonId===lessonId&&lessonLinkedTaskCard(el,root)&&
+      !el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
+    return (button&&focusScheduleTarget(button))||focusWrapLesson(lessonId,root);
   }
   function currentWrapFollowUp(state=store.getState()) {
     const receipt=ui.wrapFollowUpReceipt;
@@ -1293,11 +1342,13 @@
     const view=$('#viewRoot');
     const scheduleOpener=isScheduleControl(ui.lastFocus),wrapOpener=ui.lastFocus?.dataset?.action==='wrap-review-task';
     const lessonOpener=ui.lastFocus?.dataset?.action==='draft-lesson-follow-up';
+    const linkedLessonOpener=ui.lastFocus?.dataset?.action==='open-lesson-linked-task';
     const receiptOpener=ui.lastFocus?.id==='wrapFollowUpOpen';
     const budgetOpener=ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.view==='budget';
     if(!(focusTarget?.isConnected&&view.contains(focusTarget)&&focusScheduleTarget(focusTarget))&&
       !(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):wrapOpener?restoreWrapReviewFocus(ui.lastFocus,view):
-      lessonOpener?restoreLessonFollowUpFocus(ui.lastFocus,view):receiptOpener?focusWrapFollowUpReceipt(ui.lastFocus.dataset.id,view,ui.lastFocus.dataset.action):
+      lessonOpener?restoreLessonFollowUpFocus(ui.lastFocus,view):linkedLessonOpener?restoreLessonLinkedTaskFocus(ui.lastFocus,view):
+      receiptOpener?focusWrapFollowUpReceipt(ui.lastFocus.dataset.id,view,ui.lastFocus.dataset.action):
       budgetOpener?projectBudget?.restoreLinkedTaskFocus(ui.lastFocus):
       restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
       view.querySelector('button')?.focus();
@@ -2894,7 +2945,8 @@
     const fromEventScheduleReview=ui.eventTaskReview?.group==='schedule-reconfirmation'&&ui.eventTaskReview.actor===ui.actor;
     const fromWrapOpenWork=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='wrap-review-task'&&ui.lastFocus.dataset.id===id&&
       ['owner-gap','linked-results'].includes(ui.lastFocus.dataset.wrapReviewKind);
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromWrapOpenWork||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview});
+    const fromWrapLesson=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='open-lesson-linked-task'&&ui.lastFocus.dataset.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -2947,8 +2999,9 @@
       return;
     }
     const organizer=isOrganizer();
-    const reference=lesson?`<section class="notice lesson-follow-up-reference" aria-label="Source lesson"><p><strong>From this lesson</strong></p><blockquote>${h(lesson.change)}</blockquote><p>Write the action you want the team to take in this project. The lesson is shown for reference only and won’t be copied into the task.</p></section>`:'';
-    openDialog(lesson?'Draft follow-up task':'Add task',`${reference}${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"${wrapFollowUp?' data-wrap-follow-up="true"':''}${lesson?' data-lesson-follow-up="'+h(lesson.id)+'"':''}><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="Describe the result that means this task is finished."></textarea><small>Shared with the team and kept separately from progress updates. Do not include private booking codes or credentials.</small></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions">${wrapFollowUp?'<button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button>':''}<button class="btn btn-primary" type="submit">Add task</button></div></form>`,'',false,lesson?'lesson-follow-up':wrapFollowUp?'wrap-follow-up':'');
+    const reference=lesson?`<section class="notice lesson-follow-up-reference" aria-label="Source lesson"><p><strong>From this lesson</strong></p><blockquote>${h(lesson.change)}</blockquote><p>Write the action you want the team to take. When you save, the task will be linked here in Wrap up. The lesson text won’t be copied into the task.</p></section>`:'';
+    const source=lesson?` data-lesson-follow-up="${h(lesson.id)}" data-lesson-edited-at="${h(lesson.editedAt||'')}"`:'';
+    openDialog(lesson?'Draft follow-up task':'Add task',`${reference}${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"${wrapFollowUp?' data-wrap-follow-up="true"':''}${source}><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="Describe the result that means this task is finished."></textarea><small>Shared with the team and kept separately from progress updates. Do not include private booking codes or credentials.</small></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions">${wrapFollowUp?'<button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button>':''}<button class="btn btn-primary" type="submit">Add task</button></div></form>`,'',false,lesson?'lesson-follow-up':wrapFollowUp?'wrap-follow-up':'');
   }
   function followupDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
@@ -3649,6 +3702,7 @@
       if(action==='wrap-review-task')openWrapReviewTask(id,el);
       if(action==='budget-linked-task')openBudgetLinkedTask(id,el);
       if(action==='draft-lesson-follow-up')openLessonFollowUp(id,el);
+      if(action==='open-lesson-linked-task')openLessonLinkedTask(id,el);
       if(action==='open-wrap-follow-up')openWrapFollowUpReceipt(id,el);
       if(action==='dismiss-wrap-follow-up')dismissWrapFollowUpReceipt(id,el);
       if(action==='add-wrap-follow-up'&&ui.view==='memory'&&!window.GatherAccessLost&&$('#dialogBackdrop').hidden){
@@ -3961,13 +4015,17 @@
         const activity=form.dataset.scheduled==='true';
         const firstTask=form.dataset.guideTask==='true'&&guidedWorkspace;
         const wrapKind=ui.dialogKind;
-        const lessonId=wrapKind==='lesson-follow-up'?form.dataset.lessonFollowUp:'';
-        const wrapDraft=!!lessonId||wrapKind==='wrap-follow-up'&&form.dataset.wrapFollowUp==='true';
+        const lessonDraft=wrapKind==='lesson-follow-up';
+        const lessonId=lessonDraft?form.dataset.lessonFollowUp:'';
+        const wrapDraft=lessonDraft||wrapKind==='wrap-follow-up'&&form.dataset.wrapFollowUp==='true';
         const actor=ui.actor,project=wrapDraft?window.GatherMode?.projectId:undefined;
         const sameWrapDraft=()=>!window.GatherAccessLost&&ui.view==='memory'&&ui.dialogKind===wrapKind&&
           ui.actor===actor&&window.GatherMode?.projectId===project&&form.isConnected&&$('#newTaskForm',$('#dialog'))===form;
         if(wrapDraft&&(!sameWrapDraft()||!canCreateTasks()))throw new Error('You can no longer add a follow-up from this review.');
-        const taskData=activity?GatherScheduleUI.newActivityTask(data):data;
+        if(lessonDraft&&(!lessonId||typeof form.dataset.lessonEditedAt!=='string'||activity||firstTask))
+          throw new Error('Review the source lesson before saving this follow-up.');
+        const taskData=lessonDraft?{...data,lessonId,lessonEditedAt:form.dataset.lessonEditedAt}:
+          activity?GatherScheduleUI.newActivityTask(data):data;
         const task=store.addTask(taskData,actor);
         if(wrapDraft){
           if(sameWrapDraft()){

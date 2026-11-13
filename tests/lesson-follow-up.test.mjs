@@ -33,6 +33,7 @@ test('the lesson is an escaped reference outside a blank existing task form', ()
   assert.ok(form, 'reuses the existing task creation form');
   assert.ok(html.includes(h(original.change)), 'the sole lesson reference is visible and escaped');
   assert.match(html, /aria-label="Source lesson"/);
+  assert.match(form, /data-lesson-follow-up="lesson-fictional-01" data-lesson-edited-at=""/);
   assert.doesNotMatch(html, hidden);
   assert.doesNotMatch(html, /<hall>/);
   assert.doesNotMatch(form, /Review &lt;hall&gt;|name="(?:lesson|lessonId|lessonChange|memoryId)"/);
@@ -142,18 +143,20 @@ test('cancel restores the same lesson button, with a heading fallback if that ac
   assert.equal(focused.at(-1), heading);
 });
 
-test('hosted confirmation awaits the existing task write, sending only the actual form fields', async () => {
+test('hosted confirmation awaits the existing task write, sending only user fields and exact lesson identity', async () => {
   const ui = { dialogKind: 'lesson-follow-up', actor: 'maya', view: 'memory', wrapMine: true };
   const window = { GatherAccessLost: false, GatherMode: { projectId: 'fictional-project' } };
-  const form = { id: 'newTaskForm', isConnected: true, dataset: { lessonFollowUp: original.id } };
+  const editedAt = '2026-11-21T16:00:00.000Z';
+  const form = { id: 'newTaskForm', isConnected: true, dataset: { lessonFollowUp: original.id, lessonEditedAt: editedAt } };
   let currentForm = form;
   const data = { title: 'Verify loading area', owner: '', dueDate: '', category: 'Venue', status: 'todo', scope: '', note: '' };
+  const linkedData = { ...data, lessonId: original.id, lessonEditedAt: editedAt };
   const events = [];
   let complete, fail;
   const nextWrite = () => new Promise((resolve, reject) => { complete = resolve; fail = reject; });
   let write = nextWrite();
   const context = vm.createContext({ ui, window, guidedWorkspace: true, canCreateTasks: () => true,
-    store: { addTask: (...args) => { events.push(['write', ...args]); return write; } },
+    store: { addTask: (payload, actor) => { events.push(['write', { ...payload }, actor]); return write; } },
     $: selector => selector === '#newTaskForm' ? currentForm : {},
     finishWrapUpLesson: id => events.push(['finish', id]), toast: value => events.push(['toast', value]), syncGuide: () => {},
     focusWrapFollowUpReceipt: id => events.push(['receipt focus',id]),
@@ -163,8 +166,8 @@ test('hosted confirmation awaits the existing task write, sending only the actua
   const submit = fragment("      if(form.id==='newTaskForm')", "      if(form.id==='scheduleForm'").replace('store.addTask(', 'await store.addTask(');
   vm.runInContext(`async function submit(form,data) {${submit}}`, context);
   const save = context.submit(form, data);
-  assert.deepEqual(events, [['write', data, 'maya']]);
-  assert.equal(JSON.stringify(events).includes(original.id), false);
+  assert.deepEqual(events, [['write', linkedData, 'maya']]);
+  assert.doesNotMatch(JSON.stringify(events), /Review <hall>|outcomeNote|memoryId/);
   assert.doesNotMatch(JSON.stringify(events), hidden);
   complete({ id: 'new-task' });
   await save;
@@ -173,6 +176,10 @@ test('hosted confirmation awaits the existing task write, sending only the actua
   assert.equal(ui.wrapMine, true);
 
   events.length = 0;
+  delete form.dataset.lessonEditedAt;
+  await assert.rejects(context.submit(form, data), /Review the source lesson/);
+  assert.deepEqual(events, []);
+  form.dataset.lessonEditedAt = editedAt;
   window.GatherAccessLost = true;
   await assert.rejects(context.submit(form, data), /can no longer add a follow-up/);
   assert.deepEqual(events, []);
@@ -181,7 +188,7 @@ test('hosted confirmation awaits the existing task write, sending only the actua
   const unsuccessful = context.submit(form, data);
   fail(new Error('not saved'));
   await assert.rejects(unsuccessful, /not saved/);
-  assert.deepEqual(events, [['write', data, 'maya']]);
+  assert.deepEqual(events, [['write', linkedData, 'maya']]);
 
   events.length = 0;
   currentForm = { ...form };
@@ -199,7 +206,7 @@ test('hosted confirmation awaits the existing task write, sending only the actua
     change();
     complete({ id: 'new-task' });
     await pending;
-    assert.deepEqual(events.splice(0), [['write', data, 'maya']], 'never closes or relabels a replacement context');
+    assert.deepEqual(events.splice(0), [['write', linkedData, 'maya']], 'never closes or relabels a replacement context');
     reset();
   }
 });

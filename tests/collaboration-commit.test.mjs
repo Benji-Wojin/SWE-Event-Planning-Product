@@ -983,3 +983,56 @@ test('verification cannot overwrite a prerequisite reopened while verification w
   assert.equal(finished.result.status, 'done');
   assert.equal(finished.result.completionResult.reporter, teammate.displayName);
 });
+
+test('lesson follow-up creation validates the reviewed source within the authorized project', async () => {
+  const { project, actor } = await setup();
+  let foreignProject;
+  try {
+    const created = await as(organizer, () => projects.POST(request('/api/projects', {
+      requestId: crypto.randomUUID(), event: { name: 'Separate fictional project' },
+    })));
+    assert.equal(created.status, 201, await created.clone().text());
+    foreignProject = (await created.json()).id;
+    const foreign = (await save(foreignProject, organizer, 'addMemory', [{ change: 'Foreign source not shared here' }])).result;
+    const lesson = (await save(project, organizer, 'addMemory', [{ change: 'Fictional original lesson' }])).result;
+    const initial = { title: 'Brief the fictional team', lessonId: lesson.id, lessonEditedAt: '' };
+    const beforePermission = stored(project);
+    assert.equal((await mutate(project, teammate, 'addTask', [initial], beforePermission.revision)).status, 403);
+    assert.deepEqual(stored(project), beforePermission);
+
+    const edited = (await save(project, organizer, 'updateMemory', [lesson.id, { change: 'Fictional updated lesson' }])).result;
+    await save(project, organizer, 'completeSetup', [{ membersCanCreateTasks: true }]);
+    const beforeSave = stored(project);
+    const current = { ...initial, lessonEditedAt: edited.editedAt };
+    for (const [data, revision, status] of [
+      [initial, beforeSave.revision, 400],
+      [current, beforeSave.revision - 1, 409],
+      [{ ...current, owner: 'jack' }, beforeSave.revision, 400],
+      [{ ...initial, lessonId: foreign.id }, beforeSave.revision, 400],
+      [{ ...initial, lessonId: 'private-record-does-not-resolve' }, beforeSave.revision, 400],
+    ]) {
+      const response = await mutate(project, teammate, 'addTask', [data], revision);
+      assert.equal(response.status, status, await response.clone().text());
+      assert.doesNotMatch(await response.text(), /Foreign source not shared here/);
+      assert.deepEqual(stored(project), beforeSave);
+    }
+    assert.equal((await mutate(foreignProject, teammate, 'addTask', [initial], stored(foreignProject).revision)).status, 404);
+
+    const saved = await save(project, teammate, 'addTask', [{ ...current, owner: actor, note: 'User-written context.' }]);
+    assert.equal(saved.revision, beforeSave.revision + 1);
+    assert.equal(saved.result.memoryId, lesson.id);
+    assert.equal(saved.result.owner, actor);
+    assert.equal(saved.result.status, 'todo');
+    assert.equal(saved.result.note, 'User-written context.');
+    assert.deepEqual(saved.state.memories, JSON.parse(beforeSave.data).memories);
+    const reopened = await read(project, organizer);
+    assert.deepEqual(reopened.state.tasks.find(task => task.id === saved.result.id), saved.result);
+    assert.equal(reopened.state.tasks.filter(task => task.memoryId === lesson.id).length, 1);
+  } finally {
+    for (const id of [project, foreignProject].filter(Boolean)) {
+      sqlite.prepare('DELETE FROM project_members WHERE project_id=?').run(id);
+      sqlite.prepare('DELETE FROM project_invites WHERE project_id=?').run(id);
+      sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+    }
+  }
+});

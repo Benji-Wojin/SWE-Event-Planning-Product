@@ -3,6 +3,7 @@
   const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // Partition recorded task facts, never event dates, into mutually exclusive
   // groups. A legacy Done record that still requires verification is not final.
+  const awaitingVerification=task=>!!(task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done'));
   function groups(state,scope={}) {
     const tasks=scope.mine?state.tasks.filter(task=>!!scope.actor&&task.owner===scope.actor):state.tasks;
     const result=[
@@ -11,8 +12,7 @@
       {key:'completed',title:'Recorded completions',help:'These task records are marked complete, with required verification recorded where applicable. This is not independent proof of the outcome.',tasks:[]},
     ];
     for(const task of tasks) {
-      const pending=task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done');
-      result[pending?1:task.status==='done'?2:0].tasks.push(task);
+      result[awaitingVerification(task)?1:task.status==='done'?2:0].tasks.push(task);
     }
     return result;
   }
@@ -113,5 +113,5 @@
       <p id="reuseChecklistCount" role="status" class="muted">0 of ${reuseLimit} selected.</p>
       <label class="field section-gap">Checklist to paste<textarea id="reuseChecklistPreview" rows="7" readonly></textarea></label>`;
   }
-  root.GatherWrapUp={groups,markup,openWorkKinds,reuseLimit,reusableTitles,reconcileReusableChoices,reusableChecklist,reusableRows,reusablePicker};
+  root.GatherWrapUp={groups,markup,openWorkKinds,awaitingVerification,reuseLimit,reusableTitles,reconcileReusableChoices,reusableChecklist,reusableRows,reusablePicker};
 })(typeof window!=='undefined'?window:globalThis);

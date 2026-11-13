@@ -120,9 +120,11 @@
           task.completionReportSourceId ??= "";
           if(task.completionReportEmailHistory!==undefined&&!validCompletionEmailHistory(task.completionReportEmailHistory))
             delete task.completionReportEmailHistory;
+          // Only snapshots predating structured provenance need note migration.
+          // An explicit empty memoryId means this task is not linked to a lesson.
+          const legacyMemory = task.memoryId === undefined && state.memories.find((memory) => task.note.includes(`Event memory ${memory.id}:`));
           task.memoryId ??= "";
           task.suggestionId ??= "";
-          const legacyMemory = state.memories.find((memory) => task.note.includes(`Event memory ${memory.id}:`));
           if (legacyMemory) {
             task.memoryId = legacyMemory.id;
             task.suggestionId ||= `lesson-${legacyMemory.id}`;
@@ -313,9 +315,22 @@
       actorId(actor);
       if (actor !== 'jack') {
         if (state.event.membersCanCreateTasks !== true) throw new Error('Only the organizer can add tasks.');
-        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','scope','owner','dueDate','status','dependencies'].includes(key))) throw new Error('Teammates can add a task name, context, outcome, category, due date, owner and reviewed links.');
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key => !['title','category','note','scope','owner','dueDate','status','dependencies','lessonId','lessonEditedAt'].includes(key))) throw new Error('Teammates can add a task name, context, outcome, category, due date, owner and reviewed links.');
         if (data.owner && data.owner !== actor) throw new Error('Assign the new task to yourself or leave it unassigned.');
         if (data.status !== undefined && data.status !== 'todo') throw new Error('New teammate tasks start as To do. Report progress after creating the task.');
+      }
+      let memoryId = '';
+      if (Object.hasOwn(data,'lessonId') || Object.hasOwn(data,'lessonEditedAt')) {
+        if (!Object.hasOwn(data,'lessonId') || !Object.hasOwn(data,'lessonEditedAt') ||
+          typeof data.lessonId !== 'string' || !data.lessonId.trim() || typeof data.lessonEditedAt !== 'string')
+          throw new Error('Review the source lesson before saving this follow-up.');
+        const matches = state.memories.filter(memory => memory.id === data.lessonId);
+        const lesson = matches.length === 1 ? matches[0] : null;
+        if (!lesson?.active || lesson.outcome === 'did-not-help' || !lesson.change.trim())
+          throw new Error('This lesson is no longer available for a follow-up. Review the current lesson before saving.');
+        if ((lesson.editedAt || '') !== data.lessonEditedAt)
+          throw new Error('This lesson changed after you opened the draft. Review the current lesson before saving.');
+        memoryId = lesson.id;
       }
       const links=data.dependencies===undefined?[]:data.dependencies;
       if(!Array.isArray(links)||links.length>8||new Set(links.map(link=>link?.taskId)).size!==links.length||links.some(link=>!link||typeof link!=='object'||Array.isArray(link)||Object.keys(link).some(key=>!['taskId','kind','reason'].includes(key))||typeof link.taskId!=='string'||!['dependency','related'].includes(link.kind)||typeof link.reason!=='string'||!link.reason.trim()||link.reason.length>2000))throw new Error('Review up to eight different linked tasks and explain each relationship.');
@@ -328,6 +343,7 @@
       // must not let a coincident new ID introduce a cycle or partial creation.
       if(links.some(link=>link.kind!=='related'&&dependsOn(link.taskId,task.id))){state.tasks.shift();throw new Error('These tasks would depend on each other. Choose different linked work.');}
       task.schedule = schedule;
+      task.memoryId = memoryId;
       if(data.eventActivity===true)task.eventActivity=true;
       for(const link of links)linkDependency(task,taskById(link.taskId),actor,false,'',link.kind,clean(link.reason,2000));
       entry(actor, `created ${task.title}`, task.id, "created");
@@ -995,7 +1011,10 @@
       if (!['always','outdoor','transport','same-venue'].includes(scope) || !['untested','helped','did-not-help'].includes(outcome)) throw new Error('Choose valid lesson context and outcome.');
       const change = data.change === undefined ? memory.change : clean(data.change,3000);
       if (!change) throw new Error('Keep a useful lesson for the next event.');
-      Object.assign(memory,{ change, scope, outcome, context: clean(data.context ?? memory.context,2000), outcomeNote: clean(data.outcomeNote ?? memory.outcomeNote,2000), active: data.active === undefined ? memory.active : data.active === true || data.active === 'true', editedAt: timestamp() });
+      const now=timestamp(), previousEdit=Date.parse(memory.editedAt);
+      // Consecutive edits must not share a review stamp, even on the same clock tick.
+      const editedAt=Date.parse(now)<=previousEdit ? new Date(previousEdit+1).toISOString() : now;
+      Object.assign(memory,{ change, scope, outcome, context: clean(data.context ?? memory.context,2000), outcomeNote: clean(data.outcomeNote ?? memory.outcomeNote,2000), active: data.active === undefined ? memory.active : data.active === true || data.active === 'true', editedAt });
       entry(actor,'updated a lesson’s applicability and outcome','','memory-updated'); save(); return copy(memory);
     }
     function memoryApplies(memory) { return memory.active && memory.outcome !== 'did-not-help' && (memory.scope === 'always' || memory.scope === 'outdoor' && state.event.outdoor || memory.scope === 'transport' && state.event.transportNeeded || memory.scope === 'same-venue' && memory.venue === state.event.location); }
@@ -1387,7 +1406,7 @@
         if (memory.id === "memory-quiet") return;
         if (!memoryApplies(memory)) return;
         const title = `Apply lesson: ${clean(memory.change, 150)}`;
-        if (state.tasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title) || task.note.includes(`Event memory ${memory.id}:`))) return;
+        if (state.tasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title))) return;
         candidates.push({ id: `lesson-${memory.id}`, title: "Event feedback", body: memory.change, source: `Event feedback · ${memory.scope === 'outdoor' ? 'outdoor event' : memory.scope === 'transport' ? 'transport planned' : memory.scope === 'same-venue' ? 'same venue' : 'all events'}${memory.outcome === 'helped' ? ' · previously helped' : ''}`, category: memory.category || "Guest care", reason: "team-feedback", task: { title, category: memory.category || "Guest care", owner: "", dueDate: "", note: `From event feedback: ${memory.change}${memory.context ? `\nApplies when: ${memory.context}` : ''}${memory.wentWell ? `\nKeep what worked: ${memory.wentWell}` : ""}` } });
       });
       return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner && member.active !== false) ? suggestion.task.owner : ''}}));
@@ -1398,7 +1417,7 @@
       const suggestion = suggestionCandidates().find((item) => item.id === suggestionId);
       if (!suggestion) {
         const known = { rain: /\brain\b|weather/, accessibility: /accessib|mobility|lift access|wheelchair/, quiet: /quiet|calm space|rest area/ };
-        const task = state.tasks.find((item) => known[suggestionId]?.test(`${item.title} ${item.note}`) || item.suggestionId === suggestionId || (suggestionId.startsWith("lesson-") && (item.memoryId === suggestionId.slice(7) || item.note.includes(`Event memory ${suggestionId.slice(7)}:`))));
+        const task = state.tasks.find((item) => known[suggestionId]?.test(`${item.title} ${item.note}`) || item.suggestionId === suggestionId || (suggestionId.startsWith("lesson-") && item.memoryId === suggestionId.slice(7)));
         return task ? copy(task) : null;
       }
       const existing = state.tasks.find((task) => normalize(task.title) === normalize(suggestion.task.title));
