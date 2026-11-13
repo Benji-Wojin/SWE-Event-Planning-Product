@@ -39,6 +39,43 @@ test('required verification is unresolved even for a legacy done record; verifie
   assert.deepEqual(g.acceptance,[]);assert.deepEqual(linked(ui.preparationReview(s,now)),['reported','legacy-done']);
 });
 
+test('before-event completion and amendment rows route only organizers to the existing review',()=>{
+  const amended=task('amended"<>',{title:'Fictional <updated evidence>',owner:'jack',status:'done',
+    schedule:slot(),requiresVerification:true,reportedAt:now,verifiedAt:now,
+    completionEvidence:{note:'PRIVATE-AMENDMENT-NOTE',links:['https://example.com/private-evidence'],fileIds:['PRIVATE-FILE-ID']}});
+  const pending=task('reported',{owner:'jack',status:'progress',requiresVerification:true,reportedAt:now,
+    dependencies:[{taskId:'other-required',kind:'dependency'}],note:'PRIVATE-REPORT-NOTE'});
+  const legacy=task('legacy-done',{owner:'jack',status:'done',requiresVerification:true});
+  const other=task('other-reported',{owner:'maya',status:'progress',requiresVerification:true,reportedAt:now});
+  const prerequisite=task('other-required',{owner:'maya',status:'todo'});
+  const s=state([amended,pending,legacy,other,prerequisite]),before=structuredClone(s);
+  const group=(html,title)=>[...html.matchAll(/<details class="before-event-group"[^>]*><summary>([^<]*)<\/summary>([\s\S]*?)<\/details>/g)]
+    .find(([,heading])=>heading.startsWith(title+' · '))?.[2]||'';
+  const reviewRoutes=html=>[...html.matchAll(/data-action="review-organizer-item" data-id="([^"]+)" data-review-kind="([^"]+)"/g)]
+    .map(([,id,kind])=>[id,kind]);
+  const mine={mine:true,actor:'jack'};
+  const organizer=ui.preparationReview(s,now,mine,true);
+  const completionRows=group(organizer,'Completion needs verification');
+  const amendmentRows=group(organizer,'Evidence amended after verification');
+  assert.deepEqual(reviewRoutes(completionRows),[[pending.id,'completion']]);
+  assert.deepEqual(reviewRoutes(amendmentRows),[[h(amended.id),'amendment']]);
+  assert.deepEqual(reviewRoutes(organizer),[[pending.id,'completion'],[h(amended.id),'amendment']],
+    'a pending task in another group gets only the generic task route there');
+  assert.deepEqual(linked(completionRows),[legacy.id],'historical Done with no report has no review action');
+  assert.match(amendmentRows,/Fictional &lt;updated evidence&gt;/);
+  assert.doesNotMatch(organizer,/other-reported|other-required/);
+  assert.ok(reviewRoutes(ui.preparationReview(s,now,{},true)).some(([id,kind])=>id===other.id&&kind==='completion'));
+
+  const teammate=ui.preparationReview(s,now,mine,false);
+  assert.deepEqual(reviewRoutes(teammate),[]);
+  assert.deepEqual(linked(group(teammate,'Completion needs verification')),[pending.id,legacy.id]);
+  assert.deepEqual(linked(group(teammate,'Evidence amended after verification')),[h(amended.id)]);
+  for(const html of [organizer,teammate]){
+    assert.doesNotMatch(html,/PRIVATE-|private-evidence|<form|data-action="(?:verify-task|review-completion-evidence|toggle-task|report-task|return-completion)"/);
+  }
+  assert.deepEqual(s,before);
+});
+
 test('prerequisites use actual linked completion and verification, not related links or guessed dates',()=>{
   const s=state([task('required',{status:'done',requiresVerification:true}),task('done',{status:'done'}),
     task('blocked-link',{dependencies:[{taskId:'required',kind:'dependency'}]}),

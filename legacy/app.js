@@ -162,9 +162,11 @@
       if(!target)return false;
       target.focus({preventScroll:true});return true;
     }
-    const target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
-      el.tagName===previous.tagName&&['action','id','view','filter'].every(key=>el.dataset[key]===previous.dataset[key])&&
+    let target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
+      el.tagName===previous.tagName&&['action','id','view','filter','reviewKind'].every(key=>el.dataset[key]===previous.dataset[key])&&
       (previous.dataset.id||el.textContent===previous.textContent));
+    if(!target&&previous.dataset.action==='review-organizer-item'&&previous.classList.contains('schedule-focus-task'))
+      target=focusable(root).find(el=>el.classList.contains('schedule-row')&&el.dataset.action==='task'&&el.dataset.id===previous.dataset.id);
     if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
   }
@@ -737,7 +739,9 @@
     if(!isOrganizer()||window.GatherAccessLost)return;
     const review=GatherRecoveryUI.organizerReviews(store.getState().tasks).find(row=>row.task.id===id&&row.kind===kind);
     if(!review){
-      render();toast('This review is no longer pending.');return;
+      if(ui.dialogKind==='before-event-review')beforeEventReview();
+      else render();
+      toast('This review is no longer pending.');return;
     }
     taskDialog(id);
     requestAnimationFrame(()=>{
@@ -1885,7 +1889,7 @@
   function refreshScheduleClock() {
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;
     const target=$('[data-schedule-clock]');if(!target)return;
-    const live=schedule.clock(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
+    const live=schedule.clock(store.getState(),Date.now(),{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},isOrganizer());
     // The timetable stays put; follow keyboard focus to the same activity when
     // it moves from Next to Now, or from the focus strip into the full timetable.
     const active=target.contains(document.activeElement)?document.activeElement:null;

@@ -7,7 +7,7 @@ const source=readFileSync('legacy/app.js','utf8');
 const filterSource=source.slice(source.indexOf('  function hiddenByClosedDisclosure('),source.indexOf('  function skipToContent('));
 const restoreSource=source.slice(source.indexOf('  function restoreFocus('),source.indexOf('  function saveLock('));
 function element(tag,extra={}){
-  return {tagName:tag,parentElement:null,children:[],tabIndex:0,disabled:false,hidden:false,inert:false,isConnected:true,dataset:{},textContent:'',
+  return {tagName:tag,parentElement:null,children:[],tabIndex:0,disabled:false,hidden:false,inert:false,isConnected:true,dataset:{},textContent:'',classList:{contains:()=>false},
     matches(selector){return selector===':disabled'?this.disabled:['INPUT','SELECT','TEXTAREA'].includes(this.tagName);},
     getClientRects(){return this.noRects?[]:[{}];},
     closest(){for(let el=this;el;el=el.parentElement)if(el.hidden||el.inert)return el;return null;},
@@ -98,6 +98,30 @@ test('restoration refuses a connected field hidden by collapse but can restore i
   const f=fixture();assert.equal(f.ctx.restore(f.input,f.root),false);assert.notEqual(f.input.focused,true);
   assert.equal(f.ctx.restore(f.summary,f.root),true);assert.equal(f.summary.focused,true);
   f.details.open=true;assert.equal(f.ctx.restore(f.input,f.root),true);assert.equal(f.input.focused,true);
+});
+
+test('focus stays on the same schedule review or falls back only to that activity’s dated row',()=>{
+  const f=fixture(),scheduleButton=(kind,id,classes)=>element('BUTTON',{
+    dataset:{action:kind?'review-organizer-item':'task',id,reviewKind:kind},
+    classList:{contains:name=>classes.includes(name)},
+  });
+  const previous=scheduleButton('completion','hall',['schedule-focus-task']);previous.isConnected=false;
+  const row=scheduleButton(undefined,'hall',['schedule-row']);
+  const otherRow=scheduleButton(undefined,'other',['schedule-row']);
+  const genericCard=scheduleButton(undefined,'hall',['schedule-focus-task']);
+  const amendment=scheduleButton('amendment','hall',['schedule-focus-task']);
+  const exact=scheduleButton('completion','hall',['schedule-focus-task']);
+  append(f.root,otherRow,genericCard,row,amendment,exact);
+  f.controls.push(otherRow,genericCard,row,amendment,exact);
+  assert.equal(f.ctx.restore(previous,f.root),true);
+  assert.equal(exact.focused,true);
+  assert.notEqual(row.focused,true);
+  exact.hidden=true;
+  assert.equal(f.ctx.restore(previous,f.root),true);
+  assert.equal(row.focused,true);
+  row.hidden=true;
+  assert.equal(f.ctx.restore(previous,f.root),false);
+  for(const other of [otherRow,genericCard,amendment])assert.notEqual(other.focused,true);
 });
 
 function taskListFixture(){

@@ -35,6 +35,26 @@ test('review group follows My activities and includes no other owner, unassigned
   assert.match(ui.clock(input,now).markup,/Completion awaiting verification · 3/);
 });
 
+test('organizer live cards open the exact review while timetable, teammate and snapshot links stay unchanged',()=>{
+  const input=state([task('pending'),task('amended',{status:'done',verifiedAt:now,completionEvidence:{note:'PRIVATE_EVIDENCE'}}),
+    task('legacy',{status:'done',reportedAt:''}),task('outside',{owner:'dev'})]);
+  const before=structuredClone(input),scope={mine:true,actor:'maya',date:'2026-11-20'};
+  const expected=[['pending','completion'],['amended','amendment']];
+  const reviewLinks=markup=>[...markup.matchAll(/data-action="review-organizer-item" data-id="([^"]+)" data-review-kind="([^"]+)"/g)].map(([,id,kind])=>[id,kind]);
+  const organizer=ui.view(input,true,now,scope),clock=ui.clock(input,now,scope,true).markup;
+  assert.deepEqual(reviewLinks(organizer),expected);
+  assert.deepEqual(reviewLinks(clock),expected);
+  assert.deepEqual(ids(clock),['legacy']);
+  assert.equal(ids(organizer).filter(id=>id==='pending').length,1,'the dated row still opens the ordinary task');
+  assert.equal(ids(organizer).filter(id=>id==='amended').length,1);
+  assert.deepEqual(reviewLinks(ui.view(input,false,now,scope)),[]);
+  assert.deepEqual(reviewLinks(ui.clock(input,now,scope).markup),[]);
+  const sheet=ui.runSheet(input,now,scope);
+  assert.doesNotMatch(organizer+clock+sheet,/PRIVATE_EVIDENCE|data-action="verify-task"|>outside</);
+  assert.doesNotMatch(sheet,/data-action=|data-review-kind=/);
+  assert.deepEqual(input,before);
+});
+
 test('verification focus uses escaped schedule facts and never includes report, evidence or comments',()=>{
   const item=task('id"<>',{title:'<img src=x>',owner:'<owner>',note:'PRIVATE-NOTE',completionResult:{text:'PRIVATE-RESULT'},comments:[{text:'PRIVATE-COMMENT'}],completionEvidence:{note:'PRIVATE-EVIDENCE',links:['https://private.example']}});
   item.schedule.location='<script>hall</script>';

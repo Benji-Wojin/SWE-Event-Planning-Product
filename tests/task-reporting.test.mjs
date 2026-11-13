@@ -447,7 +447,7 @@ test('organizer review opens the section for the current task state without muta
     taskDialog(taskId){calls.push(taskId);ui.dialogKind='task';ui.detailId=taskId;},
     requestAnimationFrame:fn=>frames.push(fn),
     $(selector,root){if(selector==='#dialog')return dialog;assert.equal(root,dialog);return {focus:()=>calls.push(selector)};},
-    render:()=>calls.push('render'),toast:message=>calls.push(message),
+    beforeEventReview:()=>calls.push('refresh event review'),render:()=>calls.push('render'),toast:message=>calls.push(message),
   });
   vm.runInContext(source.slice(start,end),context);
   const open=(kind='completion')=>context.openOrganizerReview(id,kind);
@@ -470,7 +470,9 @@ test('organizer review opens the section for the current task state without muta
   organizer=true;window.GatherAccessLost=true;open();
   assert.deepEqual(calls,[]);
   window.GatherAccessLost=false;open('amendment');
-  assert.deepEqual(calls,['render','This review is no longer pending.']);
+  assert.deepEqual(calls.splice(0),['render','This review is no longer pending.']);
+  ui.dialogKind='before-event-review';open('amendment');
+  assert.deepEqual(calls,['refresh event review','This review is no longer pending.']);
   assert.equal(frames.length,0);
   assert.equal(store.exportState(),blocked);
 });
