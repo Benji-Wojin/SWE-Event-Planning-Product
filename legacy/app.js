@@ -322,6 +322,7 @@
     const mobileLabel=label=>`<span class="task-card-label" aria-hidden="true">${label}</span>`;
     let decision=null;
     if(ui.tab==='attention'&&organizer) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
+    const reply=ui.tab==='mine'&&task.owner===ui.actor&&recovery.recoveryReply(task,false);
     return `<tr role="row"${task.id===guideTaskId?' class="guide-first-task-row"':''}>
       <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" data-task-focus="${inspect?'inspect':done?'reopen':'complete'}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
       <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}" data-task-focus="name">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
@@ -329,7 +330,7 @@
       <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}" data-task-focus="links">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
       <td role="cell" class="task-cell-due" headers="tasks-due">${mobileLabel('Due')}${due(task)}</td>
       <td role="cell" class="task-cell-update" headers="tasks-update">${mobileLabel('Latest update')}<div class="task-meta">${h(updateAttribution(update))}</div><div class="task-note-preview" title="${h(update.text)}">${h(update.text || 'No progress note yet')}</div></td>
-      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details" aria-label="${decision?'Review plan for':'Open task:'} ${title}">${decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
+      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision||reply?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details"${reply?' data-open-recovery-reply':''} aria-label="${reply?'Review organizer response for':decision?'Review plan for':'Open task:'} ${title}">${reply?'Review organizer response':decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,taskIds,compact=false) {
@@ -1705,14 +1706,16 @@
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task'){
-        const requestLink=el.hasAttribute('data-open-recovery');
-        const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink)&&$('#dialogBackdrop').hidden;
-        const current=requestLink&&store.getState().tasks.find(task=>task.id===id);
+        const requestLink=el.hasAttribute('data-open-recovery'),replyLink=el.hasAttribute('data-open-recovery-reply');
+        const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink||replyLink)&&$('#dialogBackdrop').hidden;
+        const current=(requestLink||replyLink)&&store.getState().tasks.find(task=>task.id===id);
         const toRecovery=current&&current.status!=='done'&&!(current.requiresVerification&&current.reportedAt&&!current.verifiedAt)&&
-          ['date','help'].includes(GatherPriorities.pendingRequest(current)?.kind);
-        taskDialog(id,'',false,captureOrigin||requestLink,eventReviewGroup);
+          requestLink&&['date','help'].includes(GatherPriorities.pendingRequest(current)?.kind);
+        const toReply=current&&replyLink&&ui.view==='tasks'&&ui.tab==='mine'&&current.owner===ui.actor&&recovery.recoveryReply(current,false);
+        taskDialog(id,'',false,captureOrigin||requestLink||replyLink,eventReviewGroup);
         if(captureOrigin&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
-        if(toRecovery)focusTaskRecovery(id);
+        if(toReply)focusTaskRecovery(id,'#recoveryReplyHeading');
+        else if(toRecovery)focusTaskRecovery(id);
       }
       if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){

@@ -540,6 +540,41 @@ test('an event-day request link rechecks the task before focusing recovery and k
   assert.equal(ui.lastFocus,original,'drilling in from Before the event preserves its original return focus');
 });
 
+test('My tasks reply shortcut opens only a still-current response and retains the row opener',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf("      if(action==='task'){\n        const requestLink");
+  const end=source.indexOf("      if(action==='inspect-acceptance-task')",start);
+  assert.ok(start>=0&&end>start);
+  const store=create();
+  const {id}=store.addTask({title:'Fictional response',status:'blocked',owner:'maya'});
+  store.requestRecovery(id,{kind:'help',note:'Fictional request'},'maya');
+  const current=()=>store.getState().tasks.find(task=>task.id===id);
+  const requestId=GatherPriorities.pendingRequest(current()).id;
+  store.resolveRecovery(id,{requestId,action:'checkin',note:'Keep the plan.',reviewAfter:'2099-10-01'},'jack');
+  const ui={actor:'maya',view:'tasks',tab:'mine',dialogKind:'',detailId:''},backdrop={hidden:true},calls=[];
+  const recovery=GatherRecoveryUI.create({store,ui,h:String,options:()=>'',dayLabel:String,member:id=>({name:id})});
+  const el={dataset:{taskFocus:'details'},hasAttribute:name=>name==='data-open-recovery-reply'};
+  const ctx=vm.createContext({el,ui,$:()=>backdrop,id,action:'task',eventReviewGroup:'',store,GatherPriorities,recovery,
+    focusTaskRecovery:(...args)=>calls.push(args),
+    taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=id;}});
+  const open=()=>vm.runInContext(source.slice(start,end),ctx);
+  let before=store.exportState();
+  open();
+  assert.deepEqual(calls.splice(0),[[id,'',false,true,''],[id,'#recoveryReplyHeading']]);
+  assert.equal(ui.lastFocus,el);
+  assert.equal(store.exportState(),before);
+
+  ui.tab='all';
+  open();
+  assert.deepEqual(calls.splice(0),[[id,'',false,true,'']]);
+  ui.tab='mine';
+  store.requestRecovery(id,{kind:'date',note:'A new question.',proposedDate:'2099-10-02'},'maya');
+  before=store.exportState();
+  open();
+  assert.deepEqual(calls.splice(0),[[id,'',false,true,'']],'an outdated reply link still opens ordinary task details');
+  assert.equal(store.exportState(),before);
+});
+
 test('ready-to-resume task dialogs distinguish required results and unavailable ownership', () => {
   const store=create();
   store.addDependency('catering',{taskId:'volunteers',kind:'related',reason:'Coordinate food for volunteers.'});

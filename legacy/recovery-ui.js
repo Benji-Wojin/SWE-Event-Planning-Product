@@ -79,14 +79,17 @@
       return '<form id="nextUpForm" data-id="'+h(task.id)+'" class="next-up-control"><input type="hidden" name="enabled" value="'+(!task.nextUpAt)+'"><span id="nextUpTaskState" tabindex="-1">'+current+'</span>'+acceptNotice+
         (task.nextUpAt?'<button class="text-button" type="submit">Remove from Next up</button>':(active.length>=3?'<label class="field">Swap with<select name="replaceTaskId" required>'+options([['','Choose a current commitment'],...active.map(t=>[t.id,t.title])],'')+'</select></label>':'')+'<button class="btn btn-secondary btn-small" type="submit">'+(active.length>=3?'Swap into Next up':'Commit to this next')+'</button>')+'</form>';
     }
-    function recoveryMarkup(task,organizer) {
-      const s=state(),request=P.pendingRequest(task),decision=organizer?P.decision(task,s.tasks,new Date(),s.event.timeZone):null;
+    function recoveryReply(task,organizer) {
       // This is a historical response, not a projection of today's due date,
       // owner, outcome, or check-in. A newer request replaces the receipt.
       const latest=task.recoveryRequests?.at(-1);
-      const answered=!root.GatherAccessLost&&!request&&latest?.status==='resolved'&&['date','help'].includes(latest.kind)&&
-        Object.hasOwn(requestDecisionLabels,latest.decision)&&(organizer||latest.createdBy===ui.actor);
-      const reply=answered?'<section class="task-recovery section-gap" aria-labelledby="recoveryReplyHeading"><h3 id="recoveryReplyHeading" tabindex="-1">Organizer response</h3><p><strong>'+requestDecisionLabels[latest.decision]+'</strong> · '+(latest.kind==='date'?'Date proposal':'Help request')+'</p><p>'+h(latest.decisionNote)+'</p><p class="muted">This is the saved reply to the request. See Comments for the full decision and check-in.</p></section>':'';
+      return !root.GatherAccessLost&&!P.pendingRequest(task)&&latest?.status==='resolved'&&['date','help'].includes(latest.kind)&&
+        Object.hasOwn(requestDecisionLabels,latest.decision)&&(organizer||latest.createdBy===ui.actor)?latest:null;
+    }
+    function recoveryMarkup(task,organizer) {
+      const s=state(),request=P.pendingRequest(task),decision=organizer?P.decision(task,s.tasks,new Date(),s.event.timeZone):null;
+      const latest=recoveryReply(task,organizer);
+      const reply=latest?'<section class="task-recovery section-gap" aria-labelledby="recoveryReplyHeading"><h3 id="recoveryReplyHeading" tabindex="-1">Organizer response</h3><p><strong>'+requestDecisionLabels[latest.decision]+'</strong> · '+(latest.kind==='date'?'Date proposal':'Help request')+'</p><p>'+h(latest.decisionNote)+'</p><p class="muted">This is the saved reply to the request. See Comments for the full decision and check-in.</p></section>':'';
       if(!request&&!decision)return reply;
       let html=reply+'<section class="task-recovery section-gap"><h3 id="recoveryRequestHeading" tabindex="-1">'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
       if(request)html+='<p>'+h(request.note)+'</p>'+(request.kind==='date'?'<div class="date-proposal"><span>Current: '+dayLabel(task.dueDate)+'</span><strong>Proposed: '+dayLabel(request.proposedDate)+'</strong></div>':'')+'<p class="muted">'+(organizer?'From '+h(member(request.createdBy).name):'Awaiting the organizer. Your current plan is unchanged.')+'</p>';
@@ -132,7 +135,7 @@
       form.elements.dueDate.min=dateKey();form.elements.reviewAfter.min=tomorrow();
       form.querySelector('[data-owner-load]').innerHTML=ownerLoad(form.elements.owner.value);
     }
-    return {nextUpPanel,organizerReviewPanel,responseMarkup,recoveryMarkup,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
+    return {nextUpPanel,organizerReviewPanel,responseMarkup,recoveryMarkup,recoveryReply,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
   }
   root.GatherRecoveryUI={create,organizerReviews};
 })(typeof window!=='undefined'?window:globalThis);
