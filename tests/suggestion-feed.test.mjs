@@ -1,5 +1,6 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 let Feed;
 before(async () => {
@@ -86,6 +87,17 @@ const initial = () => ({
   retryAfter: 0,
   existingTasks: [],
 });
+const receipt = ({ generation, items }, taskIds = ['created']) => ({
+  generation, approvalHash: createHash('sha256').update(JSON.stringify({ generation, items })).digest('hex'), taskIds,
+});
+const ready = data => ({ ...data, status: 'ready', draft: { generation: 'one', items: [item('one'), item('two')], duplicateSuggestions: [] } });
+const button = (app, label) => nodes(app.tree).find(node => node.type === 'button' && text(node) === label);
+const actions = app => app.calls.map(call => call.action);
+const appliedMessages = app => app.messages.filter(message => message.event === 'applied');
+const parentRefresh = async app => {
+  app.listeners.message?.({ origin: location.origin, source: window.parent, data: { type: 'weft-context-changed' } });
+  await app.settle();
+};
 function harness(server) {
   const saved = Object.fromEntries(
     [
@@ -103,7 +115,7 @@ function harness(server) {
     storage = new Map(),
     listeners = {},
     calls = [],
-    messages = [];
+    messages = [], focused = [];
   let cursor = 0,
     changed = true,
     effects = [],
@@ -176,6 +188,9 @@ function harness(server) {
         cursor = 0;
         effects = [];
         tree = Feed({ query: 'project=fixture&mode=suggestions' });
+        // Model attaching the receipt status ref before effects run.
+        const receiptStatus = nodes(tree).find(node => node.props?.role === 'status' && node.props?.ref);
+        if (receiptStatus) receiptStatus.props.ref.current = { focus: () => focused.push(text(receiptStatus)) };
         effects.forEach((f) => f());
       }
       await new Promise((r) => setImmediate(r));
@@ -186,6 +201,7 @@ function harness(server) {
     calls,
     storage,
     messages,
+    focused,
     listeners,
     get data() {
       return data;
@@ -234,7 +250,7 @@ test('automatic suggestions require scoped opt-in, stay stable, dismiss locally 
           },
         }
       : input?.action === 'apply'
-        ? { ...data, receipt: { taskIds: ['created'] }, status: 'applied' }
+        ? { ...data, receipt: receipt(input), status: 'applied' }
         : undefined,
   );
   try {
@@ -474,48 +490,130 @@ test('stale cards with consent off explain how to re-enable instead of exposing 
   } finally { app.restore(); }
 });
 
-test('a rejected Add reloads current revisions once without replaying the mutation', async () => {
+test('a rejected Add stays locked until an explicit GET returns fresh context and the user confirms again', async () => {
   let first = true;
   const app = harness((input, data) => {
     if (input?.action === 'apply' && first) {
       first = false;
-      app.data = { ...data, workspaceRevision: 7 };
       return Response.json({ error: 'Project changed' }, { status: 409 });
     }
-    if (input?.action === 'apply') return { ...data, receipt: { taskIds: ['new-task'] }, status: 'applied' };
+    if (input?.action === 'apply') return { ...data, receipt: receipt(input, ['new-task']), status: 'applied' };
   });
   try {
-    app.data = { ...app.data, status: 'ready',
-      draft: { generation: 'one', items: [item('one')], duplicateSuggestions: [] } };
+    app.data = ready(app.data);
     await app.settle();
     await app.click('Add task');
-    assert.equal(app.calls.filter(c => c.action === 'apply').length, 1);
-    assert.equal(app.calls.filter(c => c.action === 'get').length, 2);
+    assert.deepEqual(actions(app), ['get', 'apply']);
+    assert.equal(button(app, 'Add task').props.disabled, true);
+    await app.click('Refresh before adding');
+    assert.deepEqual(actions(app), ['get', 'apply', 'get']);
+    assert.equal(button(app, 'Add task').props.disabled, true, 'unchanged server revision does not unlock a rejected approval');
+    await app.click('Reload saved suggestions');
+    assert.equal(button(app, 'Add task').props.disabled, true, 'explicit reload cannot bypass a rejected approval at the same revision');
+    app.data = { ...app.data, workspaceRevision: 7 };
+    await app.click('Refresh before adding');
+    assert.deepEqual(actions(app), ['get', 'apply', 'get', 'get', 'get']);
+    assert.equal(Boolean(button(app, 'Add task').props.disabled), false);
+    assert.equal(appliedMessages(app).length, 0);
     await app.click('Add task');
-    assert.equal(app.calls.filter(c => c.action === 'apply').at(-1).workspaceRevision, 7);
+    assert.deepEqual(actions(app), ['get', 'apply', 'get', 'get', 'get', 'apply']);
+    assert.equal(app.calls.at(-1).workspaceRevision, 7);
     assert.match(text(app.tree), /Task added/);
+    assert.equal(appliedMessages(app).length, 1);
+    assert.equal(app.focused.filter(label => /Task added/.test(label)).length, 1);
   } finally { app.restore(); }
 });
 
-test('failed reads do not loop, and a timed-out Add unlocks without automatically resending', async () => {
+test('failed receipt reads do not loop or unlock a timed-out approval', async () => {
   let readFails = false;
   const app = harness(input => {
     if (input?.action === 'apply') throw new DOMException('Timeout', 'TimeoutError');
     if (readFails) return Response.json({ error: 'Read changed' }, { status: 409 });
   });
   try {
-    app.data = { ...app.data, status: 'ready',
-      draft: { generation: 'one', items: [item('one')], duplicateSuggestions: [] } };
+    app.data = ready(app.data);
     await app.settle();
     await app.click('Add task');
-    assert.match(text(app.tree), /request timed out/);
-    assert.equal(app.calls.filter(c => c.action === 'apply').length, 1);
-    assert.equal(nodes(app.tree).find(n => n.type === 'button' && text(n) === 'Add task').props.disabled, false);
+    assert.match(text(app.tree), /timed out/i);
+    assert.deepEqual(actions(app), ['get', 'apply']);
+    assert.equal(button(app, 'Add task').props.disabled, true);
     readFails = true;
-    await app.click('Reload suggestions');
+    await app.click('Check what was added');
     await app.settle();
-    assert.equal(app.calls.filter(c => c.action === 'get').length, 2, 'one explicit GET, no retry loop');
+    await app.tick();
+    assert.deepEqual(actions(app), ['get', 'apply', 'get'], 'one explicit GET, no retry loop');
     assert.match(text(app.tree), /Read changed/);
+    assert.equal(button(app, 'Add task').props.disabled, true);
+    assert.equal(appliedMessages(app).length, 0);
+  } finally { app.restore(); }
+});
+
+test('checking a committed but lost approval confirms the exact receipt once without calling AI', async () => {
+  const app = harness((input, data) => {
+    if (input?.action !== 'apply') return;
+    app.data = { ...data, receipt: receipt(input, ['saved-task']), status: 'applied', revision: data.revision + 1,
+      workspaceRevision: data.workspaceRevision + 1, contextKey: 'after-apply', contextChanged: true };
+    throw new DOMException('Fictional timeout', 'TimeoutError');
+  });
+  try {
+    app.storage.set('weft-auto-suggestions-v1:owner:project', 'enabled');
+    app.data = ready(app.data);
+    await app.settle();
+    await app.click('Add task');
+    assert.deepEqual(actions(app), ['get', 'apply']);
+    assert.equal(appliedMessages(app).length, 0);
+    await parentRefresh(app);
+    await app.tick();
+    assert.doesNotMatch(text(app.tree), /Task added/);
+    assert.equal(button(app, 'Add task').props.disabled, true);
+    assert.equal(appliedMessages(app).length, 0);
+
+    const count = app.calls.length;
+    await app.click('Check what was added');
+    assert.deepEqual(actions(app).slice(count), ['get']);
+    assert.match(text(app.tree), /Task added/);
+    assert.equal(appliedMessages(app).length, 1);
+    assert.equal(app.focused.filter(label => /Task added/.test(label)).length, 1);
+
+    await parentRefresh(app);
+    await app.tick();
+    await app.tick();
+    assert.equal(appliedMessages(app).length, 1, 'parent refresh does not announce the same receipt again');
+    assert.equal(app.focused.filter(label => /Task added/.test(label)).length, 1, 'parent refresh does not steal focus');
+    assert.deepEqual(actions(app).filter(action => action !== 'get'), ['apply']);
+  } finally { app.restore(); }
+});
+
+test('a different receipt for the same generation cannot confirm this card', async () => {
+  const app = harness((input, data) => {
+    if (input?.action !== 'apply') return;
+    const other = { ...input, items: input.items.map(row => ({ ...row, included: row.id === 'two' })) };
+    return { ...data, receipt: receipt(other, ['different-task']), status: 'applied', revision: data.revision + 1,
+      workspaceRevision: data.workspaceRevision + 1, contextKey: 'different-approval', contextChanged: true };
+  });
+  try {
+    app.storage.set('weft-auto-suggestions-v1:owner:project', 'enabled');
+    app.data = ready(app.data);
+    await app.settle();
+    await app.click('Add task');
+    await app.click('Check what was added');
+    await parentRefresh(app);
+    await app.tick();
+    assert.equal(appliedMessages(app).length, 0);
+    assert.doesNotMatch(text(app.tree), /Task added/);
+    assert.match(text(app.tree), /Prepare one/);
+    assert.equal(button(app, 'Add task').props.disabled, true);
+    assert.deepEqual(actions(app).filter(action => action !== 'get'), ['apply']);
+    await app.click('Turn off');
+    assert.equal(app.storage.has('weft-auto-suggestions-v1:owner:project'), false, 'consent revocation is available while approval is unconfirmed');
+    const count = app.calls.length;
+    await app.click('Reload saved suggestions');
+    assert.deepEqual(actions(app).slice(count), ['get']);
+    assert.match(text(app.tree), /These saved suggestions were already applied/);
+    assert.doesNotMatch(text(app.tree), /Task added/);
+    assert.doesNotMatch(text(app.tree), /Prepare one/);
+    assert.equal(appliedMessages(app).length, 0);
+    assert.equal(app.focused.filter(label => /Task added/.test(label)).length, 0);
   } finally { app.restore(); }
 });
 

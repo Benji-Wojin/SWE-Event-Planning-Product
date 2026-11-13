@@ -2,13 +2,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { planSelection } from '@/lib/plan-selection';
+import { planApprovalHash } from '@/lib/plan-approval-hash';
 
-async function read(query: string, body?: unknown) {
+const approvalTimeout = 15_000;
+type Approval = {
+  kind: 'uncertain' | 'conflict';
+  scope: string;
+  generation: string;
+  hash: string;
+  revision: number;
+  workspaceRevision: number;
+};
+const isAccessError = (status?: number) => status === 401 || status === 403 || status === 404;
+async function read(query: string, body?: unknown, timeout = 45_000) {
   const response = await fetch('/api/plan?' + query, {
     method: body ? 'POST' : 'GET',
     credentials: 'same-origin',
     cache: 'no-store',
-    signal: AbortSignal.timeout(45000),
+    signal: AbortSignal.timeout(timeout),
     headers: body
       ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
       : {},
@@ -18,7 +29,7 @@ async function read(query: string, body?: unknown) {
   if (!response.ok || !result?.event)
     throw Object.assign(
       new Error(result?.error || 'Could not load suggestions.'),
-      { status: response.status, staleWrite: !!body && response.status === 409 },
+      { status: response.status, staleWrite: !!body && response.status === 409, unreadable: response.ok },
     );
   return result;
 }
@@ -44,6 +55,13 @@ export function SuggestionFeed({ query }: { query: string }) {
     [error, setError] = useState(''),
     [enabled, setEnabled] = useState(false),
     [dismissed, setDismissed] = useState<string[]>([]);
+  const [approval, setApproval] = useState<Approval | null>(null);
+  const [approvalNotice, setApprovalNotice] = useState('');
+  const [confirmedApproval, setConfirmedApproval] = useState<Approval | null>(null);
+  const recovery = useRef<Approval | null>(null);
+  const pauseAutomatic = useRef(false);
+  const receiptHeading = useRef<HTMLParagraphElement>(null);
+  const focusReceipt = useRef(false);
   const pending = useRef(false),
     attempted = useRef(''),
     queuedReload = useRef(false),
@@ -57,7 +75,12 @@ export function SuggestionFeed({ query }: { query: string }) {
       ':' +
       data.draft?.generation
     : '';
-  async function run(operation: () => Promise<void>) {
+  function updateApproval(value: Approval | null) {
+    recovery.current = value;
+    setApproval(value);
+    setApprovalNotice('');
+  }
+  async function run(operation: () => Promise<void>, { reloadOnConflict = true } = {}) {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
@@ -65,15 +88,17 @@ export function SuggestionFeed({ query }: { query: string }) {
     try {
       await operation();
     } catch (e) {
-      if ([401, 403, 404].includes((e as { status?: number }).status || 0)) {
+      if (isAccessError((e as { status?: number }).status)) {
         remember(activeConsent.current, null);
         setData(null);
         setEnabled(false);
         setDismissed([]);
         queuedReload.current = false;
+        updateApproval(null);
+        setConfirmedApproval(null);
       }
       // A rejected stale write must refresh the saved snapshot, never replay the write.
-      if ((e as { staleWrite?: boolean }).staleWrite)
+      if (reloadOnConflict && (e as { staleWrite?: boolean }).staleWrite)
         queuedReload.current = true;
       setError(
         e instanceof Error && ['TimeoutError', 'AbortError'].includes(e.name)
@@ -109,7 +134,13 @@ export function SuggestionFeed({ query }: { query: string }) {
       Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [],
     );
   }
-  const reload = () => run(async () => accept(await read(query)));
+  const reload = () => run(async () => {
+    const result = await read(query);
+    // Parent updates may revalidate access, but cannot settle an explicit Add.
+    if (recovery.current && result.suggestionScope === recovery.current.scope) return;
+    if (recovery.current) updateApproval(null);
+    accept(result);
+  });
   useEffect(() => {
     void reload();
   }, [query]);
@@ -132,12 +163,17 @@ export function SuggestionFeed({ query }: { query: string }) {
       {
         type: 'weft-plan-sidebar',
         event: 'state',
-        dirty: false,
+        dirty: !!approval,
         busy: busy || data?.status === 'generating',
       },
       location.origin,
     );
-  }, [busy, data?.status]);
+  }, [approval, busy, data?.status]);
+  useEffect(() => {
+    if (!data?.receipt || !focusReceipt.current) return;
+    focusReceipt.current = false;
+    receiptHeading.current?.focus();
+  }, [data?.receipt]);
   useEffect(() => {
     const root = document.getElementById('embeddedPlan');
     if (!root) return;
@@ -156,7 +192,8 @@ export function SuggestionFeed({ query }: { query: string }) {
     return () => observer.disconnect();
   }, []);
   async function generate(fresh = false) {
-    if (!data) return;
+    if (!data || recovery.current || (!fresh && pauseAutomatic.current)) return;
+    if(fresh)pauseAutomatic.current=false;
     const initiatingScope = data.suggestionScope;
     attempted.current = data.contextKey;
     await run(async () => {
@@ -185,6 +222,8 @@ export function SuggestionFeed({ query }: { query: string }) {
   useEffect(() => {
     if (
       !data ||
+      approval ||
+      pauseAutomatic.current ||
       !enabled ||
       !data.configured ||
       busy ||
@@ -200,31 +239,76 @@ export function SuggestionFeed({ query }: { query: string }) {
       Math.max(0, data.retryAfter || 0) * 1000,
     );
     return () => window.clearTimeout(timer);
-  }, [data, enabled, busy, error]);
+  }, [data, approval, enabled, busy, error]);
   useEffect(() => {
     if (data?.status !== 'generating' || busy || error) return;
     const timer = window.setTimeout(() => void reload(), 2500);
     return () => window.clearTimeout(timer);
   }, [data?.status, data?.revision, busy, error]);
   async function add(id: string) {
+    if(recovery.current)return;
     await run(async () => {
       const items = data.draft.items.map((item: any) => ({
         ...item,
         included: item.id === id,
       }));
-      const result = await read(query, {
+      const payload = {
         action: 'apply',
         revision: data.revision,
         workspaceRevision: data.workspaceRevision,
         generation: data.draft.generation,
         items,
         confirm: true,
-      });
-      accept(result);
-      window.parent.postMessage(
-        { type: 'weft-plan-sidebar', event: 'applied' },
-        location.origin,
-      );
+      };
+      const attempt: Approval = {kind:'uncertain', scope:data.suggestionScope,
+        generation:payload.generation, hash:await planApprovalHash(payload.generation,items),
+        revision:payload.revision, workspaceRevision:payload.workspaceRevision};
+      try {
+        const result = await read(query,payload,approvalTimeout);
+        if(result.suggestionScope!==attempt.scope){accept(result);return;}
+        if(!matchesApproval(result,attempt))throw new Error('The response did not confirm this task was added.');
+        confirmApproval(result,attempt);
+      } catch(err) {
+        const {status,unreadable}=err as {status?:number;unreadable?:boolean};
+        if(status===409||!status||status===408||status>=500||unreadable){
+          pauseAutomatic.current=true;
+          updateApproval({...attempt,kind:status===409?'conflict':'uncertain'});
+        }
+        throw err;
+      }
+    },{reloadOnConflict:false});
+  }
+  function matchesApproval(result:any,attempt:Approval) {
+    return result.suggestionScope===attempt.scope&&result.receipt?.generation===attempt.generation&&
+      result.receipt.approvalHash===attempt.hash&&Array.isArray(result.receipt.taskIds);
+  }
+  function confirmApproval(result:any,attempt:Approval) {
+    updateApproval(null);
+    setConfirmedApproval(attempt);
+    focusReceipt.current=true;
+    accept(result);
+    window.parent.postMessage({type:'weft-plan-sidebar',event:'applied'},location.origin);
+  }
+  async function checkApproval(attempt: Approval, reloadSaved = false) {
+    await run(async()=>{
+      const result=await read(query,undefined,approvalTimeout);
+      if(matchesApproval(result,attempt)){confirmApproval(result,attempt);return;}
+      if(result.suggestionScope!==attempt.scope){
+        updateApproval(null);accept(result);
+        return;
+      }
+      const sameDraft=!result.receipt&&result.revision===attempt.revision&&result.draft?.generation===attempt.generation;
+      const validContext=Number.isSafeInteger(result.workspaceRevision)&&result.workspaceRevision>=attempt.workspaceRevision&&
+        (attempt.kind!=='conflict'||result.workspaceRevision>attempt.workspaceRevision||result.contextChanged);
+      if(sameDraft&&validContext){
+        updateApproval(null);accept(result);
+        setApprovalNotice('No matching receipt was found. Review the suggestion before choosing Add again.');
+      }else if(reloadSaved&&!sameDraft){
+        updateApproval(null);accept(result);
+      }else{
+        setApprovalNotice(sameDraft?'The server still shows the same project version. Check again before adding.':
+          'We could not confirm this task was added. The saved suggestions changed. Reload them to review the current version.');
+      }
     });
   }
   if (!data)
@@ -240,7 +324,8 @@ export function SuggestionFeed({ query }: { query: string }) {
         </Button>
       </section>
     );
-  const locked = busy || data.status === 'generating';
+  const working = busy || data.status === 'generating';
+  const locked = working || !!approval;
   const cards = (data.receipt ? [] : data.draft?.items || []).filter(
     (item: any) => item.included && !dismissed.includes(item.id),
   );
@@ -248,7 +333,7 @@ export function SuggestionFeed({ query }: { query: string }) {
     <section
       className="suggestion-feed space-y-3"
       aria-label="Automatic AI suggestions"
-      aria-busy={locked}
+      aria-busy={working}
     >
       {!enabled ? (
         <div className="space-y-2">
@@ -295,7 +380,23 @@ export function SuggestionFeed({ query }: { query: string }) {
           AI isn’t configured. Automatic checks below still work.
         </p>
       )}
-      {(error || data.issue) && (
+      {approval && (
+        <section aria-label="Check suggestion approval" className="space-y-2 rounded-lg border p-3 text-sm">
+          <p className="font-medium">{approval.kind==='conflict'?'This approval needs a fresh review':'Adding this task was not confirmed'}</p>
+          <p>Checking the saved result won’t add tasks or use AI.</p>
+          {error && <p role="alert">{error}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" className="min-h-11" disabled={busy} onClick={()=>checkApproval(approval)}>
+              {approval.kind==='conflict'?'Refresh before adding':'Check what was added'}
+            </Button>
+            <Button type="button" variant="outline" className="min-h-11" disabled={busy} onClick={()=>checkApproval(approval,true)}>
+              Reload saved suggestions
+            </Button>
+          </div>
+        </section>
+      )}
+      {approvalNotice && <p role="status" className="text-sm">{approvalNotice}</p>}
+      {!approval && (error || data.issue) && (
         <div>
           <p role="alert" className="text-sm">
             {error || data.issue} Reload the project to check the saved result
@@ -310,12 +411,12 @@ export function SuggestionFeed({ query }: { query: string }) {
           </button>
         </div>
       )}
-      {locked && (
+      {working && (
         <p role="status" className="text-sm">
           Checking your plan…
         </p>
       )}
-      {data.contextChanged && (
+      {!approval && data.contextChanged && (
         <div className="space-y-2" role="status">
           <p className="text-xs">
             Your plan changed. Refresh these suggestions before adding tasks.
@@ -331,9 +432,10 @@ export function SuggestionFeed({ query }: { query: string }) {
         </div>
       )}
       {data.receipt && (
-        <p role="status" className="text-sm">
-          Task added · still to do. Other suggestions refresh with the updated
-          plan.
+        <p role="status" tabIndex={-1} ref={receiptHeading} className="text-sm">
+          {confirmedApproval&&matchesApproval(data,confirmedApproval)
+            ? 'Task added · still to do. Refresh suggestions to review other ideas.'
+            : 'These saved suggestions were already applied. Check the project for the added tasks.'}
         </p>
       )}
       {cards.map((item: any) => {
@@ -367,12 +469,12 @@ export function SuggestionFeed({ query }: { query: string }) {
               {item.location ? ' · ' + item.location : ''} · Added as incomplete
             </p>
             <div className="flex gap-3 items-center">
-              {!data.contextChanged && (complex ? (
+              {!data.contextChanged && (complex ? !approval && (
                 <a className="suggestion-review-link" target="_top" href={'/plan?' + query}>
                   Review &amp; add
                 </a>
               ) : (
-                <Button disabled={locked} onClick={() => void add(item.id)}>
+                <Button disabled={locked} onClick={() => add(item.id)}>
                   Add task
                 </Button>
               ))}

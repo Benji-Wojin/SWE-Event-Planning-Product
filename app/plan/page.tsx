@@ -27,7 +27,7 @@ export default async function Plan({
   );
   if ((suggestions || assistant) && params.embed === '1') return (
     <main id="embeddedPlan" className="plan-sidebar-shell">
-      {suggestions?<SuggestionFeed query={query}/>:<PlanReview key={query} query={query} embedded />}
+      {suggestions?<SuggestionFeed key={query} query={query}/>:<PlanReview key={query} query={query} embedded />}
     </main>
   );
   return (
