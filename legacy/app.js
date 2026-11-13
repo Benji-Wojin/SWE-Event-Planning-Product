@@ -251,14 +251,14 @@
     message.textContent=error.message||'Please check the form and try again.';
   }
   function hasUnsavedFields(root,exclude=[]) {
-    return !!root&&$$('input,textarea,select',root).some(input=>{
+    return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'&&input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')return input.checked;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
       if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
       const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
       return input.value!==(original??'');
-    });
+    }));
   }
   function confirmDiscard(...roots) {
     return !roots.some(root=>hasUnsavedFields(root))||window.confirm('Discard your unsaved changes?');
@@ -795,6 +795,7 @@
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
+    if(!['related-checklist','related-review'].includes(kind))ui.relatedChecklistDraft=null;
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if(kind!=='run-sheet')ui.runSheet=null;
@@ -839,6 +840,7 @@
     ui.guestAgenda=null;
     ui.reuseChecklist=null;
     ui.runSheet=null;
+    ui.relatedChecklistDraft=null;
     const view=$('#viewRoot');
     if(!restoreFocus(ui.lastFocus)&&!restoreViewFocus(ui.lastFocus,view))view.querySelector('button')?.focus();
     ui.lastFocus=null;
@@ -1110,33 +1112,83 @@
     if(task.status==='done'||window.GatherAccessLost||!organizer&&(task.owner!==ui.actor||state.event.membersCanCreateTasks!==true))return '';
     return `<details class="dependency-add linked-task-create"><summary>Create a linked task</summary><p class="muted">Break this work into a smaller, independently owned task. Use Related for parallel work; choose Required only when its result is needed before this task can be completed. Nothing is created until you save.</p><form id="linkedTaskForm" data-id="${h(task.id)}"><label class="field">New task name<input name="title" required maxlength="180" placeholder="What smaller result is needed?"></label><label class="field">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="What observable result will show this smaller task is finished?"></textarea><span class="muted">Shared with the team; keep private codes in Private details. This describes the result, not a progress update.</span></label><label class="field">Instructions (optional)<textarea name="note" rows="2" maxlength="3000"></textarea></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link this task?<textarea name="reason" rows="2" required maxlength="2000" placeholder="Describe the shared context or the exact result needed first."></textarea></label><p class="muted">The new task starts To do, without dates, activity times or recorded acceptance. Only the instructions and outcome entered here are shared; the current task’s notes and outcome are not copied. No message is sent.</p><button class="btn btn-secondary" type="submit">Create and link task</button></form></details>`;
   }
-  function openRelatedBatch(id) {
+  function openRelatedBatch(id,draft=null) {
     const task=store.getState().tasks.find(task=>task.id===id);
     if(window.GatherAccessLost||!isOrganizer()||!task||task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt)return;
+    ui.relatedChecklistDraft=draft;
     const ai=window.GatherMode&&!window.GatherMode.demo?'<details class="breakdown-ai section-gap"><summary>Draft smaller steps with AI</summary><div><p>Generate sends exactly the title below to Groq. No notes, event details, files, or member records are attached. Anything written in the title is sent, so skip AI if it contains private details.</p><blockquote>'+h(task.title)+'</blockquote><p>You’ll review a private draft. Nothing is added to the project until you choose what to save.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="related-ai-review">Review saved AI draft</button><button type="button" class="btn btn-primary" data-action="related-ai-generate">Send title to Groq and generate</button></div><p id="relatedAiStatus" role="status" class="muted"></p></div></details>':'';
     openDialog('Break down '+task.title,'<p>Make this task easier to hand off. You can draft ideas with AI when available or write your own checklist.</p>'+ai+
-      '<form id="relatedChecklistForm" data-id="'+h(id)+'" data-revision="'+task.revision+'"><label class="field section-gap">Write your own smaller steps<textarea name="checklist" required rows="5" maxlength="2000" aria-describedby="relatedChecklistHelp"></textarea></label><p id="relatedChecklistHelp" class="muted">Up to 8 steps, one per line. Don’t paste credentials, booking codes or private details.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Review checklist</button></div></form>','',false,'related-checklist');
+      '<form id="relatedChecklistForm" class="related-review" data-id="'+h(id)+'" data-revision="'+task.revision+'" data-actor="'+h(ui.actor)+'" data-project="'+h(window.GatherMode?.projectId||'')+'"><label class="field section-gap">Write your own smaller steps<textarea name="checklist" required rows="5" maxlength="2000" aria-describedby="relatedChecklistHelp"></textarea></label><p id="relatedChecklistHelp" class="muted">Up to 8 steps, one per line. Don’t paste credentials, booking codes or private details.</p>'+
+      (draft?'<p class="notice">Review edits and selections carry forward for unchanged steps. New or ambiguous steps are unselected.</p>':'')+
+      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(id)+'">Back to task</button><button class="btn btn-primary" type="submit">Review checklist</button></div></form>','',false,'related-checklist',!draft);
+    const form=$('#relatedChecklistForm');
+    if(draft){
+      form.dataset.relatedDraft='true';
+      form.elements.checklist.value=draft.raw;
+    }
     requestAnimationFrame(()=>{
-      if(ui.dialogKind!=='related-checklist'||$('#relatedChecklistForm')?.dataset.id!==id)return;
+      if(ui.dialogKind!=='related-checklist'||$('#relatedChecklistForm')!==form||!relatedDraftScope(form))return;
+      if(draft){form.elements.checklist.focus();return;}
       const heading=$('#dialogTitle');
       if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});$('#dialog').scrollTop=0;}
     });
   }
-  function reviewRelatedBatch(form) {
-    if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-checklist')return;
-    const id=form.dataset.id, revision=Number(form.dataset.revision), task=store.getState().tasks.find(task=>task.id===id);
-    if(!task||task.revision!==revision)throw new Error('The original task changed. Reopen it before reviewing linked work.');
-    showRelatedReview(task,GatherPlanningUI.relatedChecklistTitles(form.elements.checklist.value),false);
+  function relatedDraftScope(form) {
+    return !!form?.isConnected&&ui.actor===form.dataset.actor&&(window.GatherMode?.projectId||'')===form.dataset.project&&isOrganizer()&&!window.GatherAccessLost;
   }
-  function showRelatedReview(task,items,ai) {
+  function relatedDraftTask(form) {
+    const task=store.getState().tasks.find(task=>task.id===form.dataset.id);
+    if(!task||task.revision!==Number(form.dataset.revision)||task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt)
+      throw new Error('The original task changed. Reopen it before reviewing linked work.');
+    return task;
+  }
+  function matchingRelatedDraft(form) {
+    const draft=ui.relatedChecklistDraft;
+    return draft&&draft.id===form.dataset.id&&draft.revision===Number(form.dataset.revision)&&draft.actor===ui.actor&&draft.project===(window.GatherMode?.projectId||'')?draft:null;
+  }
+  function captureRelatedRows(form,original) {
+    return $$('[data-related-row]',form).map((row,index)=>({
+      sourceTitle:original[index].sourceTitle,
+      title:$('[data-related-title]',row).value,scope:$('[data-related-scope]',row).value,selected:$('[data-related-include]',row).checked,
+    }));
+  }
+  function reviewRelatedBatch(form) {
+    if(!relatedDraftScope(form)||ui.dialogKind!=='related-checklist'||$('#relatedChecklistForm')!==form)return;
+    const task=relatedDraftTask(form),raw=form.elements.checklist.value,previous=matchingRelatedDraft(form);
+    const {rows,discarded}=GatherPlanningUI.reconcileRelatedChecklist(GatherPlanningUI.relatedChecklistTitles(raw),previous?.rows,raw===previous?.raw);
+    if(discarded&&!window.confirm('Some edited or selected steps can’t be matched to the new checklist. Discard those review changes and continue?'))return;
+    showRelatedReview(task,rows,false,{id:task.id,revision:task.revision,actor:ui.actor,project:form.dataset.project,raw,rows});
+  }
+  function backToRelatedChecklist(form) {
+    if(!activeRelatedReview(form)||form.dataset.saveUnconfirmed||unconfirmedRelatedSaves.has(relatedReviewKey(form)))return;
+    const draft=matchingRelatedDraft(form);
+    if(!draft)return;
+    try{
+      relatedDraftTask(form);
+      openRelatedBatch(draft.id,{...draft,rows:captureRelatedRows(form,draft.rows)});
+    }catch(error){$('.form-error',form)?.remove();formError(form,error);}
+  }
+  function showRelatedReview(task,items,ai,draft=null) {
+    ui.relatedChecklistDraft=draft;
     openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" class="related-review" data-id="'+h(task.id)+'" data-revision="'+task.revision+'" data-actor="'+h(ui.actor)+'" data-project="'+h(window.GatherMode?.projectId||'')+'">'+
       '<section class="notice" data-related-check-panel hidden><p data-related-save-message tabindex="-1"></p><button type="button" class="btn btn-secondary" data-action="check-related-review" hidden>Check current linked tasks</button><a class="btn btn-secondary" data-related-projects href="/" target="_top" hidden>Return to Projects</a><p role="status" data-related-check-status></p><div data-related-current-links></div></section>'+
       (ai?'<p class="notice">Drafted by AI using only the task title. Check each step for accuracy and avoid private details. None are selected.</p>':'')+
-      GatherPlanningUI.relatedChecklistReview(items,h)+
-      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(task.id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review',true);
+      GatherPlanningUI.relatedChecklistReview(draft?items.map(row=>row.sourceTitle):items,h)+
+      '<div class="form-actions">'+(draft?'<button type="button" class="btn btn-secondary" data-action="back-related-checklist">Back to checklist</button>':'')+
+      '<button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(task.id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review',true);
     const form=$('#relatedReviewForm'), previous=unconfirmedRelatedSaves.get(relatedReviewKey(form));
+    if(draft){
+      form.dataset.relatedDraft='true';
+      $$('[data-related-row]',form).forEach((row,index)=>{
+        const saved=draft.rows[index];
+        $('[data-related-title]',row).value=saved.title;
+        $('[data-related-scope]',row).value=saved.scope;
+        $('[data-related-include]',row).checked=saved.selected;
+      });
+    }
     if(previous){
       form.dataset.saveUnconfirmed=previous.failure;
+      const back=$('[data-action="back-related-checklist"]',form);if(back)back.hidden=true;
       requestAnimationFrame(()=>paintRelatedSaveState(form));
     }
   }
@@ -1178,6 +1230,8 @@
     if(projects)projects.hidden=failure!=='access';
     const submit=$('button[type="submit"]',form);
     if(submit)submit.disabled=true;
+    const back=$('[data-action="back-related-checklist"]',form);
+    if(back)back.hidden=true;
     for(const row of $$('[data-related-row]',form))row.disabled=true;
   }
   async function saveRelatedReview(form,items) {
@@ -1250,10 +1304,10 @@
   }
   async function relatedAi(generate) {
     const form=$('#relatedChecklistForm'),status=$('#relatedAiStatus'), mode=window.GatherMode;
-    if(!form||!status||form.dataset.aiBusy==='true'||!mode||mode.demo||window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-checklist'||!confirmDiscard(form))return;
+    if(!form||!status||form.dataset.aiBusy==='true'||!mode||mode.demo||!relatedDraftScope(form)||ui.dialogKind!=='related-checklist'||!confirmDiscard(form))return;
     const task=store.getState().tasks.find(task=>task.id===form.dataset.id),revision=Number(form.dataset.revision);
     if(!task||task.revision!==revision){status.textContent='The task changed. Reopen it before using AI.';return;}
-    const active=()=>form.isConnected&&ui.dialogKind==='related-checklist'&&isOrganizer()&&!window.GatherAccessLost;
+    const active=()=>relatedDraftScope(form)&&ui.dialogKind==='related-checklist'&&$('#relatedChecklistForm')===form;
     const controls=$$('#dialog [data-action^="related-ai-"]'), initialText=form.elements.checklist.value;
     const url=mode.projectUrl('/api/plan')+'&mode=breakdown&task='+encodeURIComponent(task.id);
     async function request(data) {
@@ -1831,6 +1885,7 @@
         if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
       }
       if(action==='related-checklist')openRelatedBatch(id);
+      if(action==='back-related-checklist')backToRelatedChecklist(el.closest('#relatedReviewForm'));
       if(action==='check-related-review')await checkRelatedReview(el.closest('#relatedReviewForm'));
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){

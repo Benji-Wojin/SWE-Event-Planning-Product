@@ -245,11 +245,24 @@
     if(!lines.length||lines.length>8)throw new Error('Paste between 1 and 8 task titles, one per line.');
     return lines;
   }
+  function reconcileRelatedChecklist(titles,previous=[],sameText=false) {
+    // An edited source can make duplicate titles ambiguous even when its
+    // parsed titles are identical (for example, swapping two numbered lines).
+    const same=sameText&&titles.length===previous.length&&titles.every((title,index)=>previous[index].sourceTitle===title);
+    const used=new Set();
+    const rows=titles.map((sourceTitle,index)=>{
+      const matches=same?[previous[index]]:titles.indexOf(sourceTitle)===titles.lastIndexOf(sourceTitle)
+        ?previous.filter(row=>row.sourceTitle===sourceTitle):[];
+      if(matches.length===1){used.add(matches[0]);return {...matches[0]};}
+      return {sourceTitle,title:sourceTitle,scope:'',selected:false};
+    });
+    return {rows,discarded:previous.some(row=>!used.has(row)&&(row.selected||row.scope!==''||row.title!==row.sourceTitle))};
+  }
   function relatedChecklistReview(titles,h) {
     return '<p>Choose which smaller steps to add. Edit any title and describe an optional Done when result. Every new task starts unassigned and To do, without a date. Related work never blocks completion of the original task.</p>'+
       titles.map((item,index)=>{const {title,scope=''}=typeof item==='string'?{title:item}:item;
         return '<fieldset class="related-review-row" data-related-row><legend>Step '+(index+1)+'</legend><label class="check-field"><input type="checkbox" data-related-include> Include step '+(index+1)+'</label><label class="field">Title for step '+(index+1)+'<input data-related-title maxlength="180" value="'+h(title)+'"></label><label class="field">Done when for step '+(index+1)+' (optional)<textarea data-related-scope maxlength="500" rows="2">'+h(scope)+'</textarea></label></fieldset>';
       }).join('');
   }
-  root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup,relatedChecklistTitles,relatedChecklistReview};
+  root.GatherPlanningUI={emptyPlanMarkup,readiness,graph,graphMarkup,createTour,sidebarMessage,createSidebar,createAgentPopup,relatedChecklistTitles,reconcileRelatedChecklist,relatedChecklistReview};
 })(globalThis);
