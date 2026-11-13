@@ -2170,15 +2170,25 @@
     try{
       // Alias the operations: this shared helper awaits both the local and hosted store.
       const verify=store.verifyTask,acknowledge=store.reviewCompletionEvidence,sendBack=store.returnCompletion;
+      let verified;
       if(returning)await sendBack(id,note,actor,revision);
       else if(amendment)await acknowledge(id,revision,actor);
-      else await verify(id,actor,revision);
+      else verified=await verify(id,actor,revision);
       if(!sameReview())return;
       render();taskDialog(id,returning?control.id:'',false,true,'',undefined,'',{readOnly:true});
       const updatedTitle=$('#dialogTitle',dialog);
       requestAnimationFrame(()=>{
         if(!updatedTitle||!sameWorkspace()||ui.view!==view||ui.dialogKind!=='task'||ui.detailId!==id||
           $('#dialogBackdrop').hidden||$('#dialogTitle',dialog)!==updatedTitle)return;
+        const impact=verifying&&$('#completionLinkedImpactHeading',dialog);
+        if(impact){
+          const current=store.getState().tasks.find(item=>item.id===id);
+          if(verified?.id===id&&verified.verifiedAt&&verified.revision>revision&&current?.status==='done'&&
+            current.revision===verified.revision&&current.verifiedAt===verified.verifiedAt&&!document.hidden&&
+            document.activeElement===updatedTitle&&!workspaceUpdatesPending()&&!scheduleRevisionIsStale(store.getSnapshotRevision?.()))
+            focusTaskDialogControl(impact,dialog);
+          return;
+        }
         focusTaskDialogControl($('.completion-evidence h3',dialog)||updatedTitle,dialog);
       });
       if(returning)toast('Changes requested. The task is still incomplete.');
@@ -2880,9 +2890,47 @@
       if(active()){delete form.dataset.aiBusy;controls.forEach(control=>control.disabled=false);}
     }
   }
+  function completionLinkedImpact(task,state,dependents) {
+    const shownIds=new Set(),complete=[],waiting=[];
+    const resolved=item=>!!item&&!item.archivedAt&&item.status==='done'&&(!item.requiresVerification||!!item.verifiedAt);
+    if(!isOrganizer()||window.GatherAccessLost||!resolved(task))return {markup:'',shownIds};
+    const byId=new Map(state.tasks.map(item=>[item.id,item]));
+    for(const dependent of dependents){
+      if(dependent.id===task.id||dependent.archivedAt||resolved(dependent))continue;
+      const required=(dependent.dependencies||[]).filter(link=>link.kind!=='related');
+      if(!required.some(link=>link.taskId===task.id))continue;
+      const unresolved=required.filter(link=>!resolved(byId.get(link.taskId))).length;
+      (unresolved?waiting:complete).push({dependent,unresolved});
+      shownIds.add(dependent.id);
+    }
+    if(!shownIds.size)return {markup:'',shownIds};
+    const group=(label,rows)=>rows.length?`<h4>${label} · ${rows.length}</h4><ul class="dependency-targets">${rows.map(({dependent,unresolved})=>{
+      const review=dependent.requiresVerification&&!dependent.verifiedAt&&(dependent.reportedAt||dependent.status==='done');
+      const status=review?'Awaiting organizer verification':dependent.status==='blocked'?'Still marked Blocked':statuses[dependent.status];
+      const detail=unresolved?`${unresolved} required ${unresolved===1?'task remains':'tasks remain'}`:'';
+      return `<li><button type="button" class="text-button" data-action="task" data-completion-linked-target data-id="${h(dependent.id)}">${h(dependent.title)}</button><span class="muted"> ${h([member(dependent.owner).name,status,detail].filter(Boolean).join(' · '))}</span></li>`;
+    }).join('')}</ul>`:'';
+    return {shownIds,markup:`<section class="section-gap" aria-labelledby="completionLinkedImpactHeading"><h3 id="completionLinkedImpactHeading" tabindex="-1">Required by</h3><p class="muted">These tasks require this result. Completing required work doesn’t resume a blocked task or verify a completion report.</p>${group('Required work complete',complete)}${group('Still waiting on required work',waiting)}</section>`};
+  }
+  function openCompletionLinkedTarget(id,opener) {
+    const dialog=$('#dialog'),heading=$('#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
+    if(ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||!id||!opener?.isConnected||
+      opener.dataset.action!=='task'||!opener.hasAttribute('data-completion-linked-target')||opener.dataset.id!==id||
+      !section?.contains(opener)||opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener)||window.GatherAccessLost)return;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+      toast('Refresh the project before opening a required task from this review.');return;
+    }
+    const state=store.getState(),source=state.tasks.find(task=>task.id===ui.detailId);
+    if(!completionLinkedImpact(source,state,state.tasks).shownIds.has(id)){
+      toast('This task is no longer in the required-work review.');return;
+    }
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+  }
   function dependencyMarkup(task) {
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
     const dependents=state.tasks.filter(t=>(t.dependencies||[]).some(link=>link.taskId===task.id));
+    const impact=completionLinkedImpact(task,state,dependents);
+    const otherDependents=dependents.filter(t=>!impact.shownIds.has(t.id));
     const owner=info.ready&&state.members.find(person=>person.id===task.owner&&person.active!==false);
     return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 tabindex="-1">Task relationships</h3><button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button></div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
       ${info.open.length&&task.status!=='done'?'<p class="notice">Finish required work before completing this task. Unlink anything no longer needed.</p>':''}
@@ -2893,7 +2941,8 @@
       ${isOrganizer()&&!window.GatherAccessLost&&task.status!=='done'&&!(task.reportedAt&&task.requiresVerification&&!task.verifiedAt)?`<button class="btn btn-secondary section-gap" data-action="related-checklist" data-id="${h(task.id)}">Break down task</button>`:''}
       ${window.GatherMode&&canCreateTasks()&&!window.GatherAccessLost&&task.status!=='done'?`<div class="section-gap"><button class="btn btn-secondary btn-small" disabled aria-disabled="true" title="Ask Weft chat is coming soon">Ask Weft chat · Coming soon</button><p class="muted">You can still add and link smaller tasks manually.</p></div>`:''}
       ${task.status==='blocked'&&manage?`<details class="dependency-add"><summary>Name or link follow-up work</summary><form id="dependencyForm" data-id="${h(task.id)}"><label class="field">Existing task<select name="existingTask">${options([['','Name the follow-up'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(link=>link.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Follow-up task name<input name="newTitle" maxlength="180" placeholder="What needs to happen first?"></label><label class="check-field"><input name="additional" type="checkbox"> Add a separate blocker instead</label><p class="muted">An unused generic follow-up will be updated, not duplicated.</p><div class="form-actions"><button class="btn btn-secondary" type="submit">Save follow-up</button></div></form></details>`:''}
-      ${dependents.length?`<h3>Linked from</h3><div class="dependency-targets">${dependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
+      ${impact.markup}
+      ${otherDependents.length?`<h3>Linked from</h3><div class="dependency-targets">${otherDependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
     </section>`;
   }
   function relationshipCard(task,link,info,manage) {
@@ -4139,6 +4188,7 @@
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
+      if(action==='task'&&el.hasAttribute('data-completion-linked-target')){openCompletionLinkedTarget(id,el);return;}
       if(action==='task'){
         const requestLink=el.hasAttribute('data-open-recovery'),replyLink=el.hasAttribute('data-open-recovery-reply');
         if(eventReviewGroup==='schedule-reconfirmation'&&workspaceUpdatesPending()){

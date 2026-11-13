@@ -16,7 +16,7 @@ function sourceBlock(from,to){
   return app.slice(start,end);
 }
 
-function fixture(kind,{hosted=true,blocked=false,related=false}={}){
+function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={}){
   const core=GatherStore.createStore({storage:null});
   const {id}=core.addTask({title:'Fictional welcome desk',owner:'maya',requiresVerification:true});
   core.reportCompletion(id,'The welcome desk is set up.','maya');
@@ -29,12 +29,17 @@ function fixture(kind,{hosted=true,blocked=false,related=false}={}){
     core.addDependency(id,{taskId:linked.id,kind:related?'related':'dependency',reason:'Coordinate the entrance plan.'});
   }
   const getTask=()=>core.getState().tasks.find(task=>task.id===id);
+  if(impact){
+    const dependent=core.addTask({title:'Fictional attendee support',owner:'maya',status:'blocked'});
+    core.addDependency(dependent.id,{taskId:id,kind:'dependency',reason:'Wait for the organizer’s welcome desk verification.'});
+  }
   const ui={actor:'jack',view:'tasks',dialogKind:'task',detailId:id};
   const window=hosted?{GatherMode:{projectId:'fictional-project'}}:{GatherMode:{demo:true}};
   const dialog={isConnected:true,dataset:{}},backdrop={hidden:false};
   let title={},revision=hosted?11:undefined,stale=false,known=0,organizer=true,controls={};
   let noteValue=reason,dirtyForm='';
   const writes=[],calls=[],frames=[];
+  const impactHeading={};
   const refresh={focus:()=>calls.push(['focus'])};
   const formSubmit={setAttribute(){},removeAttribute(){}};
   function makeControl(type){
@@ -59,6 +64,7 @@ function fixture(kind,{hosted=true,blocked=false,related=false}={}){
     if(selector==='#dialog')return dialog;
     if(selector==='#dialogTitle')return title;
     if(selector==='#dialogBackdrop')return backdrop;
+    if(selector==='#completionLinkedImpactHeading')return impact&&getTask().status==='done'&&getTask().verifiedAt?impactHeading:null;
     if(selector==='#activityReviewRefresh')return refresh;
     if(['#completionEvidenceForm','#responseForm','#returnCompletionForm'].includes(selector)&&selector===dirtyForm)return {dirty:true};
     if(selector.includes('returnCompletionForm')&&selector.includes('button'))return formSubmit;
@@ -67,11 +73,11 @@ function fixture(kind,{hosted=true,blocked=false,related=false}={}){
   const document={hidden:false,activeElement:null};
   const store={getState:()=>core.getState(),getSnapshotRevision:()=>revision};
   for(const method of Object.values(reviewMethods)){
-    store[method]=(...args)=>new Promise((resolve,reject)=>writes.push({method,args,reject,finish(){
+    store[method]=(...args)=>new Promise((resolve,reject)=>writes.push({method,args,reject,finish(replaceResult=value=>value){
       try{
         const result=core[method](...args);
         if(revision!==undefined)revision++;
-        resolve(result);
+        resolve(replaceResult(result));
       }catch(error){reject(error);}
     }}));
   }
@@ -85,7 +91,7 @@ function fixture(kind,{hosted=true,blocked=false,related=false}={}){
     showPendingUpdate(){stale=true;calls.push(['warning']);},
     showRecoveryWriteConflict(value){known=value+1;stale=true;calls.push(['conflict',value]);},
     requestAnimationFrame:fn=>frames.push(fn),
-    focusTaskDialogControl(target){assert.equal(target,title);calls.push(['focus heading']);},
+    focusTaskDialogControl(target){if(target===impactHeading)calls.push(['focus linked impact']);else{assert.equal(target,title);calls.push(['focus heading']);}},
     saveLock(root){
       assert.equal(root,dialog);
       assert.equal(ui.pendingSave,undefined);
@@ -93,7 +99,7 @@ function fixture(kind,{hosted=true,blocked=false,related=false}={}){
       return ()=>{delete ui.pendingSave;calls.push(['unlock']);};
     },
     render:()=>calls.push(['render']),
-    taskDialog(...args){calls.push(['dialog',...args]);title={};},
+    taskDialog(...args){calls.push(['dialog',...args]);title={};document.activeElement=title;},
     toast:message=>calls.push(['toast',message]),
     formError:(_form,error)=>calls.push(['formError',error.message]),
   });
@@ -125,6 +131,30 @@ test('decisions do not remove a sibling form with unsent text or evidence',async
     assert.equal(f.writes.length,0);
     assert.match(f.calls.find(([event])=>event==='toast'||event==='formError')[1],/copy or clear|save or clear/i);
   }
+});
+
+test('only a current acknowledged verification moves focus from the dialog title to the linked impact',async()=>{
+  for(const outcome of ['exact','mismatched receipt','new task revision','new workspace','known newer workspace','hidden','moved focus','replaced dialog']){
+    const f=fixture('verify',{impact:true}),pending=f.save();
+    assert.equal(f.writes.length,1,outcome);
+    assert.deepEqual(f.calls,[],outcome);
+    f.writes[0].finish(value=>outcome==='mismatched receipt'?{...value,id:'different-task'}:value);
+    await pending;
+    if(outcome==='new task revision')f.core.updateTask(f.id,{title:'Fictional revised welcome desk'},'jack');
+    if(outcome==='new workspace')f.stale=true;
+    if(outcome==='known newer workspace')f.known=13;
+    if(outcome==='hidden')f.document.hidden=true;
+    if(outcome==='moved focus')f.document.activeElement={};
+    if(outcome==='replaced dialog')f.replaceControls();
+    f.flush();
+    assert.equal(f.calls.filter(([event])=>event==='focus linked impact').length,outcome==='exact'?1:0,outcome);
+    assert.equal(f.writes.length,1,'linked impact does not trigger a downstream write');
+    assert.equal(f.core.getState().tasks.find(task=>task.title==='Fictional attendee support').status,'blocked');
+  }
+  const f=fixture('amendment',{impact:true}),pending=f.save();
+  f.writes[0].finish();await pending;f.flush();
+  assert.ok(f.calls.some(([event])=>event==='focus heading'));
+  assert.ok(!f.calls.some(([event])=>event==='focus linked impact'),'acknowledging an amendment is not a new verification');
 });
 
 const rendered=f=>f.calls.filter(([kind])=>['render','dialog','celebrate'].includes(kind));
