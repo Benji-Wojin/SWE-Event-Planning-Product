@@ -42,6 +42,7 @@ function fixture() {
     })[selector] ?? null,
     GatherRecoveryUI: { organizerReviews: () => ['help', 'date', 'completion'].map(kind => ({ task: { id: kind }, kind })) },
     isOrganizer: () => true,
+    scheduleWorkspaceKey: () => JSON.stringify([window.GatherMode?.projectId,ui.actor]),
     taskDialog: (...args) => events.push(['taskDialog', ...args]),
     beforeEventReview: group => events.push(['beforeEventReview', group, snapshot]),
     render: () => events.push(['render', snapshot]),
@@ -147,6 +148,7 @@ test('late refresh cannot replace a reopened dialog, a different actor, or anoth
     f => { f.ui.actor = 'maya'; },
     f => { f.ui.scheduleMine = false; },
     f => { f.ui.scheduleDate = '2026-11-21'; },
+    f => { f.window.GatherMode = {projectId:'a-different-project'}; },
     f => { f.window.GatherAccessLost = true; },
   ]) {
     const f = load(fixture());
@@ -159,4 +161,17 @@ test('late refresh cannot replace a reopened dialog, a different actor, or anoth
     assert.equal(f.sync.hidden, false);
     assert.deepEqual(f.events, []);
   }
+});
+
+test('an explicit event review check still runs if an ambient refresh cleared the shared banner',async()=>{
+  const f=load(fixture());
+  f.sync.hidden=true;
+  const key=f.ctx.scheduleWorkspaceKey();
+  f.ui.eventScheduleCheckKey=key;
+  const checking=f.refresh('activity-details');
+  assert.equal(f.requests.length,1);
+  f.requests[0].finish();
+  await checking;
+  assert.equal(f.ui.eventScheduleCheckKey,undefined);
+  assert.ok(f.events.some(event=>event[0]==='beforeEventReview'&&event[1]==='activity-details'));
 });

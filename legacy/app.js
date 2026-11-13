@@ -1526,14 +1526,18 @@
     const refresh=store.refresh
       ? '<button type="button" class="btn btn-secondary" data-action="refresh-event-review" data-id="'+h(group)+'">Refresh event review</button>'
       : '<button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button>';
-    return '<p role="status" id="eventReviewRefreshStatus">Newer project changes are available. This review shows the last loaded plan. Refresh before making a change.</p>'+refresh;
+    const message=ui.eventScheduleCheckKey===scheduleWorkspaceKey()
+      ? 'The schedule needs a fresh check. This review shows the last loaded plan. Refresh before making a change.'
+      : 'Newer project changes are available. This review shows the last loaded plan. Refresh before making a change.';
+    return '<p role="status" id="eventReviewRefreshStatus">'+message+'</p>'+refresh;
   }
   function beforeEventReview(group='') {
     if(window.GatherAccessLost)return;
     const state=store.getState(),scope=eventReviewScope();
     ui.eventReviewSnapshot={scope,key:scheduleWorkspaceKey(),mode:ui.timelineMode,date:ui.scheduleDate,
       workspaceRevision:store.getSnapshotRevision?.(),zone:state.event?.timeZone};
-    const pending=workspaceUpdatesPending()?'<div id="dialogStaleNotice" class="notice">'+eventReviewRefreshNotice(group)+'</div>':'';
+    const pending=(workspaceUpdatesPending()||ui.eventScheduleCheckKey===ui.eventReviewSnapshot.key)
+      ?'<div id="dialogStaleNotice" class="notice">'+eventReviewRefreshNotice(group)+'</div>':'';
     openDialog('Before the event',pending+schedule.preparationReview(state,Date.now(),scope,isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
     const title=$('#dialogTitle');
     requestAnimationFrame(()=>{
@@ -1552,11 +1556,12 @@
   }
   async function refreshBeforeEventReview(group='') {
     const title=$('#dialogTitle'),scope=eventReviewScope(),mode=ui.timelineMode,date=ui.scheduleDate;
+    const key=scheduleWorkspaceKey();
     const sameReview=()=>!!title&&!window.GatherAccessLost&&!ui.pendingSave&&ui.view==='timeline'&&
       ui.dialogKind==='before-event-review'&&$('#dialogTitle')===title&&ui.timelineMode===mode&&ui.scheduleDate===date&&
-      ui.actor===scope.actor&&eventReviewScope().mine===scope.mine;
+      ui.actor===scope.actor&&eventReviewScope().mine===scope.mine&&scheduleWorkspaceKey()===key;
     const stillOpen=()=>!document.hidden&&sameReview();
-    if(!store.refresh||ui.syncing||!stillOpen()||!workspaceUpdatesPending())return;
+    if(!store.refresh||ui.syncing||!stillOpen()||(!workspaceUpdatesPending()&&ui.eventScheduleCheckKey!==key))return;
     const status=$('#eventReviewRefreshStatus');
     const button=$('[data-action="refresh-event-review"]',$('#dialog'));
     ui.syncing=true;
@@ -1572,6 +1577,7 @@
       if(!result.verified||result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()))
         throw new Error('A newer project snapshot is not ready.');
       const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      if(ui.eventScheduleCheckKey===key)delete ui.eventScheduleCheckKey;
       ui.toolUpdatePending=false;
       render();beforeEventReview(group);
       toast('Event review refreshed.');
@@ -1589,7 +1595,20 @@
   }
   function eventScheduleReviewStale(context) {
     const revision=store.getSnapshotRevision?.();
-    return workspaceUpdatesPending()||scheduleRevisionIsStale(revision)||context.workspaceRevision!==revision;
+    return context.checkRequired||ui.eventScheduleCheckKey===context.key||
+      workspaceUpdatesPending()||scheduleRevisionIsStale(revision)||context.workspaceRevision!==revision;
+  }
+  function markEventScheduleCheck(editor) {
+    editor.checkRequired=true;
+    ui.eventScheduleCheckKey=editor.key;
+  }
+  function eventScheduleSlotKey(slot) {
+    return JSON.stringify(slot?[slot.start,slot.end,slot.location]:null);
+  }
+  function eventScheduleEditorNotice() {
+    return '<p id="eventScheduleCheckStatus" role="status">Check the latest schedule before saving. This won’t submit or replace your edits.</p>'+
+      (store.refresh?'<button type="button" id="eventScheduleCheck" class="btn btn-secondary" data-action="check-event-review-schedule" aria-describedby="eventScheduleCheckStatus">Check latest schedule</button>':
+        '<p>Copy your entries if needed, then reload the project to see the latest schedule.</p>');
   }
   function openEventReviewSchedule(id,opener) {
     const context=ui.eventReviewSnapshot,dialog=$('#dialog'),group=opener?.closest('[data-event-review-group]')?.dataset.eventReviewGroup;
@@ -1605,7 +1624,8 @@
     const task=schedule.reviewScheduleTask(state,context.scope,group,id);
     if(!task){toast('This activity is no longer in that review group.');return;}
     const body=schedule.activityReviewForm(state,id);
-    ui.eventScheduleEditor={...context,group,id,taskRevision:task.revision,zone:state.event.timeZone};
+    ui.eventScheduleEditor={...context,group,id,taskRevision:task.revision,zone:state.event.timeZone,
+      slotKey:eventScheduleSlotKey(task.schedule),generation:state.demoGeneration};
     openDialog('Review activity schedule',body,'<button type="button" class="btn btn-secondary" data-action="return-from-event-review-schedule">Back to event review</button>',false,'schedule-from-review',true);
   }
   function returnFromEventReviewSchedule() {
@@ -1620,10 +1640,11 @@
       ui.dialogKind==='schedule-from-review'&&!$('#dialogBackdrop').hidden&&$('#reviewScheduleForm')===form&&
       form.isConnected&&form.dataset.id===editor.id;
     if(!sameEditor())throw new Error('Reopen the event review as the organizer before saving.');
-    if(editor.unconfirmed)throw new Error('The previous save couldn’t be confirmed. Return to the event review and refresh before trying again.');
+    if(editor.unconfirmed)throw new Error('The previous save couldn’t be confirmed. Check the latest schedule before trying again.');
     const state=store.getState(),task=schedule.reviewScheduleTask(state,editor.scope,editor.group,editor.id);
     if(eventScheduleReviewStale(editor)||!task||task.revision!==editor.taskRevision||
-      String(task.revision)!==form.dataset.revision||state.event.timeZone!==editor.zone){
+      String(task.revision)!==form.dataset.revision||state.event.timeZone!==editor.zone||eventScheduleSlotKey(task.schedule)!==editor.slotKey){
+      markEventScheduleCheck(editor);
       showPendingUpdate();
       throw new Error('This activity or project changed. Your edits are still here. Review the latest schedule before saving.');
     }
@@ -1634,15 +1655,17 @@
     catch(error){
       if(!sameEditor())return;
       if(error.status===409){
+        markEventScheduleCheck(editor);
         if(['The plan changed in another tab.','Someone updated this demo.','Another profile saved first.'].some(prefix=>error.message?.startsWith(prefix)))
           showRecoveryWriteConflict(editor.workspaceRevision);
         else showPendingUpdate();
-        throw new Error('The project changed before this schedule was saved. Your edits are still here. Return to the event review to refresh it.');
+        throw new Error('The project changed before this schedule was saved. Your edits are still here. Check the latest schedule.');
       }
       if(Number.isSafeInteger(editor.workspaceRevision)&&(!error.status||error.status===408||error.status>=500)){
         editor.unconfirmed=true;
+        markEventScheduleCheck(editor);
         showPendingUpdate();
-        throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Return to the event review and refresh before trying again.');
+        throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Check the latest schedule.');
       }
       throw error;
     }
@@ -1650,12 +1673,70 @@
     if(saved?.id!==editor.id||saved.schedule?.start!==slot.start||saved.schedule?.end!==slot.end||
       saved.schedule?.location!==slot.location.trim()||!Number.isSafeInteger(saved.revision)){
       editor.unconfirmed=true;
+      markEventScheduleCheck(editor);
       showPendingUpdate();
-      throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Return to the event review and refresh before trying again.');
+      throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Check the latest schedule.');
     }
     const reconfirm=(task.acceptedAt||task.nextUpAt)&&!saved.acceptedAt&&!saved.nextUpAt;
     render();beforeEventReview(editor.group);
     toast('Schedule saved. Event review updated.'+(reconfirm?' The owner needs to accept again.':''));
+  }
+  async function checkEventReviewSchedule(button) {
+    const editor=ui.eventScheduleEditor,form=$('#reviewScheduleForm'),title=$('#dialogTitle'),status=$('#eventScheduleCheckStatus');
+    const sameEditor=()=>!!form&&!!title&&!!status&&button?.isConnected&&form.isConnected&&
+      eventScheduleContextMatches(editor)&&ui.eventScheduleEditor===editor&&ui.dialogKind==='schedule-from-review'&&
+      !$('#dialogBackdrop').hidden&&$('#reviewScheduleForm')===form&&form.dataset.id===editor.id&&
+      $('#dialogTitle')===title&&$('#eventScheduleCheck')===button&&$('#eventScheduleCheckStatus')===status;
+    const ready=()=>sameEditor()&&!document.hidden&&!ui.pendingSave;
+    if(!store.refresh||ui.syncing||button?.hidden||!ready()||(!editor.unconfirmed&&!eventScheduleReviewStale(editor)))return;
+    markEventScheduleCheck(editor);
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Checking the latest schedule…';
+    const currentFields=(task,zone)=>{
+      const slot=task?.schedule;
+      return slot?' Current saved schedule ('+(zone||'time zone not set')+'): '+slot.start.replace('T',' ')+'; '+
+        (slot.end?'ends '+slot.end.replace('T',' '):'no end time')+'; '+(slot.location||'location not set')+'.':'';
+    };
+    let reason='';
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready()||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))return false;
+        if(!Array.isArray(state?.tasks)||!state.event)return false;
+        const task=state.tasks.find(task=>task.id===editor.id),zone=state.event.timeZone;
+        if(state.demoGeneration!==editor.generation)reason='This demo was reset.';
+        else if(!task||task.archivedAt||editor.scope.mine&&task.owner!==editor.scope.actor)reason='This activity is no longer in this review.';
+        else if(editor.unconfirmed)reason='This check can’t confirm whether that exact save went through.'+currentFields(task,zone);
+        else if(zone!==editor.zone)reason='The event time zone changed. The old times can’t be reused without review.'+currentFields(task,zone);
+        else if(!schedule.reviewScheduleTask(state,editor.scope,editor.group,editor.id)||task.revision!==editor.taskRevision||
+          eventScheduleSlotKey(task.schedule)!==editor.slotKey)reason='This activity changed since you opened it.'+currentFields(task,zone);
+        return !reason;
+      },{requireFresh:true});
+      if(!sameEditor())return;
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){status.textContent='Check paused. Your edits are still here.';return;}
+      if(reason){status.textContent=reason+' Your edits are still here. Copy them if needed, then return to the event review to use the current schedule.';return;}
+      const revision=store.getSnapshotRevision?.(),state=store.getState();
+      const current=schedule.reviewScheduleTask(state,editor.scope,editor.group,editor.id);
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision)||
+        state.demoGeneration!==editor.generation||state.event.timeZone!==editor.zone||current?.revision!==editor.taskRevision||eventScheduleSlotKey(current.schedule)!==editor.slotKey)
+        throw new Error('The current schedule could not be verified.');
+      editor.workspaceRevision=revision;
+      delete editor.checkRequired;
+      if(ui.eventScheduleCheckKey===editor.key)delete ui.eventScheduleCheckKey;
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      status.textContent='The activity and time zone are unchanged. Your edits are still here and haven’t been saved. Review them, then choose Save schedule.';
+      $('.form-error',form)?.remove();
+      button.hidden=true;
+      status.tabIndex=-1;
+      status.focus();
+    }catch{
+      if(sameEditor())status.textContent='Couldn’t check the latest schedule. Your edits are still here. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   function returnToEventTaskReview() {
     const source=ui.eventTaskReview;
@@ -1891,17 +1972,27 @@
   function showPendingUpdate(newerRevision,reviewGroup='') {
     if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
+    if(ui.dialogKind==='schedule-from-review'&&eventScheduleContextMatches(ui.eventScheduleEditor))
+      markEventScheduleCheck(ui.eventScheduleEditor);
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if(ui.dialogKind==='acceptance'){paintAcceptanceRefresh();return;}
     if(ui.dialogKind==='assignment'){paintAssignmentRefresh();return;}
     if(ui.dialogKind==='task'){paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();}
-    if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
+    if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications')return;
+    const previous=$('#dialogStaleNotice');
+    if(previous){
+      if(ui.dialogKind==='schedule-from-review'){
+        const status=$('#eventScheduleCheckStatus'),button=$('#eventScheduleCheck');
+        if(status&&button?.hidden){status.textContent='Check the latest schedule before saving. Your edits are still here.';button.hidden=false;}
+      }
+      return;
+    }
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     const group=ui.dialogKind==='before-event-review'?reviewGroup||document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
     note.innerHTML=ui.dialogKind==='before-event-review'?eventReviewRefreshNotice(group):
-      ui.dialogKind==='schedule-from-review'?'<p>This editor may not reflect the latest schedule. Your edits are still here. Copy them if needed, then use Back to event review to refresh the plan.</p>':
+      ui.dialogKind==='schedule-from-review'?eventScheduleEditorNotice():
       ui.dialogKind==='task'&&canRefreshActivityReview(store.getState().tasks.find(task=>task.id===ui.detailId))?activityReviewRefreshNotice(!!taskAcceptanceButton(),!!completionReviewControls().length):
       '<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
@@ -3270,6 +3361,7 @@
     if(el.dataset.view){event.preventDefault();navigateFromViewControl(el);return;}
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
+    if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='discard-completion-draft'){
       const form=el.closest('form'),dialog=$('#dialog');
