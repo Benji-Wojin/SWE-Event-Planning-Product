@@ -628,6 +628,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .next-up-suggestions{font-size:14px;margin-top:12px}.next-up-suggestions summary{cursor:pointer}
 .next-up-control{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:0 0 18px;font-size:14px}
 .next-up-control .field{width:100%;margin:0}.next-up-control .btn{white-space:normal}
+.next-up-accept-note{flex:0 0 100%;margin:0}
 .task-recovery{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--cream)}
 .task-recovery h3,.agreed-scope h3{margin:0 0 10px}.task-recovery p,.agreed-scope p{white-space:pre-wrap;overflow-wrap:anywhere}
 .task-recovery form{display:grid;gap:14px;margin-top:18px}.task-recovery .field{margin:0}

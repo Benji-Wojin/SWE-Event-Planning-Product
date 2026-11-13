@@ -215,9 +215,126 @@ function taskListFixture(){
   const ui={view:'tasks',taskView:'list'};
   const ctx=vm.createContext({$, $$,document,ui,window:{}});
   vm.runInContext(filterSource+restoreSource+
-    'globalThis.restore=restoreFocus;globalThis.restoreView=restoreViewFocus;',ctx);
-  return {button,inspect,name,owner,other,outside,search,heading,inactive,active,document,root,rows,body,ui,ctx};
+    'globalThis.restore=restoreFocus;globalThis.restoreView=restoreViewFocus;globalThis.restoreDisclosure=restoreNextUpDisclosure;',ctx);
+  return {button,make,inspect,name,owner,other,outside,search,heading,inactive,active,document,root,rows,body,ui,ctx};
 }
+
+function nextUpFixture({surface='mine',actor='maya',origin='task',action='task',rect={top:170,bottom:220}}={}){
+  const f=taskListFixture();
+  f.ui.view=surface==='mine'?'tasks':'overview';f.ui.tab='mine';f.ui.actor=actor;
+  f.ctx.window.innerHeight=600;
+  const topbar=f.make('HEADER',{classes:['topbar'],getBoundingClientRect:()=>({bottom:100})});
+  append(f.body,topbar);
+  const panel=()=>f.make('SECTION',{dataset:{nextUpPanel:surface,nextUpActor:actor}});
+  const oldPanel=panel(),newPanel=panel();oldPanel.isConnected=false;
+  const previous=f.make('BUTTON',{isConnected:false,dataset:{nextUpOrigin:origin,id:'same',action}});
+  const summary=f.make('SUMMARY',{dataset:{nextUpOrigin:'summary'}});
+  const title=f.make('H2',{tabIndex:-1,dataset:{nextUpHeading:''}});
+  const details=f.make('DETAILS',{open:false,dataset:{nextUpSuggestions:''}});
+  const link=(id='same',linkAction=action,linkOrigin=origin)=>f.make('BUTTON',{
+    dataset:{nextUpOrigin:linkOrigin,id,action:linkAction},
+    getBoundingClientRect:()=>rect,scrollIntoView(options){this.revealed=options;},
+  });
+  const exact=link(),unrelated=link('different'),outside=link();
+  append(oldPanel,previous);
+  append(f.root,outside,newPanel);
+  append(newPanel,title,details);
+  append(details,summary,unrelated,exact);
+  return {...f,previous,newPanel,oldPanel,summary,title,details,exact,unrelated,outside,topbar};
+}
+
+test('Next up restores the same task between sections and reopens only its suggestions disclosure',()=>{
+  for(const surface of ['mine','overview']){
+    const f=nextUpFixture({surface});
+    assert.equal(f.ctx.restore(f.previous,f.root),true);
+    assert.ok(f.document.activeElement===f.exact,'focus returns to the exact panel task, not its table duplicate');
+    assert.equal(f.details.open,true);
+    assert.equal(f.exact.focusOptions.preventScroll,true);
+    assert.equal(f.exact.revealed,undefined,'already visible focus should not scroll');
+
+    f.details.children=f.details.children.filter(node=>node!==f.exact);
+    append(f.newPanel,f.exact);
+    f.details.open=false;f.document.activeElement=f.body;
+    assert.equal(f.ctx.restoreView(f.previous,f.root),true);
+    assert.ok(f.document.activeElement===f.exact,'the same task is still the target after it moves into Committed');
+    assert.equal(f.details.open,false,'a committed link does not open an unrelated disclosure');
+    assert.notEqual(f.document.activeElement,f.outside);
+  }
+});
+
+test('a hidden retained Overview panel cannot shadow the visible My tasks panel',()=>{
+  const f=nextUpFixture();
+  const retained=f.make('DIV',{inert:true,hidden:true});
+  const overview=f.make('SECTION',{dataset:{nextUpPanel:'overview',nextUpActor:'maya'}});
+  append(retained,overview);
+  f.root.children.unshift(retained);retained.parentElement=f.root;
+  assert.equal(f.ctx.restore(f.previous,f.root),true);
+  assert.equal(f.document.activeElement,f.exact);
+  assert.equal(f.details.open,true);
+});
+
+test('Next up falls back to its own summary or heading, never a duplicate or a changed action',()=>{
+  const f=nextUpFixture({origin:'returned',action:'review-returned-completion'});
+  f.exact.dataset.action='task';
+  assert.equal(f.ctx.restore(f.previous,f.root),true);
+  assert.ok(f.document.activeElement===f.summary,'fall back to the disclosure summary when the task action changes');
+  assert.equal(f.details.open,false);
+  f.details.hidden=true;f.document.activeElement=f.body;
+  assert.equal(f.ctx.restore(f.previous,f.root),true);
+  assert.ok(f.document.activeElement===f.title,'fall back to the panel heading when the disclosure is unavailable');
+  assert.equal(f.title.tabIndex,-1);
+  f.newPanel.dataset.nextUpActor='different-actor';f.document.activeElement=f.body;
+  assert.equal(f.ctx.restore(f.previous,f.root),false);
+  assert.equal(f.document.activeElement,f.body);
+  f.newPanel.dataset.nextUpActor='maya';f.newPanel.dataset.nextUpPanel='overview';
+  assert.equal(f.ctx.restore(f.previous,f.root),false);
+  assert.equal(f.document.activeElement,f.body);
+});
+
+test('Next up reveals the focused task when a small viewport clips it without stealing existing focus',()=>{
+  for(const rect of [{top:80,bottom:124},{top:570,bottom:622}]){
+    const f=nextUpFixture({rect});
+    f.document.activeElement=f.search;
+    assert.equal(f.ctx.restoreView(f.previous,f.root),false);
+    assert.equal(f.document.activeElement,f.search);
+    assert.equal(f.details.open,false);
+    f.document.activeElement=f.body;
+    assert.equal(f.ctx.restoreView(f.previous,f.root),true);
+    assert.ok(f.document.activeElement===f.exact,'the target stays inside Next up');
+    assert.equal(f.exact.focusOptions.preventScroll,true);
+    assert.ok(f.exact.revealed,'a clipped focused target must be brought into view');
+  }
+});
+
+test('a rebuild keeps the suggestions disclosure choice only for the same personal panel',()=>{
+  const f=nextUpFixture();
+  f.ctx.restoreDisclosure(f.oldPanel,true,f.root);
+  assert.equal(f.details.open,true);
+  f.ctx.restoreDisclosure(f.oldPanel,undefined,f.root);
+  assert.equal(f.details.open,true,'no prior disclosure leaves the default intact');
+  f.ctx.restoreDisclosure(f.oldPanel,false,f.root);
+  assert.equal(f.details.open,false);
+  f.newPanel.dataset.nextUpPanel='overview';
+  f.ctx.restoreDisclosure(f.oldPanel,true,f.root);
+  assert.equal(f.details.open,false,'do not carry the preference into another view');
+  f.newPanel.dataset.nextUpPanel='mine';f.newPanel.dataset.nextUpActor='other';
+  f.ctx.restoreDisclosure(f.oldPanel,true,f.root);
+  assert.equal(f.details.open,false,'do not carry the preference into another actor’s panel');
+});
+
+test('the default follows the last commitment being removed and a user override survives beneath the dialog',()=>{
+  const f=nextUpFixture();
+  const prior=f.make('DETAILS',{open:false,dataset:{nextUpSuggestions:'',nextUpDefault:'closed'}});
+  append(f.oldPanel,prior);
+  f.details.open=true;f.details.dataset.nextUpDefault='open';
+  f.ctx.restoreDisclosure(f.oldPanel,f.ctx.nextUpDisclosureOverride(f.oldPanel),f.root);
+  assert.equal(f.details.open,true,'the previous closed default does not suppress the new open default');
+  prior.open=true;f.details.open=false;f.details.dataset.nextUpDefault='closed';
+  f.body.inert=true;
+  f.ctx.restoreDisclosure(f.oldPanel,f.ctx.nextUpDisclosureOverride(f.oldPanel),f.root);
+  assert.equal(f.details.open,true,'preserve an expanded disclosure even if the app shell is inert beneath a dialog');
+  assert.equal(f.ctx.restore(f.previous,f.root),false,'never focus beneath an open modal');
+});
 
 test('a rebuilt task row keeps its exact focused affordance despite changed text',()=>{
   const f=taskListFixture();

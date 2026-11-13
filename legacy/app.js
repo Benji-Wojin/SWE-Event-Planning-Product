@@ -153,6 +153,7 @@
   }
   function restoreFocus(previous,root=document) {
     if(!previous)return false;
+    if(previous.dataset.nextUpOrigin)return restoreNextUpFocus(previous,root);
     // Row controls can share an action and task ID. Match the exact control
     // and intent, never another button for the same task.
     if(!previous.isConnected&&previous.dataset.taskFocus){
@@ -171,6 +172,46 @@
     }
     if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
+  }
+  function sameNextUpPanel(oldPanel,newPanel) {
+    return !!oldPanel&&!!newPanel&&oldPanel.dataset.nextUpPanel===newPanel.dataset.nextUpPanel&&
+      oldPanel.dataset.nextUpActor===newPanel.dataset.nextUpActor;
+  }
+  function currentNextUpPanel(root) {
+    return $$('[data-next-up-panel]',root).find(panel=>{
+      // The dialog makes the whole shell inert, but a render beneath it
+      // still needs to preserve the active panel's disclosure choice.
+      for(let node=panel;node&&node!==root;node=node.parentElement)if(node.hidden||node.inert)return false;
+      return true;
+    });
+  }
+  function restoreNextUpFocus(previous,root) {
+    const oldPanel=previous.closest('[data-next-up-panel]');
+    const panel=currentNextUpPanel(root);
+    if(!sameNextUpPanel(oldPanel,panel)||panel.closest('[hidden],[inert]'))return false;
+    const suggestions=$('[data-next-up-suggestions]',panel);
+    const exact=previous.dataset.id&&$$('[data-next-up-origin]',panel).find(el=>
+      el.dataset.nextUpOrigin===previous.dataset.nextUpOrigin&&el.dataset.id===previous.dataset.id&&
+      el.dataset.action===previous.dataset.action&&!el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
+    if(exact&&suggestions?.contains(exact))suggestions.open=true;
+    const target=[exact,suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
+      .find(el=>el&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
+    if(!target)return false;
+    target.focus({preventScroll:true});
+    const rect=target.getBoundingClientRect?.();
+    if(rect&&(rect.top<($('.topbar')?.getBoundingClientRect().bottom||0)||rect.bottom>window.innerHeight))
+      target.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+    return true;
+  }
+  function restoreNextUpDisclosure(oldPanel,open,root) {
+    const panel=currentNextUpPanel(root);
+    if(open===undefined||!sameNextUpPanel(oldPanel,panel))return;
+    const suggestions=$('[data-next-up-suggestions]',panel);
+    if(suggestions)suggestions.open=open;
+  }
+  function nextUpDisclosureOverride(panel) {
+    const suggestions=panel&&$('[data-next-up-suggestions]',panel);
+    if(suggestions&&suggestions.open!==(suggestions.dataset.nextUpDefault==='open'))return suggestions.open;
   }
   function restoreViewFocus(previous,root) {
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
@@ -672,6 +713,8 @@
     const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
     ui.reviewDirty=false;
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
+    const oldNextUp=currentNextUpPanel($('#viewRoot'));
+    const nextUpOpen=nextUpDisclosureOverride(oldNextUp);
     const s=store.getState();
     paintNotifications(s);
     paintTeammateHandoff(s);
@@ -692,6 +735,7 @@
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
+    restoreNextUpDisclosure(oldNextUp,nextUpOpen,$('#viewRoot'));
     if(taskListScroll){const table=$('.task-table-wrap');if(table)table.scrollLeft=taskListScroll;}
     restoreScheduleDateDraft(scheduleDateDraft);
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
@@ -1596,7 +1640,11 @@
         joinWelcome=false;paintTeammateHandoff();
       }
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind,eventReviewGroup);
-      if(action==='review-returned-completion')openReturnedCompletion(id);
+      if(action==='review-returned-completion'){
+        const fromNextUp=el.dataset.nextUpOrigin==='returned'&&$('#dialogBackdrop').hidden;
+        openReturnedCompletion(id);
+        if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
+      }
       if(action==='related-checklist')openRelatedBatch(id);
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
@@ -1649,7 +1697,11 @@
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
-      if(action==='task')taskDialog(id,'',false,false,eventReviewGroup);
+      if(action==='task'){
+        const fromNextUp=el.dataset.nextUpOrigin==='task'&&$('#dialogBackdrop').hidden;
+        taskDialog(id,'',false,fromNextUp,eventReviewGroup);
+        if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
+      }
       if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
         const task=store.getState().tasks.find(task=>task.id===id);
@@ -1855,7 +1907,18 @@
       if(form.id==='returnCompletionForm'){store.returnCompletion(form.dataset.id,data.note,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Changes requested. The task is still incomplete.');}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='taskOutcomeForm'){store.setTaskOutcome(form.dataset.id,data.scope,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Outcome saved. Changed outcomes require the owner to reconfirm.');}
-      if(form.id==='nextUpForm'){store.setNextUp(form.dataset.id,{enabled:data.enabled==='true',replaceTaskId:data.replaceTaskId||''},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Next up updated.');}
+      if(form.id==='nextUpForm'){
+        const id=form.dataset.id,enabled=data.enabled==='true',actor=ui.actor;
+        const before=store.getState().tasks.find(task=>task.id===id);
+        store.setNextUp(id,{enabled,replaceTaskId:data.replaceTaskId||''},actor);
+        render();taskDialog(id,form.id);
+        requestAnimationFrame(()=>{
+          if(window.GatherAccessLost||ui.actor!==actor||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
+          $('#nextUpTaskState',$('#dialog'))?.focus();
+        });
+        toast(enabled?(data.replaceTaskId?'Task swapped into Next up.':'Task added to Next up.')+
+          (before&&!before.acceptedAt?' Responsibility accepted.':''):'Removed from Next up. You still own this task.');
+      }
       if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
@@ -10,7 +12,7 @@ const task=(id,extra={})=>({id,title:id,owner:'maya',status:'todo',dueDate:'',de
 const state=tasks=>({tasks,event:{timeZone:'America/Los_Angeles'},members:[]});
 const panel=(s,actor='maya',overview=false)=>GatherRecoveryUI.create({store:{getState:()=>s},ui:{actor},h,options:()=>'',dayLabel:h,member:id=>({name:id})}).nextUpPanel(s,{overview});
 const suggestions=html=>{
-  const section=html.match(/<details class="next-up-suggestions"[^>]*>([\s\S]*?)<\/details>/)?.[1]||'';
+  const section=html.match(/<details data-next-up-suggestions [^>]*class="next-up-suggestions"[^>]*>([\s\S]*?)<\/details>/)?.[1]||'';
   return [...section.matchAll(/<article>[\s\S]*?data-id="([^"]+)"[\s\S]*?<\/article>/g)]
     .map(([markup,id])=>({id,markup}));
 };
@@ -28,11 +30,68 @@ test('empty Next up exposes up to three ranked ready tasks but never commits or 
 test('existing commitments stay prominent, suggestions use only remaining slots, and full panels hide them',()=>{
   const tasks=Array.from({length:5},(_,i)=>task('task'+i)),s=state(tasks);
   tasks[0].nextUpAt='2026-10-01T12:00:00Z';
-  let html=panel(s);assert.match(html,/1\/3/);assert.match(html,/class="next-up-suggestions"><summary/);
+  let html=panel(s);assert.match(html,/1\/3/);assert.match(html,/class="next-up-suggestions"><summary data-next-up-origin="summary"/);
   assert.doesNotMatch(html,/next-up-suggestions" open|Choose up to/);
   assert.equal([...html.matchAll(/data-id=/g)].length,3);
   tasks[1].nextUpAt=tasks[0].nextUpAt;tasks[2].nextUpAt=tasks[0].nextUpAt;
   html=panel(s);assert.match(html,/3\/3/);assert.doesNotMatch(html,/Suggested next tasks/);
+});
+
+test('Next up identifies its origin and explains when a commitment also accepts responsibility',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const created=store.addTask({title:'Fictional commitments task',owner:'maya'});
+  const recovery=GatherRecoveryUI.create({store,ui:{actor:'maya'},h,options:()=>'',dayLabel:h,member:id=>({name:id})});
+  const current=()=>store.getState().tasks.find(row=>row.id===created.id);
+  const control=()=>recovery.responseMarkup(current(),false);
+  assert.match(control(),/id="nextUpTaskState" tabindex="-1">Not committed to Next up/);
+  assert.match(control(),/Committing also accepts responsibility for this task/);
+  store.setNextUp(created.id,{enabled:true},'maya');
+  assert.match(control(),/id="nextUpTaskState" tabindex="-1">Committed to Next up/);
+  assert.doesNotMatch(control(),/also accepts responsibility/);
+  assert.match(panel(store.getState()),/data-next-up-panel="mine" data-next-up-actor="maya"/);
+  assert.match(panel(store.getState(),'maya',true),/data-next-up-panel="overview" data-next-up-actor="maya"/);
+  assert.match(panel(store.getState()),new RegExp(`data-next-up-origin="task" data-id="${created.id}"`));
+  store.setNextUp(created.id,{enabled:false},'maya');
+  assert.match(control(),/Not committed to Next up/);
+  assert.doesNotMatch(control(),/also accepts responsibility/);
+  assert.ok(current().acceptedAt);
+});
+
+test('hosted Next up confirms and focuses the new state only after the save resolves',async()=>{
+  const app=readFileSync('public/gather-assets/app.js','utf8');
+  const start=app.indexOf("      if(form.id==='nextUpForm'){");
+  const end=app.indexOf("      if(form.id==='recoveryDecisionForm')",start);
+  assert.ok(start>=0&&end>start);
+  const events=[],frames=[];
+  let resolve,reject;
+  const ui={actor:'maya',dialogKind:'task',detailId:'task-a'};
+  const backdrop={hidden:false};
+  const ctx=vm.createContext({
+    form:{id:'nextUpForm',dataset:{id:'task-a'}},data:{enabled:'true',replaceTaskId:'task-b'},ui,window:{},
+    store:{getState:()=>({tasks:[{id:'task-a',acceptedAt:''}]}),setNextUp:(id,data,actor)=>{
+      events.push(['save',id,data.enabled,data.replaceTaskId,actor]);
+      return new Promise((yes,no)=>{resolve=yes;reject=no;});
+    }},
+    render:()=>events.push('render'),taskDialog:(...args)=>events.push(['dialog',...args]),toast:value=>events.push(value),
+    requestAnimationFrame:callback=>frames.push(callback),
+    $:selector=>selector==='#dialogBackdrop'?backdrop:selector==='#nextUpTaskState'?{focus:()=>events.push('focus-state')}:{},
+  });
+  const run=()=>vm.runInContext('(async()=>{'+app.slice(start,end)+'})()',ctx);
+  let pending=run();
+  assert.deepEqual(events,[['save','task-a',true,'task-b','maya']]);
+  assert.equal(frames.length,0);
+  resolve();
+  await pending;
+  assert.deepEqual(events.slice(1),['render',['dialog','task-a','nextUpForm'],'Task swapped into Next up. Responsibility accepted.']);
+  frames.shift()();
+  assert.equal(events.at(-1),'focus-state');
+
+  events.length=0;
+  pending=run();
+  reject(new Error('Fictional failed save'));
+  await assert.rejects(pending,/Fictional failed save/);
+  assert.deepEqual(events,[['save','task-a',true,'task-b','maya']]);
+  assert.equal(frames.length,0);
 });
 
 test('accepting an assignment keeps it visible among equally urgent suggestions without committing it',()=>{

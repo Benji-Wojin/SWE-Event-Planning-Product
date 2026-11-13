@@ -22,7 +22,7 @@
     const state=()=>store.getState();
     const dateKey=(offset=0)=>root.GatherCalendar.dayKey(new Date(),state().event.timeZone,offset);
     const tomorrow=()=>dateKey(1);
-    const taskLink=t=>'<button class="text-button" data-action="task" data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
+    const taskLink=(t,nextUp=false)=>'<button class="text-button" data-action="task"'+(nextUp?' data-next-up-origin="task"':'')+' data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
     function organizerReviewPanel(s,{expanded=false}={}) {
       const rows=organizerReviews(s.tasks),limit=5;
       if(!rows.length)return '';
@@ -47,18 +47,22 @@
     function nextUpPanel(s,{overview=false}={}) {
       const {active,returned,suggested,hasOwned}=P.personalNextUp(s.tasks,ui.actor,new Date(),s.event.timeZone);
       const committed=new Set(active.map(t=>t.id));
-      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>'<article><button type="button" class="text-button" data-action="review-returned-completion" data-id="'+h(t.id)+'">'+h(t.title)+'</button><span class="muted">Review and revise'+(committed.has(t.id)?' · Committed':'')+'</span></article>').join('')+'</section>':'';
+      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>'<article><button type="button" class="text-button" data-action="review-returned-completion" data-next-up-origin="returned" data-id="'+h(t.id)+'">'+h(t.title)+'</button><span class="muted">Review and revise'+(committed.has(t.id)?' · Committed':'')+'</span></article>').join('')+'</section>':'';
       const empty=suggested.length?'Choose up to three tasks to work on next.':hasOwned?(overview?'Nothing ready to start. Open My tasks to review blockers, reports or requests.':'Nothing ready to start. Review your open tasks below.'):'No open tasks assigned to you.';
       const heading=overview?'Your next steps':'Next up';
       const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
       const help=overview?'<p class="muted">Your returned reports, commitments, and suggested tasks. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
-      return '<section class="panel next-up-panel section-gap"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>'<article>'+taskLink(t)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length||returned.length&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+(suggested.length?'<details class="next-up-suggestions"'+(active.length?'':' open')+'><summary>Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t)+'<span class="muted">'+(t.acceptedAt?'Accepted · Not committed':'Review assignment')+'</span></article>').join('')+'</details>':'')+'</div></section>';
+      const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t,true)+'<span class="muted">'+(t.acceptedAt?'Accepted · Not committed':'Review assignment')+'</span></article>').join('')+'</details>':'';
+      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>'<article>'+taskLink(t,true)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length||returned.length&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();
       if(task.owner!==ui.actor||!P.actionable(task,s.tasks))return '';
       const active=P.nextUp(s.tasks,ui.actor,new Date(),s.event.timeZone);
-      return '<form id="nextUpForm" data-id="'+h(task.id)+'" class="next-up-control"><input type="hidden" name="enabled" value="'+(!task.nextUpAt)+'">'+(task.nextUpAt?'<span>In your next '+active.length+' tasks</span><button class="text-button" type="submit">Remove from Next up</button>':(active.length>=3?'<label class="field">Swap with<select name="replaceTaskId" required>'+options([['','Choose a current commitment'],...active.map(t=>[t.id,t.title])],'')+'</select></label>':'')+'<button class="btn btn-secondary btn-small" type="submit">'+(active.length>=3?'Swap into Next up':'Commit to this next')+'</button>')+'</form>';
+      const current=task.nextUpAt?'Committed to Next up · '+active.length+'/3':'Not committed to Next up';
+      const acceptNotice=!task.acceptedAt&&!task.nextUpAt?'<p class="next-up-accept-note muted">Committing also accepts responsibility for this task.</p>':'';
+      return '<form id="nextUpForm" data-id="'+h(task.id)+'" class="next-up-control"><input type="hidden" name="enabled" value="'+(!task.nextUpAt)+'"><span id="nextUpTaskState" tabindex="-1">'+current+'</span>'+acceptNotice+
+        (task.nextUpAt?'<button class="text-button" type="submit">Remove from Next up</button>':(active.length>=3?'<label class="field">Swap with<select name="replaceTaskId" required>'+options([['','Choose a current commitment'],...active.map(t=>[t.id,t.title])],'')+'</select></label>':'')+'<button class="btn btn-secondary btn-small" type="submit">'+(active.length>=3?'Swap into Next up':'Commit to this next')+'</button>')+'</form>';
     }
     function recoveryMarkup(task,organizer) {
       const s=state(),request=P.pendingRequest(task),decision=P.decision(task,s.tasks,new Date(),s.event.timeZone),suggestion=P.suggestion(task,s);
