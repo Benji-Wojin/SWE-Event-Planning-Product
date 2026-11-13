@@ -856,10 +856,17 @@
     taskDialog(id,'',false,quietFallback,eventGroup);
     requestAnimationFrame(()=>{
       if(window.GatherAccessLost||ui.dialogKind!=='task'||ui.detailId!==id)return;
-      const section=review.waitingOnRequiredWork?'.task-dependencies':kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
-      $(section+' h3',$('#dialog'))?.focus();
+      const selector=review.waitingOnRequiredWork?'.task-dependencies h3':kind==='help'||kind==='date'?'#recoveryRequestHeading':'.completion-evidence h3';
+      $(selector,$('#dialog'))?.focus();
     });
     return true;
+  }
+  function focusTaskRecovery(id,selector='#recoveryRequestHeading') {
+    const actor=ui.actor;
+    requestAnimationFrame(()=>{
+      if(window.GatherAccessLost||ui.actor!==actor||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
+      $(selector,$('#dialog'))?.focus();
+    });
   }
   function openReturnedCompletion(id) {
     if(window.GatherAccessLost)return;
@@ -1700,7 +1707,10 @@
       if(action==='task'){
         const fromNextUp=el.dataset.nextUpOrigin==='task'&&$('#dialogBackdrop').hidden;
         taskDialog(id,'',false,fromNextUp,eventReviewGroup);
-        if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
+        if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id){
+          ui.lastFocus=el;
+          if(el.hasAttribute('data-open-recovery'))focusTaskRecovery(id);
+        }
       }
       if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -1919,7 +1929,13 @@
         toast(enabled?(data.replaceTaskId?'Task swapped into Next up.':'Task added to Next up.')+
           (before&&!before.acceptedAt?' Responsibility accepted.':''):'Removed from Next up. You still own this task.');
       }
-      if(form.id==='recoveryDecisionForm'){store.resolveRecovery(form.dataset.id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Plan agreed. The owner can see your decision.');}
+      if(form.id==='recoveryDecisionForm'){
+        const id=form.dataset.id;
+        store.resolveRecovery(id,{...data,confirmHardDeadline:data.confirmHardDeadline==='on'},ui.actor);
+        render();taskDialog(id,form.id);
+        if(data.requestId)focusTaskRecovery(id,'#recoveryReplyHeading');
+        toast(data.requestId?'Organizer response saved to the task.':'Plan agreed. The owner can see your decision.');
+      }
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
@@ -1947,7 +1963,20 @@
         requestAnimationFrame(()=>{const heading=$('#dialog .task-dependencies h3');if(heading){heading.tabIndex=-1;heading.focus();}});
         toast(saved.length===1?'1 related task added.':'Added '+saved.length+' related tasks.');
       }
-      if(form.id==='responseForm'){const id=form.dataset.id,response=event.submitter?.value||data.response;if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);else if(response==='completed'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.reportCompletion(id,details,ui.actor);}else if(response==='date'||response==='help')store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);else throw new Error('Choose Report complete, Report blocked, or Share progress.');render();taskDialog(id,form.id);const task=store.getState().tasks.find(task=>task.id===id),hasSuggestions=(task?.handoffs||[]).some(item=>item.status==='pending');if(response==='completed')window.GatherCompletionUI?.celebrate(task,store.getState());else toast(response==='date'||response==='help'?'Request sent to the organizer.':hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');}
+      if(form.id==='responseForm'){
+        const id=form.dataset.id,response=event.submitter?.value||data.response,isRequest=response==='date'||response==='help';
+        if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');
+        if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}
+        else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);
+        else if(response==='completed'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.reportCompletion(id,details,ui.actor);}
+        else if(isRequest)store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);
+        else throw new Error('Choose Report complete, Report blocked, or Share progress.');
+        render();taskDialog(id,form.id);
+        const task=store.getState().tasks.find(task=>task.id===id),hasSuggestions=(task?.handoffs||[]).some(item=>item.status==='pending');
+        if(response==='completed')window.GatherCompletionUI?.celebrate(task,store.getState());
+        else if(isRequest){focusTaskRecovery(id);toast('Request saved for organizer review.');}
+        else toast(hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');
+      }
       if(form.id==='contextForm'){
         const state=store.getState();
         if(data.timeZone!==state.event.timeZone&&state.tasks.some(task=>task.schedule)){

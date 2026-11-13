@@ -102,7 +102,7 @@
       if(needsRevision)returned.push(task);
       if(!actionable(task,tasks))continue;
       if(task.nextUpAt)active.push(task);
-      else if(!needsRevision){
+      else if(!needsRevision&&pendingRequest(task)?.createdBy!==actor){
         // Rank the work itself, not organizer-only prompts to follow up.
         const urgency=row.info?.factors.reduce((weight,factor)=>personalFactors.has(factor.key)?weight+factor.weight:weight,0)||0;
         candidates.push({...row,score:priorityWeight(task.priority)+urgency});

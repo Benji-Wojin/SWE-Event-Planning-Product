@@ -499,6 +499,25 @@ test('organizer review opens the section for the current task state without muta
   assert.equal(store.exportState(),blocked);
 });
 
+test('task recovery focuses the current request or reply, never a different or closed dialog',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf('  function focusTaskRecovery('),end=source.indexOf('  function openReturnedCompletion(',start);
+  const ui={actor:'maya',dialogKind:'task',detailId:'fictional'},window={},frames=[],focused=[],backdrop={hidden:false};
+  const ctx=vm.createContext({ui,window,requestAnimationFrame:fn=>frames.push(fn),$:selector=>
+    selector==='#dialogBackdrop'?backdrop:selector==='#dialog'?{}:{focus:()=>focused.push(selector)}});
+  vm.runInContext(source.slice(start,end),ctx);
+  ctx.focusTaskRecovery('fictional');frames.shift()();
+  ctx.focusTaskRecovery('fictional','#recoveryReplyHeading');frames.shift()();
+  assert.deepEqual(focused,['#recoveryRequestHeading','#recoveryReplyHeading']);
+  for(const update of [
+    ()=>{ui.actor='dev';},()=>{ui.detailId='other';},()=>{backdrop.hidden=true;},()=>{window.GatherAccessLost=true;},
+  ]){
+    Object.assign(ui,{actor:'maya',detailId:'fictional'});backdrop.hidden=false;window.GatherAccessLost=false;
+    ctx.focusTaskRecovery('fictional');update();frames.shift()();
+    assert.equal(focused.length,2);
+  }
+});
+
 test('ready-to-resume task dialogs distinguish required results and unavailable ownership', () => {
   const store=create();
   store.addDependency('catering',{taskId:'volunteers',kind:'related',reason:'Coordinate food for volunteers.'});

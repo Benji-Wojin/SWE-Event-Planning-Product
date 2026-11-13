@@ -1,6 +1,7 @@
 (function(root){
   'use strict';
   const reviewLabels={completion:'Verify completion',amendment:'Review amended evidence',help:'Respond to help request',date:'Review proposed date'};
+  const requestDecisionLabels={date:'Due date changed',reassign:'Task reassigned',scope:'Outcome reviewed',checkin:'Current plan kept'};
   function organizerReviews(tasks) {
     const time=value=>{const parsed=Date.parse(value||'');return Number.isFinite(parsed)?parsed:Number.MAX_SAFE_INTEGER;};
     return tasks.flatMap(task=>{
@@ -22,7 +23,7 @@
     const state=()=>store.getState();
     const dateKey=(offset=0)=>root.GatherCalendar.dayKey(new Date(),state().event.timeZone,offset);
     const tomorrow=()=>dateKey(1);
-    const taskLink=(t,nextUp=false)=>'<button class="text-button" data-action="task"'+(nextUp?' data-next-up-origin="task"':'')+' data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
+    const taskLink=(t,{nextUp=false,request=false}={})=>'<button type="button" class="text-button" data-action="task"'+(nextUp?' data-next-up-origin="task"':'')+(request?' data-open-recovery':'')+' data-id="'+h(t.id)+'">'+h(t.title)+'</button>';
     function organizerReviewPanel(s,{expanded=false}={}) {
       const rows=organizerReviews(s.tasks),limit=5;
       if(!rows.length)return '';
@@ -47,13 +48,27 @@
     function nextUpPanel(s,{overview=false}={}) {
       const {active,returned,suggested,hasOwned}=P.personalNextUp(s.tasks,ui.actor,new Date(),s.event.timeZone);
       const committed=new Set(active.map(t=>t.id));
-      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>'<article><button type="button" class="text-button" data-action="review-returned-completion" data-next-up-origin="returned" data-id="'+h(t.id)+'">'+h(t.title)+'</button><span class="muted">Review and revise'+(committed.has(t.id)?' · Committed':'')+'</span></article>').join('')+'</section>':'';
+      const alreadyShown=new Set([...active,...returned].map(task=>task.id));
+      const requests=new Map(s.tasks.filter(task=>task.owner===ui.actor&&task.status!=='done'&&!(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)).flatMap(task=>{
+        const request=P.pendingRequest(task);
+        return request?.createdBy===ui.actor?[[task.id,{task,request}]]:[];
+      }));
+      const waiting=[...requests.values()].filter(({task})=>!alreadyShown.has(task.id));
+      const waitingLabel=request=>request.kind==='date'?'Date proposal awaiting review':'Help request awaiting review';
+      const requestBadge=task=>requests.has(task.id)?' · '+waitingLabel(requests.get(task.id).request):'';
+      const personalRow=(task,detail)=>{
+        const request=requests.get(task.id)?.request;
+        return '<article>'+taskLink(task,{nextUp:true,request:!!request})+'<span class="muted">'+h(detail)+requestBadge(task)+'</span></article>';
+      };
+      const waitingMarkup=waiting.length?'<section class="section-gap" aria-label="Requests awaiting organizer review"><h3>Waiting for the organizer</h3>'+
+        waiting.map(({task,request})=>'<article>'+taskLink(task,{nextUp:true,request:true})+'<span class="muted">'+waitingLabel(request)+'</span></article>').join('')+'</section>':'';
+      const returnedMarkup=returned.length?'<section class="section-gap" aria-labelledby="returnedCompletionHeading"><h3 id="returnedCompletionHeading">Completion changes requested</h3><p class="muted">Open a task to review what the organizer asked you to change.</p>'+returned.map(t=>'<article><button type="button" class="text-button" data-action="review-returned-completion" data-next-up-origin="returned" data-id="'+h(t.id)+'">'+h(t.title)+'</button><span class="muted">Review and revise'+(committed.has(t.id)?' · Committed':'')+requestBadge(t)+'</span></article>').join('')+'</section>':'';
       const empty=suggested.length?'Choose up to three tasks to work on next.':hasOwned?(overview?'Nothing ready to start. Open My tasks to review blockers, reports or requests.':'Nothing ready to start. Review your open tasks below.'):'No open tasks assigned to you.';
       const heading=overview?'Your next steps':'Next up';
       const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
       const help=overview?'<p class="muted">Your returned reports, commitments, and suggested tasks. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
-      const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>'<article>'+taskLink(t,true)+'<span class="muted">'+(t.acceptedAt?'Accepted · Not committed':'Review assignment')+'</span></article>').join('')+'</details>':'';
-      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>'<article>'+taskLink(t,true)+'<span class="muted">'+dayLabel(t.dueDate)+'</span></article>').join('')+(active.length||returned.length&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
+      const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>personalRow(t,t.acceptedAt?'Accepted · Not committed':'Review assignment')).join('')+'</details>':'';
+      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,dayLabel(t.dueDate))).join('')+(active.length||(returned.length||waiting.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();
@@ -65,11 +80,18 @@
         (task.nextUpAt?'<button class="text-button" type="submit">Remove from Next up</button>':(active.length>=3?'<label class="field">Swap with<select name="replaceTaskId" required>'+options([['','Choose a current commitment'],...active.map(t=>[t.id,t.title])],'')+'</select></label>':'')+'<button class="btn btn-secondary btn-small" type="submit">'+(active.length>=3?'Swap into Next up':'Commit to this next')+'</button>')+'</form>';
     }
     function recoveryMarkup(task,organizer) {
-      const s=state(),request=P.pendingRequest(task),decision=P.decision(task,s.tasks,new Date(),s.event.timeZone),suggestion=P.suggestion(task,s);
-      if(!request&&(!organizer||!decision))return '';
-      let html='<section class="task-recovery section-gap"><h3 tabindex="-1">'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
+      const s=state(),request=P.pendingRequest(task),decision=organizer?P.decision(task,s.tasks,new Date(),s.event.timeZone):null;
+      // This is a historical response, not a projection of today's due date,
+      // owner, outcome, or check-in. A newer request replaces the receipt.
+      const latest=task.recoveryRequests?.at(-1);
+      const answered=!root.GatherAccessLost&&!request&&latest?.status==='resolved'&&['date','help'].includes(latest.kind)&&
+        Object.hasOwn(requestDecisionLabels,latest.decision)&&(organizer||latest.createdBy===ui.actor);
+      const reply=answered?'<section class="task-recovery section-gap" aria-labelledby="recoveryReplyHeading"><h3 id="recoveryReplyHeading" tabindex="-1">Organizer response</h3><p><strong>'+requestDecisionLabels[latest.decision]+'</strong> · '+(latest.kind==='date'?'Date proposal':'Help request')+'</p><p>'+h(latest.decisionNote)+'</p><p class="muted">This is the saved reply to the request. See Comments for the full decision and check-in.</p></section>':'';
+      if(!request&&!decision)return reply;
+      let html=reply+'<section class="task-recovery section-gap"><h3 id="recoveryRequestHeading" tabindex="-1">'+(request?(request.kind==='date'?'Date proposal':'Help requested'):h(decision.label))+'</h3>';
       if(request)html+='<p>'+h(request.note)+'</p>'+(request.kind==='date'?'<div class="date-proposal"><span>Current: '+dayLabel(task.dueDate)+'</span><strong>Proposed: '+dayLabel(request.proposedDate)+'</strong></div>':'')+'<p class="muted">'+(organizer?'From '+h(member(request.createdBy).name):'Awaiting the organizer. Your current plan is unchanged.')+'</p>';
       if(organizer) {
+        const suggestion=P.suggestion(task,s);
         const choices=[...(request?.kind==='date'?[['date','Approve or adjust the date']]:[['date','Agree a new date']]),['reassign','Reassign the task'],['scope','Reduce the scope'],['checkin','Keep plan · set a check-in']];
         const mode=request?.kind==='date'?'date':request?.kind==='help'||!task.owner?'reassign':'checkin';
         html+='<details class="recovery-suggestion"><summary>Suggested next step</summary><p>'+h(suggestion.text)+'</p>'+suggestion.targets.map(taskLink).join('')+'</details><form id="recoveryDecisionForm" data-id="'+h(task.id)+'"><input type="hidden" name="requestId" value="'+h(request?.id||'')+'"><label class="field">Next step<select name="action">'+options(choices,mode)+'</select></label><div data-decision="date" '+(mode==='date'?'':'hidden')+'><label class="field">New due date<input type="date" name="dueDate" value="'+h(request?.proposedDate||'')+'" '+(mode==='date'?'required':'')+'></label>'+(task.hardDeadline?'<label class="check-field"><input type="checkbox" name="confirmHardDeadline"> The vendor or external deadline has also changed</label>':'')+'</div><div data-decision="reassign" '+(mode==='reassign'?'':'hidden')+'><label class="field">New owner<select name="owner" '+(mode==='reassign'?'required':'')+'>'+options([['','Choose a teammate'],...s.members.filter(m=>m.id!==task.owner&&m.active!==false).map(m=>[m.id,m.name])],'')+'</select></label><div data-owner-load></div><p class="muted">The new owner will need to accept it.</p></div><div data-decision="scope" hidden><label class="field">Smaller required outcome<textarea name="scope" rows="2" maxlength="3000">'+h(task.scope||'')+'</textarea></label><p class="muted">A different outcome clears acceptance and Next up so the owner can reconfirm. Current progress stays unchanged.</p></div><label class="field">Decision for the owner<textarea name="note" required rows="2" maxlength="3000"></textarea></label><label class="field">Next check-in<input name="reviewAfter" type="date" required value="'+tomorrow()+'"></label><button class="btn btn-primary" type="submit">Confirm plan</button></form>';
@@ -79,7 +101,9 @@
     function responseMarkup(task,awaiting,completionBlocked=false) {
       const overdue=task.dueDate&&task.dueDate<dateKey();
       const revising=P.changesRequested(task);
-      return '<section class="task-report section-gap"><h3>'+(revising?'Revised completion report':overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"'+(revising?' data-revising-completion="true"':'')+'>'+(!awaiting&&!completionBlocked&&!revising?'<button type="button" class="btn btn-secondary" data-action="prepare-completion">Report complete</button><p class="muted">Add a completion note and, optionally, a file or link. Nothing is submitted until you confirm.</p>':'')+'<label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed',revising?'Report revised completion':'Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Need someone else']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label><label class="field"><span data-response-note-label>What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. You can optionally add a file or link below. Submitting does not replace organizer verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt&&!awaiting?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
+      const requestHint=awaiting?'':'<p class="muted" data-recovery-request-hint hidden>The organizer will review this. The agreed plan stays in place.'+
+        (P.pendingRequest(task)?' A changed request replaces the current one.':'')+'</p>';
+      return '<section class="task-report section-gap"><h3>'+(revising?'Revised completion report':overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"'+(revising?' data-revising-completion="true"':'')+'>'+(!awaiting&&!completionBlocked&&!revising?'<button type="button" class="btn btn-secondary" data-action="prepare-completion">Report complete</button><p class="muted">Add a completion note and, optionally, a file or link. Nothing is submitted until you confirm.</p>':'')+'<label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed',revising?'Report revised completion':'Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Ask for help']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label>'+requestHint+'<label class="field"><span data-response-note-label>What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. You can optionally add a file or link below. Submitting does not replace organizer verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt&&!awaiting?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
     }
     function priorityMarkup(task,organizer) {
       const info=P.analyze(task,state().tasks,new Date(),state().event.timeZone),value=task.priority||'auto';
@@ -87,13 +111,14 @@
       return '<details class="task-priority priority-details"><summary>Priority &amp; history · '+h(P.labels[value])+'</summary>'+(organizer?'<form id="priorityForm" data-id="'+h(task.id)+'"><label class="field">Priority<select name="priority">'+options(Object.entries(P.labels),value)+'</select></label><label class="check-field"><input type="checkbox" name="essential" '+(task.essential?'checked':'')+'> Essential for the event</label><label class="check-field"><input type="checkbox" name="hardDeadline" '+(task.hardDeadline?'checked':'')+'> Fixed vendor or external deadline</label><button class="btn btn-secondary btn-small" type="submit">Save priority</button></form>':'')+'<p>Event risk and work that unblocks others come first. Lateness increases urgency, but does not always take the top spot.</p>'+(info?'<ul>'+info.factors.map(f=>'<li>'+h(f.label)+'</li>').join('')+'</ul>':'')+(history?'<h4>Deadline history</h4><p>Original: '+dayLabel(task.originalDueDate)+'</p><ul>'+history+'</ul>':'')+'</details>';
     }
     function syncResponse(form) {
-      const date=form.elements.response.value==='date';form.querySelector('[data-proposed-date]').hidden=!date;form.elements.proposedDate.required=date;
+      const response=form.elements.response.value,date=response==='date',help=response==='help';form.querySelector('[data-proposed-date]').hidden=!date;form.elements.proposedDate.required=date;
       form.elements.proposedDate.disabled=!date;
       form.elements.proposedDate.min=dateKey();
       const evidence=form.querySelector('[data-completion-only]');if(evidence){evidence.hidden=form.elements.response.value!=='completed';for(const input of evidence.querySelectorAll('input,select,textarea,button'))input.disabled=evidence.hidden;}
-      const completing=form.elements.response.value==='completed',label=form.querySelector('[data-response-note-label]'),submit=form.querySelector('button[type="submit"]');
+      const hint=form.querySelector('[data-recovery-request-hint]');if(hint)hint.hidden=!date&&!help;
+      const completing=response==='completed',label=form.querySelector('[data-response-note-label]'),submit=form.querySelector('button[type="submit"]');
       if(label)label.textContent=completing?'Completion note · what was done?':'What happened or what do you need?';
-      if(submit)submit.textContent=completing?(form.dataset?.revisingCompletion==='true'?'Submit revised completion':'Submit completion'):'Save update';
+      if(submit)submit.textContent=completing?(form.dataset?.revisingCompletion==='true'?'Submit revised completion':'Submit completion'):date?'Send date proposal':help?'Send help request':'Save update';
     }
     function prepareCompletion(form) {
       if(!form||![...form.elements.response.options].some(option=>option.value==='completed'))return false;

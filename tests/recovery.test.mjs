@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
+import '../legacy/recovery-ui.js';
 const now=new Date('2026-09-24T12:00:00Z');
 const create=()=>GatherStore.createStore({storage:null,now:now.getTime()});
 const get=(store,id)=>store.getState().tasks.find(task=>task.id===id);
 const decision={action:'checkin',note:'Keep the agreed plan.',reviewAfter:'2026-09-30'};
+const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const receipt=(store,id,actor='maya',organizer=false)=>GatherRecoveryUI.create({
+  store,ui:{actor},h,dayLabel:h,options:()=>'',member:id=>store.getState().members.find(m=>m.id===id),
+}).recoveryMarkup(get(store,id),organizer);
+const currentRequestId=(store,id)=>GatherPriorities.pendingRequest(get(store,id)).id;
 
 test('Next up is owner-controlled, three-slot limited, atomic and distinct from assignments',()=>{
   const store=create(),tasks=Array.from({length:4},(_,i)=>store.addTask({title:'Work '+i,owner:'maya',status:'todo'}));
@@ -39,6 +45,73 @@ test('date proposals preserve the plan, reject stale approvals and protect fixed
   assert.equal(updated.recoveryRequests.at(-1).status,'resolved');assert.equal(updated.deadlineHistory.at(-1).from,'2026-09-25');
   assert.equal(updated.followupAfter,decision.reviewAfter);assert.ok(updated.comments.at(-1).text.includes('2026-09-28'));
   assert.throws(()=>store.resolveRecovery('dietary',{...decision,requestId}),/already handled/);
+});
+
+test('recovery shows the latest request state, never a stale organizer reply for a replacement',()=>{
+  const store=create(),task=store.addTask({title:'Fictional pickup plan',owner:'maya',status:'progress',dueDate:'2026-10-01'});
+  const {id}=task;
+  store.resolveRecovery(id,{...decision,note:'UNRELATED CHECK-IN'},'jack');
+  assert.doesNotMatch(receipt(store,id),/Organizer response|UNRELATED CHECK-IN/);
+
+  store.requestRecovery(id,{kind:'help',note:'FIRST REQUEST'},'maya');
+  assert.match(receipt(store,id),/Help requested[\s\S]*Awaiting the organizer/);
+  store.resolveRecovery(id,{...decision,requestId:currentRequestId(store,id),note:'EARLIER REPLY'},'jack');
+  assert.match(receipt(store,id),/Organizer response[\s\S]*EARLIER REPLY/);
+
+  store.requestRecovery(id,{kind:'date',note:'SECOND REQUEST',proposedDate:'2026-10-05'},'maya');
+  const pending=receipt(store,id);
+  assert.match(pending,/Date proposal[\s\S]*SECOND REQUEST[\s\S]*Awaiting the organizer/);
+  assert.doesNotMatch(pending,/Organizer response|EARLIER REPLY/);
+
+  // A direct edit closes the request without deciding it. Do not fall back to the older reply.
+  store.updateTask(id,{dueDate:'2026-10-04'},'jack');
+  assert.deepEqual(get(store,id).recoveryRequests.map(r=>r.status),['resolved','superseded']);
+  assert.doesNotMatch(receipt(store,id),/Organizer response|EARLIER REPLY|Awaiting the organizer/);
+
+  store.requestRecovery(id,{kind:'help',note:'CURRENT REQUEST'},'maya');
+  store.resolveRecovery(id,{...decision,requestId:currentRequestId(store,id),note:'LATEST REPLY'},'jack');
+  const before=store.exportState();
+  const resolved=receipt(store,id);
+  assert.match(resolved,/Organizer response[\s\S]*Current plan kept[\s\S]*LATEST REPLY/);
+  assert.doesNotMatch(resolved,/Awaiting the organizer|EARLIER REPLY/);
+  assert.equal(store.exportState(),before);
+});
+
+test('each explicit recovery decision has an escaped historical receipt scoped to the requester or organizer',()=>{
+  for(const [action,patch,label] of [
+    ['date',{dueDate:'2026-10-05'},'Due date changed'],
+    ['reassign',{owner:'jules'},'Task reassigned'],
+    ['scope',{scope:'Check the fictional route.'},'Outcome reviewed'],
+    ['checkin',{},'Current plan kept'],
+  ]){
+    const store=create(),{id}=store.addTask({title:'Fictional task',owner:'maya',status:'progress',dueDate:'2026-10-01',note:'Existing progress.',scope:'Check all fictional routes.'});
+    store.requestRecovery(id,action==='date'?{kind:'date',note:'Can we shift the date?',proposedDate:'2026-10-05'}:{kind:'help',note:'Can someone help?'},'maya');
+    const note='Try <tag> & "example".';
+    store.resolveRecovery(id,{...decision,action,...patch,note,requestId:currentRequestId(store,id)},'jack');
+    const before=store.exportState(),task=get(store,id);
+    if(action==='reassign')assert.equal(task.owner,'jules');
+    for(const [actor,organizer] of [['maya',false],['jack',true]]){
+      const markup=receipt(store,id,actor,organizer);
+      assert.match(markup,/<h3\b[^>]*>Organizer response<\/h3>/,action);
+      assert.ok(markup.includes(label),action);
+      assert.ok(markup.includes('Try &lt;tag&gt; &amp; &quot;example&quot;.'),action);
+      assert.doesNotMatch(markup,/<tag>|Awaiting the organizer/,action);
+    }
+    assert.doesNotMatch(receipt(store,id,'jules'),/Organizer response|example/,action);
+    assert.equal(store.exportState(),before,action);
+  }
+});
+
+test('the recovery receipt is hidden when project access is lost',t=>{
+  const store=create(),{id}=store.addTask({title:'Fictional plan',owner:'maya'});
+  store.requestRecovery(id,{kind:'help',note:'Can someone help?'},'maya');
+  store.resolveRecovery(id,{...decision,requestId:currentRequestId(store,id)},'jack');
+  assert.match(receipt(store,id),/Organizer response/);
+  const original=globalThis.GatherAccessLost,hadFlag=Object.hasOwn(globalThis,'GatherAccessLost');
+  t.after(()=>{if(hadFlag)globalThis.GatherAccessLost=original;else delete globalThis.GatherAccessLost;});
+  globalThis.GatherAccessLost=true;
+  assert.doesNotMatch(receipt(store,id),/Organizer response|Keep the agreed plan/);
+  assert.doesNotMatch(receipt(store,id,'jack',true),/Organizer response|Keep the agreed plan/);
 });
 
 test('accepted completion email supersedes help requests and blocks reassignment decisions until verified',()=>{

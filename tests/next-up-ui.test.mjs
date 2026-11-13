@@ -152,6 +152,33 @@ test('empty guidance distinguishes no assignments from blocked, dependent, and v
   }
 });
 
+test('pending help and date requests stay visible without taking commitment slots or duplicating tasks',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const [help,date,other]=['Fictional help task','Fictional date task','Fictional other owner'].map((title,i)=>store.addTask({title,owner:i===2?'dev':'maya'}));
+  store.setNextUp(help.id,{enabled:true},'maya');
+  store.setNextUp(date.id,{enabled:true},'maya');
+  store.requestRecovery(help.id,{kind:'help',note:'Fictional help note'},'maya');
+  store.requestRecovery(date.id,{kind:'date',note:'Fictional date note',proposedDate:'2099-11-04'},'maya');
+  store.requestRecovery(other.id,{kind:'help',note:'Fictional other note'},'dev');
+  const view=()=>{const s=store.getState();return {...s,tasks:s.tasks.filter(task=>[help.id,date.id,other.id].includes(task.id))};};
+  const before=store.exportState();
+  for(const overview of [false,true]){
+    const html=panel(view(),'maya',overview);
+    assert.match(html,/1\/3/);
+    assert.match(html,/Waiting for the organizer[\s\S]*Fictional help task[\s\S]*Help request awaiting review/);
+    assert.match(html,/Fictional date task[\s\S]*Date proposal awaiting review/);
+    for(const {id} of [help,date])assert.equal(html.split('data-open-recovery data-id="'+id+'"').length,2);
+    assert.doesNotMatch(html,/Fictional .* note|Fictional other owner/);
+  }
+  assert.equal(store.exportState(),before);
+  store.setNextUp(date.id,{enabled:false},'maya');
+  const uncommitted=panel(view());
+  assert.match(uncommitted,/0\/3/);
+  assert.match(uncommitted,/Waiting for the organizer[\s\S]*Fictional date task/);
+  assert.equal(uncommitted.split('data-open-recovery data-id="'+date.id+'"').length,2);
+  assert.doesNotMatch(uncommitted,/Suggested next tasks/);
+});
+
 test('suggested task text is escaped, actor-scoped, and committing continues through the existing owner action',()=>{
   const s=state([task('id"<>',{title:'<img src=x onerror=alert(1)>'})]);
   const html=panel(s);assert.match(html,/data-id="id&quot;&lt;&gt;"/);assert.match(html,/&lt;img/);assert.doesNotMatch(html,/<img/);
