@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
+import '../legacy/priorities.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const ref = (task) => ({ id: task.id, revision: task.revision });
@@ -204,6 +205,7 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   const context = vm.createContext({
     ui: { actor: 'maya' },
     window: {GatherAccessLost:false},
+    GatherPriorities,
     eventReviewScope: () => ({mine:false,actor:'maya'}),
     schedule: {reviewAcceptanceTasks:(_state,scope)=>{
       assert.equal(scope.actor,'maya');return tasks.filter(task=>task.id==='a');

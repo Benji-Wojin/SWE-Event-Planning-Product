@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/priorities.js';
 
 const source=readFileSync('legacy/app.js','utf8');
 const start=source.indexOf('  function acceptanceCandidates(');
@@ -18,7 +19,7 @@ function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={})
     window:{GatherMode:{demo},GatherIdentity:{role},GatherAccessLost:lost},
     joinWelcome:welcome,renderedTeammateHandoff:'',document:{activeElement:null},
     $:selector=>selector==='#workspaceHandoff'?host:null,store:{getState:()=>state},
-    h:escape,statuses:{todo:'To do'},dayLabel:value=>value,
+    GatherPriorities,h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
     navigate:view=>{ctx.ui.view=view;actions.push(view);return true;},
     filteredTasks:()=>state.tasks.filter(item=>item.owner==='maya'),
     skipToContent:()=>actions.push('focus'),toast:message=>actions.push(message),
@@ -79,6 +80,41 @@ test('assignment handoff uses the real personal review without writing or select
   assert.match(markup,/id="accept-activity-review-mine">Activity starts 2030-11-19 17:00/);
   assert.match(markup,/id="accept-outcome-review-mine">/);
   assert.doesNotMatch(markup,/\bchecked\b|ignore other|Do not display/);
+});
+
+test('personal assignment review describes work readiness without changing who can accept',()=>{
+  const verifiedAt='2030-11-18T13:00:00Z';
+  const f=context([
+    task('one','maya',{dependencies:[{taskId:'outside-pending',kind:'dependency'}]}),
+    task('several','maya',{dependencies:[{taskId:'outside-pending',kind:'dependency'},{taskId:'unavailable',kind:'dependency'}]}),
+    task('linked-ready','maya',{status:'blocked',dependencies:[{taskId:'outside-done',kind:'dependency'}]}),
+    task('marked-blocked','maya',{status:'blocked'}),
+    task('help','maya',{recoveryRequests:[{kind:'help',status:'pending',note:'FICTIONAL_PRIVATE_REQUEST'}]}),
+    task('related-only','maya',{dependencies:[{taskId:'outside-pending',kind:'related'}]}),
+    task('ready','maya',{dependencies:[{taskId:'outside-done',kind:'dependency'}]}),
+    task('outside-pending','other',{title:'FICTIONAL_OTHER_PREREQUISITE',status:'done',requiresVerification:true,note:'FICTIONAL_PRIVATE_RESULT'}),
+    task('outside-done','other',{title:'FICTIONAL_OTHER_VERIFIED',status:'done',requiresVerification:true,verifiedAt}),
+  ]);
+  const before=structuredClone(f.state);
+  f.run("openHandoffTasks('review')");
+  assert.deepEqual(f.actions,['tasks','focus']);
+  const markup=f.dialog().markup;
+  for(const [id,label] of [
+    ['one','Waiting on 1 required task before completion.'],
+    ['several','Waiting on 2 required tasks before completion.'],
+    ['linked-ready','Review linked results before resuming.'],
+    ['marked-blocked','Blocked · review the latest update.'],
+    ['help','Help requested · waiting for the organizer.'],
+  ]){
+    const checkbox=markup.match(new RegExp(`<input[^>]+name="acceptTask"[^>]+value="${id}"[^>]*>`))?.[0];
+    assert.match(checkbox,new RegExp(`aria-describedby="[^"]*accept-readiness-${id}(?:\\s|")`));
+    assert.doesNotMatch(checkbox,/\b(?:disabled|checked)\b/);
+    const cue=markup.match(new RegExp(`id="accept-readiness-${id}"[^>]*>([\\s\\S]*?)<\\/span>`))?.[1].replace(/<[^>]+>/g,'');
+    assert.equal(cue,label);
+  }
+  assert.doesNotMatch(markup,/accept-readiness-(?:related-only|ready)|FICTIONAL_(?:OTHER|PRIVATE)|outside-(?:pending|done)|unavailable/);
+  assert.equal((markup.match(/name="acceptTask"/g)||[]).length,7);
+  assert.deepEqual(f.state,before);
 });
 
 test('read-only event details show the shared venue and date, with clear missing states',()=>{

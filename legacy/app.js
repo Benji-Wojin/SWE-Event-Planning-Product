@@ -478,6 +478,14 @@
     skipToContent();
     if(action==='review'&&acceptanceCandidates(store.getState().tasks).length)acceptanceDialog();
   }
+  function assignmentReadiness(task,tasks) {
+    const waiting=GatherPriorities.unresolved(task,tasks).length;
+    if(waiting)return `Waiting on ${waiting} required ${waiting===1?'task':'tasks'} before completion.`;
+    if(GatherPriorities.pendingRequest(task)?.kind==='help')return 'Help requested · waiting for the organizer.';
+    if(task.status==='blocked')return (task.dependencies||[]).some(link=>link.kind!=='related')
+      ?'Review linked results before resuming.':'Blocked · review the latest update.';
+    return '';
+  }
   function acceptanceDialog(fromEventReview=false) {
     if(window.GatherAccessLost)return;
     const state=store.getState();
@@ -487,15 +495,16 @@
     const choices=tasks.map(task=>{
       const key=h(task.id);
       const when=task.schedule?`Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}`:task.eventActivity===true?'Planned activity · start time not set':'';
+      const readiness=assignmentReadiness(task,state.tasks);
       return `<div class="acceptance-choice">
-        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}" aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''} accept-outcome-${key}">
+        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}" aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
         <span><strong id="accept-title-${key}">${h(task.title)}</strong><span id="accept-date-${key}">${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>
-        ${when?`<span id="accept-activity-${key}">${when}</span>`:''}<span id="accept-outcome-${key}"><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>
+        ${when?`<span id="accept-activity-${key}">${when}</span>`:''}${readiness?`<span id="accept-readiness-${key}"><strong>${h(readiness)}</strong></span>`:''}<span id="accept-outcome-${key}"><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>
         ${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label>
         <button type="button" class="text-button" data-action="task" data-id="${key}" aria-label="Open task details for ${h(task.title)}">Open task details</button>
       </div>`;
     }).join('');
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">Acceptance records your responsibility. It does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">You can accept responsibility even if work is waiting on something else. Acceptance does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
