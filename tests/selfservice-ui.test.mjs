@@ -83,7 +83,8 @@ test('optional planner walkthrough teaches the actual controls, fallback and sha
   const steps = tree.filter((node) => node.type === 'li');
   assert.equal(steps.length, 3);
   assert.match(text(steps[0]), /Event type.*What are you planning\?.*Example:.*40 people/);
-  assert.match(text(steps[1]), /Groq.*Generate draft.*Opening this page alone.*Use starter checklist/);
+  assert.match(text(steps[1]), /Groq.*Generate draft.*Generate another draft.*Opening this page alone.*checklist without using AI/);
+  assert.match(text(steps[1]), /Example suggestions:.*check-in table.*choose a greeter.*schedule cleanup.*Your draft will depend on your brief/);
   assert.match(text(steps[2]), /deselect.*Add selected items to project.*Shared tasks.*Timeline/);
   assert.match(text(guide), /Return to your guide.*without generating or adding anything/);
   assert.equal(tree.some((node) => ['button', 'input', 'form'].includes(node.type)), false);

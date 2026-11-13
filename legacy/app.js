@@ -36,6 +36,7 @@
     const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
     const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
     const finished=bound&&reached.has('event_details_viewed')&&(reached.has('invite_created')||reached.has('invite_skipped'));
+    const showPlanTip=next?.[0]==='budget_viewed'||next?.[0]==='event_details_viewed';
     host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
@@ -50,7 +51,7 @@
         ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a></div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
         : waitingForTask
           ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step 2 of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">Your first task is saved</h2><p role="status">Loading the next guide step…</p><div class="workspace-guide-actions"><a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(2,false,false)}`
-          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${next[0]==='budget_viewed'?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
+          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${showPlanTip?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
   function guidePlanTip() {
