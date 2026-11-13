@@ -13,6 +13,9 @@
     { id: "dev", name: "Dev Kim", initials: "DK", role: "Program & volunteers", color: "sand" },
   ];
   const copy = (value) => JSON.parse(JSON.stringify(value));
+  const validCompletionEmailId = id => typeof id==='string'&&/^[a-zA-Z0-9_-]{1,160}$/.test(id);
+  const validCompletionEmailHistory = value => Array.isArray(value)&&value.length<=10&&new Set(value).size===value.length&&
+    value.every(validCompletionEmailId);
   const clean = (value, max = 2000) => String(value == null ? "" : value).trim().slice(0, max);
   const normalize = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const validDate = (value) => value === "" || (/^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value + "T12:00:00Z").toISOString().slice(0, 10) === value);
@@ -115,6 +118,8 @@
         state.tasks.forEach((task) => {
           task.completionReportedBy ??= "";
           task.completionReportSourceId ??= "";
+          if(task.completionReportEmailHistory!==undefined&&!validCompletionEmailHistory(task.completionReportEmailHistory))
+            delete task.completionReportEmailHistory;
           task.memoryId ??= "";
           task.suggestionId ??= "";
           const legacyMemory = state.memories.find((memory) => task.note.includes(`Event memory ${memory.id}:`));
@@ -684,6 +689,10 @@
         closeRecovery(task,'superseded',actor);
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
         task.completionReportSourceId = message.id;
+        // Keep exact message IDs separately from evidence records. Earlier readers
+        // can still read this task; they strictly validate the evidence shape.
+        if(validCompletionEmailId(message.id))
+          task.completionReportEmailHistory=[message.id,...(task.completionReportEmailHistory||[]).filter(id=>id!==message.id)].slice(0,10);
         archiveEvidence(task);
         // The organizer-approved note is the report. Earlier links and files
         // are kept in history, not silently attached to this email.

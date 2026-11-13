@@ -169,6 +169,8 @@ Verifying, returning a report for changes, and acknowledging amended evidence ap
 
 Accepting a completion report from **Email briefing** records the reviewed note and links to that exact shared email from **Completion details**. Any previous submission, including its links and shared files, moves to **Earlier submissions**. No email attachments are imported, and a later email does not replace an already verified submission.
 
+Completion details shows the recorder for each submission when known. **Earlier completion emails** keeps exact links to recently superseded email reports recorded by Weft, separately from earlier files and links. Older evidence without a saved source is not matched by its text or timestamp.
+
 Use **Wrap up → Reuse tasks for another event** to choose and edit titles for that importer. Only reviewed titles carry forward; the source event and its task history are unchanged.
 
 Organizers can use **Draft guest agenda** to turn selected activities into plain text for guests. The draft shows its date and whether it includes **My activities only** or **All activities**. From a personal draft, **Start over with all activities** keeps the date and leaves the Timeline filter unchanged; it confirms before discarding edits and starts with nothing selected. Review the guest-facing titles and add any locations you want to share. Owners, internal notes, and saved locations are not included. The draft is not saved or sent. Use **Copy guest agenda** to check the current schedule first. If automatic copy is unavailable, the checked text can be copied manually once. If a check can’t finish, retry without losing your edits; if a newer plan is found, start a fresh agenda from the updated schedule.

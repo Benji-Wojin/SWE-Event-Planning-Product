@@ -122,18 +122,29 @@
         : '')
     );
   }
-  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false,workspaceRevision,completionSource}={}) {
+  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false,workspaceRevision,completionSource,
+    completionHistorySources=[],memberName}={}) {
     const review=task.status!=='done'&&!task.reportedAt?task.completionReview:null;
+    const earlierSources=new Map(completionHistorySources.filter(message=>message?.appliedTaskId===task.id).map(message=>[message.id,message]));
+    const earlierEmails=(task.completionReportEmailHistory||[]).filter(id=>id!==task.completionReportSourceId)
+      .map(id=>earlierSources.get(id)).filter(Boolean);
     if (
       task.status !== 'done' &&
       !task.reportedAt &&
       !(task.completionEvidenceHistory || []).length &&
+      !earlierEmails.length &&
       !review
     )
       return '';
     const value = task.completionEvidence;
+    const recordedBy=item=>{
+      const name=memberName?.(item.actor);
+      return name?'Recorded by '+h(name):'Recorder not available';
+    };
+    const openEmail=message=>'<button type="button" class="text-button" data-action="source" data-id="'+h(message.id)+'"'+
+      (message.subject?' aria-label="Open in Email briefing: '+h(message.subject)+'"':'')+'>Open in Email briefing</button>';
     const source=completionSource&&completionSource.id===task.completionReportSourceId
-      ? '<p class="muted">Completion reported by '+h(completionSource.sender||'the sender')+' in Email briefing. <button type="button" class="text-button" data-action="source" data-id="'+h(completionSource.id)+'">Open in Email briefing</button></p>'
+      ? '<p class="muted">Completion reported by '+h(completionSource.sender||'the sender')+' in Email briefing. '+openEmail(completionSource)+'</p>'
       : '';
     return (
       '<section class="completion-evidence section-gap"><h3 tabindex="-1">Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
@@ -149,8 +160,9 @@
           h(value.note || 'No additional note.') +
           '</p>' +
           links(value) +
-          '<p class="muted">Recorded ' +
+          '<p class="muted">Submission dated ' +
           h(new Date(value.at).toLocaleString()) +
+          ' · '+recordedBy(value)+
           '</p></div>'
         : review?'<p class="muted">No current completion report. Earlier submissions are retained below.</p>':'<p class="muted">No file or link attached.</p>') +
       (organizer && task.status==='done' && value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
@@ -172,18 +184,23 @@
           '</summary><p class="muted">Earlier records may describe a previous completion. Shared files may have been archived.</p>' +
           task.completionEvidenceHistory
             .map(
-              (item) =>
+              (item) => item ?
                 '<article><p>' +
                 h(item.note || 'No note.') +
                 '</p>' +
                 links(item) +
-                '<small>' +
+                '<small>Submission dated ' +
                 h(new Date(item.at).toLocaleString()) +
-                '</small></article>',
+                ' · '+recordedBy(item)+
+                '</small></article>' : '',
             )
             .join('') +
           '</details>'
         : '') +
+      (earlierEmails.length?'<details class="completion-history completion-email-history"><summary>Earlier completion emails · '+earlierEmails.length+
+        '</summary><p class="muted">These reviewed emails are no longer the current report. They are listed separately from the files and links in Earlier submissions.</p><ul>'+
+        earlierEmails.map(message=>'<li>'+h(message.sender||'Unknown sender')+
+          (message.subject?' · '+h(message.subject):'')+' '+openEmail(message)+'</li>').join('')+'</ul></details>':'')+
       '</section>'
     );
   }

@@ -2339,6 +2339,11 @@
       (Number.isSafeInteger(reviewedWorkspace)?` data-workspace-revision="${reviewedWorkspace}"`:'');
     const completionSource=task.completionReportSourceId&&taskState.messages?.find(message=>
       message.id===task.completionReportSourceId&&message.appliedTaskId===id);
+    const historyById=new Map((task.completionReportEmailHistory||[]).map(sourceId=>[sourceId,null]));
+    for(const message of taskState.messages||[])if(message.appliedTaskId===id&&historyById.has(message.id))
+      historyById.set(message.id,message);
+    const completionHistorySources=[...historyById.values()].filter(Boolean);
+    const evidenceRecorders=new Map((taskState.members||[]).map(person=>[person.id,person.name]));
     const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
     const teammateReconfirmation=organizer&&!own&&schedule.awaitingScheduleAcceptance?.(task,taskState.members||[]);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
@@ -2353,7 +2358,7 @@
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
-      ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked,workspaceRevision:reviewedWorkspace,completionSource})||''}
+      ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked,workspaceRevision:reviewedWorkspace,completionSource,completionHistorySources,memberName:actor=>evidenceRecorders.get(actor)})||''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.
         ${completionBlocked?`<p id="verificationRequiredWork">Verification is waiting on required work. See Task relationships below.${organizer?' You can still request changes to this report.':''}</p>`:''}
         ${organizer?`<button type="button" class="btn btn-primary btn-small" data-action="verify-task" ${completionReviewAttributes} ${completionBlocked?'disabled aria-describedby="verificationRequiredWork"':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" ${completionReviewAttributes} class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
