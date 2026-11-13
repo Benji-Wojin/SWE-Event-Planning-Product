@@ -42,6 +42,8 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
       return (await page.type(page.props)).props.children[1].props.src;
     };
     assert.equal(await landing({project:'school',task:'task-123',review:'amendment'}),'/workspace.html?project=school&task=task-123&review=amendment#tasks');
+    assert.equal(await landing({project:'school',guide:'1',task:'task-123',review:'owner'}),'/workspace.html?project=school&guide=1&task=task-123&review=owner#tasks');
+    assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&task=task-123&review=owner');
     for(const review of ['help','review-blocked',['completion','amendment'],'']){
       assert.equal(await landing({project:'school',task:'task-123',review}),'/workspace.html?project=school&task=task-123#tasks');
     }

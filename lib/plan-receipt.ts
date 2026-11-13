@@ -9,7 +9,7 @@ export type PlanReceiptTask = {
 };
 
 const handoffSections = [
-  { id: 'owner', title: 'Assign an owner', help: 'Open a task and choose an active owner in Edit task details.' },
+  { id: 'owner', title: 'Assign an owner', help: 'Open a task to choose an owner in Edit task details. The task changes only when you save.' },
   { id: 'review', title: 'Review completion', help: 'Open a task to review its completion or updated evidence.' },
   { id: 'required-work', title: 'Review required work', help: 'Open the task and check Task relationships. The report is still on file, but verification must wait until the required work is resolved.' },
   { id: 'schedule-acceptance', title: 'Waiting for renewed acceptance', help: 'The schedule changed. The assigned owner needs to review the current plan and accept responsibility again.' },

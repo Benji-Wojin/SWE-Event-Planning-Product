@@ -9,7 +9,7 @@
   }
   function taskLinkFrom(params) {
     const id=taskIdFrom(params),hints=params.getAll('review');
-    const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment'].includes(hints[0])?hints[0]:'';
+    const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment','owner'].includes(hints[0])?hints[0]:'';
     return {id,review};
   }
   function scheduleDate(value) {

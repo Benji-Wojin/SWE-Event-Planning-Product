@@ -57,16 +57,17 @@ test('missing owners never masquerade as Unassigned or expose IDs; pending repor
 });
 
 test('Review owner opens and focuses only the current organizer task form, preserving drafts without writes',()=>{
-  const begin=source.indexOf("      if(action==='review-task-owner'");
-  const handler=source.slice(begin,source.indexOf("      if(action==='quick-tour'",begin));
-  for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details']){
+  const begin=source.indexOf('  function focusTaskOwnerEditor(');
+  const handler=source.slice(begin,source.indexOf('  function openTaskOwnerLink(',begin));
+  assert.match(source,/if\(action==='review-task-owner'\)focusTaskOwnerEditor\(id\)/);
+  for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details','closed']){
     let focused=0;const details={open:false},field={value:'unsaved-owner',focus(){focused++;}};
     const form={dataset:{id:mode==='stale-form'?'other':'activity'},closest:()=>mode==='missing-details'?null:details};
     const context=vm.createContext({action:'review-task-owner',id:'activity',window:{GatherAccessLost:mode==='lost'},isOrganizer:()=>mode!=='member',
       ui:{dialogKind:mode==='other-dialog'?'other':'task',detailId:mode==='other-task'?'other':'activity'},
       focusTaskDialogControl:target=>target.focus(),
-      $:(selector,root)=>selector==='#taskDetailForm'?(mode==='missing-form'?null:form):root===form?field:null});
-    vm.runInContext(handler,context);
+      $:(selector,root)=>selector==='#dialogBackdrop'?{hidden:mode==='closed'}:selector==='#taskDetailForm'?(mode==='missing-form'?null:form):root===form?field:null});
+    vm.runInContext(handler+"\nfocusTaskOwnerEditor('activity');",context);
     assert.equal(details.open,mode==='allowed');assert.equal(focused,mode==='allowed'?1:0);assert.equal(field.value,'unsaved-owner');
   }
   assert.doesNotMatch(handler,/store\.|fetch|render\(|taskDialog\(|closeDialog\(|reset\(/);

@@ -1070,7 +1070,7 @@ test('the organizer handoff separates next actions and refresh moves the same ta
       const start=all.indexOf(node)+1,end=i+1<headings.length?all.indexOf(headings[i+1].node):all.length;
       const links=all.slice(start,end).filter(row=>row.type==='a'&&row.props.href?.includes('&task='));
       assert.deepEqual(links.map(row=>[text(row),row.props.href]),expected[group].map(id=>[
-        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
+        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Assign an owner'?'&review=owner':group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
       ]),group);
     }
     assert.equal(all.filter(row=>row.type==='a'&&row.props.href?.includes('&task=')).length,initial.receiptTasks.length);
@@ -1184,6 +1184,38 @@ test('receipt review hints are limited to real project plan handoffs',async()=>{
       await app.start();
       assert.equal(nodes(app.tree).find(node=>node.type==='a'&&text(node)==='Fictional task')?.props.href,expected);
     }finally{app.dispose();}
+  }
+});
+
+test('owner review links are limited to real standalone plan receipts and preserve the guide', async () => {
+  for (const [query, embedded, guided, projectHref, hint] of [
+    ['project=p_school', false, false, '/project?project=p_school', true],
+    ['project=p_school', false, true, '/project?project=p_school', true],
+    ['project=p_school', true, true, '/project?project=p_school', false],
+    ['project=p_school&mode=suggestions', false, true, '/project?project=p_school', false],
+    ['project=p_school&mode=assistant', false, true, '/project?project=p_school', false],
+    ['demo=1', false, true, '/demo?as=jack', false],
+  ]) {
+    const initial = fixture();
+    initial.receiptTasks = [
+      { id: 'task-unassigned', title: 'Set up AV', handoff: { state: 'needs-owner' } },
+      { id: 'task-reassign', title: 'Prepare foyer', handoff: { state: 'needs-reassignment' } },
+      { id: 'task-pending', title: 'Check signs', handoff: { state: 'awaiting-acceptance' } },
+    ];
+    initial.receipt = { taskIds: initial.receiptTasks.map(task => task.id) };
+    const app = harness(undefined, initial, query, embedded, guided);
+    try {
+      await app.start();
+      for (const [index, task] of initial.receiptTasks.entries()) {
+        const link = planLink(app.tree, task.title);
+        assert.equal(link?.props.href, projectHref + '&task=' + task.id +
+          (guided && hint ? '&guide=1' : '') + (hint && index < 2 ? '&review=owner' : ''),
+        `${query}, embedded=${embedded}, guided=${guided}: ${task.handoff.state}`);
+        assert.equal(link.props.target, embedded ? '_top' : undefined);
+        assert.equal(link.props.onClick, undefined);
+      }
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+    } finally { app.dispose(); }
   }
 });
 

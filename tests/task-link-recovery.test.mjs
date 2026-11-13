@@ -7,9 +7,10 @@ const source=readFileSync('legacy/app.js','utf8');
 const part=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
 const notice=part('  function taskLinkNotice()', '  function tasksView(s)');
 const bootstrap=part('  const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
+const ownerLink=part('  function openTaskOwnerLink(', '  function openScheduleReconfirmation(');
 function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false}={}){
   const events=[];
-  const ui={tab:'mine'};
+  const ui={tab:'mine',actor:'fictional-actor'},title={},frames=[],document={activeElement:title};
   const elements={
     '#taskLinkUnavailableTitle':{focus(){events.push('notice focus');},scrollIntoView(){events.push('notice visible');}},
     '#taskLinkNotice':{remove(){events.push('dismissed');}},
@@ -19,17 +20,19 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
       focus(options){assert.equal(options.preventScroll,true);events.push('opener focus');},
     };}},
     '#workspaceHandoffTitle':{focus(){events.push('welcome focus');}},
+    '#dialogTitle':title,
   };
   const context=vm.createContext({
-    ui,store:{getState:()=>({tasks})},taskLinkUnavailable:false,joinWelcome:false,
+    ui,document,store:{getState:()=>({tasks,members:[{id:'active',active:true},{id:'former',active:false},{id:'example',role:'Member · example'}]})},taskLinkUnavailable:false,joinWelcome:false,
     navigation:{takeInitialTaskLink:()=>({id,review}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
     window:{GatherMode:mode,GatherAccessLost:accessLost,dispatchEvent(){events.push('ready');}},Event,isLiveTeammate:()=>true,isOrganizer:()=>organizer,
     navigate(view){ui.view=view;events.push(view);},syncGuide(){},$:selector=>elements[selector],
-    taskDialog(...args){events.push(args);},
+    taskDialog(...args){if(args[7])args[7]={...args[7]};events.push(args);},
+    requestAnimationFrame(fn){frames.push(fn);},focusTaskOwnerEditor(id){events.push(['owner focus',id]);},
     openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
   });
-  vm.runInContext(notice+'\n'+bootstrap,context);
-  return {ui,events,context,markup:()=>vm.runInContext('taskLinkNotice()',context)};
+  vm.runInContext(notice+'\n'+ownerLink+'\n'+bootstrap,context);
+  return {ui,events,context,document,elements,frames,markup:()=>vm.runInContext('taskLinkNotice()',context)};
 }
 
 test('an unavailable task link lands on All tasks with a persistent, focused explanation and a search action',()=>{
@@ -47,6 +50,37 @@ test('an unavailable task link lands on All tasks with a persistent, focused exp
   assert.equal(view.markup(),'');
   assert.deepEqual(view.events.slice(-2),['dismissed','search focus']);
   assert.match(source,/if\(view!=='tasks'\)taskLinkUnavailable=false/);
+});
+
+test('owner receipt hints focus only a still-actionable task in the same live organizer dialog',()=>{
+  const id='exact-task',options={review:'owner',organizer:true,mode:{demo:false,projectId:'fixture'}};
+  const opened=[id,'',false,true,'',undefined,'',{readOnly:true}];
+  for(const owner of ['', 'former', 'missing', 'example']){
+    const view=land(id,[{id,status:'todo',owner}],options);
+    assert.deepEqual(view.events.at(-1),opened);
+    assert.equal(view.frames.length,1);
+    view.frames[0]();assert.deepEqual(view.events.at(-1),['owner focus',id]);
+  }
+  for(const extra of [{owner:'active'},{status:'done'},{reportedAt:'reported'},{verifiedAt:'verified'},{archivedAt:'archived'}]){
+    const view=land(id,[{id,status:'todo',...extra}],options);
+    assert.deepEqual(view.events.at(-1),opened);
+    assert.equal(view.frames.length,0);
+  }
+  for(const override of [{organizer:false},{mode:{demo:true}},{mode:undefined}]){
+    const view=land(id,[{id,status:'todo'}],{...options,...override});
+    assert.deepEqual(view.events.at(-1),opened);assert.equal(view.frames.length,0);
+  }
+  for(const late of ['focus','dialog','actor','owner','project','access']){
+    const task={id,status:'todo'},view=land(id,[task],{...options,mode:{...options.mode}});
+    if(late==='focus')view.document.activeElement={};
+    if(late==='dialog')view.elements['#dialogTitle']={};
+    if(late==='actor')view.ui.actor='other';
+    if(late==='owner')task.owner='active';
+    if(late==='project')view.context.window.GatherMode.projectId='other';
+    if(late==='access')view.context.window.GatherAccessLost=true;
+    view.frames[0]();assert.deepEqual(view.events.at(-1),opened,late);
+  }
+  assert.deepEqual(land(id,[],options).events,['tasks','ready','notice focus','notice visible']);
 });
 
 test('current links open the matching task with heading focus, ordinary navigation never shows the notice',()=>{
