@@ -8,6 +8,7 @@ import '../legacy/store.js';
 const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s,');
 const overview=app.slice(start,app.indexOf('  function filteredTasks(s)',start));
+const linkedResults=app.slice(app.indexOf('  function personalLinkedResults('),app.indexOf('  function openLinkedResults('));
 function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){
   const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};
   const before=structuredClone(state),requests=[];
@@ -20,9 +21,10 @@ function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='
     empty:(title,copy)=>'<strong>'+title+'</strong><p>'+copy+'</p>',
     GatherInbox:{conversations:()=>[]},fetch:()=>{requests.push('fetch');throw Error('Rendering must be local');},
   });
-  for(const file of ['calendar','priorities','planning-ui','recovery-ui'])vm.runInContext(readFileSync('legacy/'+file+'.js','utf8'),context);
+  for(const file of ['calendar','priorities','planning-ui','recovery-ui','schedule-ui'])vm.runInContext(readFileSync('legacy/'+file+'.js','utf8'),context);
+  context.GatherScheduleUI=context.window.GatherScheduleUI;
   context.recovery=context.window.GatherRecoveryUI.create({store:context.store,ui:{actor},h:context.h,options:()=>'',dayLabel:context.dayLabel,member:id=>({name:id})});
-  vm.runInContext(overview+'globalThis.renderOverview=overview;',context);
+  vm.runInContext(linkedResults+overview+'globalThis.renderOverview=overview;',context);
   const html=context.renderOverview(state);
   assert.deepEqual(state,before);assert.deepEqual(requests,[]);
   return html;

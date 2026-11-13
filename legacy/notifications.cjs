@@ -30,12 +30,17 @@
     const revisions = returned.map(({ id, title }) => ({ id, title, kind: 'completion-changes' })).sort(byTitle);
     const schedules = open.filter(task => !returnedIds.has(task.id) && pendingReconfirmation?.(task,actor))
       .map(({id,title})=>({id,title,kind:'schedule-reconfirmation'})).sort(byTitle);
-    if (!dayFormat.test(today)) return [...revisions,...schedules];
     const scheduleIds = new Set(schedules.map(task=>task.id));
-    const due = open.filter(task => !returnedIds.has(task.id) && !scheduleIds.has(task.id) && dayFormat.test(task.dueDate) && task.dueDate <= today)
+    const linkedResultsReady = root.GatherScheduleUI?.linkedResultsReady;
+    const byId = linkedResultsReady ? new Map(tasks.map(task => [task.id, task])) : null;
+    const linkedResults = linkedResultsReady ? open.filter(task => !returnedIds.has(task.id) && !scheduleIds.has(task.id) && linkedResultsReady(task, byId))
+      .map(({id,title})=>({id,title,kind:'linked-results'})).sort(byTitle) : [];
+    if (!dayFormat.test(today)) return [...revisions,...schedules,...linkedResults];
+    const linkedIds = new Set(linkedResults.map(task=>task.id));
+    const due = open.filter(task => !returnedIds.has(task.id) && !scheduleIds.has(task.id) && !linkedIds.has(task.id) && dayFormat.test(task.dueDate) && task.dueDate <= today)
       .map(({ id, title, dueDate }) => ({ id, title, dueDate, overdue: dueDate < today }))
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || byTitle(a, b));
-    return [...revisions, ...schedules, ...due];
+    return [...revisions, ...schedules, ...linkedResults, ...due];
   }
   const api = Object.freeze({ preferenceKey, readReminderPreference, writeReminderPreference, taskReminders });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

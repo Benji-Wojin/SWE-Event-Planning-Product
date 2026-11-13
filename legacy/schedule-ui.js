@@ -155,8 +155,14 @@
   const awaitingScheduleAcceptance = (task,members) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members);
   const scheduleAcceptanceCue = 'Schedule changed · owner needs to accept again';
   const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId))));
-  const linkedResultsReady = (task,byId) => task.status==='blocked'&&!waitingVerification(task)&&
-    (task.dependencies||[]).some(link=>link.kind!=='related')&&!unfinishedRequiredWork(task,byId);
+  function linkedResultsReady(task,byId) {
+    if(!task||task.archivedAt||task.status!=='blocked'||waitingVerification(task))return false;
+    const required=(task.dependencies||[]).filter(link=>link.kind!=='related');
+    return required.length>0&&required.every(link=>{
+      const prerequisite=byId.get(link.taskId);
+      return prerequisite&&!prerequisite.archivedAt&&resolved(prerequisite);
+    });
+  }
   const wallTimeIssue=(task,zone)=>zone&&root.GatherCalendar?.scheduleTimeIssue(task.schedule,zone);
   const usableWallTimes=(tasks,zone)=>tasks.filter(task=>!wallTimeIssue(task,zone));
   const wallTimeWarning=(task,zone,nextStep)=>{
@@ -609,5 +615,5 @@
     }
     return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,scheduledTimelineDay,personalTimelineDay,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,scheduledTimelineDay,personalTimelineDay,pendingReconfirmation,linkedResultsReady,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
