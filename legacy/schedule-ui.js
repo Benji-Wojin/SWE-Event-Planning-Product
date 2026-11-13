@@ -154,14 +154,12 @@
   const pendingAcceptance = (task,members) => !resolved(task)&&task.owner&&members.some(member=>member.id===task.owner&&member.active!==false)&&!task.acceptedAt&&!task.reportedAt&&!waitingVerification(task);
   const awaitingScheduleAcceptance = (task,members) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members);
   const scheduleAcceptanceCue = 'Schedule changed · owner needs to accept again';
-  const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId))));
+  const requiredResultReady = task => !!task&&!task.archivedAt&&resolved(task);
+  const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&!requiredResultReady(byId.get(link.taskId)));
   function linkedResultsReady(task,byId) {
     if(!task||task.archivedAt||task.status!=='blocked'||waitingVerification(task))return false;
     const required=(task.dependencies||[]).filter(link=>link.kind!=='related');
-    return required.length>0&&required.every(link=>{
-      const prerequisite=byId.get(link.taskId);
-      return prerequisite&&!prerequisite.archivedAt&&resolved(prerequisite);
-    });
+    return required.length>0&&required.every(link=>requiredResultReady(byId.get(link.taskId)));
   }
   const wallTimeIssue=(task,zone)=>zone&&root.GatherCalendar?.scheduleTimeIssue(task.schedule,zone);
   const usableWallTimes=(tasks,zone)=>tasks.filter(task=>!wallTimeIssue(task,zone));

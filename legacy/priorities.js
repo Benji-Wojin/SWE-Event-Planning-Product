@@ -11,8 +11,8 @@
   const daysLeft = (task,now,zone) => dayNumber(task.dueDate)-dayNumber(dayKey(now,zone));
   const pendingRequest = task => (task.recoveryRequests || []).find(r=>r.status==='pending');
   const responseTime = task => Math.max(...[task.ownerRespondedAt,task.acceptedAt,task.nextUpAt].map(value=>new Date(value||0).getTime()||0));
-  const unresolved = (task,tasks) => (task.dependencies || []).filter(link=>link.kind!=='related'&&!resolved(tasks.find(t=>t.id===link.taskId)));
-  const actionable = (task,tasks) => !resolved(task)&&task.status!=='done'&&task.status!=='blocked'&&!awaiting(task)&&pendingRequest(task)?.kind!=='help'&&!unresolved(task,tasks).length;
+  const unresolved = (task,tasks) => (task.dependencies || []).filter(link=>link.kind!=='related'&&!resolved(tasks.find(t=>t.id===link.taskId&&!t.archivedAt)));
+  const actionable = (task,tasks) => !task.archivedAt&&!resolved(task)&&task.status!=='done'&&task.status!=='blocked'&&!awaiting(task)&&pendingRequest(task)?.kind!=='help'&&!unresolved(task,tasks).length;
   function downstream(task,tasks) {
     const seen=new Set([task.id]),queue=[task.id],result=[];
     while(queue.length) {
@@ -30,7 +30,7 @@
     const today=dayNumber(dayKey(now,zone));
     if(dayNumber(task.planReviewAfter)>today)return null;
     const waiting=unresolved(task,tasks);
-    if(waiting.some(link=>!tasks.some(t=>t.id===link.taskId)))return {key:'missing',label:'Review missing linked task'};
+    if(waiting.some(link=>!tasks.some(t=>t.id===link.taskId&&!t.archivedAt)))return {key:'missing',label:'Review unavailable required work'};
     // A blocked parent is not another reminder: route attention to its prerequisites.
     if(waiting.length)return null;
     if(task.status==='blocked')return {key:'blocked',label:'Unblocking decision'};
@@ -67,7 +67,9 @@
     else if(days<=3)add('due','Due in '+days+' '+(days===1?'day':'days'),'Deadline approaching',55-days*5);
     if(awaiting(task))add('verification','Verify completion','The owner reports this is finished',60);
     const required=(task.dependencies||[]).filter(link=>link.kind!=='related'),waiting=unresolved(task,tasks);
-    if(task.status==='blocked'&&required.length&&!waiting.length)add('ready','Ready to resume','Review linked results',55);
+    const unavailable=waiting.some(link=>!tasks.some(item=>item.id===link.taskId&&!item.archivedAt));
+    if(unavailable)add('required-unavailable','Required work unavailable','Review the unavailable task link',45);
+    else if(task.status==='blocked'&&required.length&&!waiting.length&&!awaiting(task)&&!task.archivedAt)add('ready','Ready to resume','Review linked results',55);
     else if(task.status==='blocked')add('blocked',waiting.length?'Waiting on linked work':'Blocked','Review the blocker',waiting.length?0:45);
     const review=decision(task,tasks,now,zone);
     if(review)add('decision',review.label,'Review the next step',35);
@@ -113,7 +115,9 @@
     return {active,returned,suggested,hasOwned:owned.length>0};
   }
   function suggestion(task,state) {
-    const waits=unresolved(task,state.tasks).map(link=>state.tasks.find(t=>t.id===link.taskId)).filter(Boolean);
+    const links=unresolved(task,state.tasks);
+    const waits=links.map(link=>state.tasks.find(t=>t.id===link.taskId&&!t.archivedAt)).filter(Boolean);
+    if(waits.length<links.length)return {text:'Review the unavailable required task links before completing this work.',targets:waits};
     if(waits.length)return {text:'Follow up on the linked work before asking this owner to finish.',targets:waits};
     const request=pendingRequest(task);
     if(request?.kind==='date')return {text:task.hardDeadline?'Check the vendor or external deadline before approving a new date.':'Check linked work before agreeing to the proposed date.',targets:downstream(task,state.tasks)};

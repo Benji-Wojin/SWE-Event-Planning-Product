@@ -63,7 +63,7 @@ async function hash(value: unknown) {
 }
 type Context = Awaited<ReturnType<typeof loadContext>>;
 const existingPlanTasks = (c: Context) =>
-  c.state.tasks.map((task: any) => ({
+  c.state.tasks.filter((task: any) => !task.archivedAt).map((task: any) => ({
     id: task.id,
     title: task.title,
     start: task.schedule?.start || '',
@@ -110,7 +110,7 @@ async function loadContext(request: Request) {
         'transportNeeded',
       ].map((key) => [key, state.event[key]]),
     ),
-    existingTasks: state.tasks.slice(0, 200).map((task: any) => ({
+    existingTasks: state.tasks.filter((task: any) => !task.archivedAt).slice(0, 200).map((task: any) => ({
       title: task.title,
       start: task.schedule?.start || '',
     })),
@@ -208,7 +208,8 @@ async function snapshot(c: Context) {
         const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
           :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
           :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt
-            ? task.reportedAt&&task.dependencies?.some((link:{kind?:string;taskId:string})=>link.kind!=='related'&&!completionStates?.get(link.taskId))
+            ? task.reportedAt&&task.dependencies?.some((link:{kind?:string;taskId:string})=>link.kind!=='related'&&
+                (!completionStates?.get(link.taskId)||tasks.get(link.taskId)?.archivedAt))
               ? 'review-blocked' : 'needs-review'
           :!task.owner?'needs-owner'
           :!owners.has(task.owner)?'needs-reassignment'

@@ -210,7 +210,7 @@
     for (const task of migrateDependencies.filter(task => task.status === 'blocked')) {
       const specs = blockerSpecs(task);
       for (const spec of specs) {
-        const matches = spec.match ? state.tasks.filter(other => other.id !== task.id && spec.match.test(other.title) && !dependsOn(other.id, task.id)) : [];
+        const matches = spec.match ? state.tasks.filter(other => other.id !== task.id && !other.archivedAt && spec.match.test(other.title) && !dependsOn(other.id, task.id)) : [];
         if (matches.length === 1) task.dependencies.push({ taskId: matches[0].id, reason: task.note, automatic: true, key: spec.key, createdAt: task.updatedAt, delivered: '' });
       }
       if (task.dependencies.length === specs.length) task.blockerFingerprint = normalize(task.note);
@@ -334,7 +334,7 @@
       }
       const links=data.dependencies===undefined?[]:data.dependencies;
       if(!Array.isArray(links)||links.length>8||new Set(links.map(link=>link?.taskId)).size!==links.length||links.some(link=>!link||typeof link!=='object'||Array.isArray(link)||Object.keys(link).some(key=>!['taskId','kind','reason'].includes(key))||typeof link.taskId!=='string'||!['dependency','related'].includes(link.kind)||typeof link.reason!=='string'||!link.reason.trim()||link.reason.length>2000))throw new Error('Review up to eight different linked tasks and explain each relationship.');
-      for(const link of links)taskById(link.taskId);
+      for(const link of links)requireActiveLinkTarget(taskById(link.taskId));
       if(links.length&&data.status==='done')throw new Error('New work with reviewed links must start incomplete.');
       if(data.eventActivity!==undefined&&data.eventActivity!==true)throw new Error('Review the event activity setting.');
       const schedule = data.schedule === undefined ? null : scheduleFields(data.schedule, actor);
@@ -427,7 +427,7 @@
       for (const request of task.recoveryRequests || []) if (request.status === 'pending') Object.assign(request,{status,resolvedAt:timestamp(),resolvedBy:actor});
     }
     function actionable(task) {
-      return task.status !== 'done' && task.status !== 'blocked' && !(task.reportedAt && task.requiresVerification && !task.verifiedAt) &&
+      return !task.archivedAt && task.status !== 'done' && task.status !== 'blocked' && !(task.reportedAt && task.requiresVerification && !task.verifiedAt) &&
         !(task.recoveryRequests || []).some(r=>r.status==='pending'&&r.kind==='help') &&
         !(task.dependencies || []).some(link=>link.kind!=='related'&&!dependencyResolved(state.tasks.find(other=>other.id===link.taskId)));
     }
@@ -1023,7 +1023,7 @@
     function matchingRequestTasks(task,title) {
       const key=requestKey(title);
       const topic=blockerSpecs({...task,note:title}).find(spec=>spec.match?.test(title)||spec.key.startsWith('budget:')&&/^approve\b/i.test(title));
-      return state.tasks.filter(other=>other.id!==task.id&&other.status!=='done'&&!dependsOn(other.id,task.id)&&
+      return state.tasks.filter(other=>other.id!==task.id&&!other.archivedAt&&other.status!=='done'&&!dependsOn(other.id,task.id)&&
         (requestKey(other.title)===key||topic&&(topic.match?topic.match.test(other.title):other.blockerOriginKey===topic.key)));
     }
     function requestClauses(text) {
@@ -1053,7 +1053,7 @@
         if (inactiveRequest(source) || /\b(?:not|never)\b|\b\w+n't\b/i.test(source)) continue;
         const association = /\b(?:related to|associated with|link .{0,40}to|depends on|waiting (?:on|for)|blocked by)\b/i.test(source);
         if (association) {
-          const mentioned = state.tasks.filter(other=>other.id!==task.id && other.status!=='done' && (' '+normalize(source)+' ').includes(' '+normalize(other.title)+' '));
+          const mentioned = state.tasks.filter(other=>other.id!==task.id && !other.archivedAt && other.status!=='done' && (' '+normalize(source)+' ').includes(' '+normalize(other.title)+' '));
           if (mentioned.length === 1) {
             const other=mentioned[0],kind=/\b(?:depends on|waiting|blocked by)\b/i.test(source)?'dependency':'related';
             if(kind==='related'||!dependsOn(other.id,task.id))specs.push({key:kind+':'+other.id,title:other.title,owner:'',taskId:other.id,kind,sourceText:source});
@@ -1106,7 +1106,7 @@
       if(task.status==='done')throw new Error('Reopen the source task before adding follow-up work.');
       let target,fields;
       if(data.action==='link'){
-        target=taskById(data.taskId);
+        target=requireActiveLinkTarget(taskById(data.taskId));
         if(target.id===task.id||target.status==='done')throw new Error('Choose a different open task.');
       }else{
         fields=taskFields({title:data.title,owner:data.owner??'',category:task.category,note:`Requested in “${task.title}”.\n${suggestion.sourceText}\n\nShare the result when reporting complete.`});
@@ -1148,6 +1148,10 @@
       task.revision++;
       entry(actor, text, task.id, kind);
     }
+    function requireActiveLinkTarget(task) {
+      if(task.archivedAt)throw new Error('Choose an active task. Archived tasks cannot be linked again.');
+      return task;
+    }
     function linkDependency(task, prerequisite, actor, automatic, key = '', kind = 'dependency', reason = task.note) {
       if (task.id===prerequisite.id || kind!=='related'&&dependsOn(prerequisite.id, task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
       const existing = task.dependencies.find(link => link.taskId === prerequisite.id);
@@ -1165,7 +1169,7 @@
     }
     function unusedPlaceholder(task) {
       const candidates = task.dependencies.filter(link => genericLink(task, link) && !link.independent).map(link => ({link, task: state.tasks.find(t => t.id === link.taskId)})).filter(({task: child}) =>
-        child && child.blockerOriginKey?.startsWith('custom:') && child.title.startsWith('Resolve blocker: ') &&
+        child && !child.archivedAt && child.blockerOriginKey?.startsWith('custom:') && child.title.startsWith('Resolve blocker: ') &&
         child.status === 'todo' && !child.owner && child.revision === (child.blockerAutoRevision || 1) &&
         !child.comments.length && !child.dependencies.length && !child.acceptedAt && !child.reportedAt && !child.completedAt && !child.completionResult &&
         !child.requiresVerification && !child.followupAfter && !child.sourceMessageId && !child.memoryId && !child.suggestionId &&
@@ -1208,9 +1212,9 @@
       for (const spec of specs) {
         const generic = spec.key.startsWith('custom:');
         const blockerKey=text=>requestKey(text).replace(/\b(?:i|we|am|are|need|needs|waiting|for|another|additional|separate)\b/g,' ').replace(/\s+/g,' ').trim();
-        if(generic&&additional&&task.dependencies.some(link=>genericLink(task,link)&&blockerKey(link.reason)===blockerKey(task.note)&&state.tasks.some(child=>child.id===link.taskId&&child.status!=='done')))continue;
+        if(generic&&additional&&task.dependencies.some(link=>genericLink(task,link)&&blockerKey(link.reason)===blockerKey(task.note)&&state.tasks.some(child=>child.id===link.taskId&&!child.archivedAt&&child.status!=='done')))continue;
         if (generic && additional) spec.key += ':' + blockerKey(task.note);
-        const current = task.dependencies.find(link => link.kind!=='related' && (link.key === spec.key || generic && !additional && !link.independent && (genericLink(task,link) || !link.automatic&&!link.key?.startsWith('handoff:'))) && state.tasks.some(t => t.id === link.taskId && t.status !== 'done'));
+        const current = task.dependencies.find(link => link.kind!=='related' && (link.key === spec.key || generic && !additional && !link.independent && (genericLink(task,link) || !link.automatic&&!link.key?.startsWith('handoff:'))) && state.tasks.some(t => t.id === link.taskId && !t.archivedAt && t.status !== 'done'));
         if (current && placeholder && current === placeholder.link && generic) {
           refinePlaceholder(task, placeholder, spec, actor);
           placeholder = null;
@@ -1219,7 +1223,7 @@
           placeholder = null;
         }
         if (!current) {
-          const matches = state.tasks.filter(t => t.id !== task.id && t.status !== 'done' && !dependsOn(t.id, task.id) &&
+          const matches = state.tasks.filter(t => t.id !== task.id && !t.archivedAt && t.status !== 'done' && !dependsOn(t.id, task.id) &&
             !t.blockerOriginKey?.startsWith('custom:') &&
             (spec.match ? spec.match.test(t.title) : t.blockerOriginKey === spec.key));
           let prerequisite = matches.length === 1 ? matches[0] : null;
@@ -1302,7 +1306,7 @@
       const kind = data.kind || 'dependency';
       if (kind === 'related') {
         if (!data.taskId || data.title) throw new Error('Choose an existing task to relate.');
-        const other = taskById(data.taskId);
+        const other = requireActiveLinkTarget(taskById(data.taskId));
         linkDependency(task,other,actor,false,'',kind,clean(data.reason,2000) || 'Related work; does not prevent completion.');
         save(); return copy(other);
       }
@@ -1310,12 +1314,12 @@
       let prerequisite;
       if (data.taskId) {
         if (data.title) throw new Error('Choose a task or create one, not both.');
-        prerequisite = taskById(data.taskId);
+        prerequisite = requireActiveLinkTarget(taskById(data.taskId));
         if (dependsOn(prerequisite.id, task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
         if (placeholder && placeholder.task.id !== prerequisite.id) mergePlaceholder(task, placeholder, prerequisite, actor);
       } else {
         if (!clean(data.title)) throw new Error('Name the follow-up task.');
-        prerequisite = state.tasks.find(child => task.dependencies.some(link => link.taskId === child.id) && normalize(child.title) === normalize(data.title) && child.status !== 'done');
+        prerequisite = state.tasks.find(child => !child.archivedAt && task.dependencies.some(link => link.taskId === child.id) && normalize(child.title) === normalize(data.title) && child.status !== 'done');
         if (prerequisite && placeholder && placeholder.task.id !== prerequisite.id && !data.additional) mergePlaceholder(task, placeholder, prerequisite, actor);
         if (!prerequisite && placeholder) prerequisite = refinePlaceholder(task, placeholder, {title: data.title, key: blockerSpecs({...task,note:clean(data.title)})[0].key}, actor, false);
         if (!prerequisite) {
@@ -1338,7 +1342,7 @@
       if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).some(key=>!['taskId','kind','reason'].includes(key)) || !['dependency','related'].includes(data.kind) || typeof data.reason !== 'string' || !data.reason.trim() || data.reason.length>2000) throw new Error('Choose a relationship and explain why it is needed.');
       const link=task.dependencies.find(item=>item.taskId===data.taskId);
       if (!link) throw new Error('That task is no longer linked.');
-      const other=taskById(data.taskId);
+      const other=requireActiveLinkTarget(taskById(data.taskId));
       if (data.kind==='dependency' && dependsOn(other.id,task.id)) throw new Error('These tasks would depend on each other. Choose a different task.');
       Object.assign(link,{kind:data.kind,reason:clean(data.reason,2000),automatic:false});
       dependencyComment(task,`Relationship to “${other.title}”: ${data.kind==='related'?'related work, not a prerequisite':'required before completion'}. ${link.reason}`,actor,other.id,'dependency-reviewed');
@@ -1355,12 +1359,12 @@
       dependencyComment(task, `Removed link to “${title}”. The other task is unchanged.`, actor, prerequisiteId, 'dependency-removed');
       save(); return copy(task);
     }
-    function dependencyResolved(task) { return task && task.status === 'done' && (!task.requiresVerification || Boolean(task.verifiedAt)); }
+    function dependencyResolved(task) { return task && !task.archivedAt && task.status === 'done' && (!task.requiresVerification || Boolean(task.verifiedAt)); }
     function requireResolvedDependencies(task) {
       const open = task.dependencies.filter(link => link.kind !== 'related')
         .map(link => state.tasks.find(item => item.id === link.taskId)).filter(item => !dependencyResolved(item));
       if (open.length) throw new Error('Finish or verify required work before completing this task: ' +
-        open.slice(0, 3).map(item => '“' + (item?.title || 'Unavailable task') + '”').join(', ') +
+        open.slice(0, 3).map(item => '“' + (item?.title || 'Unavailable task') + '”' + (item?.archivedAt ? ' (archived)' : '')).join(', ') +
         (open.length > 3 ? ` and ${open.length - 3} more` : '') + '. Review Linked work to remove an obsolete link.');
     }
     function captureCompletion(task, actor, reporter = '') {
@@ -1369,7 +1373,9 @@
     function deliverDependencyResults() {
       for (const task of state.tasks) for (const link of task.dependencies) {
         const prerequisite = state.tasks.find(t => t.id === link.taskId);
-        if (!prerequisite) continue;
+        // Unavailable targets do not deliver a new result. Previously
+        // recorded result comments remain in the task history.
+        if (!prerequisite||prerequisite.archivedAt) continue;
         const actor = dependencyResolved(prerequisite) ? prerequisite.completionResult?.actor || prerequisite.completedBy || 'jack' : prerequisite.updatedBy || 'jack';
         if (!dependencyResolved(prerequisite)) {
           if (link.delivered && link.delivered !== 'open') dependencyComment(task, `“${prerequisite.title}” is no longer resolved. Review this dependency.`, actor, prerequisite.id, 'dependency-reopened');
@@ -1392,7 +1398,7 @@
       const required=task.dependencies.filter(link=>link.kind!=='related');
       if (!required.length || required.some(link => {
         const prerequisite = state.tasks.find(item => item.id === link.taskId);
-        return !dependencyResolved(prerequisite) || prerequisite.archivedAt;
+        return !dependencyResolved(prerequisite);
       })) throw new Error('Some linked work is unavailable, still open, or awaiting verification.');
       // Resuming is a status change, not a new progress update or result.
       task.status = 'progress';

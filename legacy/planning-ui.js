@@ -18,10 +18,11 @@
   function readiness(task,tasks) {
     const index=new Map(tasks.map(t=>[t.id,t]));
     const links=task.dependencies || [],required=links.filter(l=>l.kind!=='related');
-    const open=required.filter(l=>!resolved(index.get(l.taskId)));
-    const dependents=tasks.filter(t=>(t.dependencies||[]).some(l=>l.taskId===task.id&&l.kind!=='related'));
-    const label=resolved(task)?'Complete':task.reportedAt&&task.requiresVerification&&!task.verifiedAt?'Awaiting verification':open.length?`Waiting on ${open.length} prerequisite${open.length===1?'':'s'}`:task.status==='blocked'?required.length?'Ready to resume':'Blocked · review update':'No prerequisite blockers';
-    return {open,required,related:links.filter(l=>l.kind==='related'),dependents,label, tone:resolved(task)?'complete':open.length||task.status==='blocked'?'waiting':'ready'};
+    const unavailable=required.filter(l=>!index.get(l.taskId)||index.get(l.taskId).archivedAt);
+    const open=required.filter(l=>!resolved(index.get(l.taskId))||index.get(l.taskId)?.archivedAt);
+    const dependents=task.archivedAt?[]:tasks.filter(t=>!t.archivedAt&&(t.dependencies||[]).some(l=>l.taskId===task.id&&l.kind!=='related'));
+    const label=resolved(task)?'Complete':unavailable.length?'Required work unavailable':task.reportedAt&&task.requiresVerification&&!task.verifiedAt?'Awaiting verification':open.length?`Waiting on ${open.length} prerequisite${open.length===1?'':'s'}`:task.status==='blocked'?required.length?'Ready to resume':'Blocked · review update':'No prerequisite blockers';
+    return {open,unavailable,required,related:links.filter(l=>l.kind==='related'),dependents,label, tone:resolved(task)?'complete':open.length||task.status==='blocked'?'waiting':'ready'};
   }
   function graph(tasks, visible=tasks, focusId='') {
     const index=new Map(tasks.map(t=>[t.id,t]));
