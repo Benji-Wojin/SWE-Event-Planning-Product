@@ -197,6 +197,8 @@ A shared or divisible space may intentionally host simultaneous activities. Thes
 
 Event info keeps a guest list and shared files separate from task conversations. Guests have a contact name, optional email/phone, type (attendee, speaker, volunteer or vendor), group, attendance and notes. These are contact records, not accounts or app members. No messages, invitations or RSVP requests are sent to these guest records. Expected guest counts and other planning context remain manually maintained.
 
+Project members can record a confirmed guest arrival without changing the RSVP. If someone changes the list before your save, **Review latest record** reloads that guest without repeating your action. If the latest record already matches, the review is read-only; otherwise, confirm again after reviewing. Clearing an arrival corrects the record; it does not record a departure.
+
 Authenticated project members can add/edit guests and upload files. Organizers can archive/restore guests; uploaders and organizers can archive/restore files. The four demo perspectives use the same interface and APIs with isolated sample contacts; restarting the demo isolates its old records from the new generation. Guest contacts do not grant app membership.
 
 CSV imports require a preview and confirmation. Invalid rows prevent the entire import; existing emails (including archived guests) are skipped rather than overwritten. Names alone never merge records. Limits: 40 KB / 100 rows per import, 500 guest records including archived contacts. Data uses revision checks and idempotent write receipts to avoid silent overwrite and duplicate retries.

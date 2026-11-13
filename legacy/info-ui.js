@@ -289,25 +289,75 @@
       if(!poll||!state.identity.admin)return;
       pollForm(poll.closedAt?'Reopen date poll':'Close date poll',`<h3>${h(poll.title)}</h3><p>${poll.closedAt?'Members will be able to edit their own availability again.':'Members will no longer be able to edit availability in this poll. Saved responses are kept.'} This does not select a date. Agree the date with your team, then update Project settings separately.</p>`,()=>({action:'closeDatePoll',id,closed:!poll.closedAt}),poll.closedAt?'Date poll reopened.':'Date poll closed. Responses kept.');
     }
-    function arrivalDialog(id) {
+    function focusArrivalList(id) {
+      if(!host?.isConnected)return;
+      const row=[...host.querySelectorAll('[data-info-arrival]')].find(button=>button.dataset.infoArrival===id);
+      (row||host.querySelector('[data-info-search]'))?.focus();
+    }
+    function arrivalDialog(id,reviewedIntent,refreshed=false) {
       const guest = state.guests.find((g) => g.id === id && !g.archivedAt);
       if (!guest) return;
       const arrived = !!guest.arrival?.at,
+        intent = reviewedIntent ?? !arrived,
+        alreadyDone = refreshed && arrived===intent,
         revision = state.revision,
         requestId = crypto.randomUUID();
+      let reloading=false, needsReview=false;
       openDialog(
         arrived ? 'Review guest arrival' : 'Record guest arrival',
-        `<form id="guestArrivalForm"><h3>${h(guest.name)}</h3><p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>Only record an arrival you have confirmed. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'This records arrival now, using your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit">${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Reload guest list</button></div></form>`,
-        '', false, 'info',
+        `<form id="guestArrivalForm">${refreshed?'<p class="notice" role="status">'+(alreadyDone?'The latest record already matches the change you were reviewing. Nothing was changed by this refresh.':'Latest guest record loaded. Review it before confirming.')+'</p>':''}<h3>${h(guest.name)}</h3><p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>Only record an arrival you have confirmed. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${alreadyDone ? 'This review is read-only.' : arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'This records arrival now, using your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit">${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Review latest record</button></div></form>`,
+        '', false, 'info',refreshed,
       );
       const form = document.getElementById('guestArrivalForm');
-      form.addEventListener('submit', (event) => submit(form, event, () => save({
-        action: 'arrival', id, arrived: !arrived, revision, requestId,
-      }, arrived ? 'Arrival record cleared. RSVP response unchanged.' : 'Arrival recorded. RSVP response unchanged.')));
-      form.querySelector('[data-arrival-reload]').addEventListener('click', () => {
-        if (form.dataset.saving) return;
-        closeDialog();
-        void load();
+      const confirm=form.querySelector('button[type="submit"]');
+      const reload=form.querySelector('[data-arrival-reload]');
+      if(alreadyDone&&confirm)confirm.hidden=true;
+      form.addEventListener('submit', async (event) => {
+        if(reloading||needsReview||alreadyDone){event.preventDefault();event.stopPropagation();return;}
+        let conflict=false;
+        await submit(form,event,async()=>{
+          try{
+            await save({action:'arrival',id,arrived:intent,revision,requestId},
+              arrived?'Arrival record cleared. RSVP response unchanged.':'Arrival recorded. RSVP response unchanged.');
+            focusArrivalList(id);
+          }catch(e){
+            if(e.status!==409)throw e;
+            needsReview=conflict=true;
+            error(form,new Error('The guest list changed. Review the latest record before saving.'));
+          }
+        });
+        if(conflict&&document.getElementById('guestArrivalForm')===form){
+          if(confirm)confirm.disabled=true;
+          reload.focus();
+        }
+      });
+      reload.addEventListener('click', async () => {
+        if(form.dataset.saving||reloading)return;
+        reloading=true;
+        reload.setAttribute('aria-disabled','true');
+        const target=host, ticket=++loadTicket;
+        const stillOpen=()=>host===target&&target?.isConnected&&document.getElementById('guestArrivalForm')===form;
+        try {
+          const next=await request();
+          if(!stillOpen()||ticket!==loadTicket||root.GatherAccessLost)return;
+          const identityChanged=JSON.stringify(next.identity)!==JSON.stringify(state.identity);
+          state=next;
+          render();
+          if(identityChanged||!state.guests.some(g=>g.id===id&&!g.archivedAt)){
+            closeDialog();
+            focusArrivalList(id);
+            toast(identityChanged?'Your project identity changed. Review the current guest list.':'This guest is no longer on the active guest list.');
+            return;
+          }
+          arrivalDialog(id,intent,true);
+        }catch(e){
+          if(!stillOpen()||ticket!==loadTicket||root.GatherAccessLost)return;
+          if(accessDenied(e))loadError(e);
+          else error(form,e);
+        }finally{
+          reloading=false;
+          if(stillOpen())reload.removeAttribute('aria-disabled');
+        }
       });
     }
     function guestDialog(id) {

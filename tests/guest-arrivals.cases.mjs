@@ -5,7 +5,8 @@ export function guestArrivalTests({ sqlite, owner, infoRead, infoWrite, env }) {
   function setup() {
     owner();
     const id = 'p_' + crypto.randomUUID();
-    const data = sqlite.prepare("SELECT data FROM workspaces WHERE id='main'").get().data;
+    const data = sqlite.prepare("SELECT data FROM workspaces WHERE id='main'").get()?.data
+      ?? globalThis.GatherStore.createStore({storage:null}).exportState();
     sqlite.prepare('INSERT INTO projects (id,owner_id,request_payload,created_at) VALUES (?,?,?,?)')
       .run(id,'owner-1','{}',new Date().toISOString());
     sqlite.prepare('INSERT INTO workspaces (id,data,revision) VALUES (?,?,1)').run(id,data);
@@ -59,6 +60,50 @@ export function guestArrivalTests({ sqlite, owner, infoRead, infoWrite, env }) {
     state=await (await write(query,state,{action:'archiveGuest',id:guest.id,archived:false})).json();
     assert.ok(state.guests[0].arrival.at);
     assert.equal((await write(query,state,{action:'add',guest:{name:'Injected',arrival:{at:'fake'}}})).status,400);
+  });
+  test('concurrent volunteers cannot replace or clear a newer arrival using a stale guest list',async()=>{
+    const {id,query}=setup();
+    const initial=await added(query,'tentative'),guest=initial.guests.at(-1);
+    const volunteers=['A','B'].map(label=>({
+      userId:'arrival-conflict-user-'+label,actorId:'arrival-conflict-actor-'+label,
+      email:`arrival-conflict-${label.toLowerCase()}@example.com`,displayName:`Fictional volunteer ${label}`,
+    }));
+    const member=sqlite.prepare('INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)');
+    const membership=sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)');
+    for(const {userId,actorId,email,displayName} of volunteers){
+      member.run(userId,actorId,email,displayName,'member');
+      membership.run(crypto.randomUUID(),id,userId,actorId,'fictional-arrival-conflict-invite',new Date().toISOString());
+    }
+    const signIn=({userId,email,displayName})=>{globalThis.__gatherUser={userId,email,displayName};};
+    const read=async()=>{
+      const response=await infoRead(query);assert.equal(response.status,200);return response.json();
+    };
+    const change=(snapshot,arrived)=>write(query,snapshot,{action:'arrival',id:guest.id,arrived});
+    try{
+      const [a,b]=volunteers;
+      signIn(a);const beforeA=await read();assert.equal(beforeA.identity.actor,a.actorId);
+      signIn(b);const beforeB=await read();assert.equal(beforeB.identity.actor,b.actorId);
+      assert.equal(beforeA.revision,beforeB.revision);
+      assert.equal(beforeB.guests.find(row=>row.id===guest.id).arrival??null,null);
+
+      signIn(a);const recorded=await change(beforeA,true);assert.equal(recorded.status,200);
+      const saved=await recorded.json(),original=saved.guests.find(row=>row.id===guest.id);
+      assert.ok(saved.revision>beforeB.revision);
+      assert.equal(original.arrival.actor,a.actorId);assert.equal(original.arrival.name,a.displayName);
+      assert.ok(Number.isFinite(Date.parse(original.arrival.at)));
+      assert.equal(original.attendance,'tentative');assert.equal(original.notes,guest.notes);
+
+      signIn(b);
+      assert.equal((await change(beforeB,true)).status,409,'a stale record must not replace the first volunteer’s attribution');
+      assert.equal((await change(beforeB,false)).status,409,'a stale clear must not remove a newer arrival');
+      const refreshed=await read();
+      assert.equal(refreshed.revision,saved.revision,'both conflicts leave the saved revision untouched');
+      assert.deepEqual(refreshed.guests.find(row=>row.id===guest.id),original);
+    }finally{
+      // The shared owner fixture has a finite project allowance.
+      sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+      owner();
+    }
   });
   test('project teammates record and undo arrivals with their identity, and revocation blocks writes and receipt replays',async()=>{
     const {id,query}=setup();let state=await added(query);
