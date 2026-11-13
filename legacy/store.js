@@ -783,8 +783,14 @@
     function archiveEvidence(task) {
       if(task.completionEvidence)task.completionEvidenceHistory=[copy(task.completionEvidence),...(task.completionEvidenceHistory||[])].slice(0,10);
     }
-    function setCompletionEvidence(taskId, input, actor='jack') {
+    function requireCompletionTaskRevision(task,expectedRevision) {
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||expectedRevision<1||
+        task.revision!==expectedRevision||task.archivedAt))
+        throw new Error('The completion task changed. Review it before submitting.');
+    }
+    function setCompletionEvidence(taskId, input, actor='jack',expectedRevision) {
       actorId(actor);const task=taskById(taskId),details=completionEvidence(input);
+      requireCompletionTaskRevision(task,expectedRevision);
       if(actor!=='jack'&&task.owner!==actor)throw new Error('Only the assigned owner or organizer can edit this submission.');
       if(task.status!=='done'&&!task.reportedAt)throw new Error('Report completion before editing a submission.');
       archiveEvidence(task);task.completionEvidence={...details,at:timestamp(),actor};task.completionEvidenceReviewAt='';task.revision++;
@@ -806,11 +812,14 @@
       entry(actor,'reviewed the amended completion submission; original task verification unchanged',task.id,'completion-evidence-reviewed');
       save(true,false);return copy(task);
     }
-    function reportCompletion(taskId, input, actor = 'jack') {
+    function reportCompletion(taskId, input, actor = 'jack',expectedRevision) {
       actorId(actor); const task = taskById(taskId);
+      requireCompletionTaskRevision(task,expectedRevision);
       const details=typeof input==='string'?completionEvidence({note:input}):completionEvidence(input),note=details.note;
       if (task.owner !== actor) throw new Error('Only the assigned owner can report this commitment complete.');
       if (!clean(note)) throw new Error('Add a completion note so the organizer knows what happened.');
+      if(expectedRevision!==undefined&&(task.status==='done'||task.verifiedAt||task.reportedAt))
+        throw new Error('The completion task changed. Review it before submitting.');
       if (task.verifiedAt) return copy(task);
       requireResolvedDependencies(task);
       const priorRevision=task.revision;

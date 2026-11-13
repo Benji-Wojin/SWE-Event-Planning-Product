@@ -290,7 +290,8 @@
         (store[method] = (...args) => {
           mutationGeneration++;
           // The optional reviewed revision follows the local-only actor argument.
-          const reviewedRevision=method==='verifyTask'?args[2]:method==='returnCompletion'?args[3]:undefined;
+          const reviewedRevision=method==='verifyTask'?args[2]:
+            ['returnCompletion','reportCompletion','setCompletionEvidence'].includes(method)?args[3]:undefined;
           args = args.slice(0, count[method]);
           while (args.length < count[method]) args.push(null);
           if(reviewedRevision!==undefined)args.push(reviewedRevision);

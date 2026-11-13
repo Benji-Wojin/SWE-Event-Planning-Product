@@ -144,7 +144,7 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     !Object.hasOwn(arity, method) ||
     !Array.isArray(input.args) ||
     (input.args.length !== arity[method] &&
-      !(['verifyTask','returnCompletion'].includes(method) && input.args.length === arity[method] + 1))
+      !(['verifyTask','returnCompletion','reportCompletion','setCompletionEvidence'].includes(method) && input.args.length === arity[method] + 1))
   )
     throw new HttpError(400, 'Unsupported workspace action.');
   const memberTaskCreation = ['addTask','addLinkedTask'].includes(method) && store.getState().event.membersCanCreateTasks === true;
@@ -264,13 +264,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         result = store.assignTasks(a, user.actorId);
         break;
       case 'reportCompletion':
-        result = store.reportCompletion(a, b, user.actorId);
+        result = store.reportCompletion(a, b, user.actorId, input.args.length > arity[method] ? c ?? null : undefined);
         break;
       case 'returnCompletion':
         result = store.returnCompletion(a, b, user.actorId, c);
         break;
       case 'setCompletionEvidence':
-        result = store.setCompletionEvidence(a, b, user.actorId);
+        result = store.setCompletionEvidence(a, b, user.actorId, input.args.length > arity[method] ? c ?? null : undefined);
         break;
       case 'verifyTask':
         result = store.verifyTask(a, user.actorId, b);
@@ -341,7 +341,10 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskSchedule', 'setTaskOutcome', 'verifyTask', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskSchedule', 'setTaskOutcome', 'verifyTask', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) ||
+    input.method==='resolveRecovery' && input.args[1]?.action==='scope' ||
+    input.method==='addLinkedTask' && authorized.role==='admin' ||
+    input.method==='setCompletionEvidence' && authorized.role==='admin' && result?.owner!==user.actorId;
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

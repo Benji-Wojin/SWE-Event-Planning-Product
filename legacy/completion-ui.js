@@ -52,7 +52,11 @@
     };
   }
   const uploadAttempts = new WeakMap();
-  async function prepare(form, details, file) {
+  async function prepare(form, details, file, {stillCurrent=()=>true}={}) {
+    function checkReview() {
+      if(!stillCurrent())throw new Error('This task review changed. The completion was not submitted.');
+    }
+    checkReview();
     if (!file || !file.size && !file.name) return details;
     if (!file.size || file.size > 4 * 1024 * 1024 || !/\.(pdf|txt|csv|png|jpe?g|docx|xlsx)$/i.test(file.name))
       throw new Error('Choose a non-empty PDF, TXT, CSV, image, Word or Excel file up to 4 MB.');
@@ -65,11 +69,13 @@
       let response,info;
       try {response=await fetch(url,{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(15000)});info=await response.json();}
       catch {throw new Error('File uploads could not be reached. Your completion has not been submitted. Try again.');}
+      checkReview();
       if (!response.ok || !info.uploadsAvailable) throw new Error('File uploads are unavailable. Your completion has not been submitted.');
       attempt = {url,revision:info.revision,requestId:crypto.randomUUID(),fileId:null};
       uploadAttempts.set(file, attempt);
     }
     if (!attempt.fileId) {
+      checkReview();
       if(status)status.textContent='Uploading your file…';
       const body=new FormData();body.set('file',file);body.set('revision',attempt.revision);body.set('requestId',attempt.requestId);
       let response,info;
@@ -89,6 +95,7 @@
       attempt.fileId=info.uploadedFileId;
     }
     form.dataset.completionUploaded='true';
+    checkReview();
     if(status)status.textContent='File uploaded. Saving your completion…';
     return {...details,fileIds:[...new Set([...details.fileIds,attempt.fileId])]};
   }
@@ -172,7 +179,9 @@
       (canEdit && (task.status === 'done' || task.reportedAt)
         ? '<details class="completion-edit"><summary>Edit submission</summary><form id="completionEvidenceForm" data-id="' +
           h(task.id) +
-          '"><label class="field">Completion note <span class="muted">optional</span><textarea name="completionNote" rows="3" maxlength="3000">' +
+          '" data-revision="'+h(task.revision)+'"'+
+          (Number.isSafeInteger(workspaceRevision)?' data-workspace-revision="'+workspaceRevision+'"':'')+
+          '><label class="field">Completion note <span class="muted">optional</span><textarea name="completionNote" rows="3" maxlength="3000">' +
           h(value?.note || task.completionResult?.text || '') +
           '</textarea></label>' +
           fields(value || {}) +

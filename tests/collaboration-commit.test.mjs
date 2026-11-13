@@ -563,6 +563,30 @@ test('completion return is organizer-only, preserves evidence/outcome and permit
     const verified=(await save(project,organizer,'verifyTask',[task.id])).result;assert.equal(verified.status,'done');assert.equal(verified.verifiedBy,'jack');assert.ok(verified.reportedBy);assert.equal(verified.completionEvidenceHistory.length,1);assert.ok(verified.comments.some(comment=>comment.kind==='completion-returned'));
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
+test('report and evidence edit reject stale task revisions even on the current workspace revision',async()=>{
+  const {project,actor}=await setup();
+  try{
+    const task=(await save(project,organizer,'addTask',[{title:'Fictional AV check',owner:actor,requiresVerification:true}])).result;
+    const changed=(await save(project,organizer,'setTaskOutcome',[task.id,'Verify sound at both entrances.'])).result;
+    const details={note:'Both entrances checked.'};
+    let baseline=stored(project);
+    for(const revision of [task.revision,null,String(changed.revision)]){
+      assert.equal((await mutate(project,teammate,'reportCompletion',[task.id,details,revision],baseline.revision)).status,400);
+      assert.deepEqual(stored(project),baseline);
+    }
+    const report=(await save(project,teammate,'reportCompletion',[task.id,details,changed.revision])).result;
+    baseline=stored(project);
+    assert.equal((await mutate(project,teammate,'reportCompletion',[task.id,details,report.revision],baseline.revision)).status,400);
+    assert.deepEqual(stored(project),baseline);
+    const amended=(await save(project,teammate,'setCompletionEvidence',[task.id,{note:'The west entrance was also checked.'},report.revision])).result;
+    baseline=stored(project);
+    assert.equal((await mutate(project,teammate,'setCompletionEvidence',[task.id,details,report.revision],baseline.revision)).status,400);
+    assert.deepEqual(stored(project),baseline);
+    assert.equal(amended.completionEvidence.note,'The west entrance was also checked.');
+    assert.equal(amended.reportedAt,report.reportedAt);
+    assert.equal(amended.verifiedAt,'');
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
 test('verify and return reject a replaced report even with the current workspace revision',async()=>{
   const {project,actor}=await setup();
   try{
@@ -633,6 +657,21 @@ test('amendment acknowledgment rechecks organizer authority at commit even with 
   const baseline=stored(project);let intercepted=false;
   beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
   try{assert.equal((await mutate(project,organizer,'reviewCompletionEvidence',[task.id,task.revision],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;}
+});
+test('an organizer editing another person’s evidence must still be organizer when the edit commits',async()=>{
+  const {project,task}=await amendmentFixture(),baseline=stored(project);
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('edit-old-owner-'+project,project,organizer.userId,'jack','fictional',new Date().toISOString());
+  let intercepted=false;
+  beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){
+    intercepted=true;
+    sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);
+  }};
+  try{
+    const response=await mutate(project,organizer,'setCompletionEvidence',[task.id,{note:'Fictional organizer amendment.'},task.revision],baseline.revision);
+    assert.equal(response.status,409);
+    assert.ok(intercepted);
+    assert.deepEqual(stored(project),baseline);
+  }finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
 for(const winner of ['reviewCompletionEvidence','setCompletionEvidence'])test('overlapping amendment review/edit retains only '+winner,async()=>{
   const {project,task}=await amendmentFixture(),baseline=stored(project);

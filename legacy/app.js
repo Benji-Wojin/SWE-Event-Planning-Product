@@ -373,6 +373,8 @@
   function confirmCloseDialog() {
     if($('#budgetForm')?.dataset?.budgetUnconfirmed==='true')
       return window.confirm('Close without confirming this Budget change? Your original change may have saved. Check Recent budget changes before entering it again.');
+    if($('#dialog [data-completion-save-unconfirmed="true"]'))
+      return window.confirm('Close without confirming this completion save? Your edits may have saved. Copy anything you need before closing, then reload the project to check.');
     if(hasAcceptanceReturnDraft())
       return window.confirm('Close the assignment review and discard your selections and any unsaved task edits?');
     return confirmDiscard($('#dialog'));
@@ -2300,6 +2302,27 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked,...(input.type==='file'?{files:[...input.files]}:{}),...(input.multiple?{selected:[...input.selectedOptions].map(option=>({value:option.value,text:option.textContent}))}:{})})));
   }
+  const completionDraftKeys=['revision','workspaceRevision','reviewNeedsRefresh','completionUploaded','completionSaveUnconfirmed'];
+  function taskCompletionDraftContext(drafts,exclude) {
+    return ['responseForm','completionEvidenceForm'].filter(id=>id!==exclude).flatMap(id=>{
+      const form=$('#'+id,$('#dialog'));
+      if(!form)return [];
+      const completionDraft=drafts.some(draft=>draft.form===id&&(id==='completionEvidenceForm'||
+        form.elements.response?.value==='completed'||draft.name.startsWith('completion')));
+      if(!completionDraft&&form.dataset.completionSaveUnconfirmed!=='true')return [];
+      return [{id,data:completionDraftKeys.map(key=>[key,form.dataset[key]])}];
+    });
+  }
+  function restoreTaskCompletionDraftContext(context) {
+    for(const {id,data} of context){
+      const form=$('#'+id,$('#dialog'));
+      if(!form)continue;
+      for(const [key,value] of data){
+        if(value===undefined)delete form.dataset[key];
+        else form.dataset[key]=value;
+      }
+    }
+  }
   function priorityMarkup(task,organizer) { return recovery.priorityMarkup(task,organizer); }
   function taskOutcomeMarkup(task,organizer) {
     const historical=task.status==='done'||!!task.reportedAt;
@@ -2323,6 +2346,7 @@
     if(ui.overlapComparison&&(!overlapComparisonInScope(ui.overlapComparison)||ui.overlapComparison.peerId!==id))ui.overlapComparison=null;
     ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
+    const completionDraftContext=sameTask&&!discardDrafts?taskCompletionDraftContext(drafts,submittedForm):[];
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
     const previousFocus=sameTask?document.activeElement:null;
     const scroll=sameTask?$('#dialog').scrollTop:0;
@@ -2373,6 +2397,7 @@
     if(sameTask){
       for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.files){const transfer=new DataTransfer();for(const file of draft.files)transfer.items.add(file);input.files=transfer.files;}else if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
+      restoreTaskCompletionDraftContext(completionDraftContext);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
       requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
@@ -2783,9 +2808,85 @@
     openDialog(record.title||'Add a private booking',`<p class="notice">Only the authenticated local administrator can retrieve these details. They do not enter task notes, activity, email review, or workspace exports.</p><form id="bookingForm" data-id="${h(record.id||'')}"><div class="form-grid"><label class="field">Booking type<select name="type">${options(['Flight','Hotel','Transport','Venue','Other'].map(x=>[x,x]),record.type||'Flight')}</select></label><label class="field">Booking date<input type="date" name="date" value="${h(record.date||'')}"></label><label class="field full-width">Title<input name="title" required maxlength="160" placeholder="Guest speaker arrival" value="${h(record.title||'')}"></label><label class="field">Airline / hotel / provider<input name="provider" maxlength="160" value="${h(record.provider||'')}"></label><label class="field">Traveler / booked for<input name="traveler" maxlength="160" value="${h(record.traveler||'')}"></label><label class="field full-width">Confirmation reference<input id="privateReference" type="password" name="reference" required maxlength="160" autocomplete="off" value="${h(record.reference||'')}"></label><div class="inline full-width"><button type="button" class="text-button" data-action="reveal-reference">Show / hide reference</button><button type="button" class="text-button" data-action="copy-reference">Copy reference</button></div><label class="field full-width">Itinerary / private logistics notes<textarea name="details" rows="4" maxlength="2000">${h(record.details||'')}</textarea></label><label class="field full-width">Related task (optional)<select name="taskId">${options([['','Not linked'],...store.getState().tasks.map(task=>[task.id,task.title])],record.taskId||'')}</select></label></div><div class="form-actions"><button type="submit" class="btn btn-primary">Save encrypted details</button></div></form>`,'',true,'private');
     $('#bookingForm').dataset.version=record.version||'';
   }
+  async function saveReviewedSubmission(form,submission,file,submitter) {
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog),{actor,view,dialogKind,detailId}=ui;
+    const {id}=form.dataset,editing=form.id==='completionEvidenceForm',organizer=isOrganizer();
+    const project=window.GatherMode?.projectId,generation=store.getState().demoGeneration;
+    const sameReview=()=>!!dialog&&!!title&&form.isConnected&&!window.GatherAccessLost&&
+      ui.actor===actor&&ui.view===view&&ui.dialogKind===dialogKind&&
+      ((dialogKind==='task'&&ui.detailId===id&&detailId===id)||(dialogKind==='completion-response'&&!editing))&&
+      window.GatherMode?.projectId===project&&store.getState().demoGeneration===generation&&isOrganizer()===organizer&&
+      !$('#dialogBackdrop').hidden&&$('#dialogTitle',dialog)===title&&$('#'+form.id,dialog)===form&&form.dataset.id===id;
+    if(ui.pendingSave||!(editing||form.id==='responseForm')||!sameReview())return;
+    const revision=Number(form.dataset.revision),workspaceRevision=store.getSnapshotRevision?.();
+    const stillCurrent=()=>{
+      if(!sameReview()||acceptanceReviewPending(form)||!Number.isSafeInteger(revision)||revision<1||
+        (Number.isSafeInteger(workspaceRevision)&&
+          (Number(form.dataset.workspaceRevision)!==workspaceRevision||store.getSnapshotRevision?.()!==workspaceRevision)))return false;
+      const task=store.getState().tasks.find(item=>item.id===id);
+      if(!task||task.archivedAt||task.revision!==revision||Number(form.dataset.revision)!==revision)return false;
+      return editing?(organizer||task.owner===actor)&&(task.status==='done'||!!task.reportedAt):
+        task.owner===actor&&task.status!=='done'&&!task.verifiedAt&&!task.reportedAt&&!dependencyInfo(task).open.length;
+    };
+    const formMessage=(message)=>{
+      const status=form.querySelector('[data-submission-status]');
+      if(status)status.textContent='';
+      formError(form,new Error(message+
+        (form.dataset.completionUploaded==='true'?' Your file is saved in Event info. If you reopen the task, check Event info before uploading it again.':'')));
+    };
+    const unconfirmed=()=>{
+      form.dataset.completionSaveUnconfirmed='true';
+      form.dataset.reviewNeedsRefresh='true';
+      formMessage('The completion save could not be confirmed. Copy your note and links, reload the project, and check whether it saved before submitting again.');
+    };
+    const stale=(knownWorkspaceConflict=false)=>{
+      if(!sameReview())return;
+      form.dataset.reviewNeedsRefresh='true';
+      if(knownWorkspaceConflict)showRecoveryWriteConflict(workspaceRevision);
+      else showPendingUpdate();
+      formMessage('This completion wasn’t saved. Copy your note and links, reload the project, then review the current task before submitting.');
+    };
+    if(form.dataset.completionSaveUnconfirmed==='true'){unconfirmed();return;}
+    if(!stillCurrent()){stale();return;}
+    if(!editing&&!String(submission.note).trim()){formError(form,new Error('Add a completion note so the organizer knows what happened.'));return;}
+    $('.form-error',form)?.remove();
+    const release=saveLock(dialog,submitter);
+    let saving=false;
+    try{
+      // Event info uploads are separate shared writes. Check that the task's
+      // workspace is current before starting one, even without a stale banner.
+      if(file?.size&&Number.isSafeInteger(workspaceRevision)&&store.confirmSnapshotRevision){
+        let newer=false;
+        const current=await store.confirmSnapshotRevision(workspaceRevision,()=>{newer=true;});
+        if(!stillCurrent()||newer){stale(newer);return;}
+        if(!current){formMessage('Could not confirm the latest task. This attempt didn’t upload a file or submit a completion. Try again.');return;}
+      }
+      const details=await window.GatherCompletionUI.prepare(form,submission,file,{stillCurrent});
+      if(!stillCurrent()){stale();return;}
+      const write=editing?store.setCompletionEvidence:store.reportCompletion;
+      saving=true;
+      await write(id,details,actor,revision);
+      if(!sameReview())return;
+      const saved=store.getState();
+      render();taskDialog(id,form.id,false,false,'',undefined,'',{readOnly:true});
+      if(editing)toast('Submission saved. Task status and verification are unchanged.');
+      else window.GatherCompletionUI.celebrate(saved.tasks.find(task=>task.id===id),saved);
+    }catch(error){
+      if(!sameReview())return;
+      if(saving&&error.status===409)stale(error.message?.startsWith('The plan changed in another tab.'));
+      else if(!saving&&!stillCurrent()){
+        stale();
+        if(file&&form.dataset.completionUploaded!=='true'&&error.message?.includes('upload could not be confirmed'))
+          formMessage('This completion wasn’t saved. The upload could not be confirmed. Check Event info before uploading the file again.');
+      }else if(saving&&error.status===400&&error.message==='The completion task changed. Review it before submitting.')stale();
+      else if(saving&&(!error.status||error.status>=500||error.status===408))unconfirmed();
+      else formMessage(error.message||'Could not save this completion. Please check the form and try again.');
+    }finally{release();}
+  }
   function responseDialog(id,preview=false) {
     const task=store.getState().tasks.find(item=>item.id===id);if(!task)return;
-    openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until Jack confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}"><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`);
+    const workspaceRevision=store.getSnapshotRevision?.();
+    openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until the organizer confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}" data-revision="${h(task.revision)}"${Number.isSafeInteger(workspaceRevision)?' data-workspace-revision="'+workspaceRevision+'"':''}><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`,'',false,'completion-response');
   }
   function contextDialog() {
     if(window.GatherAccessLost)return;
@@ -3120,9 +3221,13 @@
       }
     }
     const isSubmission=form.id==='completionEvidenceForm'||form.id==='responseForm'&&(event.submitter?.value||data.response)==='completed';
-    // Snapshot before saveLock disables fields. Choosing a file never uploads it.
-    const submission=isSubmission?window.GatherCompletionUI.collect(form,form.id==='responseForm'?data.note:undefined):null;
-    const submissionFile=isSubmission?form.elements.completionUpload?.files?.[0]:null;
+    if(isSubmission){
+      // Snapshot before saveLock disables fields. Choosing a file never uploads it.
+      const submission=window.GatherCompletionUI.collect(form,form.id==='responseForm'?data.note:undefined);
+      const submissionFile=form.elements.completionUpload?.files?.[0];
+      await saveReviewedSubmission(form,submission,submissionFile,event.submitter);
+      return;
+    }
     if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
     if(form.id==='acceptTasksForm')data.selections=acceptanceSelections(form);
     if(form.id==='assignTasksForm')data.tasks=assignmentSelection(form);
@@ -3215,7 +3320,6 @@
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
       }
-      if(form.id==='completionEvidenceForm'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.setCompletionEvidence(form.dataset.id,details,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Submission saved. Task status and verification are unchanged.');}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
       if(form.id==='taskOutcomeForm'){store.setTaskOutcome(form.dataset.id,data.scope,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Outcome saved. Changed outcomes require the owner to reconfirm.');}
       if(form.id==='nextUpForm'){
@@ -3271,13 +3375,11 @@
         if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');
         if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}
         else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);
-        else if(response==='completed'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.reportCompletion(id,details,ui.actor);}
         else if(isRequest)store.requestRecovery(id,{kind:response,note:data.note,proposedDate:data.proposedDate||''},ui.actor);
         else throw new Error('Choose Report complete, Report blocked, or Share progress.');
         render();taskDialog(id,form.id);
         const task=store.getState().tasks.find(task=>task.id===id),hasSuggestions=(task?.handoffs||[]).some(item=>item.status==='pending');
-        if(response==='completed')window.GatherCompletionUI?.celebrate(task,store.getState());
-        else if(isRequest){focusTaskRecovery(id);toast('Request saved for organizer review.');}
+        if(isRequest){focusTaskRecovery(id);toast('Request saved for organizer review.');}
         else toast(hasSuggestions?'Update saved. Review the suggested follow-ups.':response==='blocked'?'Blocker saved. Review the linked work.':response==='progress'?'Progress saved.':'Report saved.');
       }
       if(form.id==='contextForm'){
@@ -3314,7 +3416,6 @@
         form.dataset.reviewNeedsRefresh='true';paintAssignmentRefresh();return;
       }
       if(error.status===409){if(form.id==='recoveryDecisionForm'||((form.id==='scheduleForm'||form.id==='taskDetailForm')&&ui.dialogKind==='task'&&ui.detailId===form.dataset.id))showRecoveryWriteConflict();else showPendingUpdate();}
-      if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';
       formError(form,error);toast(error.message||'Please check the form and try again.');
     }
     finally{release();if(form.id==='acceptTasksForm'&&form.isConnected)paintAcceptanceRefresh();if(form.id==='assignTasksForm'&&form.isConnected)paintAssignmentRefresh();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
@@ -3324,6 +3425,7 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
+    if(el.name==='completionUpload'&&el.form)delete el.form.dataset.completionUploaded;
     if(el.closest('#guestAgendaForm'))syncGuestAgenda(el.closest('#guestAgendaForm'));
     if(el.matches('[data-reuse-choice]'))syncReuseChecklist();
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));

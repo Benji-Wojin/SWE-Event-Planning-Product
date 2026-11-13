@@ -126,7 +126,8 @@ test('restored selections still count as unsaved, including while inspecting a t
   const source=readFileSync('legacy/app.js','utf8'),messages=[];
   const input={type:'checkbox',name:'acceptTask',form:{id:'acceptTasksForm'},checked:true,defaultChecked:true};
   const root={fields:[input]},ui={actor:'maya'};
-  const context=vm.createContext({ui,$:()=>root,$$:(_selector,element)=>element.fields,window:{confirm:message=>{messages.push(message);return false;}}});
+  let unconfirmed=false;
+  const context=vm.createContext({ui,$:selector=>selector.includes('data-completion-save-unconfirmed')?(unconfirmed?{}:null):root,$$:(_selector,element)=>element.fields,window:{confirm:message=>{messages.push(message);return false;}}});
   vm.runInContext(source.slice(source.indexOf('  function hasUnsavedFields('),source.indexOf('  const unsavedDialog=')),context);
   assert.equal(context.confirmCloseDialog(),false);
   input.checked=false;
@@ -138,6 +139,9 @@ test('restored selections still count as unsaved, including while inspecting a t
   assert.match(source,/beforeunload[^\n]+hasAcceptanceReturnDraft\(\)/);
   ui.actor='other';
   assert.equal(context.confirmCloseDialog(),true);
+  unconfirmed=true;
+  assert.equal(context.confirmCloseDialog(),false);
+  assert.match(messages.at(-1),/completion save.*may have saved/);
 });
 
 test('editing a follow-up preserves the exact text and clears the previous sent marker',()=>{

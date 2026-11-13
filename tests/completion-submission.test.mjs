@@ -67,11 +67,10 @@ test('invalid files and attachment limits are rejected before any network reques
   for(const chosen of [new File(['x'],'script.html'),new File([],'empty.txt'),new File([new Uint8Array(4*1024*1024+1)],'big.txt')])await assert.rejects(ui.prepare(form,details(),chosen),/up to 4 MB/);
   await assert.rejects(ui.prepare(form,{...details(),fileIds:['a','b','c','d','e']},file()),/Up to 5/);
 });
-test('submission capture precedes the save lock and upload is awaited before completion mutation',()=>{
+test('the submit event captures attachment inputs before delegating to the reviewed submission flow',()=>{
   const app=readFileSync('legacy/app.js','utf8'),start=app.indexOf("document.addEventListener('submit'");
-  assert.ok(app.indexOf('const submissionFile=',start)<app.indexOf('const release=saveLock',start));
-  assert.match(app,/const details=await window.GatherCompletionUI.prepare\(form,submission,submissionFile\);store.reportCompletion\(id,details,ui.actor\)/);
-  assert.match(app,/const details=await window.GatherCompletionUI.prepare\(form,submission,submissionFile\);store.setCompletionEvidence/);
+  const submit=app.slice(start,app.indexOf('const release=saveLock',start));
+  assert.match(submit,/if\(isSubmission\)[\s\S]*collect\(form,[^\n]+[\s\S]*const submissionFile=form.elements.completionUpload\?\.files\?\.\[0\];[\s\S]*await saveReviewedSubmission\(form,submission,submissionFile,event.submitter\);\s*return;/);
 });
 test('removed attachment rows stay removed after sibling-form selection restoration',()=>{
   const {ui}=setup(()=>{throw Error('Mounting must not upload');});

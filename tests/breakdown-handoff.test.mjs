@@ -153,7 +153,7 @@ test('the hosted task editor returns to the batch only after the confirmed save,
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const generated = readFileSync('public/gather-assets/app.js', 'utf8');
   const start = generated.indexOf("      if(form.id==='taskDetailForm'){");
-  const end = generated.indexOf("      if(form.id==='completionEvidenceForm')", start);
+  const end = generated.indexOf("      if(form.id==='priorityForm')", start);
   assert.ok(start >= 0 && end > start);
   const update = vm.runInNewContext('(async function(form,data){'+generated.slice(start,end)+'})', {
     store: {
