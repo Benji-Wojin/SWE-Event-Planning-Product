@@ -122,6 +122,24 @@ test('discard checks detect changed values but ignore untouched, hidden and read
   root.fields[2].value='maya';root.fields[3].checked=true;assert.equal(context.hasUnsavedFields(root),true);
 });
 
+test('restored selections still count as unsaved, including while inspecting a task',()=>{
+  const source=readFileSync('legacy/app.js','utf8'),messages=[];
+  const input={type:'checkbox',name:'acceptTask',form:{id:'acceptTasksForm'},checked:true,defaultChecked:true};
+  const root={fields:[input]},ui={actor:'maya'};
+  const context=vm.createContext({ui,$:()=>root,$$:(_selector,element)=>element.fields,window:{confirm:message=>{messages.push(message);return false;}}});
+  vm.runInContext(source.slice(source.indexOf('  function hasUnsavedFields('),source.indexOf('  const unsavedDialog=')),context);
+  assert.equal(context.confirmCloseDialog(),false);
+  input.checked=false;
+  assert.equal(context.confirmCloseDialog(),true);
+  ui.acceptanceReturn={actor:'maya',selected:[{id:'task',revision:1}]};
+  assert.equal(context.confirmCloseDialog(),false);
+  assert.match(messages.at(-1),/discard your selections and any unsaved task edits/);
+  assert.match(source,/if\(action==='map-focus'\)\{if\(!confirmCloseDialog\(\)/);
+  assert.match(source,/beforeunload[^\n]+hasAcceptanceReturnDraft\(\)/);
+  ui.actor='other';
+  assert.equal(context.confirmCloseDialog(),true);
+});
+
 test('editing a follow-up preserves the exact text and clears the previous sent marker',()=>{
   const store=create();
   store.saveDraft('bus','Original message','jack');

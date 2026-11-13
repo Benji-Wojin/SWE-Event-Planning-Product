@@ -117,6 +117,33 @@ test('personal assignment review describes work readiness without changing who c
   assert.deepEqual(f.state,before);
 });
 
+test('assignment drilldown keeps selections local and returns only in the same actor and view',()=>{
+  const f=context([task('mine','maya'),task('other','dev')]),calls=[];
+  const opener={},form={dataset:{actor:'maya',returnTo:'event-review'},contains:node=>node===opener};
+  const original=f.ctx.$;
+  Object.assign(f.ctx,{$:selector=>selector==='#acceptTasksForm'?form:original(selector),
+    $$:(_selector,root)=>{assert.equal(root,form);return [{value:'mine',dataset:{revision:'1'}}];},
+    schedule:{reviewAcceptanceTasks:state=>state.tasks},eventReviewScope:()=>({mine:false,actor:'maya'}),
+    taskDialog(...args){calls.push(args);f.ctx.ui.dialogKind='task';},
+  });
+  Object.assign(f.ctx.ui,{view:'timeline',dialogKind:'acceptance'});
+  f.ctx.inspectAcceptanceTask('mine',{});assert.deepEqual(calls,[]);
+  f.ctx.inspectAcceptanceTask('other',opener);assert.deepEqual(calls,[]);
+  assert.match(f.actions.pop(),/no longer in your assignment review/);
+  f.ctx.inspectAcceptanceTask('mine',opener);
+  assert.deepEqual(calls,[[ 'mine','',false,true ]]);
+  const resume=f.ctx.ui.acceptanceReturn;
+  assert.equal(resume.actor,'maya');assert.equal(resume.view,'timeline');assert.equal(resume.fromEventReview,true);
+  assert.equal(JSON.stringify(resume.selected),'[{"id":"mine","revision":1}]');
+  f.ctx.acceptanceDialog=(...args)=>calls.push(args);
+  for(const [object,key,value] of [[f.ctx.ui,'view','tasks'],[f.ctx.ui,'actor','dev'],[f.ctx.window,'GatherAccessLost',true]]){
+    const prior=object[key];object[key]=value;
+    f.ctx.returnToAcceptanceReview();assert.equal(calls.length,1);
+    object[key]=prior;
+  }
+  f.ctx.returnToAcceptanceReview();assert.deepEqual(calls[1],[true,resume]);
+});
+
 test('read-only event details show the shared venue and date, with clear missing states',()=>{
   const f=context();
   f.ctx.isOrganizer=()=>false;
@@ -142,7 +169,7 @@ test('orienting from the welcome moves focus to the destination only after navig
     [true,true,false,[]],
   ]){
     const actions=[];
-    const ctx=vm.createContext({ui:{view:'overview'},$:()=>({hidden:true}),confirmDiscard:()=>consent,
+    const ctx=vm.createContext({ui:{view:'overview'},$:()=>({hidden:true}),confirmCloseDialog:()=>consent,confirmDiscard:()=>consent,
       recordGuideViewClick:()=>{},navigate:view=>{actions.push('navigate:'+view);return valid;},
       skipToContent:()=>actions.push('focus'),control:{dataset:{view:'timeline'},closest:()=>fromHandoff?{}:null}});
     vm.runInContext(source.slice(a,b)+'navigateFromViewControl(control);',ctx);

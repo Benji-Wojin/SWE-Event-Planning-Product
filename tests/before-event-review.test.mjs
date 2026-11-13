@@ -284,7 +284,7 @@ test('Back to event review obeys the delegated discard prompt and never leaves a
   let click,allow=false;
   const context=vm.createContext({ui,window:{},$:(selector)=>selector==='#dialog'?dialog:null,
     document:{addEventListener(type,handler){assert.equal(type,'click');click=handler;}},
-    confirmDiscard(root,other){assert.equal(root,dialog);assert.equal(other,null);calls.push('confirm');return allow;},
+    hasAcceptanceReturnDraft:()=>false,confirmDiscard(root,other){assert.equal(root,dialog);assert.equal(other,null);calls.push('confirm');return allow;},
     beforeEventReview(group){calls.push(group);ui.dialogKind='before-event-review';ui.eventTaskReview=null;},
   });
   vm.runInContext(source.slice(returnStart,source.indexOf('  function showPendingUpdate(',returnStart))+

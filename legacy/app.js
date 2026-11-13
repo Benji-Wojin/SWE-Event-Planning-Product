@@ -211,6 +211,7 @@
   function hasUnsavedFields(root,exclude=[]) {
     return !!root&&$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
+      if(input.type==='checkbox'&&input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')return input.checked;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
       if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
       const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
@@ -219,6 +220,14 @@
   }
   function confirmDiscard(...roots) {
     return !roots.some(root=>hasUnsavedFields(root))||window.confirm('Discard your unsaved changes?');
+  }
+  function hasAcceptanceReturnDraft() {
+    return !!(ui.acceptanceReturn?.selected.length&&ui.acceptanceReturn.actor===ui.actor);
+  }
+  function confirmCloseDialog() {
+    if(hasAcceptanceReturnDraft())
+      return window.confirm('Close the assignment review and discard your selections and any unsaved task edits?');
+    return confirmDiscard($('#dialog'));
   }
   const unsavedDialog=()=>!!$('#dialogBackdrop')&&!$('#dialogBackdrop').hidden&&hasUnsavedFields($('#dialog'));
   const unsavedReview=()=>hasUnsavedFields($('#emailReviewForm'));
@@ -486,25 +495,59 @@
       ?'Review linked results before resuming.':'Blocked · review the latest update.';
     return '';
   }
-  function acceptanceDialog(fromEventReview=false) {
+  function acceptanceDialog(fromEventReview=false,resume=null) {
     if(window.GatherAccessLost)return;
     const state=store.getState();
     const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
-    if(!tasks.length){toast('No unaccepted open tasks in this view.');return;}
+    if(!tasks.length){
+      if(resume){if(fromEventReview)beforeEventReview();else closeDialog();}
+      toast('No unaccepted open tasks in this view.');return;
+    }
     const source=fromEventReview?'this event review':'the current view';
+    const sync=resume?$('#workspaceSyncNotice'):null;
+    const stale=Boolean(sync&&!sync.hidden);
+    const previous=new Map(resume?.selected.map(task=>[task.id,task.revision]));
+    const keep=task=>!stale&&previous.has(task.id)&&previous.get(task.id)===task.revision;
+    const selectedCount=tasks.filter(keep).length;
+    const changed=previous.size-selectedCount;
     const choices=tasks.map(task=>{
       const key=h(task.id);
       const when=task.schedule?`Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}`:task.eventActivity===true?'Planned activity · start time not set':'';
       const readiness=assignmentReadiness(task,state.tasks);
       return `<div class="acceptance-choice">
-        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}" aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
+        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}"${keep(task)?' checked':''} aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
         <span><strong id="accept-title-${key}">${h(task.title)}</strong><span id="accept-date-${key}">${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>
         ${when?`<span id="accept-activity-${key}">${when}</span>`:''}${readiness?`<span id="accept-readiness-${key}"><strong>${h(readiness)}</strong></span>`:''}<span id="accept-outcome-${key}"><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>
         ${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label>
-        <button type="button" class="text-button" data-action="task" data-id="${key}" aria-label="Open task details for ${h(task.title)}">Open task details</button>
+        <button type="button" class="text-button" data-action="inspect-acceptance-task" data-id="${key}" aria-label="Open task details for ${h(task.title)}">Open task details</button>
       </div>`;
     }).join('');
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. Nothing is selected for you.</p><p class="notice">You can accept responsibility even if work is waiting on something else. Acceptance does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">0 tasks selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit" disabled>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. ${resume?'Only unchanged selections were kept.':'Nothing is selected for you.'}</p>${changed?`<p class="notice" role="status">${changed} ${changed===1?'selection was':'selections were'} cleared ${stale?'because newer project changes are available. Reload before accepting.':'because the task changed or is no longer in this review. Check the current tasks before accepting.'}</p>`:''}<p class="notice">You can accept responsibility even if work is waiting on something else. Acceptance does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">${selectedCount} ${selectedCount===1?'task':'tasks'} selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit"${selectedCount?'':' disabled'}>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    if(stale)showPendingUpdate();
+    if(resume&&!changed&&!stale){
+      const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+      requestAnimationFrame(()=>{
+        if(window.GatherAccessLost||ui.dialogKind!=='acceptance'||!title||$('#dialogTitle',dialog)!==title)return;
+        const opener=$$('[data-action="inspect-acceptance-task"]',dialog).find(button=>button.dataset.id===resume.openerId);
+        if(opener){opener.focus({preventScroll:true});opener.scrollIntoView({block:'center',inline:'nearest'});}
+      });
+    }
+  }
+  function inspectAcceptanceTask(id,opener) {
+    if(window.GatherAccessLost||ui.dialogKind!=='acceptance')return;
+    const form=$('#acceptTasksForm');
+    if(!form||form.dataset.actor!==ui.actor||!form.contains(opener))return;
+    const state=store.getState(),fromEventReview=form.dataset.returnTo==='event-review';
+    const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
+    if(!tasks.some(task=>task.id===id)){toast('This task is no longer in your assignment review.');return;}
+    const selected=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
+    ui.acceptanceReturn={actor:ui.actor,view:ui.view,fromEventReview,openerId:id,selected};
+    taskDialog(id,'',false,true);
+  }
+  function returnToAcceptanceReview() {
+    const resume=ui.acceptanceReturn;
+    if(!resume||ui.dialogKind!=='task'||resume.actor!==ui.actor||resume.view!==ui.view||window.GatherAccessLost)return;
+    acceptanceDialog(resume.fromEventReview,resume);
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
@@ -709,7 +752,9 @@
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if(kind!=='run-sheet')ui.runSheet=null;
-    if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.eventTaskReview=null;
+    if(!['task','delete-task','related-checklist','related-review'].includes(kind)){
+      ui.eventTaskReview=null;ui.acceptanceReturn=null;
+    }
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
@@ -718,7 +763,9 @@
     $('#dialog').className=`dialog ${wide?'dialog-wide':''}`;
     const heading=`<h2 id="dialogTitle">${h(title)}</h2>`;
     const reviewBack=kind==='task'&&ui.eventTaskReview&&ui.eventTaskReview.actor===ui.actor&&!window.GatherAccessLost;
-    $('#dialog').innerHTML=`<div class="dialog-header">${reviewBack?`<div class="event-review-task-heading">${heading}<button type="button" class="text-button" data-action="return-to-event-task-review">← Back to event review</button></div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
+    const assignmentBack=kind==='task'&&ui.acceptanceReturn&&ui.acceptanceReturn.actor===ui.actor&&ui.acceptanceReturn.view===ui.view&&!window.GatherAccessLost;
+    const back=assignmentBack?['return-to-acceptance-review','Back to assignment review']:reviewBack?['return-to-event-task-review','Back to event review']:null;
+    $('#dialog').innerHTML=`<div class="dialog-header">${back?`<div class="event-review-task-heading">${heading}<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button></div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
@@ -742,6 +789,7 @@
     $('#dialog').replaceChildren();
     ui.dialogKind='';
     ui.eventTaskReview=null;
+    ui.acceptanceReturn=null;
     ui.guestAgenda=null;
     ui.reuseChecklist=null;
     ui.runSheet=null;
@@ -1508,7 +1556,7 @@
   function navigateFromViewControl(el) {
     const view=el.dataset.view;
     if(view===ui.view&&$('#dialogBackdrop').hidden){setDrawer(false);return;}
-    if(!confirmDiscard($('#dialog'),view!==ui.view?$('#emailReviewForm'):null))return;
+    if(!confirmCloseDialog()||!confirmDiscard(view!==ui.view?$('#emailReviewForm'):null))return;
     if(!$('#dialogBackdrop').hidden)closeDialog();
     const fromHandoff=el.closest('#workspaceHandoff')!==null;
     recordGuideViewClick(view);
@@ -1524,9 +1572,13 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist','notifications','return-to-event-task-review');
+    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
-    if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
+    const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
+    const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
+    if(action==='close-dialog'||exitsAssignment){
+      if(!confirmCloseDialog()||!confirmDiscard(reviewForm))return;
+    }else if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,reviewForm))return;
     const eventReviewGroup=(action==='task'||action==='review-organizer-item')&&ui.dialogKind==='before-event-review'
       ? el.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
     const writes=['toggle-task','claim','confirm-delete-task','confirm-demo-reset','sample-reply','refresh-proposal','ignore-message','accept-task','resume-task','unlink-dependency','verify-task','review-completion-evidence','verification-toggle','accept-insight','dismiss-insight','record-followup'];
@@ -1535,6 +1587,7 @@
     try {
       if(action==='close-dialog')closeDialog();
       if(action==='return-to-event-task-review')returnToEventTaskReview();
+      if(action==='return-to-acceptance-review')returnToAcceptanceReview();
       if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
@@ -1597,6 +1650,7 @@
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task')taskDialog(id,'',false,false,eventReviewGroup);
+      if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
         const task=store.getState().tasks.find(task=>task.id===id);
         if(!task)throw new Error('That task is no longer available.');
@@ -1612,10 +1666,10 @@
         const form=$('#taskDetailForm'),owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
         if(details){details.open=true;owner.focus();}
       }
-      if(action==='quick-tour'){if(confirmDiscard($('#dialog'),$('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
+      if(action==='quick-tour'){if(confirmCloseDialog()&&confirmDiscard($('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
       if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}
-      if(action==='map-focus'){if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();ui.taskView='map';ui.mapFocus=id;ui.search='';ui.owner='';ui.status='';ui.tab='all';navigate('tasks');return;}
+      if(action==='map-focus'){if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();ui.taskView='map';ui.mapFocus=id;ui.search='';ui.owner='';ui.status='';ui.tab='all';navigate('tasks');return;}
       if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!t||!isOrganizer()||completionNeedsReview(t)){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();if(t.status==='done')toast('Task reopened. Its history is preserved.');else window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
       if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
       if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
@@ -1903,13 +1957,13 @@
       renderTaskRows();
     }
   });
-  $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop')&&confirmDiscard($('#dialog')))closeDialog();});
+  $('#dialogBackdrop').addEventListener('click',event=>{if(!ui.pendingSave&&event.target===$('#dialogBackdrop')&&confirmCloseDialog())closeDialog();});
   document.addEventListener('copy',guardGuestAgendaPreviewCopy);
   window.addEventListener('offline',resetGuestAgendaManualCopy);
   window.addEventListener('online',resetGuestAgendaManualCopy);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)resetGuestAgendaManualCopy();});
   document.addEventListener('keydown',event=>{
-    if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden){if(confirmDiscard($('#dialog')))closeDialog();}else setDrawer(false);}
+    if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden){if(confirmCloseDialog())closeDialog();}else setDrawer(false);}
     const scope=!$('#dialogBackdrop').hidden?$('#dialog'):matchMedia('(max-width:800px)').matches&&$('#sidebar').classList.contains('open')?$('#sidebar'):null;
     if(event.key==='Tab'&&scope){
       const controls=focusable(scope);
@@ -1927,14 +1981,14 @@
   const routeChanged=view=>{
     if(ui.pendingSave){navigation.replace(ui.view);return;}
     if(view===ui.view)return;
-    if(!confirmDiscard($('#dialog'),$('#emailReviewForm'))){navigation.replace(ui.view);return;}
+    if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm'))){navigation.replace(ui.view);return;}
     if(!$('#dialogBackdrop').hidden)closeDialog();
     navigate(view);
   };
   let unsubscribeNavigation=navigation.subscribe(routeChanged);
   window.addEventListener('pagehide',()=>{unsubscribeNavigation();});
   window.addEventListener('pageshow',event=>{if(event.persisted){unsubscribeNavigation=navigation.subscribe(routeChanged);routeChanged(navigation.initial());}});
-  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||unsavedDialog()||unsavedReview()||planSidebar.unsaved()||agentPopup.unsaved()){event.preventDefault();event.returnValue='';}});
+  window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||hasAcceptanceReturnDraft()||unsavedDialog()||unsavedReview()||planSidebar.unsaved()||agentPopup.unsaved()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshScheduleClock() {
     if(window.GatherAccessLost||document.hidden||ui.pendingSave||ui.view!=='timeline'||ui.timelineMode==='deadlines'||!$('#dialogBackdrop').hidden)return;

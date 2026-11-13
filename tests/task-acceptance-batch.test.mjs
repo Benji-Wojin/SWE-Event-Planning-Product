@@ -238,6 +238,7 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   assert.match(markup, /Nothing is selected for you/);
   assert.match(markup, /id="acceptanceSubmit"[^>]*disabled/);
   assert.match(markup, /does not mark work complete/);
+  assert.match(markup, /data-action="inspect-acceptance-task" data-id="a"/);
   vm.runInContext('acceptanceDialog(true);',context);
   assert.match(markup,/data-return-to="event-review"/);
   assert.match(markup,/Planned activity · start time not set/);
@@ -250,6 +251,52 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
     ),
     100,
   );
+});
+test('returning to an assignment review keeps only unchanged, still-eligible selections in the same source',()=>{
+  const owned=(id,revision,extra={})=>({id,revision,title:id,owner:'maya',status:'todo',...extra});
+  const tasks=[owned('same',2),owned('changed',5),owned('outside-scope',3),owned('new-unselected',1),
+    owned('accepted',2,{acceptedAt:'2030-11-01'}),owned('reassigned',2,{owner:'dev'}),owned('completed',3,{status:'done'})];
+  const selected=[{id:'same',revision:2},{id:'changed',revision:4},{id:'outside-scope',revision:3},
+    {id:'accepted',revision:2},{id:'reassigned',revision:2},{id:'completed',revision:3},{id:'removed',revision:1}];
+  const state={event:{timeZone:'UTC'},tasks},resume={selected,openerId:'same'},before=structuredClone({state,resume});
+  const scoped=tasks.filter(task=>task.id!=='outside-scope');
+  const dialog={},title={},frames=[],sync={hidden:true};
+  let markup,opens=0,warnings=0;
+  const context=vm.createContext({
+    ui:{actor:'maya'},window:{GatherAccessLost:false},GatherPriorities,
+    store:{getState:()=>state,acceptTasks(){throw Error('Returning is read-only');}},
+    eventReviewScope:()=>({mine:true,actor:'maya'}),
+    schedule:{reviewAcceptanceTasks(current,scope){assert.equal(current,state);assert.equal(scope.mine,true);return scoped;}},
+    filteredTasks(){throw Error('Must keep the event review source');},
+    h:String,statuses:{todo:'To do'},dayLabel:value=>value,
+    $:selector=>selector==='#dialog'?dialog:selector==='#dialogTitle'?title:selector==='#workspaceSyncNotice'?sync:null,
+    showPendingUpdate(){warnings++;},
+    requestAnimationFrame:frame=>frames.push(frame),
+    openDialog(_title,body){opens++;markup=body;},
+    toast(){throw Error('No toast for an available review');},
+  });
+  vm.runInContext(app.slice(app.indexOf('  function acceptanceCandidates('),app.indexOf('  function inboxView(')),context);
+  context.acceptanceDialog(true,resume);
+  assert.equal(opens,1);
+  assert.match(markup,/from this event review/);
+  assert.match(markup,/data-return-to="event-review"/);
+  assert.match(markup,/data-action="before-event-review">Back to event review/);
+  assert.match(markup,/6 selections were cleared because the task changed or is no longer in this review/);
+  assert.match(markup,/id="acceptanceCount"[^>]*>1 task selected\./);
+  assert.doesNotMatch(markup,/id="acceptanceSubmit"[^>]*disabled/);
+  const inputs=[...markup.matchAll(/<input[^>]*name="acceptTask"[^>]*value="([^"]+)"[^>]*>/g)];
+  assert.deepEqual(inputs.map(([,id])=>id),['same','changed','new-unselected']);
+  assert.deepEqual(inputs.filter(([tag])=>/\bchecked\b/.test(tag)).map(([,id])=>id),['same']);
+  assert.match(markup,/value="changed" data-revision="5"/);
+  assert.match(markup,/data-action="inspect-acceptance-task" data-id="same"/);
+  assert.deepEqual({state,resume},before);
+  sync.hidden=false;
+  context.acceptanceDialog(true,resume);
+  assert.equal(warnings,1);
+  assert.match(markup,/7 selections were cleared because newer project changes are available/);
+  assert.match(markup,/0 tasks selected/);
+  assert.doesNotMatch(markup,/\bchecked\b/);
+  assert.deepEqual({state,resume},before);
 });
 test('selection state enables deliberate submit and serializes all reviewed revisions before save lock', () => {
   const count = { textContent: '' },

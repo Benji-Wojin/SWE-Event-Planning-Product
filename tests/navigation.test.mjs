@@ -117,7 +117,7 @@ test('hosted build loads navigation before the workspace and retains dirty-form 
   assert.ok(html.indexOf('-navigation.js')<html.indexOf('-hosted-store.js'));
   assert.match(html, /<script defer src="\/gather-assets\/versioned\/[a-f0-9]{20}-navigation.js"><\/script>/);
   assert.match(app,/ui.pendingSave\)\{navigation.replace\(ui.view\)/);
-  assert.match(app,/!confirmDiscard\(\$\('#dialog'\),\$\('#emailReviewForm'\)\)\)\{navigation.replace\(ui.view\)/);
+  assert.match(app,/!confirmCloseDialog\(\)\|\|!confirmDiscard\(\$\('#emailReviewForm'\)\)\)\{navigation.replace\(ui.view\)/);
 });
 
 test('mobile drawer focuses its container, traps Tab, and restores the opener without removing link focus styles',()=>{
@@ -158,12 +158,12 @@ test('restored pages keep dirty dialogs and in-flight saves never close the form
   const source=app.slice(app.indexOf('  const routeChanged='),app.indexOf('  let unsubscribeNavigation='));
   const ui={view:'info',pendingSave:false},calls=[];
   const context={ui,navigation:{replace:view=>calls.push(['replace',view])},$:()=>({hidden:false}),
-    confirmDiscard:()=>{calls.push(['confirm']);return false;},closeDialog:()=>calls.push(['close']),navigate:view=>calls.push(['navigate',view])};
+    confirmCloseDialog:()=>{calls.push(['confirm']);return false;},confirmDiscard:()=>true,closeDialog:()=>calls.push(['close']),navigate:view=>calls.push(['navigate',view])};
   const changed=vm.runInNewContext(source+'\nrouteChanged;',context);
   changed('info');assert.deepEqual(calls,[],'BFCache returning to the same section must preserve the form');
   ui.pendingSave=true;changed('tasks');assert.deepEqual(calls,[['replace','info']]);
   ui.pendingSave=false;calls.length=0;changed('tasks');assert.deepEqual(calls,[['confirm'],['replace','info']]);
-  calls.length=0;context.confirmDiscard=()=>true;changed('tasks');assert.deepEqual(calls,[['close'],['navigate','tasks']]);
+  calls.length=0;context.confirmCloseDialog=()=>true;changed('tasks');assert.deepEqual(calls,[['close'],['navigate','tasks']]);
 });
 
 test('drawer Tab trap handles initial container focus in both directions and both boundaries',()=>{
