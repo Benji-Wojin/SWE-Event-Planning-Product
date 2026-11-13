@@ -539,6 +539,7 @@
     return pageHeading('','Tasks','',`${isOrganizer()?'<button class="btn btn-secondary" data-action="review-assignments">Assign tasks</button>':''}${addButton()}`)+`
       ${taskLinkNotice()}
       ${guideTaskPanel(s)}
+      ${ui.acceptanceHandoff ? acceptanceHandoffMarkup(s) : ''}
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${linkedResultsPanel(s)}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
@@ -706,10 +707,19 @@
       if(button.isConnected)button.removeAttribute('aria-disabled');
     }
   }
-  function focusAfterAcceptance() {
+  function focusAfterAcceptance(restoredFocus=document.body) {
     // The review button disappears when all visible assignments are accepted.
-    // Wait for saveLock to release, and never steal focus from another control.
-    queueMicrotask(()=>{if(ui.view==='tasks'&&document.activeElement===document.body)skipToContent();});
+    // The single-task receipt can also replace the restored opener, if focus
+    // has not moved since the save returned to My tasks.
+    const receipt=ui.acceptanceHandoff;
+    queueMicrotask(()=>{
+      if(ui.view!=='tasks')return;
+      if(receipt&&ui.acceptanceHandoff===receipt&&document.activeElement===restoredFocus&&currentAcceptanceHandoff(store.getState())){
+        const heading=$('#acceptanceHandoffHeading',$('#viewRoot'));
+        if(heading&&focusScheduleTarget(heading))return;
+      }
+      if(document.activeElement===document.body)skipToContent();
+    });
   }
   function acceptanceCandidates(tasks) {
     return tasks.filter(waitsForAcceptance).slice(0,100);
@@ -719,6 +729,62 @@
   }
   function isLiveTeammate() {
     return !!(window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost&&window.GatherIdentity?.role==='member');
+  }
+  function acceptanceHandoffInScope(receipt) {
+    return !!receipt&&isLiveTeammate()&&ui.view==='tasks'&&ui.tab==='mine'&&
+      receipt.actor===ui.actor&&receipt.project===window.GatherMode.projectId;
+  }
+  function captureAcceptanceHandoff(selections,form,state=store.getState()) {
+    const project=window.GatherMode?.projectId,actor=ui.actor;
+    if(!project||form.dataset.returnTo||!acceptanceHandoffInScope({project,actor})||selections.length!==1)return null;
+    const [{id,revision}]=selections,task=state.tasks.find(item=>item.id===id);
+    if(!task||!waitsForAcceptance(task)||task.revision!==revision)return null;
+    return {id,revision,actor,project};
+  }
+  function rememberAcceptanceHandoff(receipt,result,state=store.getState()) {
+    if(!acceptanceHandoffInScope(receipt)||!Array.isArray(result)||result.length!==1)return false;
+    const [saved]=result,task=state.tasks.find(item=>item.id===receipt.id);
+    if(saved?.id!==receipt.id||saved.revision!==receipt.revision+1||saved.owner!==receipt.actor||
+      saved.acceptedBy!==receipt.actor||!saved.acceptedAt||!task||task.revision!==saved.revision||
+      task.owner!==receipt.actor||task.acceptedBy!==receipt.actor||task.acceptedAt!==saved.acceptedAt||
+      task.archivedAt||task.status==='done'||task.reportedAt||task.verifiedAt)return false;
+    ui.acceptanceHandoff={...receipt,acceptedAt:saved.acceptedAt};
+    return true;
+  }
+  function currentAcceptanceHandoff(state) {
+    const receipt=ui.acceptanceHandoff;
+    if(!acceptanceHandoffInScope(receipt))return null;
+    return state.tasks.find(task=>task.id===receipt.id&&task.owner===receipt.actor&&task.acceptedBy===receipt.actor&&
+      task.acceptedAt===receipt.acceptedAt&&!task.archivedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt)||null;
+  }
+  function acceptanceHandoffMarkup(state) {
+    const task=currentAcceptanceHandoff(state);
+    if(!task)return '';
+    const readiness=assignmentReadiness(task,state.tasks);
+    return `<section class="panel notice section-gap" id="acceptanceHandoff" aria-labelledby="acceptanceHandoffHeading">
+      <h2 id="acceptanceHandoffHeading" tabindex="-1">Responsibility accepted</h2>
+      <p><strong>${h(task.title)}</strong> is in My tasks. Its completion status hasn’t changed.</p>
+      ${readiness?`<p class="muted">${h(readiness)}</p>`:''}
+      <div class="inline"><button id="acceptanceHandoffOpen" class="btn btn-primary" type="button" data-action="open-accepted-handoff" data-id="${h(task.id)}">Open accepted task</button>
+      <button id="acceptanceHandoffDismiss" class="btn btn-secondary" type="button" data-action="dismiss-accepted-handoff">Dismiss</button></div></section>`;
+  }
+  function actOnAcceptanceHandoff(opener,id='') {
+    const task=currentAcceptanceHandoff(store.getState()),root=$('#viewRoot');
+    if(!task||ui.pendingSave||document.hidden||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    if(!id&&opener===$('#acceptanceHandoffDismiss',root)&&opener.dataset.action==='dismiss-accepted-handoff'){
+      ui.acceptanceHandoff=null;
+      $('#acceptanceHandoff',root)?.remove();
+      skipToContent();
+      return true;
+    }
+    if(id!==task.id||opener!==$('#acceptanceHandoffOpen',root)||opener.dataset.action!=='open-accepted-handoff'||opener.dataset.id!==id)return false;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+      toast('Refresh the project before opening this accepted task.');return false;
+    }
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=opener;
+    return true;
   }
   function teammateHandoff(s,welcome) {
     const pending=s.tasks.filter(waitsForAcceptance).length;
@@ -760,10 +826,13 @@
     if(action==='review'&&acceptanceCandidates(store.getState().tasks).length)acceptanceDialog();
   }
   function assignmentReadiness(task,tasks) {
+    const required=(task.dependencies||[]).filter(link=>link.kind!=='related');
+    if(required.some(link=>!tasks.some(item=>item.id===link.taskId&&!item.archivedAt)))
+      return 'Required work is unavailable. Review Task relationships or ask the organizer.';
     const waiting=GatherPriorities.unresolved(task,tasks).length;
     if(waiting)return `Waiting on ${waiting} required ${waiting===1?'task':'tasks'} before completion.`;
     if(GatherPriorities.pendingRequest(task)?.kind==='help')return 'Help requested · waiting for the organizer.';
-    if(task.status==='blocked')return (task.dependencies||[]).some(link=>link.kind!=='related')
+    if(task.status==='blocked')return required.length
       ?'Review linked results before resuming.':'Blocked · review the latest update.';
     return '';
   }
@@ -1341,7 +1410,7 @@
       ui.timelineMode='schedule';ui.scheduleDate=scheduleDay;
       navigation.replaceScheduleDate(scheduleDay);
     }
-    if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;ui.firstScheduleReceipt=null;}
+    if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;ui.firstScheduleReceipt=null;ui.acceptanceHandoff=null;}
     if(view!=='tasks')taskLinkUnavailable=false;
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
@@ -3289,7 +3358,9 @@
     const fromLinkedResults=linkedReview?.id===id&&linkedReview.actor===ui.actor&&linkedReview.project===window.GatherMode?.projectId;
     const fromRequiredReview=ui.completionLinkedReturn?.targetId===id;
     const fromPlanReceipt=ui.planReceiptReturn?.id===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
+    const fromAcceptanceHandoff=ui.lastFocus?.id==='acceptanceHandoffOpen'&&ui.lastFocus.dataset.id===id&&
+      currentAcceptanceHandoff(taskState)?.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromAcceptanceHandoff||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -4133,6 +4204,7 @@
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
+    if(action==='open-accepted-handoff'||action==='dismiss-accepted-handoff'){actOnAcceptanceHandoff(el,id);return;}
     if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
     if(action==='use-latest-lesson'){useLatestLesson(el);return;}
     if(action==='discard-completion-draft'){
@@ -4526,9 +4598,14 @@
       }
       if(form.id==='acceptTasksForm'){
         if(window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task acceptance.');
-        store.acceptTasks(data.selections,ui.actor);
+        const handoff=captureAcceptanceHandoff(data.selections,form);
+        const accepted=store.acceptTasks(data.selections,ui.actor);
         if(form.dataset.returnTo==='event-review'){render();beforeEventReview();}
-        else{closeDialog();render();focusAfterAcceptance();}
+        else{
+          ui.acceptanceHandoff=null;
+          if(handoff&&form.isConnected&&form===$('#acceptTasksForm')&&ui.dialogKind==='acceptance')rememberAcceptanceHandoff(handoff,accepted);
+          closeDialog();render();focusAfterAcceptance(document.activeElement);
+        }
         toast(`Responsibility accepted for ${data.selections.length} ${data.selections.length===1?'task':'tasks'}. Completion is unchanged.`);
       }
       if(form.id==='newTaskForm'){

@@ -590,7 +590,7 @@ test('acceptance restores lost keyboard focus after saving without stealing a ne
   ui.view = 'timeline';
   pending.shift()();
   assert.equal(focused, 1);
-  assert.match(app, /else\{closeDialog\(\);render\(\);focusAfterAcceptance\(\);\}/);
+  assert.match(app, /closeDialog\(\);render\(\);focusAfterAcceptance\(document\.activeElement\);/);
 });
 test('prepared client awaits one actor-free batch mutation and captures refs before locking', () => {
   execFileSync(process.execPath, ['scripts/prepare.mjs']);

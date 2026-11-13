@@ -505,6 +505,7 @@ test('known-stale assignment controls cannot write, and a conflicting save keeps
     FormData:class{constructor(){return [];}},
     $:selector=>selector==='#acceptTasksForm'?form:null,$$:()=>selected,
     acceptanceReviewPending:()=>stale,
+    captureAcceptanceHandoff:()=>null,
     syncAcceptanceSelection:()=>events.push('changed choices'),
     acceptanceSelections:()=>selected.filter(input=>input.checked).map(input=>({id:input.value,revision:Number(input.dataset.revision)})),
     saveLock:()=>{events.push('lock');return ()=>events.push('release');},
@@ -571,7 +572,7 @@ test('prepared hosted UI awaits one registered batch action without actor parame
     proxy = readFileSync('legacy/hosted-store.js', 'utf8');
   assert.match(
     hosted,
-    /await store\.acceptTasks\(data\.selections,ui\.actor\);\s*if\(form\.dataset\.returnTo==='event-review'\)\{render\(\);beforeEventReview\(\);\}/,
+    /const accepted=await store\.acceptTasks\(data\.selections,ui\.actor\);\s*if\(form\.dataset\.returnTo==='event-review'\)\{render\(\);beforeEventReview\(\);\}/,
   );
   assert.match(proxy, /'acceptTasks'/);
   assert.match(proxy, /acceptTasks: 1/);

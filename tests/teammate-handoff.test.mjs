@@ -88,13 +88,17 @@ test('personal assignment review describes work readiness without changing who c
   const verifiedAt='2030-11-18T13:00:00Z';
   const f=context([
     task('one','maya',{dependencies:[{taskId:'outside-pending',kind:'dependency'}]}),
-    task('several','maya',{dependencies:[{taskId:'outside-pending',kind:'dependency'},{taskId:'unavailable',kind:'dependency'}]}),
+    task('several','maya',{dependencies:[{taskId:'outside-pending',kind:'dependency'},{taskId:'outside-open',kind:'dependency'}]}),
+    task('missing-required','maya',{status:'blocked',dependencies:[{taskId:'outside-missing',kind:'dependency'}]}),
+    task('archived-required','maya',{status:'blocked',dependencies:[{taskId:'outside-archived',kind:'dependency'}]}),
     task('linked-ready','maya',{status:'blocked',dependencies:[{taskId:'outside-done',kind:'dependency'}]}),
     task('marked-blocked','maya',{status:'blocked'}),
     task('help','maya',{recoveryRequests:[{kind:'help',status:'pending',note:'FICTIONAL_PRIVATE_REQUEST'}]}),
-    task('related-only','maya',{dependencies:[{taskId:'outside-pending',kind:'related'}]}),
+    task('related-only','maya',{dependencies:[{taskId:'outside-missing',kind:'related'},{taskId:'outside-archived',kind:'related'}]}),
     task('ready','maya',{dependencies:[{taskId:'outside-done',kind:'dependency'}]}),
     task('outside-pending','other',{title:'FICTIONAL_OTHER_PREREQUISITE',status:'done',requiresVerification:true,note:'FICTIONAL_PRIVATE_RESULT'}),
+    task('outside-open','other',{title:'FICTIONAL_OTHER_OPEN'}),
+    task('outside-archived','other',{title:'FICTIONAL_OTHER_ARCHIVED',status:'done',requiresVerification:true,verifiedAt,archivedAt:verifiedAt}),
     task('outside-done','other',{title:'FICTIONAL_OTHER_VERIFIED',status:'done',requiresVerification:true,verifiedAt}),
   ]);
   const before=structuredClone(f.state);
@@ -104,6 +108,8 @@ test('personal assignment review describes work readiness without changing who c
   for(const [id,label] of [
     ['one','Waiting on 1 required task before completion.'],
     ['several','Waiting on 2 required tasks before completion.'],
+    ['missing-required','Required work is unavailable. Review Task relationships or ask the organizer.'],
+    ['archived-required','Required work is unavailable. Review Task relationships or ask the organizer.'],
     ['linked-ready','Review linked results before resuming.'],
     ['marked-blocked','Blocked · review the latest update.'],
     ['help','Help requested · waiting for the organizer.'],
@@ -114,8 +120,8 @@ test('personal assignment review describes work readiness without changing who c
     const cue=markup.match(new RegExp(`id="accept-readiness-${id}"[^>]*>([\\s\\S]*?)<\\/span>`))?.[1].replace(/<[^>]+>/g,'');
     assert.equal(cue,label);
   }
-  assert.doesNotMatch(markup,/accept-readiness-(?:related-only|ready)|FICTIONAL_(?:OTHER|PRIVATE)|outside-(?:pending|done)|unavailable/);
-  assert.equal((markup.match(/name="acceptTask"/g)||[]).length,7);
+  assert.doesNotMatch(markup,/accept-readiness-(?:related-only|ready)|FICTIONAL_(?:OTHER|PRIVATE)|outside-(?:pending|open|done|archived|missing)/);
+  assert.equal((markup.match(/name="acceptTask"/g)||[]).length,9);
   assert.deepEqual(f.state,before);
 });
 
