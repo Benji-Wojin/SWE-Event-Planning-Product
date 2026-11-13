@@ -21,6 +21,7 @@ import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
 import { duplicateSuggestions, planSelection, planTaskSignature } from './plan-selection';
 import type { PlanReceiptTask } from './plan-receipt';
+import { planApprovalHash } from './plan-approval-hash';
 import {
   generateEventPlan,
   planRequestBody,
@@ -680,10 +681,7 @@ async function applyDraft(c: Context, input: any) {
     throw new HttpError(400, 'Review and confirm the selected items first.');
   const row = await read(c.id),
     data = await decode(row),
-    approvalHash = await hash({
-      generation: input.generation,
-      items: input.items,
-    });
+    approvalHash = await planApprovalHash(input.generation, input.items);
   if (data.receipt?.generation === input.generation) {
     if (data.receipt.approvalHash !== approvalHash)
       throw new HttpError(

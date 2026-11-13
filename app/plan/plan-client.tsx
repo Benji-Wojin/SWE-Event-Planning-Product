@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection, selectNewPlanItems, type ExistingPlanTask } from '@/lib/plan-selection';
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
+import { planApprovalHash } from '@/lib/plan-approval-hash';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
 import { PlanGuideHint, type PlanGuideStage } from './guide-hint';
@@ -48,7 +49,16 @@ function existingTaskLink(task: ExistingPlanTask, params: URLSearchParams, guide
     </a>
   ) : <strong className="break-words">{task.title}</strong>;
 }
-async function api(query: string, body?: unknown) {
+const approvalTimeout = 15_000;
+type ApprovalCheck = {
+  kind: 'uncertain' | 'conflict';
+  generation: string;
+  hash: string;
+  revision: number;
+  workspaceRevision: number;
+};
+const isAccessError = (status: number) => [401, 403, 404].includes(status);
+async function api(query: string, body?: unknown, signal?: AbortSignal) {
   const response = await fetch('/api/plan?' + query, {
     method: body ? 'POST' : 'GET',
     credentials: 'same-origin',
@@ -57,6 +67,7 @@ async function api(query: string, body?: unknown) {
       ? { 'Content-Type': 'application/json', 'X-Gather-Request': '1' }
       : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const data: any = await response.json().catch(() => null);
   if (!response.ok || !data?.event)
@@ -65,7 +76,7 @@ async function api(query: string, body?: unknown) {
         data?.error ||
           'Could not reach the project. Your edits are still here.',
       ),
-      { status: response.status },
+      { status: response.status, unreadable: response.ok && !data?.event },
     );
   return data;
 }
@@ -77,6 +88,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
+  const [approvalCheck, setApprovalCheck] = useState<ApprovalCheck | null>(null);
   const pending = useRef(false),
     request = useRef<any>(null),
     starterRequest = useRef<any>(null),
@@ -98,10 +110,11 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const [chatStartingNew,setChatStartingNew]=useState(false),[chatReset,setChatReset]=useState(0);
   const draftDirty = !!data && editable(brief, items) !== initial;
   const dirty = draftDirty || chatDirty || !!checklist.trim();
+  const unresolvedApproval = !!approvalCheck;
   useEffect(() => {
     if (!embedded) return;
-    window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty, busy:busy || researchBusy || data?.status === 'generating'}, window.location.origin);
-  }, [embedded, dirty, busy, researchBusy, data?.status]);
+    window.parent.postMessage({type:'weft-plan-sidebar', event:'state', dirty:dirty || unresolvedApproval, busy:busy || researchBusy || data?.status === 'generating'}, window.location.origin);
+  }, [embedded, dirty, unresolvedApproval, busy, researchBusy, data?.status]);
   useEffect(() => {
     if (!embedded) return;
     const root = document.getElementById('embeddedPlan');
@@ -135,7 +148,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   if (guideReturn) projectParams.set('guide','1');
   const projectUrl = demo ? '/demo?as=jack' : '/project?' + projectParams;
   const waiting = data?.status === 'generating',
-    locked = busy || waiting || researchBusy,
+    checkingLocked = busy || waiting || researchBusy,
+    locked = checkingLocked || !!approvalCheck,
     applied = !!data?.receipt && !chatStartingNew;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
     !data?.configured ? 'starter' : brief.description.trim() ? 'generate' : 'brief';
@@ -182,6 +196,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
   function accept(result: any, restoreActivityPreference = true) {
     checklistRequest.current=null;
+    setApprovalCheck(null);
     setChatStartingNew(false);
     setData(result);
     setBrief(result.brief);
@@ -203,7 +218,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     try {
       await operation();
     } catch (e) {
-      if ([401, 403, 404].includes((e as { status?: number }).status || 0)) {
+      if (isAccessError((e as { status?: number }).status || 0)) {
         setData(null);
         setBrief(emptyBrief);
         setItems([]);
@@ -212,6 +227,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
         starterRequest.current = null;
         checklistRequest.current=null;
         setChecklist('');
+        setApprovalCheck(null);
       }
       setError(
         e instanceof Error
@@ -236,14 +252,14 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     void reload();
   }, [query]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !unresolvedApproval) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [dirty, unresolvedApproval]);
   useEffect(() => {
     if (error) errorBox.current?.focus();
   }, [error]);
@@ -416,6 +432,38 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       );
     });
   }
+  function matchingReceipt(result: any, attempted: ApprovalCheck) {
+    return result.receipt?.generation === attempted.generation &&
+      result.receipt.approvalHash === attempted.hash && Array.isArray(result.receipt.taskIds);
+  }
+  async function checkApproval(attempted: ApprovalCheck) {
+    await run(async () => {
+      const result = await api(query, undefined, AbortSignal.timeout(approvalTimeout));
+      if (matchingReceipt(result, attempted)) {
+        focusReceipt.current = true;
+        accept(result);
+        request.current = null;
+        return;
+      }
+      focusNotice.current = true;
+      const sameDraft = !result.receipt && result.revision === attempted.revision &&
+        result.draft?.generation === attempted.generation;
+      const contextConfirmed = Number.isSafeInteger(result.workspaceRevision) &&
+        result.workspaceRevision >= attempted.workspaceRevision &&
+        (attempted.kind !== 'conflict' || result.workspaceRevision > attempted.workspaceRevision || result.contextChanged);
+      if (sameDraft && contextConfirmed) {
+        setData(result);
+        setApprovalCheck(null);
+        setNotice(result.contextChanged
+          ? 'No matching receipt was found. The project changed; review the draft guidance below before adding tasks.'
+          : 'No matching receipt was found. Review your selection again before choosing Add selected items.');
+      } else if (sameDraft) {
+        setNotice('The server still shows the same project version. Your selection is kept. Check again before adding tasks.');
+      } else {
+        setNotice('We could not confirm this selection was added. The saved draft or project changed. Reload the saved draft to see its current state; this check did not add anything.');
+      }
+    });
+  }
   const alert = error && (
     <p
       role="alert"
@@ -441,7 +489,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       </section>
     );
   return (
-    <section aria-busy={locked} className={embedded ? 'plan-sidebar-review' : undefined}>
+    <section aria-busy={checkingLocked} className={embedded ? 'plan-sidebar-review' : undefined}>
       {alert}
       {error && waiting && (
         <Button
@@ -458,6 +506,18 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {notice}
         </p>
       )}
+      {approvalCheck && <section aria-labelledby="plan-approval-check-title" className="mb-5 space-y-3 rounded-lg border p-4 text-sm">
+        <h2 id="plan-approval-check-title" className="font-semibold">{approvalCheck.kind === 'uncertain' ? 'Adding tasks was not confirmed' : 'This approval needs a fresh review'}</h2>
+        <p>Your selection is kept here. Checking the saved result won’t add any tasks or call AI.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" className="min-h-11" disabled={checkingLocked} onClick={()=>checkApproval(approvalCheck)}>
+            {approvalCheck.kind === 'uncertain' ? 'Check what was added' : 'Refresh before adding'}
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11" disabled={checkingLocked} onClick={()=>{
+            if(window.confirm('Reload the current saved draft? This replaces the draft view shown here.'))void reload();
+          }}>Reload saved draft</Button>
+        </div>
+      </section>}
       {!embedded && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 text-sm">
         <p className="min-w-0 break-words font-medium">
           {data.event.name}
@@ -1228,7 +1288,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                   data.contextChanged
                 }
                 onClick={() =>
-                  void run(async () => {
+                  run(async () => {
                     const reviewedWorkspaceRevision = data.workspaceRevision;
                     const latest = draftDirty ? await save(true) : data;
                     // Saving a private draft also reads the current project. Do not
@@ -1247,17 +1307,36 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                       );
                       return;
                     }
-                    const result = await api(query, {
+                    const approval = {
                       action: 'apply',
                       revision: latest.revision,
                       workspaceRevision: latest.workspaceRevision,
                       generation: latest.draft.generation,
                       items: latest.draft.items,
                       confirm: true,
-                    });
-                    focusReceipt.current=!!result.receipt;
-                    accept(result);
-                    request.current = null;
+                    };
+                    const attempted: ApprovalCheck = {
+                      kind: 'uncertain',
+                      generation: approval.generation,
+                      hash: await planApprovalHash(approval.generation, approval.items),
+                      revision: approval.revision,
+                      workspaceRevision: approval.workspaceRevision,
+                    };
+                    try {
+                      const result = await api(query, approval, AbortSignal.timeout(approvalTimeout));
+                      if (!matchingReceipt(result, attempted)) {
+                        setApprovalCheck(attempted);
+                        throw new Error('The response did not confirm what was added. Check the saved result before trying again.');
+                      }
+                      focusReceipt.current = true;
+                      accept(result);
+                      request.current = null;
+                    } catch (err) {
+                      const { status, unreadable } = err as { status?: number; unreadable?: boolean };
+                      if (status === 409) setApprovalCheck({ ...attempted, kind: 'conflict' });
+                      else if (!status || status === 408 || status >= 500 || unreadable) setApprovalCheck(attempted);
+                      throw err;
+                    }
                   })
                 }
               >

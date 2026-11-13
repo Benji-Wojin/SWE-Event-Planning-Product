@@ -27,7 +27,7 @@ export default async function Plan({
   );
   if ((suggestions || assistant) && params.embed === '1') return (
     <main id="embeddedPlan" className="plan-sidebar-shell">
-      {suggestions?<SuggestionFeed query={query}/>:<PlanReview query={query} embedded />}
+      {suggestions?<SuggestionFeed query={query}/>:<PlanReview key={query} query={query} embedded />}
     </main>
   );
   return (
@@ -45,7 +45,7 @@ export default async function Plan({
       <p className="mb-6 text-sm text-muted-foreground">
         {suggestions ? 'A focused AI review of what’s missing—not another generic checklist. ' : ''}Private until you add selected items to the project.
       </p>
-      <PlanReview query={query} guided={guided} />
+      <PlanReview key={query} query={query} guided={guided} />
     </main>
   );
 }

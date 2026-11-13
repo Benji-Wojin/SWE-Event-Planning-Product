@@ -1,5 +1,6 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 
 // Hook-level interaction tests, not a substitute for real-browser layout/accessibility QA.
@@ -88,6 +89,7 @@ const fixture = () => ({
   retryAfter: 0,
 });
 const copy = (value) => structuredClone(value);
+const approvalHash = ({ generation, items }) => createHash('sha256').update(JSON.stringify({ generation, items })).digest('hex');
 const text = (node) =>
   node == null || typeof node === 'boolean'
     ? ''
@@ -138,7 +140,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   };
   const state = [],
     timers = new Map(),
-    requests = [], listeners=new Map(), parentMessages=[];
+    requests = [], listeners=new Map(), parentMessages=[], focused=[];
   let index = 0,
     changed = true,
     effects = [],
@@ -216,6 +218,9 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     changed = false;
     index = 0;
     tree = PlanReview({ query, embedded, guided });
+    // The hook renderer has no real DOM; attach the receipt heading ref before effects.
+    const heading = nodes(tree).find(node => node.props?.id === 'plan-receipt-heading');
+    if (heading?.props.ref) heading.props.ref.current = { focus: () => focused.push(heading.props.id) };
     const next = effects;
     effects = [];
     next.forEach((callback) => callback());
@@ -229,6 +234,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   }
   return {
     requests,
+    focused,
     parentMessages,
     async message(data,extra={}){
       for(const listener of listeners.get('message')||[])listener({data,source:window.parent,origin:window.location.origin,...extra});
@@ -319,7 +325,8 @@ test('guided planner points to the real brief, explicit generation, private revi
     if (context.input?.action === 'generate') {
       context.value = { ...context.saved, brief: context.input.brief, status: 'ready', draft: { ...fixture().draft, brief: context.input.brief } };
     }
-    if (context.input?.action === 'apply') context.value = { ...context.saved, status: 'applied', receipt: { taskIds: ['task-created'] } };
+    if (context.input?.action === 'apply') context.value = { ...context.saved, status: 'applied',
+      receipt: { generation: context.input.generation, approvalHash: approvalHash(context.input), taskIds: ['task-created'] } };
   }, initial, 'project=p_example', false, true);
   try {
     await app.start();
@@ -536,8 +543,8 @@ test('starter controls stay locked during generation and are absent from convers
   }
 });
 
-test('apply saves brief edits and sends normalized reviewed items, without losing either on a failed response', async () => {
-  let first = true;
+test('a lost apply response checks the matching saved receipt without replaying approval or losing normalized edits', async () => {
+  let writes = 0;
   const active = harness((context) => {
     const { input, saved } = context;
     if (input?.action === 'save')
@@ -554,18 +561,17 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
         },
       };
     if (input?.action === 'apply') {
+      assert.equal(++writes, 1, 'the approval write is never replayed');
       assert.equal(input.items[0].title, 'Updated task');
       context.value = {
         ...saved,
         revision: saved.revision + 1,
+        workspaceRevision: saved.workspaceRevision + 1,
         status: 'applied',
-        receipt: { taskIds: ['task-new'] },
+        receipt: { generation: input.generation, approvalHash: approvalHash(input), taskIds: ['task-new'] },
         receiptTasks: [{id:'task-new',title:'Updated task',handoff:{state:'needs-owner'}}],
       };
-      if (first) {
-        first = false;
-        throw new Error('Connection lost after save');
-      }
+      throw new Error('Connection lost after save');
     }
   });
   try {
@@ -578,21 +584,110 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
       'New brief to preserve',
     );
     assert.equal(active.find('title-one').props.value, 'Updated task');
-    await active.click('Add 1 selected items to project');
+    assert.equal(planButton(active.tree, 'Add 1 selected items to project').props.disabled, true);
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'save', 'apply']);
+    await active.click('Check what was added');
     assert.match(text(active.tree), /1 task added/);
-    assert.deepEqual(
-      active.requests
-        .filter((input) => input.action !== 'get')
-        .map((input) => input.action),
-      ['save', 'apply', 'apply'],
-    );
-    assert.deepEqual(
-      active.requests.at(-1).items,
-      active.requests.at(-2).items,
-    );
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'save', 'apply', 'get']);
+    assert.deepEqual(active.focused, ['plan-receipt-heading']);
+    assert.match(planLink(active.tree, 'Updated task').props.href, /task=task-new/);
   } finally {
     active.dispose();
   }
+});
+
+for (const direct of [false, true]) test(`receipt from another approval of the same generation cannot replace local review${direct ? ' even in a successful response' : ' after a lost response'}`, async () => {
+  const initial = fixture();
+  const active = harness(context => {
+    if (context.input?.action !== 'apply') return;
+    const changedItems = [{ ...context.input.items[0], title: 'Different tab proposal' }];
+    context.value = {
+      ...context.saved, revision: initial.revision + 1, workspaceRevision: initial.workspaceRevision + 1, status: 'applied',
+      draft: { ...initial.draft, items: changedItems },
+      receipt: { generation: context.input.generation, approvalHash: approvalHash({ generation: context.input.generation, items: changedItems }), taskIds: ['other-tab'] },
+      receiptTasks: [{ id: 'other-tab', title: 'Different tab proposal' }],
+    };
+    if (!direct) throw new Error('Fictional connection loss');
+  }, initial);
+  try {
+    await active.start();
+    await active.click('Add 1 selected items to project');
+    assert.equal(active.find('plan-receipt-heading'), undefined);
+    assert.equal(active.find('title-one').props.value, item.title);
+    await active.click('Check what was added');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get']);
+    assert.equal(active.find('title-one').props.value, item.title);
+    assert.equal(active.find('include-one').props.checked, true);
+    assert.equal(active.find('plan-receipt-heading'), undefined);
+    assert.equal(planLink(active.tree, 'Different tab proposal'), undefined);
+    assert.equal(planButton(active.tree, 'Add 1 selected items to project').props.disabled, true);
+    assert.ok(planButton(active.tree, 'Reload saved draft'));
+    assert.deepEqual(active.focused, []);
+  } finally { active.dispose(); }
+});
+
+test('an unconfirmed approval without a saved receipt requires a separate click to approve', async () => {
+  let attempts = 0;
+  const active = harness(context => {
+    if (context.input?.action !== 'apply') return;
+    if (++attempts === 1) return Response.json({ error: 'Fictional gateway timeout' }, { status: 504 });
+    context.value = { ...context.saved, revision: context.saved.revision + 1, status: 'applied',
+      receipt: { generation: context.input.generation, approvalHash: approvalHash(context.input), taskIds: ['task-new'] } };
+  });
+  try {
+    await active.start();
+    await active.click('Add 1 selected items to project');
+    assert.equal(planButton(active.tree, 'Add 1 selected items to project').props.disabled, true);
+    await active.click('Check what was added');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get']);
+    assert.equal(active.find('plan-receipt-heading'), undefined);
+    assert.equal(active.find('include-one').props.checked, true);
+    assert.equal(Boolean(planButton(active.tree, 'Add 1 selected items to project').props.disabled), false);
+    await active.click('Add 1 selected items to project');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get', 'apply']);
+    assert.deepEqual(active.requests.at(-1), active.requests[1], 'retry is the same exact approval when nothing changed');
+    assert.match(text(active.tree), /1 task added/);
+  } finally { active.dispose(); }
+});
+
+test('explicit approval conflict blocks repeat writes until a read-only refresh and fresh confirmation', async () => {
+  const initial = fixture();
+  let attempts = 0, advanceContext = false;
+  const active = harness(context => {
+    if (!context.input && advanceContext)
+      context.value = { ...context.saved, workspaceRevision: initial.workspaceRevision + 1 };
+    if (context.input?.action !== 'apply') return;
+    if (++attempts === 1) {
+      assert.equal(context.input.workspaceRevision, initial.workspaceRevision);
+      return Response.json({ error: 'The project changed. Refresh before adding.' }, { status: 409 });
+    }
+    assert.equal(context.input.workspaceRevision, initial.workspaceRevision + 1);
+    assert.equal(context.input.revision, initial.revision);
+    assert.equal(context.input.generation, initial.draft.generation);
+    assert.equal(context.input.confirm, true);
+    context.value = { ...context.saved, revision: initial.revision + 1, status: 'applied',
+      receipt: { generation: context.input.generation, approvalHash: approvalHash(context.input), taskIds: ['task-new'] } };
+  }, initial);
+  try {
+    await active.start();
+    await active.click('Add 1 selected items to project');
+    assert.equal(planButton(active.tree, 'Add 1 selected items to project').props.disabled, true);
+    assert.equal(active.find('include-one').props.checked, true);
+    assert.equal(active.find('title-one').props.value, item.title);
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply']);
+    await active.click('Refresh before adding');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get']);
+    assert.equal(planButton(active.tree, 'Add 1 selected items to project').props.disabled, true, 'a still-stale read cannot unlock approval');
+    advanceContext = true;
+    await active.click('Refresh before adding');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get', 'get']);
+    assert.equal(active.find('include-one').props.checked, true);
+    assert.equal(active.find('plan-receipt-heading'), undefined);
+    assert.equal(Boolean(planButton(active.tree, 'Add 1 selected items to project').props.disabled), false);
+    await active.click('Add 1 selected items to project');
+    assert.deepEqual(active.requests.map(input => input.action), ['get', 'apply', 'get', 'get', 'apply']);
+    assert.match(text(active.tree), /1 task added/);
+  } finally { active.dispose(); }
 });
 for (const contextChanged of [false, true]) {
   test(`saving dirty approval pauses when the workspace revision advances${contextChanged ? ' and the draft needs a new context review' : ' with the same context hash'}`, async () => {
