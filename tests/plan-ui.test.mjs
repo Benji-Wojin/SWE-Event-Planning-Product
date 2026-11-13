@@ -482,6 +482,94 @@ test('guided planner without AI configuration points to the real starter option 
   } finally { app.dispose(); }
 });
 
+test('guided first draft offers a no-AI path after a confirmed generation failure or interruption', async () => {
+  for (const status of ['error', 'interrupted']) {
+    const initial = { ...fixture(), brief: { ...brief, description: '' }, draft: null, status: 'empty' };
+    const entered = 'A fictional school fundraiser with a volunteer check-in.';
+    const recoveredRevision = status === 'error' ? 5 : 4;
+    const app = harness(context => {
+      if (context.input?.action === 'save') {
+        assert.equal(context.input.brief.description, entered);
+        context.value = { ...context.saved, revision: 3, brief: context.input.brief };
+      } else if (context.input?.action === 'generate') {
+        assert.equal(context.input.revision, 3);
+        context.value = { ...context.saved, revision: recoveredRevision, brief: context.input.brief,
+          status: status === 'error' ? 'error' : 'generating',
+          issue: status === 'error' ? 'AI could not finish this fictional plan.' : '' };
+      } else if (context.input?.action === 'starter') {
+        assert.deepEqual(context.input.brief, { ...initial.brief, description: entered });
+        assert.equal(context.input.replace, false);
+        assert.equal(context.input.revision, recoveredRevision);
+        context.value = { ...context.saved, revision: recoveredRevision + 1, status: 'ready', issue: '', brief: context.input.brief,
+          draft: { ...fixture().draft, source: 'starter', brief: context.input.brief } };
+      } else if (!context.input && context.saved.status === 'generating') {
+        context.value = { ...context.saved, status: 'interrupted' };
+      }
+    }, initial, 'project=p_example', false, true);
+    try {
+      await app.start();
+      await app.edit('plan-brief', entered);
+      assert.equal(planLink(app.tree, 'Go to starter checklist'), undefined);
+      await app.click('Generate draft');
+      const beforeStarter = ['get', 'save', 'generate'];
+      if (status === 'interrupted') {
+        assert.equal(planLink(app.tree, 'Go to starter checklist'), undefined, 'an active lease is not a failure');
+        await app.poll();
+        beforeStarter.push('get');
+      }
+      const fallback = planLink(app.tree, 'Go to starter checklist');
+      const retry = planLink(app.tree, 'Back to AI draft controls');
+      assert.equal(fallback?.props.href, '#plan-starter', status);
+      assert.equal(retry?.props.href, '#plan-generate', status);
+      assert.equal(fallback.props.onClick, undefined);
+      assert.equal(retry.props.onClick, undefined);
+      assert.equal(app.find('plan-starter').props.tabIndex, -1);
+      assert.equal(app.find('plan-generate').props.tabIndex, -1);
+      assert.equal(app.find('plan-brief').props.value, entered);
+      assert.doesNotMatch(text(app.tree), /AI isn’t configured for this planner/);
+      assert.deepEqual(app.requests.map(row => row.action), beforeStarter);
+
+      await app.click('Use starter checklist');
+      assert.deepEqual(app.requests.map(row => row.action), [...beforeStarter, 'starter']);
+      assert.equal(app.find('plan-brief').props.value, entered);
+      assert.equal(planLink(app.tree, 'Review proposed items')?.props.href, '#plan-proposed-items');
+      assert.equal(planLink(app.tree, 'Go to starter checklist'), undefined);
+      assert.equal(app.saved.receipt, null);
+    } finally { app.dispose(); }
+  }
+});
+
+test('guided recovery keeps a previous draft in review and does not infer failure from a lost response', async () => {
+  const prior = { ...fixture(), status: 'error', issue: 'AI could not finish this fictional plan.' };
+  const priorApp = harness(undefined, prior, 'project=p_example', false, true);
+  try {
+    await priorApp.start();
+    assert.equal(planLink(priorApp.tree, 'Review proposed items')?.props.href, '#plan-proposed-items');
+    assert.equal(planLink(priorApp.tree, 'Go to starter checklist'), undefined);
+    assert.equal(planLink(priorApp.tree, 'Back to AI draft controls'), undefined);
+    assert.equal(priorApp.find('title-one').props.value, item.title);
+    assert.deepEqual(priorApp.requests.map(row => row.action), ['get']);
+  } finally { priorApp.dispose(); }
+
+  for (const status of ['empty', 'error', 'interrupted']) {
+    const initial = { ...fixture(), draft: null, status };
+    const app = harness(context => {
+      if (context.input?.action === 'generate') throw new Error('Fictional network interruption');
+    }, initial, 'project=p_example', false, true);
+    try {
+      await app.start();
+      assert.equal(Boolean(planLink(app.tree, 'Go to starter checklist')), status !== 'empty');
+      await app.click('Generate draft');
+      assert.match(text(app.tree), /Fictional network interruption/);
+      assert.ok(planButton(app.tree, 'Retry request'));
+      assert.equal(planLink(app.tree, 'Go to starter checklist'), undefined, status);
+      assert.equal(planLink(app.tree, 'Back to AI draft controls'), undefined, status);
+      assert.equal(app.find('plan-brief').props.value, initial.brief.description);
+      assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate']);
+    } finally { app.dispose(); }
+  }
+});
+
 test('planner walkthrough stays out of regular, embedded, demo, and other planning modes', async () => {
   for (const [query, embedded, guided] of [
     ['project=p_example', false, false],

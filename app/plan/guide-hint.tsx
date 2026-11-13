@@ -8,12 +8,13 @@ const steps = [
   ['Review and add what you want', 'Edit or deselect suggestions, then add your selection. Tasks appear in Shared tasks, and scheduled activities appear in Timeline.'],
 ] as const;
 
-export type PlanGuideStage = 'brief' | 'generate' | 'starter' | 'review' | 'added';
+export type PlanGuideStage = 'brief' | 'generate' | 'starter' | 'recover' | 'review' | 'added';
 
 const nextAction: Record<PlanGuideStage, {href: string; label: string}> = {
   brief: {href: '#plan-kind', label: 'Start the event brief'},
   generate: {href: '#plan-generate', label: 'Go to draft controls'},
   starter: {href: '#plan-starter', label: 'Go to starter checklist'},
+  recover: {href: '#plan-starter', label: 'Go to starter checklist'},
   review: {href: '#plan-proposed-items', label: 'Review proposed items'},
   added: {href: '#plan-receipt-heading', label: 'See what was added'},
 };
@@ -24,7 +25,8 @@ export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false, onUseE
   draftNeedsRecheck?: boolean;
   onUseExample?: () => void;
 }) {
-  const current = stage === 'brief' ? 0 : stage === 'generate' || stage === 'starter' ? 1 : stage === 'review' ? 2 : -1;
+  const withoutAi = stage === 'starter' || stage === 'recover';
+  const current = stage === 'brief' ? 0 : stage === 'generate' || withoutAi ? 1 : stage === 'review' ? 2 : -1;
   const action = nextAction[stage];
   return <section aria-labelledby="plan-guide-hint" className="mb-6 space-y-4 rounded-2xl border border-primary/25 bg-card p-4 text-sm sm:p-6">
     <header className="space-y-1">
@@ -36,8 +38,8 @@ export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false, onUseE
       {steps.map(([title, instruction], index) => <li key={title}
         aria-current={current === index ? 'step' : undefined}
         className={current === index ? 'space-y-1 rounded-lg border border-primary/40 bg-primary/10 p-3' : 'space-y-1 rounded-lg border p-3'}>
-        <h3 className="font-semibold">{index + 1}. {stage === 'starter' && index === 1 ? 'Start a private draft' : title}</h3>
-        <p className="leading-relaxed text-muted-foreground">{stage === 'starter' && index === 1 ? 'Choose Use starter checklist to get an editable set of tasks without AI.' : instruction}</p>
+        <h3 className="font-semibold">{index + 1}. {withoutAi && index === 1 ? 'Start a private draft' : title}</h3>
+        <p className="leading-relaxed text-muted-foreground">{withoutAi && index === 1 ? 'Choose Use starter checklist to get an editable set of tasks without AI.' : instruction}</p>
       </li>)}
     </ol>
     {(stage === 'brief' || stage === 'starter') && <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
@@ -48,7 +50,11 @@ export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false, onUseE
       </div>}
     </div>}
     {stage === 'starter' && <p className="text-muted-foreground">AI isn’t configured for this planner. You can still practice reviewing a private draft with a starter checklist.</p>}
+    {stage === 'recover' && <p className="text-muted-foreground">AI didn’t return a draft. Keep your brief and start with a checklist for your event type. You’ll review it before anything is added to the project.</p>}
     {draftNeedsRecheck && <p className="text-muted-foreground">The project changed since this draft was saved. Review and update the draft before adding anything.</p>}
-    {!locked && <a href={action.href} className="inline-flex min-h-11 items-center rounded-lg border px-3 font-medium text-primary underline underline-offset-4">{action.label}</a>}
+    {!locked && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <a href={action.href} className="inline-flex min-h-11 items-center rounded-lg border px-3 font-medium text-primary underline underline-offset-4">{action.label}</a>
+      {stage === 'recover' && <a href="#plan-generate" className="inline-flex min-h-11 items-center text-primary underline underline-offset-4">Back to AI draft controls</a>}
+    </div>}
   </section>;
 }

@@ -158,7 +158,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     locked = checkingLocked || handoffRefreshing || !!approvalCheck,
     applied = !!data?.receipt && !chatStartingNew;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
-    !data?.configured ? 'starter' : brief.description.trim() ? 'generate' : 'brief';
+    !data?.configured ? 'starter' : !request.current && (data.status === 'error' || data.status === 'interrupted') ? 'recover' :
+    brief.description.trim() ? 'generate' : 'brief';
   const canUseGuideExample = guideReturn && guideStage === 'brief' && !locked && brief.description === '';
   const guideDraftNeedsRecheck = guideStage === 'review' && !!data?.contextChanged;
   const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
