@@ -164,6 +164,7 @@ test('assignment review exposes the comparison with its checkbox and does not pr
   let html = '';
   const context = vm.createContext({ h, GatherScheduleUI, schedule, ui: { actor }, window: {}, store: f.store,
     filteredTasks: () => [f.task], acceptanceCandidates: tasks => tasks.filter(task => !task.acceptedAt && task.owner === actor),
+    acceptanceReviewPending: () => false,
     assignmentReadiness: () => '', statuses: { todo: 'To do' }, dayLabel: h,
     openDialog: (_title, markup) => { html = markup; },
   });

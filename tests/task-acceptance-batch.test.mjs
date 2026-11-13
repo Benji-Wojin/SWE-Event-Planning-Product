@@ -223,6 +223,8 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
     dayLabel: (s) => s,
     openDialog: (_title, body) => (markup = body),
     toast: () => {},
+    workspaceUpdatesPending: () => false,
+    scheduleRevisionIsStale: () => false,
   });
   vm.runInContext(
     app.slice(
@@ -262,21 +264,29 @@ test('returning to an assignment review keeps only unchanged, still-eligible sel
     owned('accepted',2,{acceptedAt:'2030-11-01'}),owned('reassigned',2,{owner:'dev'}),owned('completed',3,{status:'done'})];
   const selected=[{id:'same',revision:2},{id:'changed',revision:4},{id:'outside-scope',revision:3},
     {id:'accepted',revision:2},{id:'reassigned',revision:2},{id:'completed',revision:3},{id:'removed',revision:1}];
-  const state={event:{timeZone:'UTC'},tasks},resume={selected,openerId:'same'},before=structuredClone({state,resume});
+  const state={event:{timeZone:'UTC'},tasks},resume={selected,openerId:'same',timeZone:'UTC'},before=structuredClone({state,resume});
   const scoped=tasks.filter(task=>task.id!=='outside-scope');
   const dialog={},title={},frames=[],sync={hidden:true};
-  let markup,opens=0,warnings=0;
+  let markup,opens=0,notice;
+  const form={dataset:{}},status={},refresh={focus(){}},submit={};
+  const kept={checked:true,disabled:false};
+  const document={activeElement:null,createElement:()=>({})};
   const context=vm.createContext({
-    ui:{actor:'maya'},window:{GatherAccessLost:false},GatherPriorities,
+    ui:{actor:'maya',dialogKind:''},window:{GatherAccessLost:false},GatherPriorities,
     store:{getState:()=>state,acceptTasks(){throw Error('Returning is read-only');}},
     eventReviewScope:()=>({mine:true,actor:'maya'}),
     schedule:{reviewAcceptanceTasks(current,scope){assert.equal(current,state);assert.equal(scope.mine,true);return scoped;}},
     filteredTasks(){throw Error('Must keep the event review source');},
     h:String,statuses:{todo:'To do'},dayLabel:value=>value,
-    $:selector=>selector==='#dialog'?dialog:selector==='#dialogTitle'?title:selector==='#workspaceSyncNotice'?sync:null,
-    showPendingUpdate(){warnings++;},
+    $:selector=>({'#dialog':dialog,'#dialogTitle':title,'#workspaceSyncNotice':sync,'#acceptTasksForm':form,
+      '#dialogStaleNotice':notice,'#acceptanceRefreshStatus':status,'#acceptanceRefresh':refresh,
+      '.dialog-body':{prepend:node=>{notice=node;}}})[selector]??null,
+    $$:()=>[kept,submit],
+    document,
+    workspaceUpdatesPending:()=>!sync.hidden,
+    scheduleRevisionIsStale:()=>false,
     requestAnimationFrame:frame=>frames.push(frame),
-    openDialog(_title,body){opens++;markup=body;},
+    openDialog(_title,body,_footer,_wide,kind){opens++;markup=body;context.ui.dialogKind=kind;},
     toast(){throw Error('No toast for an available review');},
   });
   vm.runInContext(app.slice(app.indexOf('  function acceptanceCandidates('),app.indexOf('  function inboxView(')),context);
@@ -296,11 +306,229 @@ test('returning to an assignment review keeps only unchanged, still-eligible sel
   assert.deepEqual({state,resume},before);
   sync.hidden=false;
   context.acceptanceDialog(true,resume);
-  assert.equal(warnings,1);
-  assert.match(markup,/7 selections were cleared because newer project changes are available/);
-  assert.match(markup,/0 tasks selected/);
-  assert.doesNotMatch(markup,/\bchecked\b/);
+  assert.match(status.textContent,/Newer project changes are available/);
+  assert.match(notice.innerHTML,/data-action="(?:refresh-acceptance-review|reload-workspace)"/);
+  assert.match(markup,/id="acceptanceSubmit"[^>]*disabled/);
+  assert.match(markup,/value="same" data-revision="2"[^>]*\bchecked\b/);
+  assert.equal(kept.checked,true);
+  assert.equal(kept.disabled,true);
+  assert.equal(submit.disabled,true);
+  sync.hidden=true;
+  assert.equal(context.acceptanceReviewPending(form),true,'clearing the banner does not bypass the locked review');
   assert.deepEqual({state,resume},before);
+});
+
+test('refresh clears a checked assignment if a newly loaded prerequisite state changes the reviewed readiness at the same task revision',()=>{
+  const store=create();
+  const prerequisite=store.addTask({title:'Fictional room booking',owner:'jack',requiresVerification:false});
+  const dependent=store.addTask({title:'Fictional room setup',owner:'maya'});
+  const stable=store.addTask({title:'Fictional welcome sign',owner:'maya'});
+  store.addDependency(dependent.id,{taskId:prerequisite.id,reason:'The room must be available.'});
+  store.updateTask(prerequisite.id,{status:'done'});
+  const candidate=store.getState();
+  const selected=candidate.tasks.filter(task=>[dependent.id,stable.id].includes(task.id)).map(task=>({...ref(task),readiness:''}));
+  // Model a loaded snapshot whose prerequisite changed without the related task's
+  // delivery comment. Normal store reopening also bumps the dependent revision.
+  candidate.tasks.find(task=>task.id===prerequisite.id).status='todo';
+  const saved=store.exportState();
+  let html='';
+  const context=vm.createContext({ui:{actor:'maya'},window:{},store:{getState:()=>candidate},GatherPriorities,
+    schedule:{},filteredTasks:state=>state.tasks,workspaceUpdatesPending:()=>false,scheduleRevisionIsStale:()=>false,
+    h:String,statuses:{todo:'To do'},dayLabel:String,openDialog:(_title,markup)=>{html=markup;},
+  });
+  vm.runInContext(app.slice(app.indexOf('  function acceptanceCandidates('),app.indexOf('  function inboxView(')),context);
+  context.acceptanceDialog(false,{selected});
+  const check=id=>html.match(new RegExp('<input[^>]*value="'+id+'"[^>]*>'))?.[0];
+  assert.match(check(dependent.id),/data-readiness="Waiting on 1 required task before completion\."/);
+  assert.doesNotMatch(check(dependent.id),/\bchecked\b/);
+  assert.match(check(stable.id),/\bchecked\b/);
+  assert.match(html,/1 selection was cleared/);
+  assert.equal(store.exportState(),saved);
+});
+
+test('a changed event time zone clears selected activity reviews but not unchanged preparation work',()=>{
+  const timed={id:'timed',revision:2,title:'Timed',owner:'maya',status:'todo',
+    schedule:{start:'2030-11-10T09:00',end:'',location:'Fixture hall'}};
+  const prep={id:'prep',revision:4,title:'Preparation',owner:'maya',status:'todo'};
+  const tasks=[timed,prep];
+  const state={event:{timeZone:'America/New_York'},tasks};
+  const resume={timeZone:'UTC',selected:tasks.map(ref)};
+  let markup;
+  const context=vm.createContext({
+    ui:{actor:'maya'},window:{GatherAccessLost:false},GatherPriorities,GatherScheduleUI,
+    schedule:GatherScheduleUI.create({h:String,options:()=>'',statusBadge:()=>''}),
+    store:{getState:()=>state,acceptTasks(){assert.fail('Review does not accept tasks');}},
+    filteredTasks:()=>tasks, workspaceUpdatesPending:()=>false, scheduleRevisionIsStale:()=>false, h:String, statuses:{todo:'To do'}, dayLabel:String,
+    $:()=>null, requestAnimationFrame(){}, openDialog(_title,body){markup=body;},
+  });
+  vm.runInContext(app.slice(app.indexOf('  function acceptanceCandidates('),app.indexOf('  function inboxView(')),context);
+  context.acceptanceDialog(false,resume);
+  const checked=Array.from(markup.matchAll(/<input[^>]*name="acceptTask"[^>]*value="([^"]+)"[^>]*>/g))
+    .filter(([tag])=>/\bchecked\b/.test(tag)).map(([,id])=>id);
+  assert.deepEqual(checked,['prep']);
+  assert.match(markup,/America\/New_York/);
+  assert.match(markup,/1 task selected/);
+});
+
+function acceptanceRefreshFixture({fromEventReview=true}={}){
+  const ui={actor:'maya',view:fromEventReview?'timeline':'tasks',tab:'mine',dialogKind:'acceptance',
+    timelineMode:'schedule',scheduleMine:true,scheduleDate:'2030-11-10',toolUpdatePending:true};
+  const window={GatherAccessLost:false,GatherMode:{projectId:'fixture-project'}},document={hidden:false};
+  const attrs=new Map(), status={textContent:''},sync={hidden:false},backdrop={hidden:false},dialog={};
+  const button={isConnected:true,setAttribute:(name,value)=>attrs.set(name,value),removeAttribute:name=>attrs.delete(name),getAttribute:name=>attrs.get(name)};
+  const selected=[{checked:true,value:'retained',dataset:{revision:'7'}},{checked:true,value:'changed',dataset:{revision:'2'}}];
+  const submit={disabled:true},count={textContent:''};
+  const title={};
+  let form={isConnected:true,dataset:{actor:'maya',timeZone:'UTC',...(fromEventReview?{returnTo:'event-review'}:{})},
+    contains:element=>element===button};
+  let revision=11,known=13,recoveryFloor=-1,zone='UTC';
+  const reads=[],events=[];
+  const context=vm.createContext({
+    ui,window,document, h:String,
+    $:selector=>({'#dialog':dialog,'#dialogTitle':title,'#dialogBackdrop':backdrop,
+      '#acceptTasksForm':form,'#acceptanceRefreshStatus':status,'#acceptanceRefresh':button,
+      '[data-action="refresh-acceptance-review"]':button,'#workspaceSyncNotice':sync,
+      '#acceptanceSubmit':submit,'#acceptanceCount':count})[selector]??null,
+    $$:selector=>selector.includes('acceptTask')?selected:[],
+    eventReviewScope:()=>({mine:ui.scheduleMine,actor:ui.actor}),
+    workspaceUpdatesPending:()=>!sync.hidden,
+    recoveryConflictPending:(candidate=revision)=>candidate<=recoveryFloor,
+    scheduleRevisionIsStale:candidate=>candidate<known,
+    rememberNewerSchedule:(_snapshot,candidate)=>{if(Number.isSafeInteger(candidate))known=Math.max(known,candidate);},
+    showPendingUpdate:()=>events.push('pending'),
+    render:()=>events.push('render'),
+    toast:message=>events.push(['toast',message]),
+    store:{
+      getState:()=>({event:{timeZone:zone},tasks:[]}),getSnapshotRevision:()=>revision,
+      acceptTasks(){assert.fail('Refresh does not accept tasks');},
+      refresh(canApply,options){
+        return new Promise((resolve,reject)=>reads.push({canApply,options,reject,finish(candidate,result={changed:candidate!==revision,verified:true}){
+          if(canApply(candidate)&&result.verified&&!result.pending)revision=candidate;
+          resolve(result);
+        }}));
+      },
+    },
+    acceptanceDialog:(...args)=>events.push(['dialog',...args]),
+  });
+  const start=app.indexOf('  function acceptanceSelections(');
+  assert.ok(start>=0,'the refresh handler is present');
+  const end=app.indexOf('  function inboxView(',start);
+  vm.runInContext(app.slice(start,end),context);
+  return {ui,window,document,button,attrs,status,sync,selected,reads,events,backdrop,submit,
+    refresh:()=>context.refreshAcceptanceReview(button),
+    isPending:()=>context.acceptanceReviewPending(form),
+    set reviewedRevision(value){form.dataset.workspaceRevision=String(value);},
+    set knownRevision(value){known=value;},
+    set recoveryFloor(value){recoveryFloor=value;},
+    set zone(value){zone=value;},
+    replaceForm(){form={...form};},
+  };
+}
+
+test('a verified assignment refresh keeps source and reviewed selections without writes',async()=>{
+  for(const fromEventReview of [false,true]){
+    const f=acceptanceRefreshFixture({fromEventReview});
+    f.recoveryFloor=13;
+    const pending=f.refresh();
+    assert.equal(f.reads.length,1);
+    const [read]=f.reads;
+    assert.equal(read.options.requireFresh,true);
+    assert.equal(read.canApply(12),false,'old revision cannot publish');
+    assert.equal(read.canApply(13),false,'a write-conflict floor cannot publish');
+    assert.equal(read.canApply(14),true);
+    assert.equal(f.attrs.get('aria-disabled'),'true');
+    assert.match(f.status.textContent,/Refreshing/);
+    await f.refresh();
+    assert.equal(f.reads.length,1,'a duplicate refresh does not race the first');
+    assert.deepEqual(f.events,[]);
+    f.zone='America/New_York';
+    read.finish(14);
+    await pending;
+    assert.equal(f.sync.hidden,true);
+    assert.equal(f.ui.toolUpdatePending,false);
+    const opened=f.events.find(event=>Array.isArray(event)&&event[0]==='dialog');
+    assert.equal(opened[1],fromEventReview);
+    assert.deepEqual(JSON.parse(JSON.stringify(opened[2].selected)),[{id:'retained',revision:7},{id:'changed',revision:2}]);
+    assert.equal(opened[2].timeZone,'UTC','retain the reviewed zone, not the newly loaded one');
+    assert.equal(f.events[0],'render');
+  }
+});
+
+test('a changed loaded workspace revision requires review even without the sync banner',()=>{
+  const f=acceptanceRefreshFixture();
+  f.sync.hidden=true;
+  f.recoveryFloor=0;
+  f.knownRevision=11;
+  f.reviewedRevision=11;
+  assert.equal(f.isPending(),false);
+  f.reviewedRevision=10;
+  assert.equal(f.isPending(),true);
+});
+
+test('failed, unverified or superseded refreshes keep the old locked selection form',async()=>{
+  for(const interrupt of ['failure','unverified','pending','hidden','actor','project','view','form']){
+    const f=acceptanceRefreshFixture();
+    const pending=f.refresh();
+    assert.equal(f.reads.length,1,interrupt);
+    const [read]=f.reads;
+    if(interrupt==='failure')read.reject(new Error('Fictional read failed'));
+    else if(interrupt==='unverified')read.finish(13,{changed:false});
+    else if(interrupt==='pending')read.finish(13,{pending:true,newerRevision:14});
+    else{
+      if(interrupt==='hidden')f.document.hidden=true;
+      if(interrupt==='actor')f.ui.actor='dev';
+      if(interrupt==='project')f.window.GatherMode.projectId='other-project';
+      if(interrupt==='view')f.ui.view='overview';
+      if(interrupt==='form')f.replaceForm();
+      assert.equal(read.canApply(14),false,interrupt);
+      read.finish(14);
+    }
+    await pending;
+    assert.equal(f.sync.hidden,false,interrupt);
+    assert.ok(f.selected.every(input=>input.checked),interrupt);
+    assert.equal(f.submit.disabled,true,interrupt);
+    assert.ok(f.events.every(event=>event!=='render'&&event[0]!=='dialog'),interrupt);
+  }
+});
+
+test('known-stale assignment controls cannot write, and a conflicting save keeps the reviewed choices locked',async()=>{
+  const start=app.indexOf("  document.addEventListener('submit'"),end=app.indexOf("  document.addEventListener('change'",start);
+  const clickStart=app.indexOf("      if(action==='acceptance-select')"),clickEnd=app.indexOf("      if(action==='report-task')",clickStart);
+  assert.ok(start>=0&&end>start&&clickStart>=0&&clickEnd>clickStart);
+  const selected=[{value:'kept',checked:true,dataset:{revision:'4'}},{value:'unchecked',checked:false,dataset:{revision:'5'}}];
+  const control={},form={id:'acceptTasksForm',dataset:{actor:'maya'},isConnected:true,contains:element=>element===control,closest:()=>null};
+  let submit,stale=true,revision=12;
+  const events=[];
+  const context=vm.createContext({
+    ui:{actor:'maya',dialogKind:'acceptance'},window:{},action:'acceptance-select',id:'all',el:control,
+    document:{addEventListener(_type,handler){submit=handler;}},
+    FormData:class{constructor(){return [];}},
+    $:selector=>selector==='#acceptTasksForm'?form:null,$$:()=>selected,
+    acceptanceReviewPending:()=>stale,
+    syncAcceptanceSelection:()=>events.push('changed choices'),
+    acceptanceSelections:()=>selected.filter(input=>input.checked).map(input=>({id:input.value,revision:Number(input.dataset.revision)})),
+    saveLock:()=>{events.push('lock');return ()=>events.push('release');},
+    store:{getSnapshotRevision:()=>revision,async acceptTasks(selections,actor){events.push(['write',selections,actor]);revision=13;throw Object.assign(new Error('Fictional 409'),{status:409});}},
+    showRecoveryWriteConflict:submitted=>{stale=true;events.push(['conflict',submitted]);},
+    formError:(candidate,error)=>{assert.equal(candidate,form);events.push(['error',error.message]);},
+    toast:()=>{},paintAcceptanceRefresh:()=>events.push(['paint',stale]),
+  });
+  vm.runInContext(app.slice(start,end).replace('store.acceptTasks(', 'await store.acceptTasks('),context);
+  const choose=()=>vm.runInContext(app.slice(clickStart,clickEnd),context);
+  const event=()=>({target:form,preventDefault(){},submitter:{}});
+  choose();
+  await submit(event());
+  assert.deepEqual(events,[['paint',true],['paint',true]]);
+  assert.deepEqual(selected.map(input=>input.checked),[true,false]);
+
+  stale=false;
+  await submit(event());
+  assert.deepEqual(events.slice(2),['lock',['write',[{id:'kept',revision:4}],'maya'],['conflict',12],'release',['paint',true]]);
+  assert.deepEqual(selected.map(input=>input.checked),[true,false]);
+  choose();
+  await submit(event());
+  assert.equal(events.filter(item=>Array.isArray(item)&&item[0]==='write').length,1);
+  assert.deepEqual(selected.map(input=>input.checked),[true,false]);
 });
 test('selection state enables deliberate submit and serializes all reviewed revisions before save lock', () => {
   const count = { textContent: '' },
@@ -309,6 +537,9 @@ test('selection state enables deliberate submit and serializes all reviewed revi
   const context = vm.createContext({
     $$: () => selected,
     $: (selector) => (selector === '#acceptanceCount' ? count : button),
+    workspaceUpdatesPending: () => false,
+    scheduleRevisionIsStale: () => false,
+    store: {},
   });
   vm.runInContext(
     app.slice(

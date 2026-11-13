@@ -652,27 +652,34 @@
       toast('No unaccepted open tasks in this view.');return;
     }
     const source=fromEventReview?'this event review':'the current view';
-    const sync=resume?$('#workspaceSyncNotice'):null;
-    const stale=Boolean(sync&&!sync.hidden);
-    const previous=new Map(resume?.selected.map(task=>[task.id,task.revision]));
-    const keep=task=>!stale&&previous.has(task.id)&&previous.get(task.id)===task.revision;
+    const stale=acceptanceReviewPending(null);
+    const previous=new Map(resume?.selected.map(task=>[task.id,task]));
+    const readinessById=new Map(tasks.map(task=>[task.id,assignmentReadiness(task,state.tasks)]));
+    const zoneChanged=resume?.timeZone!==undefined&&resume.timeZone!==state.event.timeZone;
+    const keep=task=>{
+      const reviewed=previous.get(task.id);
+      return !!reviewed&&reviewed.revision===task.revision&&!(zoneChanged&&(task.schedule||task.scheduleReconfirmation))&&
+        (reviewed.readiness===undefined||reviewed.readiness===readinessById.get(task.id));
+    };
     const selectedCount=tasks.filter(keep).length;
     const changed=previous.size-selectedCount;
+    const changeReason=zoneChanged?'the event time zone or the assignments changed':'the task changed or is no longer in this review';
+    const reviewRevision=store.getSnapshotRevision?.();
     const choices=tasks.map(task=>{
       const key=h(task.id);
       const when=schedule.reconfirmation?.(task,state.event,ui.actor)||(task.schedule?`Activity: ${h(GatherScheduleUI.dateLabel(task.schedule.start))} · ${h(GatherScheduleUI.range(task.schedule))} · ${h(state.event.timeZone)}${task.schedule.end?'':' · No end time set'} · ${h(task.schedule.location||'No location entered')}`:task.eventActivity===true?'Planned activity · start time not set':'');
-      const readiness=assignmentReadiness(task,state.tasks);
+      const readiness=readinessById.get(task.id);
       return `<div class="acceptance-choice">
-        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}"${keep(task)?' checked':''} aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
+        <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}" data-readiness="${h(readiness)}"${keep(task)?' checked':''} aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
         <span><strong id="accept-title-${key}">${h(task.title)}</strong><span id="accept-date-${key}">${h(statuses[task.status]||task.status)} · ${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}</span>
         ${when?`<span id="accept-activity-${key}">${when}</span>`:''}${readiness?`<span id="accept-readiness-${key}"><strong>${h(readiness)}</strong></span>`:''}<span id="accept-outcome-${key}"><strong>Done when:</strong> ${h(task.scope||'No separate outcome recorded.')}</span>
         ${task.note?`<span><strong>Latest update:</strong> ${h(task.note)}</span>`:''}</span></label>
         <button type="button" class="text-button" data-action="inspect-acceptance-task" data-id="${key}" aria-label="Open task details for ${h(task.title)}">Open task details</button>
       </div>`;
     }).join('');
-    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. ${resume?'Only unchanged selections were kept.':'Nothing is selected for you.'}</p>${changed?`<p class="notice" role="status">${changed} ${changed===1?'selection was':'selections were'} cleared ${stale?'because newer project changes are available. Reload before accepting.':'because the task changed or is no longer in this review. Check the current tasks before accepting.'}</p>`:''}<p class="notice">You can accept responsibility even if work is waiting on something else. Acceptance does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}"${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">${selectedCount} ${selectedCount===1?'task':'tasks'} selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit"${selectedCount?'':' disabled'}>Accept selected tasks</button></div></form>`,'',false,'acceptance');
-    if(stale)showPendingUpdate();
-    if(resume&&!changed&&!stale){
+    openDialog('Accept your task assignments',`<p>Review the tasks you can take responsibility for. Only your open, unaccepted tasks from ${source} are shown, up to 100 at a time. ${resume?'Only unchanged selections were kept.':'Nothing is selected for you.'}</p>${changed?`<p class="notice" role="status">${changed} ${changed===1?'selection was':'selections were'} cleared because ${changeReason}. Check the current tasks before accepting.</p>`:''}<p class="notice">You can accept responsibility even if work is waiting on something else. Acceptance does not mark work complete, change deadlines, or remove prerequisites.</p><form id="acceptTasksForm" data-actor="${h(ui.actor)}" data-time-zone="${h(state.event.timeZone)}"${Number.isSafeInteger(reviewRevision)?' data-workspace-revision="'+reviewRevision+'"':''}${fromEventReview?' data-return-to="event-review"':''}><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="acceptance-select" data-id="none">Select none</button></div><div class="acceptance-list">${choices}</div><p id="acceptanceCount" role="status">${selectedCount} ${selectedCount===1?'task':'tasks'} selected.</p><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${fromEventReview?'before-event-review':'close-dialog'}">${fromEventReview?'Back to event review':'Cancel'}</button><button id="acceptanceSubmit" class="btn btn-primary" type="submit"${selectedCount&&!stale?'':' disabled'}>Accept selected tasks</button></div></form>`,'',false,'acceptance');
+    if(stale)paintAcceptanceRefresh();
+    if(resume?.openerId&&!changed&&!stale){
       const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
       requestAnimationFrame(()=>{
         if(window.GatherAccessLost||ui.dialogKind!=='acceptance'||!title||$('#dialogTitle',dialog)!==title)return;
@@ -685,11 +692,12 @@
     if(window.GatherAccessLost||ui.dialogKind!=='acceptance')return;
     const form=$('#acceptTasksForm');
     if(!form||form.dataset.actor!==ui.actor||!form.contains(opener))return;
+    if(acceptanceReviewPending(form)){paintAcceptanceRefresh();return;}
     const state=store.getState(),fromEventReview=form.dataset.returnTo==='event-review';
     const tasks=acceptanceCandidates(fromEventReview?schedule.reviewAcceptanceTasks(state,eventReviewScope()):filteredTasks(state));
     if(!tasks.some(task=>task.id===id)){toast('This task is no longer in your assignment review.');return;}
-    const selected=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
-    ui.acceptanceReturn={actor:ui.actor,view:ui.view,fromEventReview,openerId:id,selected};
+    const selected=acceptanceSelections(form,true);
+    ui.acceptanceReturn={actor:ui.actor,view:ui.view,fromEventReview,openerId:id,selected,timeZone:form.dataset.timeZone};
     taskDialog(id,'',false,true);
   }
   function returnToAcceptanceReview() {
@@ -698,10 +706,82 @@
     acceptanceDialog(resume.fromEventReview,resume);
     return true;
   }
+  function acceptanceSelections(form,forReview=false) {
+    return $$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision),
+      ...(forReview&&input.dataset.readiness!==undefined?{readiness:input.dataset.readiness}:{})}));
+  }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
     $('#acceptanceCount',form).textContent=`${count} ${count===1?'task':'tasks'} selected.`;
-    $('#acceptanceSubmit',form).disabled=count===0;
+    const stale=acceptanceReviewPending(form);
+    $('#acceptanceSubmit',form).disabled=count===0||stale;
+    if(stale)paintAcceptanceRefresh();
+  }
+  function acceptanceReviewPending(form) {
+    const revision=store.getSnapshotRevision?.();
+    const reviewedRevision=form?.dataset?.workspaceRevision;
+    return form?.dataset?.reviewNeedsRefresh==='true'||workspaceUpdatesPending()||scheduleRevisionIsStale(revision)||
+      (reviewedRevision!==undefined&&Number(reviewedRevision)!==revision);
+  }
+  function paintAcceptanceRefresh() {
+    const form=$('#acceptTasksForm');
+    if(!form||ui.dialogKind!=='acceptance'||!acceptanceReviewPending(form))return;
+    form.dataset.reviewNeedsRefresh='true';
+    const focused=document.activeElement;
+    let notice=$('#dialogStaleNotice');
+    if(!notice){
+      notice=document.createElement('div');notice.id='dialogStaleNotice';notice.className='notice';
+      notice.innerHTML='<p id="acceptanceRefreshStatus" role="status"></p>'+
+        (store.refresh?'<button type="button" id="acceptanceRefresh" class="btn btn-secondary" data-action="refresh-acceptance-review" aria-describedby="acceptanceRefreshStatus">Refresh assignment review</button>':
+          '<button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button>');
+      $('.dialog-body').prepend(notice);
+      $('#acceptanceRefreshStatus').textContent='Newer project changes are available. Your selections are held until you refresh. You’ll keep only assignments that haven’t changed.';
+    }
+    const controls=$$('input[name="acceptTask"],[data-action="acceptance-select"],[data-action="inspect-acceptance-task"],#acceptanceSubmit',form);
+    for(const control of controls)control.disabled=true;
+    if(controls.includes(focused))$('#acceptanceRefresh')?.focus();
+  }
+  async function refreshAcceptanceReview(button) {
+    const form=$('#acceptTasksForm'),status=$('#acceptanceRefreshStatus');
+    if(!form||!status||!store.refresh||button!==$('#acceptanceRefresh')||window.GatherAccessLost||
+      ui.dialogKind!=='acceptance'||form.dataset.actor!==ui.actor||!acceptanceReviewPending(form)||ui.pendingSave||document.hidden)return;
+    if(ui.syncing){
+      if(button.getAttribute('aria-disabled')!=='true')status.textContent='The project is already checking for changes. Try again in a moment.';
+      return;
+    }
+    const fromEventReview=form.dataset.returnTo==='event-review',actor=ui.actor,project=window.GatherMode?.projectId;
+    const scope=()=>JSON.stringify(fromEventReview?[ui.view,ui.timelineMode,eventReviewScope().mine]:
+      [ui.view,ui.tab,ui.owner,ui.status,ui.search]);
+    const openedScope=scope();
+    const sameWorkspace=()=>!window.GatherAccessLost&&ui.actor===actor&&window.GatherMode?.projectId===project;
+    const sameReview=()=>sameWorkspace()&&ui.dialogKind==='acceptance'&&$('#acceptTasksForm')===form&&
+      $('#acceptanceRefresh')===button&&scope()===openedScope&&!$('#dialogBackdrop').hidden;
+    const ready=()=>sameReview()&&!ui.pendingSave&&!document.hidden;
+    const resume={selected:acceptanceSelections(form,true),timeZone:form.dataset.timeZone};
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Refreshing assignment review…';
+    try{
+      const result=await store.refresh(revision=>ready()&&Number.isSafeInteger(revision)&&
+        !recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(result.pending&&sameWorkspace())rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){
+        if(sameReview())status.textContent='Refresh paused. Your selections are still here. Try again.';
+        return;
+      }
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))
+        throw new Error('A newer project snapshot is not ready.');
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();acceptanceDialog(fromEventReview,resume);
+      if(ui.dialogKind==='acceptance')toast('Assignment review refreshed. Review the current tasks before accepting.');
+    }catch{
+      if(sameReview())status.textContent='Could not refresh assignments. Your selections are still here. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   function inboxView(s) {
     const messages=s.messages.filter(m=>!m.ignoredAt);
@@ -935,6 +1015,7 @@
     if(input?.defaultValue===draft.base)input.value=draft.value;
   }
   function render() {
+    if(ui.dialogKind==='acceptance')paintAcceptanceRefresh();
     projectBudget?.unmount(ui.view==='budget');
     const taskListScroll=ui.view==='tasks'&&ui.taskView==='list'?$('.task-table-wrap')?.scrollLeft:undefined;
     const scheduleDateDraft=captureScheduleDateDraft();
@@ -1462,6 +1543,7 @@
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
+    if(ui.dialogKind==='acceptance'){paintAcceptanceRefresh();return;}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     const group=ui.dialogKind==='before-event-review'?document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
@@ -1470,11 +1552,10 @@
       '<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
   }
-  function showRecoveryWriteConflict() {
-    const current=store.getSnapshotRevision?.();
-    if(Number.isSafeInteger(current)){
-      ui.recoveryConflictRevision=current;
-      rememberNewerSchedule(null,current+1);
+  function showRecoveryWriteConflict(submittedRevision=store.getSnapshotRevision?.()) {
+    if(Number.isSafeInteger(submittedRevision)){
+      ui.recoveryConflictRevision=Math.max(ui.recoveryConflictRevision??-1,submittedRevision);
+      rememberNewerSchedule(null,submittedRevision+1);
     }
     showPendingUpdate();
   }
@@ -2650,6 +2731,7 @@
       if(action==='accept-task'){store.acceptTask(id,ui.actor);render();taskDialog(id);toast('Responsibility accepted.');}
       if(action==='review-acceptance'&&!window.GatherAccessLost)acceptanceDialog();
       if(action==='review-event-acceptance'&&ui.dialogKind==='before-event-review')acceptanceDialog(true);
+      if(action==='refresh-acceptance-review')await refreshAcceptanceReview(el);
       if(action==='review-assignments')assignmentDialog();
       if(action==='review-event-assignments'&&ui.dialogKind==='before-event-review'&&['unassigned','owner-unavailable'].includes(id))assignmentDialog(id);
       if(action==='assignment-select'){
@@ -2658,7 +2740,10 @@
       }
       if(action==='acceptance-select'){
         const form=$('#acceptTasksForm');
-        if(form){$$('input[name="acceptTask"]',form).forEach(input=>input.checked=id==='all');syncAcceptanceSelection(form);}
+        if(form&&ui.dialogKind==='acceptance'&&form.contains(el)){
+          if(acceptanceReviewPending(form))paintAcceptanceRefresh();
+          else{$$('input[name="acceptTask"]',form).forEach(input=>input.checked=id==='all');syncAcceptanceSelection(form);}
+        }
       }
       if(action==='report-task')responseDialog(id);
       if(action==='prepare-completion')recovery.prepareCompletion(el.closest('#responseForm'));
@@ -2717,6 +2802,10 @@
     event.preventDefault();
     if(form.id==='guestAgendaForm')return;
     if(ui.pendingSave||form.dataset.saving==='true')return;
+    if(form.id==='acceptTasksForm'){
+      if(ui.dialogKind!=='acceptance'||form!==$('#acceptTasksForm'))return;
+      if(acceptanceReviewPending(form)){paintAcceptanceRefresh();return;}
+    }
     if(form.id==='relatedReviewForm'&&form.dataset.saveUnconfirmed)return;
     if(form.id==='relatedChecklistForm'){
       $('.form-error',form)?.remove();
@@ -2737,11 +2826,12 @@
     const submission=isSubmission?window.GatherCompletionUI.collect(form,form.id==='responseForm'?data.note:undefined):null;
     const submissionFile=isSubmission?form.elements.completionUpload?.files?.[0]:null;
     if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
-    if(form.id==='acceptTasksForm')data.selections=$$('input[name="acceptTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
+    if(form.id==='acceptTasksForm')data.selections=acceptanceSelections(form);
     if(form.id==='assignTasksForm')data.tasks=$$('input[name="assignTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
     if(form.id==='relatedReviewForm')data.items=$$('[data-related-row]',form).filter(row=>$('[data-related-include]',row).checked)
       .map(row=>({title:$('[data-related-title]',row).value,scope:$('[data-related-scope]',row).value}));
     $('.form-error',form)?.remove();
+    const acceptanceRevision=form.id==='acceptTasksForm'?store.getSnapshotRevision?.():undefined;
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='rescheduleDateForm'){
@@ -2907,8 +2997,13 @@
         const ticket=privateEpoch;
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
-    }catch(error){if(error.status===409){if(form.id==='recoveryDecisionForm'||((form.id==='scheduleForm'||form.id==='taskDetailForm')&&ui.dialogKind==='task'&&ui.detailId===form.dataset.id))showRecoveryWriteConflict();else showPendingUpdate();}if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
-    finally{release();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
+    }catch(error){
+      if(error.status===409&&form.id==='acceptTasksForm'){showRecoveryWriteConflict(acceptanceRevision);return;}
+      if(error.status===409){if(form.id==='recoveryDecisionForm'||((form.id==='scheduleForm'||form.id==='taskDetailForm')&&ui.dialogKind==='task'&&ui.detailId===form.dataset.id))showRecoveryWriteConflict();else showPendingUpdate();}
+      if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';
+      formError(form,error);toast(error.message||'Please check the form and try again.');
+    }
+    finally{release();if(form.id==='acceptTasksForm'&&form.isConnected)paintAcceptanceRefresh();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 
   document.addEventListener('change',event=>{

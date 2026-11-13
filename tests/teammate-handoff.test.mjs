@@ -23,6 +23,7 @@ function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={})
     GatherPriorities,GatherScheduleUI,schedule:GatherScheduleUI.create({h:escape}),h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
     navigate:view=>{ctx.ui.view=view;actions.push(view);return true;},
     filteredTasks:()=>state.tasks.filter(item=>item.owner==='maya'),
+    acceptanceReviewPending:()=>false,
     skipToContent:()=>actions.push('focus'),toast:message=>actions.push(message),
     openDialog:(title,markup)=>{dialog={title,markup};},
   });
