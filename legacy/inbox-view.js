@@ -96,17 +96,17 @@
       }
       const updated=result.changed||result.suggestionsChanged||toolUpdate;
       if(updated){refreshSuggestionSurfaces();if(manual)toast('Plan updated.');}
-      const pending=!!(result.pending||ui.toolUpdatePending||recoveryConflictPending());
+      const pending=!!(result.pending||ui.toolUpdatePending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()));
       const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=!pending;
       if(pending){showPendingUpdate(result.newerRevision);const banner=$('#inboxSyncNotice');if(banner){banner.hidden=false;banner.textContent='New updates are available. Your edited proposal is unchanged. Use “Refresh comparison” to discard edits and load the latest task before accepting.';}}
-      else if(manual&&!updated)toast('You have the latest updates.');
+      else {paintTimelineScheduleStatus(false);if(manual&&!updated)toast('You have the latest updates.');}
     } catch(error) {if(manual&&!window.GatherAccessLost)toast(error.message);}
     finally {ui.syncing=false;}
   }
   function canApplyWorkspaceRefresh() {
     return !window.GatherAccessLost&&!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&
       ($('#dialogBackdrop').hidden||ui.dialogKind==='thought'||ui.dialogKind==='notifications')&&!ui.savingProposal&&
-      !document.activeElement?.matches('input,textarea,select');
+      !document.activeElement?.matches('input,textarea,select')&&!hasPartialScheduleDate();
   }
   function bindWorkspaceRefresh() {
     let timer=null;

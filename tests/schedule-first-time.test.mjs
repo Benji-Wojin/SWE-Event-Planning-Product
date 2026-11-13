@@ -81,6 +81,7 @@ function fixture({ mine = true, currentDate = date, initial = [fixed, other] } =
     focusScheduleTarget: node => { node?.focus(); return !!node; }, focusTaskDialogControl: () => {},
     requestAnimationFrame: callback => frames.push(callback), isOrganizer: () => organizer,
     pageHeading: (_crumb, title, _sub, actions) => '<h1>' + title + '</h1>' + actions, addButton: () => '', icon: () => '',
+    workspaceUpdatesPending: () => false, scheduleRevisionIsStale: () => false,
     store: { getState: () => snapshot, setTaskSchedule(id, data, actor) {
       calls.push(['write', id, data, actor]);
       return new Promise((resolve, reject) => {

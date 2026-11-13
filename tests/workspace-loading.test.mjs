@@ -81,19 +81,37 @@ function preparedRefresh(demo=false) {
   const ui={view:'tasks'},busyRunSheetRevisions=new Set();
   const backdrop={hidden:true}, notice={hidden:true}, inboxNotice={hidden:true};
   const store={async refresh(canApply){calls.push('request');return result|| (canApply()?{changed:true,suggestionsChanged:true}:{pending:true});}};
-  let result;
+  let result, partialDate=false, knownNewer=false;
   let next=0;
   vm.runInNewContext(source+'\nbindWorkspaceRefresh();',{
     store,ui,window,document,busyRunSheetRevisions,recoveryConflictPending:()=>false,showPendingUpdate(){calls.push('pending');},
+    hasPartialScheduleDate:()=>partialDate,scheduleRevisionIsStale:()=>knownNewer,paintTimelineScheduleStatus(){},
     render(){calls.push('render');},paintNotifications(){calls.push('notifications');},
     refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
     $:selector=>({'#dialogBackdrop':backdrop,'#workspaceSyncNotice':notice,'#inboxSyncNotice':inboxNotice})[selector],
     setInterval(callback,ms){const id=next++;timers.set(id,{callback,ms});return id;},
     clearInterval(id){timers.delete(id);},
   });
-  return {events,timers,calls,window,document,ui,backdrop,notice,busyRunSheetRevisions,snapshotResult:value=>{result=value;}};
+  return {events,timers,calls,window,document,ui,backdrop,notice,busyRunSheetRevisions,snapshotResult:value=>{result=value;},
+    partialDate:value=>{partialDate=value;},knownNewer:value=>{knownNewer=value;}};
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('passive refresh does not erase a partial native Timeline date after focus leaves it or hide a known stale revision',async()=>{
+  const {events,calls,notice,partialDate,knownNewer,snapshotResult}=preparedRefresh();
+  partialDate(true);
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending']);
+  assert.equal(notice.hidden,false);
+  partialDate(false);knownNewer(true);snapshotResult({changed:false});
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending']);
+  assert.equal(notice.hidden,false);
+  knownNewer(false);
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request']);
+  assert.equal(notice.hidden,true);
+});
 
 test('the generated refresh lifecycle fetches on focus, visible return, and its existing timer, without double polling after restore',async()=>{
   for(const demo of [false,true]){

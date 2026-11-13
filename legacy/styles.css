@@ -664,6 +664,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .schedule-share p{margin:0}.schedule-share .btn{min-height:44px}
 .schedule-panel{padding:22px}.schedule-zone{font-size:.875rem;line-height:1.5;margin:0 0 18px;overflow-wrap:anywhere}
 .schedule-panel>#schedulePanelHeading{margin:0 0 14px}
+.schedule-refresh{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-bottom:14px}
+.schedule-refresh .btn{min-height:44px;max-width:100%;white-space:normal}
+.schedule-refresh [role="status"]{margin:0;font-size:.875rem;overflow-wrap:anywhere}
+.schedule-refresh [role="status"]:empty{position:absolute}
 .schedule-pending{margin:20px 0 24px;padding:16px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}
 .schedule-pending h2{font-size:1rem;margin:0 0 8px}.schedule-pending p{font-size:.875rem}
 .schedule-pending ul{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:8px}

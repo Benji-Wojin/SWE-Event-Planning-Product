@@ -52,6 +52,18 @@ test('personal schedules retain completed/review work and only their own overlap
   assert.equal((schedule.clock({event,tasks},now,{mine:true,actor:'maya'}).markup.match(/>Owner overlap</g)||[]).length,2);
 });
 
+test('hosted empty Timeline retains the scope and any unapplied date controls without committing a date',()=>{
+  const state={event,tasks:[]},scope={actor:'maya',mine:true,canRefresh:true,updatesPending:true};
+  assert.doesNotMatch(schedule.view(state,false,now,scope),/id="scheduleDate"/);
+  const html=schedule.view(state,false,now,{...scope,keepDateFilter:true});
+  assert.match(html,/id="scheduleDate" name="scheduleDate" value=""/);
+  assert.match(html,/aria-pressed="true" data-action="schedule-scope" data-id="mine"/);
+  assert.match(html,/type="button" data-action="refresh-timeline-schedule" aria-describedby="timelineScheduleRefreshStatus"/);
+  assert.match(html,/id="timelineScheduleRefreshStatus" role="status"[^>]*data-pending="true">Project updates are available/);
+  assert.match(html,/No scheduled activities/);
+  assert.doesNotMatch(schedule.view(state,false,now),/timelineScheduleRefresh/);
+});
+
 test('focus cards expose safe owner, location and status with no extra actions',()=>{
   const item=task('id"<>','private-maya-id','09:00','10:00',{title:'<img src=x onerror=alert(1)>',status:'blocked'});
   item.schedule.location='<script>alert(1)</script>';
@@ -80,13 +92,13 @@ test('timeline view and live refresh use the current profile and the same scope'
   const fragment=source.slice(start,source.indexOf('  function updatesView(s)',start));
   const calls=[];
   const context=vm.createContext({ui:{timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-04',actor:'maya'},isOrganizer:()=>false,
-    window:{GatherMode:{demo:false}},
+    window:{GatherMode:{demo:false}},store:{refresh(){},getSnapshotRevision:()=>20},workspaceUpdatesPending:()=>false,scheduleRevisionIsStale:()=>false,
     pageHeading:()=>'',schedule:{view(state,organizer,now,scope){calls.push({state,organizer,scope});return 'timetable';}}});
   vm.runInContext(fragment+'globalThis.view=timelineView;',context);
   const state={tasks:[],event};assert.match(context.view(state),/timetable/);
-  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya',date:'2026-10-04',shareDay:true});assert.equal(calls[0].state,state);
+  assert.deepEqual({...calls[0].scope},{mine:true,actor:'maya',date:'2026-10-04',shareDay:true,canRefresh:true,keepDateFilter:false,updatesPending:false});assert.equal(calls[0].state,state);
   context.ui.actor='dev';context.view(state);assert.equal(calls[1].scope.actor,'dev');
   context.ui.scheduleMine=false;context.view(state);assert.equal(calls[2].scope.mine,false);
-  context.window.GatherMode.demo=true;context.view(state);assert.equal(calls[3].scope.shareDay,false);
+  context.window.GatherMode.demo=true;context.view(state);assert.equal(calls[3].scope.shareDay,false);assert.equal(calls[3].scope.canRefresh,false);
   assert.match(source,/if\(action==='schedule-scope'\)\{ui\.scheduleMine=id==='mine';render\(\);\}/);
 });

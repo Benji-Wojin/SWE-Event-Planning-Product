@@ -316,7 +316,14 @@
       return focusWrapFollowUpReceipt(previous.dataset.id,root,previous.dataset.action);
     if(previous.dataset.wrapLesson||previous.id==='wrapUpLessons')
       return focusWrapLesson(previous.dataset.wrapLesson,root);
-    if(!previous.dataset.taskFocus)return restoreFocus(previous,root);
+    if(!previous.dataset.taskFocus){
+      if(restoreFocus(previous,root))return true;
+      if(ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&!window.GatherAccessLost&&
+        (['scheduleDate','applyScheduleDate'].includes(previous.id)||
+          ['clear-schedule-date','jump-schedule-date','copy-schedule-day','run-sheet','draft-guest-agenda','schedule-set-start','open-first-schedule-receipt'].includes(previous.dataset.action)))
+        return focusScheduleTarget($('#schedulePanelHeading',root));
+      return false;
+    }
     if(ui.view!=='tasks'||ui.taskView!=='list'||root.closest('[hidden],[inert]'))return false;
     if(restoreFocus(previous,root))return true;
     const rows=$('#taskRows',root);
@@ -985,11 +992,15 @@
       <button id="scheduleFirstReceiptOpen" type="button" class="btn btn-secondary" data-action="open-first-schedule-receipt" data-id="${h(task.id)}">Open activity</button>
     </section>`;
   }
-  function timelineView(s) {
+  function timelineView(s,dateDraft=null) {
     const scheduled=ui.timelineMode!=='deadlines';
     const controls=(isOrganizer()?'<button class="btn btn-secondary" data-action="move-event-plan">Move event plan</button>':'')+(scheduled?((s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="run-sheet">Run sheet</button>':'')+(isOrganizer()?(s.tasks.some(task=>task.schedule)?'<button class="btn btn-secondary" data-action="draft-guest-agenda">Draft guest agenda</button>':'')+'<button class="btn btn-secondary" data-action="schedule-task">Schedule existing task</button><button class="btn btn-primary" data-action="add-activity">Add activity</button>':'')):addButton());
     const heading=pageHeading('','Timeline','','<button class="btn btn-secondary" data-action="before-event-review">Before the event</button>'+controls)+`<div class="schedule-switch" role="group" aria-label="Timeline view"><button class="filter-tab ${scheduled?'active':''}" aria-pressed="${scheduled}" data-action="timeline-mode" data-id="schedule">Event schedule</button><button class="filter-tab ${!scheduled?'active':''}" aria-pressed="${!scheduled}" data-action="timeline-mode" data-id="deadlines">Preparation deadlines</button></div>`;
-    if(scheduled)return heading+firstScheduleReceiptMarkup(s)+schedule.view(s,isOrganizer(),Date.now(),{...timelineScheduleScope(),shareDay:!!window.GatherMode&&!window.GatherMode.demo});
+    if(scheduled)return heading+firstScheduleReceiptMarkup(s)+schedule.view(s,isOrganizer(),Date.now(),{
+      ...timelineScheduleScope(),shareDay:!!window.GatherMode&&!window.GatherMode.demo,keepDateFilter:!!dateDraft,
+      canRefresh:!!window.GatherMode&&!window.GatherMode.demo&&!!store.refresh&&!window.GatherAccessLost,
+      updatesPending:workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()),
+    });
     const keys=[...new Set(s.tasks.filter(t=>t.status!=='done').map(t=>t.dueDate||''))].sort((a,b)=>(a||'9999').localeCompare(b||'9999'));
     return heading+`<section class="panel"><div class="timeline-list">${keys.map(key=>`<div class="timeline-day"><div class="timeline-date"><strong>${key?dayLabel(key):'No deadline'}</strong><span>${key===dateKey()?'Today':key&&key<dateKey()?'Past due':''}</span></div><div class="timeline-tasks">${s.tasks.filter(t=>t.status!=='done'&&(t.dueDate||'')===key).map(t=>`<button class="timeline-task" data-action="task" data-id="${h(t.id)}"><strong>${h(t.title)}</strong><span class="inline">${person(t.owner)}${statusBadge(t.status)}</span></button>`).join('')}</div></div>`).join('')||empty('No open tasks.','')}</div></section>`;
   }
@@ -1113,6 +1124,9 @@
     return input&&input.defaultValue===ui.scheduleDate&&input.value!==input.defaultValue
       ? {base:input.defaultValue,value:input.value}:null;
   }
+  function hasPartialScheduleDate() {
+    return ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&!!$('#scheduleDate')?.validity.badInput;
+  }
   function restoreScheduleDateDraft(draft) {
     if(!draft||ui.view!=='timeline'||ui.timelineMode==='deadlines'||ui.scheduleDate!==draft.base)return;
     const input=$('#scheduleDate');
@@ -1150,7 +1164,7 @@
     $$('.nav-item[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===ui.view);button.setAttribute('aria-current',button.dataset.view===ui.view?'page':'false');});
     $('#profile').innerHTML=`${avatar(ui.actor)}<div class="profile-copy"><strong>${h(member(ui.actor).name)}</strong><span>${h(member(ui.actor).role)}</span></div>`;
     $('#actorSelect').innerHTML=options(s.members.map(p=>[p.id,`${p.name.split(' ')[0]} · demo`]),ui.actor);
-    const markup=(guideTaskNeedsReveal&&!['tasks','overview'].includes(ui.view)?guideTaskPanel(s,true):'')+({overview:()=>overview(s,guideTaskNeedsReveal),tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:timelineView,updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
+    const markup=(guideTaskNeedsReveal&&!['tasks','overview'].includes(ui.view)?guideTaskPanel(s,true):'')+({overview:()=>overview(s,guideTaskNeedsReveal),tasks:tasksView,inbox:inboxView,team:teamView,info:()=>projectInfo?projectInfo.markup():'<h1>Event info</h1><p>Available in the hosted app.</p>',budget:()=>projectBudget?projectBudget.markup():'<h1>Budget</h1><p>Available in the hosted app.</p>',timeline:()=>timelineView(s,scheduleDateDraft),updates:updatesView,memory:memoryView,details:privateView})[ui.view](s);
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
@@ -1972,6 +1986,7 @@
   function showPendingUpdate(newerRevision,reviewGroup='') {
     if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
+    paintTimelineScheduleStatus(true);
     if(ui.dialogKind==='schedule-from-review'&&eventScheduleContextMatches(ui.eventScheduleEditor))
       markEventScheduleCheck(ui.eventScheduleEditor);
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
@@ -2014,6 +2029,71 @@
   }
   function scheduleRevisionIsStale(revision) {
     return staleScheduleRevision!==null&&Number.isSafeInteger(revision)&&revision<=staleScheduleRevision;
+  }
+  function paintTimelineScheduleStatus(pending) {
+    const status=$('#timelineScheduleRefreshStatus');
+    if(!status)return;
+    if(pending){
+      if($('#timelineScheduleRefresh')?.getAttribute('aria-disabled')==='true')return;
+      status.dataset.pending='true';
+      const message='Project updates are available. This schedule shows the last loaded times.';
+      if(status.textContent!==message)status.textContent=message;
+    }else if(status.dataset.pending==='true'){
+      delete status.dataset.pending;
+      status.textContent='';
+    }
+  }
+  async function refreshTimelineSchedule(button) {
+    const status=$('#timelineScheduleRefreshStatus'),scope=timelineScheduleScope(),key=scheduleWorkspaceKey();
+    const sameView=()=>!!status&&!!button?.isConnected&&$('#timelineScheduleRefresh')===button&&$('#timelineScheduleRefreshStatus')===status&&
+      !window.GatherAccessLost&&!window.GatherMode?.demo&&ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&
+      ui.actor===scope.actor&&ui.scheduleMine===scope.mine&&ui.scheduleDate===scope.date&&scheduleWorkspaceKey()===key;
+    const safeView=()=>sameView()&&$('#dialogBackdrop').hidden&&!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&!ui.savingProposal;
+    const say=message=>{delete status.dataset.pending;status.textContent=message;};
+    if(!store.refresh||!safeView()||button.getAttribute('aria-disabled')==='true')return;
+    if(hasPartialScheduleDate()){say('Finish typing or clear the date before checking for updates.');return;}
+    if(ui.syncing){say('A project check is already running. Try again in a moment.');return;}
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    say('Checking schedule updates…');
+    try{
+      const result=await store.refresh(revision=>safeView()&&!hasPartialScheduleDate()&&Number.isSafeInteger(revision)&&
+        !recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(result.pending&&Number.isSafeInteger(result.newerRevision)&&!window.GatherAccessLost&&scheduleWorkspaceKey()===key)
+        showPendingUpdate(result.newerRevision);
+      if(!safeView()||hasPartialScheduleDate()){
+        if(sameView())say('Schedule check paused. Your date and current view are unchanged.');
+        return;
+      }
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision)){
+        say('Could not confirm the latest schedule. The last loaded times are still shown. Try again.');
+        return;
+      }
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      const changed=result.changed||ui.toolUpdatePending;
+      ui.toolUpdatePending=false;
+      if(changed){
+        // render() preserves the unapplied date and restores the exact focused
+        // control. No form submission or filter navigation is involved.
+        render();
+        const updatedStatus=$('#timelineScheduleRefreshStatus');
+        // The view redraw remounts its status node. Announce from the new
+        // region once it is mounted, only if this exact schedule is still open.
+        const updatedButton=$('#timelineScheduleRefresh');
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{
+          if(updatedStatus&&$('#timelineScheduleRefreshStatus')===updatedStatus&&$('#timelineScheduleRefresh')===updatedButton&&
+            !updatedStatus.textContent&&!window.GatherAccessLost&&!document.hidden&&$('#dialogBackdrop').hidden)
+            updatedStatus.textContent='Schedule updated.';
+        }));
+      }else say('Schedule is up to date.');
+      if(changed||result.suggestionsChanged)refreshSuggestionSurfaces();
+    }catch{
+      if(sameView())say('Could not check for schedule updates. The last loaded times are still shown. Try again.');
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
@@ -3411,6 +3491,7 @@
     if(el.dataset.view){event.preventDefault();navigateFromViewControl(el);return;}
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
+    if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='discard-completion-draft'){
@@ -4049,7 +4130,7 @@
     const today=dateKey();
     if(attentionDay===today)return;
     if(ui.dialogKind==='notifications')paintNotifications(store.getState(),today);
-    if(!$('#dialogBackdrop').hidden||unsavedReview())return;
+    if(!$('#dialogBackdrop').hidden||unsavedReview()||hasPartialScheduleDate())return;
     attentionDay=today;render();
   }
   window.addEventListener('storage',event=>{
