@@ -1480,6 +1480,7 @@
   }
   let staleScheduleRevision=null;
   const busyRunSheetRevisions=new Set();
+  let runSheetCheckOutcome=null;
   function rememberNewerSchedule(snapshot,newerRevision) {
     if(!Number.isSafeInteger(newerRevision))return;
     if(snapshot&&snapshot.revision<newerRevision)snapshot.stale=true;
@@ -1502,7 +1503,7 @@
     openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. '+
       (hasRows?'Refresh it before printing or downloading.':'Refresh it to check the same date and activity scope again.')+'</p>'+
       (store.refresh?'<button type="button" class="btn btn-secondary" id="runSheetRefresh" data-action="refresh-run-sheet">Refresh run sheet</button>':'')+
-      '</div><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked" data-blocked>'+
+      '</div><p id="runSheetCheckStatus" class="muted" role="status"></p><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked" data-blocked>'+
       (hasRows?'Run sheet isn’t ready to print. Return to Weft to check or refresh it.':'No run sheet to print: this view has no scheduled activities. Return to Weft to check the schedule.')+
       '</p>'+schedule.runSheetMarkup(model)+
       (hasRows?'':'<p id="runSheetEmpty" class="notice">There’s nothing to print or download from this view. '+emptyHelp+'</p>')+
@@ -1521,11 +1522,20 @@
       printNotice?.toggleAttribute('data-blocked',true);
       return null;
     }
-    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||scheduleRevisionIsStale(snapshot.revision)||
+    const outcome=runSheetCheckOutcome&&runSheetCheckOutcome.revision===snapshot.revision?runSheetCheckOutcome.kind:null;
+    const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||outcome==='inconclusive'||scheduleRevisionIsStale(snapshot.revision)||
       (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
     const noRows=!snapshot.model.days.length;
+    const checkStatus=$('#runSheetCheckStatus');
+    const message=outcome==='checking'?'Checking the saved plan…':
+      outcome==='inconclusive'?'Could not confirm the saved plan. Refresh this view to check again.':
+      stale?'':outcome==='failed'?(noRows?'Could not check for updates. Try again to check this schedule.':
+        'Could not check for updates. This is the last loaded copy; confirm changes with your team before using it.'):
+      outcome==='checked'?(noRows?'No newer plan found. This view still has no scheduled activities.':
+        'No newer plan found. This copy is still a snapshot.'):'';
+    if(checkStatus&&checkStatus.textContent!==message)checkStatus.textContent=message;
     printNotice?.toggleAttribute('data-blocked',blocked||noRows);
     $('#runSheetRefresh')?.setAttribute('aria-disabled',String(!!busy));
     const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=blocked;
@@ -1539,19 +1549,24 @@
   async function checkRunSheet() {
     const snapshot=currentRunSheet();
     if(!snapshot||!store.confirmSnapshotRevision)return;
-    busyRunSheetRevisions.add(snapshot.revision);currentRunSheet();
+    const actor=ui.actor,project=window.GatherMode?.projectId,revision=snapshot.revision;
+    const sameWorkspace=()=>!window.GatherAccessLost&&ui.actor===actor&&window.GatherMode?.projectId===project;
+    const record=kind=>{
+      if(sameWorkspace()&&store.getSnapshotRevision?.()===revision)runSheetCheckOutcome={revision,kind};
+    };
+    record('checking');
+    busyRunSheetRevisions.add(revision);currentRunSheet();
     try {
-      const current=await store.confirmSnapshotRevision(snapshot.revision,newer=>rememberNewerSchedule(snapshot,newer));
-      if(window.GatherAccessLost)return;
-      if(!current){snapshot.stale=true;currentRunSheet();}
-      else if(ui.runSheet===snapshot&&!snapshot.stale)toast(snapshot.model.days.length
-        ?'No newer plan found. This copy is still a snapshot.':'No newer plan found. This view still has no scheduled activities.');
+      const current=await store.confirmSnapshotRevision(revision,newer=>{
+        if(sameWorkspace())rememberNewerSchedule(snapshot,newer);
+      });
+      if(!sameWorkspace())return;
+      if(!current)snapshot.stale=true;
+      record(current?'checked':scheduleRevisionIsStale(revision)?null:'inconclusive');
     } catch {
-      if(ui.runSheet===snapshot&&!window.GatherAccessLost)toast(snapshot.model.days.length
-        ?'Could not check for updates. Confirm changes with your team before using this copy.'
-        :'Could not check for updates. Try again to check this schedule.');
+      record('failed');
     } finally {
-      busyRunSheetRevisions.delete(snapshot.revision);
+      busyRunSheetRevisions.delete(revision);
       currentRunSheet();
     }
   }
@@ -1581,6 +1596,7 @@
         throw new Error('A newer snapshot is not ready.');
       const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
       ui.toolUpdatePending=false;
+      runSheetCheckOutcome=null;
       render();
       openRunSheet(snapshot.scope,true);
       toast('Run sheet refreshed.');

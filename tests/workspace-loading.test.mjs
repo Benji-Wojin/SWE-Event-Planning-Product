@@ -16,7 +16,7 @@ function element(tag) {
     addEventListener(type, fn) { this.listeners[type] = fn; },
   };
 }
-function start(response, { oldDocument = false, demo = false, search } = {}) {
+function start(response, { oldDocument = false, demo = false, search, abortSignal = AbortSignal } = {}) {
   const boot = element('main'), shell = element('div'), body = element('body'), listeners = {};
   shell.hidden = !oldDocument;boot.attributes['aria-busy'] = 'true';
   body.classList = { toggle() {} };
@@ -31,7 +31,7 @@ function start(response, { oldDocument = false, demo = false, search } = {}) {
   const requests=[];
   const run = vm.runInNewContext(source, { window, document,
     location: { search: search ?? (demo ? '?demo=1&as=jack' : '?project=new-project'), origin: 'https://weft.example', reload() { reloads++; } },
-    URL, URLSearchParams, AbortSignal, structuredClone, fetch: (path,options) => { requests.push(path); return typeof response==='function'?response(options):response; },
+    URL, URLSearchParams, AbortSignal: abortSignal, structuredClone, fetch: (path,options) => { requests.push(path); return typeof response==='function'?response(options):response; },
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
     inviteLabel, requests, reloads: () => reloads, redirect: () => redirect };
@@ -285,6 +285,92 @@ test('a snapshot confirmation is a read-only check and never replaces the displa
   assert.equal(pending.newerRevision,2);
   assert.equal(store.getSnapshotRevision(),1);
   assert.deepEqual(fixture.requests,Array(4).fill('/api/workspace?project=new-project'));
+});
+
+function controlledDeadlines() {
+  const deadlines=[];
+  return { deadlines, abortSignal: { timeout(ms) {
+    const controller=new AbortController();
+    deadlines.push({ms,controller});
+    return controller.signal;
+  } } };
+}
+const timeout=()=>new DOMException('Fictional read deadline expired','TimeoutError');
+
+test('snapshot confirmation bounds a stalled authenticated read and can retry the same snapshot',async()=>{
+  const {deadlines,abortSignal}=controlledDeadlines(), started=deferred();
+  let reads=0;
+  const fixture=start(options=>{
+    assert.equal(options.method,'GET');
+    if(++reads!==2)return success(state);
+    started.resolve(options);
+    return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+  },{abortSignal});
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore(),newer=[];
+  const pending=store.confirmSnapshotRevision(1,revision=>newer.push(revision));
+  const options=await started.promise;
+  assert.equal(options.signal,deadlines[0].controller.signal);
+  assert.equal(deadlines[0].ms,10000);
+  assert.equal(options.cache,'no-store');
+  const rejected=assert.rejects(pending,{name:'TimeoutError'});
+  deadlines[0].controller.abort(timeout());
+  await rejected;
+  assert.deepEqual(newer,[]);
+  assert.equal(store.getSnapshotRevision(),1);
+  assert.equal(await store.confirmSnapshotRevision(1),true);
+  assert.equal(reads,3);
+});
+
+test('confirmation and refresh can time out behind a stalled save without aborting the save or reading afterward',async()=>{
+  const {deadlines,abortSignal}=controlledDeadlines(), write=deferred(), started=deferred();
+  let reads=0;
+  const fixture=start(options=>{
+    if(options.method==='POST'){started.resolve(options);return write.promise;}
+    reads++;return success(state);
+  },{abortSignal});
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore(),newer=[];
+  const saving=store.addTask({title:'Fictional task'});
+  const writeOptions=await started.promise;
+  const checking=store.confirmSnapshotRevision(1,revision=>newer.push(revision));
+  const refreshing=store.refresh(()=>true,{requireFresh:true});
+  const rejected=assert.rejects(refreshing,{name:'TimeoutError'});
+  assert.deepEqual(deadlines.map(deadline=>deadline.ms),[10000,10000]);
+  for(const {controller} of deadlines)controller.abort(timeout());
+  await rejected;
+  assert.equal(await checking,false,'an unsettled local save makes the check inconclusive');
+  assert.equal(reads,1);
+  assert.equal(writeOptions.signal,undefined);
+  write.resolve(success({...state,revision:2,result:'saved'}));
+  assert.equal(await saving,'saved');
+  assert.equal(store.getSnapshotRevision(),2);
+  assert.equal(reads,1);
+  assert.deepEqual(newer,[]);
+});
+
+test('a local save started during a stalled confirmation keeps it inconclusive when the read aborts',async()=>{
+  const {deadlines,abortSignal}=controlledDeadlines(), reading=deferred(), writing=deferred(), write=deferred();
+  let reads=0;
+  const fixture=start(options=>{
+    if(options.method==='POST'){writing.resolve();return write.promise;}
+    if(++reads!==2)return success(state);
+    reading.resolve();
+    return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));
+  },{abortSignal});
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore(),newer=[];
+  const checking=store.confirmSnapshotRevision(1,revision=>newer.push(revision));
+  await reading.promise;
+  const saving=store.addTask({title:'Fictional task'});
+  await writing.promise;
+  deadlines[0].controller.abort(timeout());
+  assert.equal(await checking,false);
+  assert.equal(store.getSnapshotRevision(),1);
+  assert.deepEqual(newer,[]);
+  write.resolve(success({...state,revision:2,result:'saved'}));
+  assert.equal(await saving,'saved');
+  assert.equal(store.getSnapshotRevision(),2);
 });
 
 test('verified refresh passes the candidate revision before publishing and holds below a known minimum',async()=>{

@@ -62,6 +62,7 @@
   let mutationGeneration = 0;
   let refreshGeneration = 0;
   let accessLost = false;
+  const snapshotReadDeadline = 10000;
   function stopAccess() {
     accessLost = true;
     if (snapshot) { snapshot.state = { tasks:[],members:[],messages:[],activity:[],memories:[],event:{} }; snapshot.exportState = {}; snapshot.suggestions = []; }
@@ -73,7 +74,7 @@
     window.GatherAccessLost = true;
     window.top.location.replace('/');
   }
-  async function request(body, timeout) {
+  async function request(body, signal) {
     if(accessLost)throw new Error('Project access changed. Return to Projects.');
     const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
@@ -83,7 +84,7 @@
       body: body ? JSON.stringify(body) : undefined,
       credentials: 'same-origin',
       cache: 'no-store',
-      ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (response.status === 401) window.top.location.href = signIn();
     if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
@@ -98,6 +99,19 @@
       throw error;
     }
     return result;
+  }
+  async function waitForSnapshotQueue(signal) {
+    let abort;
+    try {
+      await Promise.race([queue, new Promise((_, reject) => {
+        abort = () => reject(signal.reason);
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once:true });
+      })]);
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+    signal.throwIfAborted();
   }
   function validateIdentity(next) {
     if (snapshot && (next.identity.actorId !== snapshot.identity.actorId || next.identity.role !== snapshot.identity.role ||
@@ -178,10 +192,26 @@
       exportState: () => JSON.stringify(snapshot.exportState, null, 2),
       getSnapshotRevision: () => snapshot.revision,
       confirmSnapshotRevision: async (expected,onNewer) => {
-        await queue;
+        const signal=AbortSignal.timeout(snapshotReadDeadline);
         const report=revision=>{if(Number.isSafeInteger(revision)&&revision>expected)onNewer?.(revision);};
+        try {
+          await waitForSnapshotQueue(signal);
+        } catch (error) {
+          if(!signal.aborted)throw error;
+          // An unsettled local write is not the same as an offline read.
+          report(snapshot.revision);
+          return false;
+        }
         if(snapshot.revision!==expected){report(snapshot.revision);return false;}
-        const generation=mutationGeneration, latest=await request();
+        const generation=mutationGeneration;
+        let latest;
+        try {
+          latest=await request(undefined,signal);
+        } catch (error) {
+          if(generation===mutationGeneration&&snapshot.revision===expected)throw error;
+          report(snapshot.revision);
+          return false;
+        }
         validateIdentity(latest);
         if(!Number.isSafeInteger(latest.revision))throw new Error('Weft could not confirm the current plan.');
         report(Math.max(latest.revision,snapshot.revision));
@@ -192,9 +222,10 @@
         return () => listeners.delete(fn);
       },
       refresh: async (canApply, {requireFresh=false}={}) => {
-        await queue;
+        const signal=AbortSignal.timeout(snapshotReadDeadline);
+        await waitForSnapshotQueue(signal);
         const base=snapshot.revision, generation=mutationGeneration, refreshId=++refreshGeneration;
-        const latest=await request(undefined,requireFresh?10000:undefined);
+        const latest=await request(undefined,signal);
         validateIdentity(latest);
         if(requireFresh&&(!Number.isSafeInteger(latest.revision)||!Array.isArray(latest.state?.tasks)))return {changed:false};
         if(refreshId!==refreshGeneration)return {changed:false};
@@ -262,7 +293,7 @@
           while (args.length < count[method]) args.push(null);
           const revision = snapshot.revision;
           const next = queue.then(async () => {
-            const response = await request({ method, args, revision },method==='addRelatedTasks'?15000:undefined);
+            const response = await request({ method, args, revision },method==='addRelatedTasks'?AbortSignal.timeout(15000):undefined);
             if(method==='addRelatedTasks'&&(!Number.isSafeInteger(response?.revision)||response.revision<=revision||!Array.isArray(response.state?.tasks)))
               throw new Error('Weft could not confirm the saved project.');
             publish(response);
