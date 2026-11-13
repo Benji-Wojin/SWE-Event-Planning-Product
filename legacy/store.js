@@ -25,6 +25,9 @@
     Object.keys(value).every(key => ['start','end','location'].includes(key)) && validLocalTime(value.start) &&
     typeof value.end === 'string' && (value.end === '' || validLocalTime(value.end) && value.end > value.start) &&
     typeof value.location === 'string' && value.location.length <= 240;
+  const validScheduleReconfirmation = value => !!value && typeof value==='object' && !Array.isArray(value) &&
+    Object.keys(value).length===3 && typeof value.owner==='string' && !!value.owner &&
+    validSchedule(value.previous) && (value.previous ? validZone(value.timeZone) : value.timeZone===''||validZone(value.timeZone));
   function taskOutcome(value) {
     if(typeof value!=='string'||value.length>3000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value))throw new Error('Describe the required outcome in 3,000 characters or fewer.');
     return value.trim();
@@ -181,6 +184,8 @@
       task.noteCommentCount ??= null;
       task.completionReview ??= null;
       for (const field of ['acceptedAt','acceptedBy','reportedAt','reportedBy','verifiedAt','verifiedBy','followupAfter']) task[field] = typeof task[field] === 'string' ? task[field] : '';
+      if(!validScheduleReconfirmation(task.scheduleReconfirmation)||task.scheduleReconfirmation.owner!==task.owner||
+        task.acceptedAt||task.reportedAt||task.verifiedAt||task.status==='done')delete task.scheduleReconfirmation;
       task.requiresVerification = Boolean(task.requiresVerification);
       task.priority = ['auto', 'high', 'low'].includes(task.priority) ? task.priority : 'auto';
       task.essential = task.essential === true;
@@ -276,6 +281,7 @@
       if (next.status!==previousStatus && (next.status==='done'||previousStatus==='done')) {task.planReviewAfter='';task.followupAfter='';task.followupSentAt='';}
       if (changed.includes('dueDate')) task.deadlineHistory.push({from:task.dueDate,to:next.dueDate,at:timestamp(),actor});
       if (changed.includes('owner') || changed.includes('dueDate') || next.status === 'done') closeRecovery(task, 'superseded', actor);
+      if(changed.includes('owner')||next.status==='done')delete task.scheduleReconfirmation;
       if (changed.includes('owner')) { task.nextUpAt=''; task.nextUpBy=''; task.ownerRespondedAt=''; task.followupSentAt=''; task.planReviewAfter=''; }
       if (changed.includes('note') && actor === next.owner) task.ownerRespondedAt = timestamp();
       changed.forEach((field) => { task[field] = next[field]; });
@@ -330,12 +336,17 @@
       if(issue)throw new Error(calendar.scheduleTimeMessage(issue,state.event.timeZone));
       return data ? {start:data.start,end:data.end,location:data.location.trim()} : null;
     }
+    function rememberAcceptedSchedule(task) {
+      if(!task.owner||task.status==='done'||task.reportedAt||task.verifiedAt||!(task.acceptedAt||task.nextUpAt))return false;
+      task.scheduleReconfirmation={owner:task.owner,previous:copy(task.schedule),timeZone:state.event.timeZone};
+      return true;
+    }
     function setTaskSchedule(taskId, data, actor = 'jack') {
       actorId(actor);
       const task = taskById(taskId), schedule = scheduleFields(data, actor, task.schedule);
       if (JSON.stringify(task.schedule) === JSON.stringify(schedule)) return copy(task);
       const hadSchedule=!!task.schedule;
-      const reconfirm=task.owner&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&(task.acceptedAt||task.nextUpAt);
+      const reconfirm=rememberAcceptedSchedule(task);
       task.schedule = schedule;
       if(reconfirm){
         for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
@@ -412,7 +423,7 @@
       if (active.length>=3&&!replace) throw new Error('You already have three next tasks. Choose one to swap.');
       if (replace) {replace.nextUpAt='';replace.nextUpBy='';replace.revision++;}
       task.nextUpAt=timestamp();task.nextUpBy=actor;task.revision++;
-      if (!task.acceptedAt) {task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';}
+      if (!task.acceptedAt) {task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';delete task.scheduleReconfirmation;}
       entry(actor,`committed to ${task.title} next${replace?`; moved ${replace.title} back to other work`:''}`,task.id,'next-up');save();return copy(task);
     }
     function requestRecovery(taskId, data, actor='jack') {
@@ -661,6 +672,7 @@
       if(ownerMail&&received>Date.parse(task.ownerRespondedAt||'1970-01-01'))task.ownerRespondedAt=new Date(received).toISOString();
       if (before) message.before = before;
       if (completionReport && !task.verifiedAt) {
+        delete task.scheduleReconfirmation;
         closeRecovery(task,'superseded',actor);
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
         task.completionReview=null;
@@ -674,7 +686,8 @@
       }
       if (completionReport && task.status === 'done' && !task.verifiedAt) captureCompletion(task, actor, message.sender);
       message.appliedTaskId = task.id;
-      if (message.suggested.signal === 'acceptance' && ownerMail && received>Date.parse(task.acceptedAt||'1970-01-01')) { task.acceptedAt = new Date(received).toISOString(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
+      // An acceptance email does not confirm that the owner reviewed a revised slot.
+      if (message.suggested.signal === 'acceptance' && ownerMail && !task.scheduleReconfirmation && received>Date.parse(task.acceptedAt||'1970-01-01')) { task.acceptedAt = new Date(received).toISOString(); task.acceptedBy = task.owner; task.acceptedSourceId = message.id; task.acceptedRecordedBy = actor; }
       message.appliedAt = timestamp();
       message.appliedBy = actor;
       message.approved = {...copy(proposed),...Object.fromEntries(['title','owner','status','dueDate','note','category'].map(field=>[field,task[field]]))};
@@ -698,7 +711,7 @@
     function acceptTask(taskId, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       if (task.owner !== actor) throw new Error('Only the assigned owner can accept this commitment.');
-      if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
+      if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; delete task.scheduleReconfirmation; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
       return copy(task);
     }
     function assignTasks(input, actor = 'jack') {
@@ -734,7 +747,7 @@
       }
       const pending=tasks.filter(task=>!task.acceptedAt);
       for(const task of pending){
-        task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';task.revision++;
+        task.acceptedAt=timestamp();task.acceptedBy=actor;task.acceptedSourceId='';task.acceptedRecordedBy='';delete task.scheduleReconfirmation;task.revision++;
         entry(actor,`accepted responsibility for ${task.title}`,task.id,'accepted');
       }
       if(pending.length)save();
@@ -774,6 +787,7 @@
       if (task.verifiedAt) return copy(task);
       requireResolvedDependencies(task);
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
+      delete task.scheduleReconfirmation;
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
       recordNoteAttribution(task, actor, task.reportedAt);
@@ -902,7 +916,7 @@
       const at=timestamp();
       for(const {task,row,item} of changes){
         if(item.moveDue){task.deadlineHistory.push({from:task.dueDate,to:row.due,at,actor});task.dueDate=row.due;}
-        if(item.moveSchedule)task.schedule=copy(row.schedule);
+        if(item.moveSchedule){rememberAcceptedSchedule(task);task.schedule=copy(row.schedule);}
         closeRecovery(task,'superseded',actor);
         for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
         task.revision++;

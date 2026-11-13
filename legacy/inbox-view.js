@@ -31,7 +31,8 @@
       ${diff.changed.length?`<table class="change-table"><thead><tr><th scope="col">Field</th><th scope="col">${diff.isNew?'Before':'Current'}</th><th scope="col">${diff.isNew?'New task':'After accepting'}</th></tr></thead><tbody>${diff.changed.map(f=>`<tr><th scope="row">${changeNames[f.key]}</th><td>${diff.isNew?'—':changeValue(f.key,f.before)}</td><td>${changeValue(f.key,f.after)}</td></tr>`).join('')}</tbody></table>`:'<p class="change-noop">Accepting will attach this email as a source; no field values change.</p>'}
       ${diff.unchanged.length?`<p class="unchanged-fields">Unchanged: ${diff.unchanged.map(f=>changeNames[f.key].toLowerCase()).join(', ')}.</p>`:''}
       ${diff.waitsForVerification?'<p class="verification-explanation">Completion is reported, not verified. This task will remain in progress until the organizer verifies it.</p>':diff.reportsCompletion&&!diff.current?.verifiedAt?'<p class="verification-explanation">This records a completion report from the email, not independent verification.</p>':''}
-      ${diff.current&&diff.after.owner!==diff.current.owner?'<p class="verification-explanation">Changing the owner resets their acceptance; the new owner will need to acknowledge the task.</p>':''}`;
+      ${diff.current&&diff.after.owner!==diff.current.owner?'<p class="verification-explanation">Changing the owner resets their acceptance; the new owner will need to acknowledge the task.</p>':''}
+      ${diff.current?.scheduleReconfirmation&&diff.after.owner===diff.current.owner&&message.suggested.signal==='acceptance'?'<p class="verification-explanation">This email won’t reconfirm the changed schedule. The task owner still needs to review it and accept in Weft.</p>':''}`;
   }
   function emailReader(m,s) {
     if(m.ignoredAt)return `<div class="review-result"><span class="eyebrow">SET ASIDE</span><h3>No task changes made</h3><p>Email kept in history.</p></div>`;

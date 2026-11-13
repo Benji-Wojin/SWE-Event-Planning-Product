@@ -660,7 +660,7 @@
     const changed=previous.size-selectedCount;
     const choices=tasks.map(task=>{
       const key=h(task.id);
-      const when=task.schedule?`Activity: ${h(GatherScheduleUI.dateLabel(task.schedule.start))} · ${h(GatherScheduleUI.range(task.schedule))} · ${h(state.event.timeZone)}${task.schedule.end?'':' · No end time set'} · ${h(task.schedule.location||'No location entered')}`:task.eventActivity===true?'Planned activity · start time not set':'';
+      const when=schedule.reconfirmation?.(task,state.event,ui.actor)||(task.schedule?`Activity: ${h(GatherScheduleUI.dateLabel(task.schedule.start))} · ${h(GatherScheduleUI.range(task.schedule))} · ${h(state.event.timeZone)}${task.schedule.end?'':' · No end time set'} · ${h(task.schedule.location||'No location entered')}`:task.eventActivity===true?'Planned activity · start time not set':'');
       const readiness=assignmentReadiness(task,state.tasks);
       return `<div class="acceptance-choice">
         <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}"${keep(task)?' checked':''} aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
@@ -1926,6 +1926,7 @@
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
+      ${schedule.reconfirmation?.(task,taskState.event,ui.actor)||''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>

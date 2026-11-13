@@ -20,7 +20,7 @@ function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={})
     window:{GatherMode:{demo},GatherIdentity:{role},GatherAccessLost:lost},
     joinWelcome:welcome,renderedTeammateHandoff:'',document:{activeElement:null},
     $:selector=>selector==='#workspaceHandoff'?host:null,store:{getState:()=>state},
-    GatherPriorities,GatherScheduleUI,h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
+    GatherPriorities,GatherScheduleUI,schedule:GatherScheduleUI.create({h:escape}),h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
     navigate:view=>{ctx.ui.view=view;actions.push(view);return true;},
     filteredTasks:()=>state.tasks.filter(item=>item.owner==='maya'),
     skipToContent:()=>actions.push('focus'),toast:message=>actions.push(message),

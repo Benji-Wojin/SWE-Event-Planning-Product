@@ -323,6 +323,21 @@
     function needsZone() {
       return '<p class="muted">Set the event time zone before scheduling activities.</p><button class="btn btn-secondary" data-action="event-context">Project settings</button>';
     }
+    function reconfirmation(task,event,actor) {
+      const change=task.scheduleReconfirmation;
+      if(!change||!actor||change.owner!==actor||task.owner!==actor||task.acceptedAt||
+        task.reportedAt||task.verifiedAt||task.status==='done')return '';
+      const facts=(slot,timeZone)=>{
+        if(!slot)return 'Not on the schedule';
+        const summary=activitySummary({schedule:slot},timeZone);
+        const fields=[summary.timing,summary.location,summary.warning].filter(Boolean);
+        return h(fields.join(' · '));
+      };
+      const previous=change.previous,current=task.schedule;
+      const matches=!previous&&!current||previous&&current&&change.timeZone===event.timeZone&&
+        previous.start===current.start&&previous.end===current.end&&previous.location===current.location;
+      return `<span class="schedule-reconfirmation"><strong>Review schedule changes before accepting again</strong><span><strong>Before changes:</strong> ${facts(previous,change.timeZone)}</span><span><strong>Current schedule:</strong> ${facts(current,event.timeZone)}</span><span class="muted">${matches?'The current schedule matches the earlier one, but you still need to accept again.':'Your previous acceptance was cleared.'} Progress is unchanged.</span></span>`;
+    }
     function overlapMarkup(kinds) {
       return kinds.map(kind=>`<span class="schedule-overlap-label">${overlapLabel[kind]}</span>`).join('');
     }
@@ -534,7 +549,7 @@
         <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
-    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm};
+    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
