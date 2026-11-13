@@ -255,10 +255,50 @@
     const suggestions=panel&&$('[data-next-up-suggestions]',panel);
     if(suggestions&&suggestions.open!==(suggestions.dataset.nextUpDefault==='open'))return suggestions.open;
   }
+  function sameWrapReview(oldPanel,newPanel) {
+    return !!oldPanel&&!!newPanel&&oldPanel.dataset.wrapActor===newPanel.dataset.wrapActor&&
+      oldPanel.dataset.wrapScope===newPanel.dataset.wrapScope;
+  }
+  function wrapReviewOverrides(panel) {
+    return panel?$$('[data-wrap-group]',panel)
+      .filter(group=>group.open!==(group.dataset.wrapDefault==='open'))
+      .map(group=>[group.dataset.wrapGroup,group.open]):[];
+  }
+  function restoreWrapReviewDisclosures(oldPanel,overrides,root) {
+    const panel=$('[data-wrap-review]',root);
+    if(!sameWrapReview(oldPanel,panel))return;
+    for(const group of $$('[data-wrap-group]',panel)){
+      const choice=overrides.find(([key])=>key===group.dataset.wrapGroup);
+      if(choice)group.open=choice[1];
+    }
+  }
+  function restoreWrapReviewFocus(previous,root) {
+    if(ui.view!=='memory'||window.GatherAccessLost||!root||root.closest('[hidden],[inert]')||
+      previous?.dataset.action!=='wrap-review-task')return false;
+    const panel=$('[data-wrap-review]',root);
+    if(!panel||panel.closest('[hidden],[inert]')||!sameWrapReview(previous.closest('[data-wrap-review]'),panel))return false;
+    const row=$$('[data-action="wrap-review-task"]',panel).find(button=>button.dataset.id===previous.dataset.id&&
+      !button.matches(':disabled')&&!button.closest('[hidden],[inert]'));
+    if(row){
+      const group=row.closest('[data-wrap-group]');
+      if(group)group.open=true;
+      if(!hiddenByClosedDisclosure(row)&&focusScheduleTarget(row))return true;
+    }
+    const key=previous.closest('[data-wrap-group]')?.dataset.wrapGroup;
+    const group=$$('[data-wrap-group]',panel).find(item=>item.dataset.wrapGroup===key);
+    const scope=$('[data-action="wrap-up-scope"][aria-pressed="true"]',panel);
+    for(const target of [group&&$('summary',group),scope,$('#wrapUpReviewHeading',panel)])
+      if(target&&target.getClientRects().length&&!target.closest('[hidden],[inert]')&&focusScheduleTarget(target))return true;
+    return false;
+  }
   function restoreViewFocus(previous,root) {
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
     if(isScheduleControl(previous))
       return restoreScheduleFocus(previous,root);
+    if(previous.dataset.action==='wrap-review-task')
+      return restoreWrapReviewFocus(previous,root);
+    if(previous.dataset.wrapLesson||previous.id==='wrapUpLessons')
+      return focusWrapLesson(previous.dataset.wrapLesson,root);
     if(!previous.dataset.taskFocus)return restoreFocus(previous,root);
     if(ui.view!=='tasks'||ui.taskView!=='list'||root.closest('[hidden],[inert]'))return false;
     if(restoreFocus(previous,root))return true;
@@ -686,7 +726,7 @@
   function memoryView(s) {
     const reuse=isOrganizer()&&s.tasks.some(task=>!ui.wrapMine||task.owner===ui.actor)
       ?'<button class="btn btn-secondary" data-action="reuse-checklist">Reuse tasks for another event</button>':'';
-    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-task">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+GatherWrapUp.markup(s,{h,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card"><span class="memory-category">${h(m.category||'Team learning')}</span><h2>${h(m.change)}</h2>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button></article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
+    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-task">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+GatherWrapUp.markup(s,{h,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons" tabindex="-1">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card"><span class="memory-category">${h(m.category||'Team learning')}</span><h3 class="wrap-up-lesson-title" data-wrap-lesson="${h(m.id)}" tabindex="-1">${h(m.change)}</h3>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button></article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
   }
 
   function reminderScope() {
@@ -761,6 +801,8 @@
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const oldNextUp=currentNextUpPanel($('#viewRoot'));
     const nextUpOpen=nextUpDisclosureOverride(oldNextUp);
+    const oldWrap=ui.view==='memory'?$('[data-wrap-review]',$('#viewRoot')):null;
+    const wrapOverrides=oldWrap?wrapReviewOverrides(oldWrap):[];
     const s=store.getState();
     paintNotifications(s);
     paintTeammateHandoff(s);
@@ -782,6 +824,7 @@
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
     restoreNextUpDisclosure(oldNextUp,nextUpOpen,$('#viewRoot'));
+    if(oldWrap)restoreWrapReviewDisclosures(oldWrap,wrapOverrides,$('#viewRoot'));
     if(taskListScroll){const table=$('.task-table-wrap');if(table)table.scrollLeft=taskListScroll;}
     restoreScheduleDateDraft(scheduleDateDraft);
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
@@ -894,8 +937,8 @@
     ui.relatedChecklistDraft=null;
     ui.relatedBatch=null;
     const view=$('#viewRoot');
-    const scheduleOpener=isScheduleControl(ui.lastFocus);
-    if(!(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
+    const scheduleOpener=isScheduleControl(ui.lastFocus),wrapOpener=ui.lastFocus?.dataset?.action==='wrap-review-task';
+    if(!(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):wrapOpener?restoreWrapReviewFocus(ui.lastFocus,view):restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
       view.querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
@@ -924,6 +967,20 @@
       $(selector,$('#dialog'))?.focus();
     });
     return true;
+  }
+  function openWrapReviewTask(id,opener) {
+    if(ui.view!=='memory'||window.GatherAccessLost||!$('#dialogBackdrop').hidden||
+      !opener?.isConnected||opener.dataset.action!=='wrap-review-task'||opener.dataset.id!==id||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    const panel=$('[data-wrap-review]',$('#viewRoot'));
+    if(!panel?.contains(opener)||panel.dataset.wrapActor!==ui.actor||panel.dataset.wrapScope!==(ui.wrapMine?'mine':'all'))return false;
+    const task=store.getState().tasks.find(item=>item.id===id&&(!ui.wrapMine||item.owner===ui.actor));
+    if(!task){render();toast('This task is no longer in this review.');return false;}
+    const kind=opener.dataset.wrapReviewKind;
+    const reviewed=isOrganizer()&&['completion','amendment'].includes(kind)&&openOrganizerReview(id,kind,'',true);
+    if(!reviewed)taskDialog(id,'',false,true);
+    if(ui.dialogKind==='task'&&ui.detailId===id){ui.lastFocus=opener;return true;}
+    return false;
   }
   function focusTaskRecovery(id,selector='#recoveryRequestHeading') {
     const actor=ui.actor;
@@ -1979,6 +2036,20 @@
   function feedbackDialog() {
     openDialog('Add lesson for next time',`<form id="feedbackForm"><div class="form-grid"><label class="field full-width">What worked well?<textarea name="wentWell" rows="2" maxlength="2000" placeholder="Keep the staggered bus departures…"></textarea></label><label class="field full-width">What should we repeat or do differently?<textarea name="change" required rows="3" maxlength="2000" placeholder="Keep a quiet space ready before guests arrive…"></textarea></label><label class="field">Area<select name="category">${options(['Guest care','Transport','Food & drink','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label><label class="field">Event rating (optional)<select name="rating">${options([['','Not rated'],['5','5 — Great'],['4','4 — Good'],['3','3 — Mixed'],['2','2 — Difficult'],['1','1 — Needs work']],'')}</select></label></div>${memoryFields()}<p class="notice">Suggestions use the selected event context. Written exceptions require manual review.</p><div class="form-actions"><button class="btn btn-primary" type="submit">Save lesson</button></div></form>`);
   }
+  function finishWrapUpLesson(id) {
+    const onWrapUp=ui.view==='memory';
+    closeDialog();
+    render();
+    if(!onWrapUp||window.GatherAccessLost||ui.view!=='memory')return false;
+    focusWrapLesson(id,$('#viewRoot'));
+    return true;
+  }
+  function focusWrapLesson(id,root) {
+    if(ui.view!=='memory'||window.GatherAccessLost||!root||root.closest('[hidden],[inert]'))return false;
+    const lesson=id&&$$('[data-wrap-lesson]',root).find(item=>item.dataset.wrapLesson===id);
+    const target=lesson||$('#wrapUpLessons',root);
+    return !!target&&!target.closest('[hidden],[inert]')&&focusScheduleTarget(target);
+  }
   function thoughtDialog() {
     const suggestions=store.getSuggestions();
     openDialog('Automatic checks',`<h3 class="planning-checks-title">Rules, not AI</h3><details class="suggestion-details"><summary>How checks update</summary><p>These rule-based checks refresh as tasks, deadlines, event details, and feedback change. Optional AI suggestions live in the Overview sidebar. Ask Weft is coming soon.</p></details><button class="btn btn-secondary section-gap" data-action="event-context">${isOrganizer()?'Update event context':'Event details'}</button><div class="ai-panel section-gap" id="suggestionList">${suggestions.map(insightMarkup).join('')||empty('No automatic checks.','')}</div><button class="text-button section-gap" data-action="feedback">${icon('plus')} Add event feedback</button>`, '',true,'thought');
@@ -2135,6 +2206,7 @@
       if(action==='return-to-related-batch')returnToRelatedBatch();
       if(action==='inspect-overlap-peer')inspectOverlapPeer(id,el);
       if(action==='return-to-overlap-review')returnToOverlapReview();
+      if(action==='wrap-review-task')openWrapReviewTask(id,el);
       if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
@@ -2468,7 +2540,7 @@
         finally{ui.savingProposal=false;}
       }
       if(form.id==='pasteForm'){const m=store.addMessage(data,ui.actor);ui.messageId=m.id;closeDialog();release();navigate('inbox');toast('Message saved. Review its next step before applying.');}
-      if(form.id==='feedbackForm'){store.addMemory({...data,rating:Number(data.rating)},ui.actor);closeDialog();render();thoughtDialog();toast('Feedback saved.');}
+      if(form.id==='feedbackForm'){const lesson=store.addMemory({...data,rating:Number(data.rating)},ui.actor);if(!finishWrapUpLesson(lesson?.id)&&!window.GatherAccessLost)thoughtDialog();toast('Lesson saved.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
       if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
       if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
@@ -2497,7 +2569,7 @@
         }
         store.updateEvent(data,ui.actor);closeDialog();render();toast('Event details saved.');
       }
-      if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);closeDialog();render();toast('Feedback updated.');}
+      if(form.id==='memoryEditForm'){store.updateMemory(form.dataset.id,data,ui.actor);finishWrapUpLesson(form.dataset.id);toast('Lesson updated.');}
       if(form.id==='recordFollowupForm'){store.recordFollowup(form.dataset.id,data.afterDate,ui.actor);closeDialog();render();toast('Follow-up recorded.');}
       if(form.id==='privateLoginForm'){
         if(!ui.privateConfigured&&data.passphrase!==data.confirm)throw new Error('The passphrases do not match.');

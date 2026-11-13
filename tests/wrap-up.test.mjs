@@ -79,6 +79,30 @@ test('hosted and local entry points load the versioned wrap-up renderer and pres
   const app=readFileSync('public/gather-assets/app.js','utf8');assert.match(app,/GatherWrapUp\.markup\(/);assert.match(app,/action==='wrap-up-scope'/);
   assert.match(readFileSync('legacy/navigation.js','utf8'),/'memory'/);
 });
+test('saving a Wrap up lesson returns to its exact record and later repaint retains that focus',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const before=source.indexOf('  function finishWrapUpLesson('),after=source.indexOf('  function thoughtDialog()',before);
+  const restore=source.indexOf('  function restoreViewFocus('),next=source.indexOf('  function saveLock(',restore);
+  const calls=[],heading={id:'wrapUpLessons'},root={closest:()=>null};
+  const card=id=>({dataset:{wrapLesson:id},textContent:'Same lesson title',closest:()=>null});
+  heading.closest=()=>null;
+  let cards=[card('other'),card('saved')];
+  const doc={body:{}};doc.activeElement=doc.body;
+  const ui={view:'memory'},window={};
+  const ctx=vm.createContext({ui,window,document:doc,$:key=>key==='#viewRoot'?root:heading,$$:()=>cards,
+    closeDialog:()=>calls.push('close'),render:()=>calls.push('render'),isScheduleControl:()=>false,
+    focusScheduleTarget:target=>{calls.push(target);return true;}});
+  vm.runInContext(source.slice(before,after)+source.slice(restore,next),ctx);
+  assert.equal(ctx.finishWrapUpLesson('saved'),true);
+  assert.deepEqual(calls.splice(0),['close','render',cards[1]]);
+  const old=cards[1];old.isConnected=false;cards=[card('other'),card('saved')];
+  assert.equal(ctx.restoreViewFocus(old,root),true);assert.deepEqual(calls.splice(0),[cards[1]]);
+  cards=[card('other')];
+  assert.equal(ctx.restoreViewFocus(old,root),true);assert.deepEqual(calls.splice(0),[heading]);
+  ui.view='overview';
+  assert.equal(ctx.finishWrapUpLesson('saved'),false);assert.deepEqual(calls,['close','render']);
+  assert.match(source,/if\(!finishWrapUpLesson\(lesson\?\.id\)&&!window\.GatherAccessLost\)thoughtDialog\(\)/);
+});
 test('the reuse picker projects only titles and display groups, and copies chosen text in source order',()=>{
   const s=state([
     row('internal-one',{title:'2. Confirm\nmain entrance',note:'PRIVATE_NOTE',dueDate:'2030-01-01',schedule:{location:'PRIVATE_LOCATION'}}),
