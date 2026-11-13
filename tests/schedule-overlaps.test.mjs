@@ -58,7 +58,7 @@ test('timeline and details show a concise warning with escaped links, not extra 
   const datedRows=html.match(/<button class="schedule-row"[^>]*>[\s\S]*?<\/button>/g)||[];
   assert.match(html,/2 activities have owner overlaps/);
   assert.equal(datedRows.filter(row=>row.includes('>Owner overlap<')).length,2);
-  assert.match(details,/Owner overlap · 1 activity/);assert.match(details,/data-action="task" data-id="b&quot;&lt;&gt;"/);
+  assert.match(details,/Owner overlap · 1 activity/);assert.match(details,/data-action="inspect-overlap-peer" data-id="b&quot;&lt;&gt;" data-overlap-kind="owner"/);
   assert.match(details,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.doesNotMatch(details,/<img|<form/);
   assert.match(details,/Ask the organizer/);assert.match(details,/An end time is missing/);
   assert.match(ui.details(tasks[0],true,event,tasks),/id="scheduleForm"/);

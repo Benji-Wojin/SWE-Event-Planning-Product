@@ -165,7 +165,7 @@
       target.focus({preventScroll:true});return true;
     }
     let target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
-      el.tagName===previous.tagName&&['action','id','view','filter','reviewKind','scheduleDay'].every(key=>el.dataset[key]===previous.dataset[key])&&
+      el.tagName===previous.tagName&&['action','id','view','filter','reviewKind','scheduleDay','overlapKind'].every(key=>el.dataset[key]===previous.dataset[key])&&
       (previous.dataset.id||el.textContent===previous.textContent));
     if(!target&&['task','review-organizer-item'].includes(previous.dataset.action)&&previous.classList?.contains('schedule-focus-task')){
       const rows=focusable(root).filter(el=>el.classList.contains('schedule-row')&&el.dataset.action==='task'&&el.dataset.id===previous.dataset.id);
@@ -846,6 +846,7 @@
     if(!['task','delete-task','related-checklist','related-review'].includes(kind)){
       ui.eventTaskReview=null;ui.acceptanceReturn=null;
     }
+    if(!['task','delete-task'].includes(kind))ui.overlapComparison=null;
     if($('#sidebar').classList.contains('open'))setDrawer(false);
     if($('#dialogBackdrop').hidden)ui.lastFocus=document.activeElement;
     tour.close({restoreFocus:false});
@@ -856,7 +857,10 @@
     const reviewBack=kind==='task'&&ui.eventTaskReview&&ui.eventTaskReview.actor===ui.actor&&!window.GatherAccessLost;
     const assignmentBack=kind==='task'&&ui.acceptanceReturn&&ui.acceptanceReturn.actor===ui.actor&&ui.acceptanceReturn.view===ui.view&&!window.GatherAccessLost;
     const back=assignmentBack?['return-to-acceptance-review','Back to assignment review']:reviewBack?['return-to-event-task-review','Back to event review']:null;
-    $('#dialog').innerHTML=`<div class="dialog-header">${back?`<div class="event-review-task-heading">${heading}<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button></div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
+    const comparisonBack=kind==='task'&&ui.overlapComparison&&activeOverlapComparison();
+    const backButtons=(comparisonBack?'<button type="button" class="text-button" data-action="return-to-overlap-review">← Back to overlap review</button>':'')+
+      (back?`<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button>`:'');
+    $('#dialog').innerHTML=`<div class="dialog-header">${backButtons?`<div class="event-review-task-heading">${heading}${backButtons}</div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
     $('#dialogBackdrop').classList.add('open');
     $('#appShell').inert=true;
@@ -880,6 +884,7 @@
     $('#dialog').replaceChildren();
     ui.dialogKind='';
     ui.overlapReviewDay='';
+    ui.overlapComparison=null;
     ui.eventTaskReview=null;
     ui.acceptanceReturn=null;
     ui.guestAgenda=null;
@@ -956,6 +961,70 @@
       for(const disclosure of disclosures)disclosure.open=true;
       if(disclosures.length)focusTaskDialogControl($('summary',disclosures[0]),dialog);
     });
+  }
+  function overlapComparisonInScope(comparison) {
+    return !!comparison&&!window.GatherAccessLost&&comparison.actor===ui.actor&&comparison.view===ui.view&&
+      comparison.project===(window.GatherMode?.projectId||'');
+  }
+  function activeOverlapComparison() {
+    const comparison=ui.overlapComparison;
+    return overlapComparisonInScope(comparison)&&comparison.peerId===ui.detailId?comparison:null;
+  }
+  function inspectOverlapPeer(id,opener) {
+    const dialog=$('#dialog'),kind=opener.dataset.overlapKind;
+    const disclosure=opener.closest('[data-schedule-overlap-kind]');
+    if(window.GatherAccessLost||ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||!opener.isConnected||
+      !disclosure?.open||!dialog.contains(disclosure)||disclosure.dataset.scheduleOverlapKind!==kind||
+      opener.dataset.id!==id||opener.dataset.action!=='inspect-overlap-peer')return false;
+    const current=activeOverlapComparison();
+    if(current?.originId===id)return returnToOverlapReview();
+    if(workspaceUpdatesPending()){
+      showPendingUpdate();toast('Refresh the project before comparing this overlap.');
+      return false;
+    }
+    const state=store.getState(),originId=ui.detailId;
+    if(!GatherScheduleUI.overlapPairIsCurrent(state,originId,id,kind)){
+      toast('This overlap is no longer current.');
+      return false;
+    }
+    ui.overlapComparison=current?{...current,peerId:id}:{
+      actor:ui.actor,project:window.GatherMode?.projectId||'',view:ui.view,originId,peerId:id,returnPeerId:id,kind,
+      relatedBatch:ui.relatedBatch&&{...ui.relatedBatch,ids:[...ui.relatedBatch.ids]},
+      reviewDay:ui.overlapReviewDay||'',openedKinds:$$('[data-schedule-overlap-kind]',dialog)
+        .filter(item=>item.open).map(item=>item.dataset.scheduleOverlapKind),
+    };
+    taskDialog(id,'',false,true);
+    return true;
+  }
+  function returnToOverlapReview() {
+    const comparison=activeOverlapComparison();
+    if(!comparison||!['task','delete-task'].includes(ui.dialogKind)||$('#dialogBackdrop').hidden)return false;
+    const {originId,returnPeerId,reviewDay,kind,openedKinds,relatedBatch}=comparison;
+    const state=store.getState();
+    ui.overlapComparison=null;
+    if(!state.tasks.some(task=>task.id===originId)){
+      closeDialog();toast('The original activity is no longer available.');
+      return true;
+    }
+    const stale=workspaceUpdatesPending();
+    const pair=!stale&&GatherScheduleUI.overlapPairIsCurrent(state,originId,returnPeerId,kind);
+    if(relatedBatch&&relatedBatchInScope(relatedBatch))ui.relatedBatch=relatedBatch;
+    taskDialog(originId,'',false,true,'',undefined,reviewDay);
+    if(stale)showPendingUpdate();
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||$('#dialogTitle',dialog)!==title||!overlapComparisonInScope(comparison)||
+        ui.dialogKind!=='task'||ui.detailId!==originId||$('#dialogBackdrop').hidden)return;
+      const disclosures=$$('[data-schedule-overlap-kind]',dialog);
+      for(const item of disclosures)if(openedKinds.includes(item.dataset.scheduleOverlapKind))item.open=true;
+      const origin=disclosures.find(item=>item.dataset.scheduleOverlapKind===kind);
+      const opener=pair&&!workspaceUpdatesPending()&&origin?.open&&$$('[data-action="inspect-overlap-peer"]',origin)
+        .find(item=>item.dataset.id===returnPeerId&&item.dataset.overlapKind===kind);
+      focusTaskDialogControl(opener||(origin&&$('summary',origin))||title,dialog);
+    });
+    if(stale)toast('Refresh the project to check whether this overlap is still current.');
+    else if(!pair)toast('That overlap is no longer current.');
+    return true;
   }
   function openReturnedCompletion(id) {
     if(window.GatherAccessLost)return;
@@ -1530,6 +1599,7 @@
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
+    if(ui.overlapComparison&&(!overlapComparisonInScope(ui.overlapComparison)||ui.overlapComparison.peerId!==id))ui.overlapComparison=null;
     ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
@@ -1576,7 +1646,7 @@
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
     window.GatherResourcesUI?.mount(id,$('#dialog'));
-    if(batch&&workspaceUpdatesPending())showPendingUpdate();
+    if((batch||ui.overlapComparison)&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -1983,7 +2053,7 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch');
+    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
     const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
@@ -2001,6 +2071,8 @@
       if(action==='return-to-acceptance-review')returnToAcceptanceReview();
       if(action==='open-related-batch-child')openRelatedBatchChild(id,el);
       if(action==='return-to-related-batch')returnToRelatedBatch();
+      if(action==='inspect-overlap-peer')inspectOverlapPeer(id,el);
+      if(action==='return-to-overlap-review')returnToOverlapReview();
       if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
@@ -2093,7 +2165,7 @@
       if(action==='confirm-delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='delete-task'&&ui.detailId===id){
         await store.deleteTask(id,Number(el.dataset.revision),ui.actor);
         if(ui.mapFocus===id)ui.mapFocus='';
-        render();if(!returnToRelatedBatch()){if(!returnToEventTaskReview())closeDialog();ui.detailId='';}
+        render();if(!returnToOverlapReview()&&!returnToRelatedBatch()){if(!returnToEventTaskReview())closeDialog();ui.detailId='';}
         toast('Task deleted.');
       }
       if(action==='review-task-owner'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -2289,7 +2361,7 @@
         if(!confirmFixedDate(form.dataset.id,data)||!confirmTaskOwnerChange(before,data))return;
         store.updateTask(form.dataset.id,data,ui.actor);
         const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;
-        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
+        render();if(keepDrafts||(ui.overlapComparison&&activeOverlapComparison()))taskDialog(form.dataset.id,form.id);else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
       }
