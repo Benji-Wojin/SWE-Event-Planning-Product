@@ -464,6 +464,9 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .review-card .form-actions>.muted,.form-actions>.muted,.dialog-footer>.muted{font-size:12px}
 .memory-card h2{font-size:18px;line-height:1.5;font-weight:600;letter-spacing:-.4px;margin:13px 0}
 .memory-card .wrap-up-lesson-title{color:inherit;font-size:18px;line-height:1.5;font-weight:600;letter-spacing:-.4px;margin:13px 0;overflow-wrap:anywhere}
+.memory-card [data-action="draft-lesson-follow-up"]{display:block;min-height:44px;text-align:left;white-space:normal}
+.lesson-follow-up-reference{margin-bottom:16px;overflow-wrap:anywhere}
+.lesson-follow-up-reference blockquote{margin:8px 0;padding-inline-start:12px;border-inline-start:2px solid currentColor}
 .memory-card>.text-button{margin-top:15px}
 .activity-content>.text-button{font-size:12px;margin-top:5px}
 .comment time{display:block;font-size:12px;color:#718364;margin-top:2px}
