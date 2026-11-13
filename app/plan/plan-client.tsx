@@ -13,6 +13,7 @@ import { planApprovalHash } from '@/lib/plan-approval-hash';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
 import { PlanGuideHint, type PlanGuideStage } from './guide-hint';
+import { PlanApprovalImpact } from './approval-impact';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
   eventKinds,
@@ -1348,10 +1349,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                   keep separate work.
                 </p>
               )}
-              <p className="text-sm text-muted-foreground">
-                Only selected items will be added, all as incomplete. Nothing
-                will be sent or booked.
-              </p>
+              <PlanApprovalImpact selected={selected} />
+              <p className="text-sm text-muted-foreground">Nothing will be sent or booked.</p>
               <Button
                 className="h-auto min-h-10 whitespace-normal"
                 disabled={

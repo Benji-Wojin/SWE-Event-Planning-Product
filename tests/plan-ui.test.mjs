@@ -4,11 +4,11 @@ import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 
 // Hook-level interaction tests, not a substitute for real-browser layout/accessibility QA.
-let PlanReview, PlanGuideHint;
+let PlanReview, PlanGuideHint, PlanApprovalImpact;
 before(async () => {
   const bundle = await build({
     stdin: {
-      contents: "export {PlanReview} from './app/plan/plan-client'; export {PlanGuideHint} from './app/plan/guide-hint';",
+      contents: "export {PlanReview} from './app/plan/plan-client'; export {PlanGuideHint} from './app/plan/guide-hint'; export {PlanApprovalImpact} from './app/plan/approval-impact';",
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -41,7 +41,7 @@ before(async () => {
       },
     ],
   });
-  ({ PlanReview, PlanGuideHint } = await import(
+  ({ PlanReview, PlanGuideHint, PlanApprovalImpact } = await import(
     'data:text/javascript;base64,' +
       Buffer.from(bundle.outputFiles[0].text).toString('base64')
   ));
@@ -103,8 +103,8 @@ function nodes(node) {
     ? []
     : Array.isArray(node)
       ? node.flatMap(nodes)
-      : node.type === PlanGuideHint
-        ? nodes(PlanGuideHint(node.props))
+      : node.type === PlanGuideHint || node.type === PlanApprovalImpact
+        ? nodes(node.type(node.props))
       : [node, ...nodes(node.props?.children)];
 }
 const planLink = (tree, label) => nodes(tree).find(node => node.type === 'a' && text(node) === label);
@@ -1753,6 +1753,79 @@ test('batch selection changes only inclusion, preserves draft edits, and never c
     assert.equal(app.find('note-two').props.value,'Keep this reviewed note.');
     assert(app.requests.every(r=>r.action==='get'));assert.match(text(app.tree),/1 of 3 proposals selected/);
   }finally{app.dispose();}
+});
+
+test('the selected-items preview updates draft-only scheduling impacts and disappears after approval', async () => {
+  const initial = fixture();
+  initial.draft.source = 'starter';
+  initial.draft.starterVersion = 5;
+  const timed = { ...copy(item), id: 'arrival', kind: 'activity', title: 'Welcome guests', start: '2030-10-04T09:00', location: 'Fictional arrival area' };
+  const untimed = { ...copy(item), id: 'cleanup', kind: 'activity', title: 'Close the venue', location: 'Fictional cleanup area' };
+  const unchecked = { ...copy(untimed), id: 'unchecked', title: 'Unchecked proposal', included: false };
+  const reused = { ...copy(untimed), id: 'reuse', title: 'Prepare refreshments', included: false, duplicateChoice: 'reuse' };
+  initial.draft.items = [copy(item), timed, untimed, unchecked, reused];
+  initial.existingTasks = [{ id: 'existing', title: 'Set up refreshments', start: '' }];
+  initial.existingTaskCount = 1;
+  initial.draft.duplicateSuggestions = [{ itemId: 'reuse', taskId: 'existing', taskIdentity: 'set up refreshments|',
+    itemIdentity: JSON.stringify([reused.title, reused.kind, reused.note, reused.dueDate, reused.start, reused.end, reused.location, reused.category]) }];
+  const app = harness(context => {
+    const { input, saved } = context;
+    if (input?.action === 'save') context.value = { ...saved, revision: 3, draft: { ...saved.draft, items: input.items } };
+    if (input?.action === 'apply') {
+      assert.deepEqual(input.items.find(row => row.id === unchecked.id), unchecked);
+      assert.deepEqual(input.items.find(row => row.id === reused.id), reused);
+      assert.deepEqual(input.items.filter(row => row.included).map(row => row.id), [item.id, timed.id, untimed.id]);
+      context.value = { ...saved, status: 'applied', receipt: { generation: input.generation,
+        approvalHash: approvalHash(input), taskIds: ['saved-one', 'saved-arrival', 'saved-cleanup'] } };
+    }
+  }, initial, 'project=p_example', false, true);
+  const preview = () => app.find('plan-approval-impact');
+  const summary = () => text(preview());
+  const untimedDisclosure = () => nodes(preview()).find(node => node.type === 'details');
+  const untimedTitles = () => nodes(untimedDisclosure()).filter(node => node.type === 'li').map(text);
+  try {
+    await app.start();
+    assert.equal(preview()?.type, 'section');
+    assert.match(summary(), /Selected items preview/);
+    assert.ok(nodes(preview()).some(node => node.type === 'strong' && text(node) === '1 preparation task'));
+    assert.match(summary(), /1 event-day activity with a start time entered/);
+    assert.match(summary(), /if the time passes validation/);
+    assert.match(summary(), /1 event-day activity without a start time/);
+    assert.match(summary(), /Needs a start time before appearing on the timetable or run sheet/i);
+    assert.match(summary(), /Locations entered without a start time go into shared task notes, not Timeline locations/);
+    assert.doesNotMatch(summary(), /Fictional (?:arrival|cleanup) area|Prepare refreshments|Set up refreshments/);
+    assert.match(text(untimedDisclosure()), /See activities that need a start time/);
+    assert.deepEqual(untimedTitles(), [untimed.title]);
+
+    await app.check('include-cleanup', false);
+    assert.doesNotMatch(summary(), /event-day activity without a start time|go into shared task notes/);
+    assert.equal(untimedDisclosure(), undefined);
+    await app.edit('date-arrival', '');
+    assert.match(summary(), /1 event-day activity without a start time/);
+    assert.doesNotMatch(summary(), /activity with a start time entered/);
+    assert.deepEqual(untimedTitles(), [timed.title]);
+    await app.edit('location-arrival', '');
+    assert.doesNotMatch(summary(), /go into shared task notes/);
+    await app.click('Select none');
+    assert.ok(preview(), 'the preview remains visible when nothing is selected');
+    assert.doesNotMatch(summary(), /event-day activit|preparation tasks?\b/);
+    assert.equal(planButton(app.tree, 'Add 0 selected items to project').props.disabled, true);
+
+    await app.check('include-one', true);
+    await app.check('include-arrival', true);
+    await app.check('include-cleanup', true);
+    assert.match(summary(), /2 event-day activities without a start time/);
+    assert.deepEqual(untimedTitles(), [timed.title, untimed.title]);
+    assert.equal(app.find('include-unchecked').props.checked, false);
+    assert.equal(app.find('include-reuse').props.checked, false);
+    assert.deepEqual(app.requests, [{ action: 'get' }], 'preview and edits do not write or call AI');
+    assert.deepEqual(app.saved, initial, 'no preview or draft edit changes shared facts');
+
+    await app.click('Add 3 selected items to project');
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'apply']);
+    assert.ok(app.find('plan-receipt-heading'));
+    assert.equal(preview(), undefined, 'the approval preview ends once the receipt exists');
+  } finally { app.dispose(); }
 });
 
 test('mixed starter groups can be selected separately, with required links still blocking apply',async()=>{

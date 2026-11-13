@@ -165,7 +165,7 @@ New or changed activity times must occur exactly once in the event time zone. A 
 
 Use **Copy day link** to share the live project date with a teammate. It does not grant access or send a message, and it does not copy your personal activity filter.
 
-In the private plan, **Paste a checklist** imports one title per line without calling AI. Imported tasks start unchecked and unassigned. If the shared plan changes, recheck a pasted draft without losing edits before adding anything.
+In the private plan, **Paste a checklist** imports one title per line without calling AI. Imported tasks start unchecked and unassigned. If the shared plan changes, recheck a pasted draft without losing edits before adding anything. Before adding any draft, **Selected items preview** distinguishes preparation tasks from activities with or without an entered start time. Untimed activities go into Shared tasks but need a start time before appearing on the timetable or run sheet. Locations entered without a time go into the shared task notes instead of the timetable.
 
 After adding a reviewed plan, open a task directly from the receipt. The organizer can refresh **Team handoff** to see which new tasks need assignment or completion review, which are waiting for acceptance or a revised submission, and which have been accepted or completed. Completion links open the current evidence or **Task relationships** when required work blocks verification; if the review is no longer pending, the link opens the task normally. Returned work with no active owner appears under assignment so it doesn't stall unnoticed.
 
