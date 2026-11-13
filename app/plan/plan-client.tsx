@@ -10,7 +10,8 @@ import { duplicateItemIdentity, planSelection, selectNewPlanItems, type Existing
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planApprovalHash } from '@/lib/plan-approval-hash';
-import { planTaskHref } from '@/lib/workspace-task-link';
+import { planActivityHref, planTaskHref } from '@/lib/workspace-task-link';
+import { workspaceScheduleDate } from '@/lib/workspace-day';
 import {AskWeftPanel} from './ask-weft-panel';
 import { examplePlanBrief, PlanGuideHint, type PlanGuideStage } from './guide-hint';
 import { PlanApprovalImpact } from './approval-impact';
@@ -171,15 +172,19 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const showHandoff=applied&&!assistant&&!suggestions;
   const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
   const untimedCount = showHandoff ? receiptTasks.filter(task => task.needsStartTime).length : 0;
-  function receiptTaskRow({id,title,handoff,needsStartTime}: PlanReceiptTask) {
+  function receiptTaskRow({id,title,handoff,needsStartTime,scheduleDay}: PlanReceiptTask) {
     const state=showHandoff?handoff?.state:undefined;
     const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':
       !embedded&&(state==='needs-owner'||state==='needs-reassignment')?'owner':'';
     const href = planTaskHref(params,id,guideReturn,review);
     const scheduleHref=showHandoff&&needsStartTime&&!embedded&&!demo?planTaskHref(params,id,guideReturn,'schedule'):'';
+    const timelineHref = showHandoff && !needsStartTime && !embedded && !demo && workspaceScheduleDate(scheduleDay)
+      ? planActivityHref(params, id, guideReturn) : '';
     return <li key={id} className="break-words">
       {href ? <a href={href} data-handoff-task={showHandoff ? id : undefined} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
       {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
+      {timelineHref && <a href={timelineHref} data-handoff-task={id} data-handoff-intent="timeline" aria-label={`Show ${title} in Timeline`}
+        className="inline-flex min-h-11 items-center text-primary underline">Show in Timeline</a>}
       {showHandoff && needsStartTime && <span className="flex flex-wrap items-center gap-x-3 font-medium">
         <span>Needs a start time</span>
         {scheduleHref && <a href={scheduleHref} data-handoff-task={id} data-handoff-intent="schedule" aria-label={`Set start time for ${title}`}

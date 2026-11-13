@@ -2,13 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/schedule-ui.js';
 
 const source=readFileSync('legacy/app.js','utf8');
 const part=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
 const notice=part('  function taskLinkNotice()', '  function tasksView(s)');
-const bootstrap=part('  const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
+const bootstrap=part('  ui.scheduleDate=navigation.initialScheduleDate();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
 const handoffLink=part('  function openTaskHandoffLink(', '  function openScheduleReconfirmation(');
-function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false}={}){
+function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false,activity='',date='',rows=[]}={}){
   const events=[];
   const ui={tab:'mine',actor:'fictional-actor'},title={},frames=[],document={activeElement:title};
   let updatesPending=false;
@@ -22,21 +23,52 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     };}},
     '#workspaceHandoffTitle':{focus(){events.push('welcome focus');}},
     '#dialogTitle':title,
+    '#schedulePanelHeading':{label:'schedule heading'},
   };
   const context=vm.createContext({
     ui,document,store:{getState:()=>({tasks,members:[{id:'active',active:true},{id:'former',active:false},{id:'example',role:'Member · example'}]})},taskLinkUnavailable:false,joinWelcome:false,
-    navigation:{takeInitialTaskLink:()=>({id,review}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
+    GatherScheduleUI,
+    navigation:{initialScheduleDate:()=>date,takeInitialActivityLink:()=>activity,takeInitialTaskLink:()=>({id,review}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
     window:{GatherMode:mode,GatherAccessLost:accessLost,dispatchEvent(){events.push('ready');}},Event,isLiveTeammate:()=>true,isOrganizer:()=>organizer,
-    navigate(view){ui.view=view;events.push(view);},syncGuide(){},$:selector=>elements[selector],
+    navigate(view,options){ui.view=view;if(options?.scheduleDay)ui.scheduleDate=options.scheduleDay;events.push(view);},syncGuide(){},$:selector=>elements[selector],
+    $$:selector=>selector==='.schedule-row'?rows:[],focusScheduleTarget(target){events.push(['focus',target?.label]);return !!target;},
+    toast:message=>events.push(['toast',message]),
     taskDialog(...args){if(args[7])args[7]={...args[7]};events.push(args);},
     requestAnimationFrame(fn){frames.push(fn);},focusTaskOwnerEditor(id){events.push(['owner focus',id]);},
     schedule:{firstTimeTask:(state,id)=>state.tasks.find(task=>task.id===id&&task.eventActivity&&!task.schedule&&!(task.status==='done'&&(!task.requiresVerification||task.verifiedAt)))},
     workspaceUpdatesPending:()=>updatesPending,focusTaskScheduleEditor(id,setup){events.push(['schedule focus',id,setup]);},
     openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
   });
-  vm.runInContext(notice+'\n'+handoffLink+'\n'+bootstrap,context);
+  vm.runInContext(notice+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
   return {ui,events,context,document,elements,frames,pending(){updatesPending=true;},markup:()=>vm.runInContext('taskLinkNotice()',context)};
 }
+
+test('activity bootstrap uses the current overnight start day and focuses only the exact dated Timeline row',()=>{
+  const id='fictional-activity',day='2099-12-04',date='2099-11-01';
+  const task={id,title:'Same name',status:'done',schedule:{start:day+'T23:45',end:'2099-12-05T01:00'}};
+  const row=(label,id,scheduleDay)=>({label,dataset:{id,scheduleDay},closest:()=>null,getClientRects:()=>[{}]});
+  const rows=[row('same-title decoy','different',day),row('same activity carryover',id,'2099-12-05'),row('exact activity',id,day)];
+  const view=land('',[task],{activity:id,date,mode:{projectId:'fictional-project'},welcome:true,rows});
+  assert.equal(view.ui.scheduleDate,day);
+  assert.equal(view.ui.tab,'mine','the normal Shared tasks view is not selected');
+  assert.deepEqual(view.events,['timeline','ready',['focus','exact activity']]);
+  const missingRow=land('',[task],{activity:id,date,mode:{projectId:'fictional-project'},rows:rows.slice(0,2)});
+  assert.deepEqual(missingRow.events,['timeline','ready',['focus','schedule heading'],['toast','This activity is no longer visible on this date.']]);
+});
+
+test('missing, unscheduled, archived or invalid activities leave the viewer on Timeline without a task dialog',()=>{
+  const id='fictional-unavailable',date='2099-11-01';
+  for(const tasks of [[],[{id,schedule:null}],[{id,archivedAt:'former',schedule:{start:'2099-12-05T13:00'}}],
+    [{id,schedule:{start:'2099-02-29T13:00'}}]]){
+    const view=land('',tasks,{activity:id,date,mode:{projectId:'fictional-project'}});
+    assert.equal(view.ui.scheduleDate,date);
+    assert.deepEqual(view.events,['timeline','ready',['focus','schedule heading'],['toast','This activity is no longer available on the schedule.']]);
+  }
+  for(const override of [{mode:{demo:true}},{mode:undefined},{accessLost:true}]){
+    const view=land('',[{id,schedule:{start:'2099-12-05T13:00'}}],{activity:id,mode:{projectId:'fictional-project'},...override});
+    assert.deepEqual(view.events,['overview','ready']);
+  }
+});
 
 test('an unavailable task link lands on All tasks with a persistent, focused explanation and a search action',()=>{
   const id='fictional-removed-task',view=land(id,[{id:'current-task'}],{welcome:true});

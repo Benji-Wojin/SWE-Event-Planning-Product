@@ -2,6 +2,7 @@ export type PlanReceiptTask = {
   id: string;
   title: string;
   needsStartTime?: true;
+  scheduleDay?: string;
   handoff?: {
     state: 'needs-owner'|'needs-reassignment'|'awaiting-acceptance'|'awaiting-schedule-acceptance'|'accepted'|'needs-review'|'review-blocked'|'needs-amendment-review'|'changes-requested'|'complete';
     ownerName?: string;

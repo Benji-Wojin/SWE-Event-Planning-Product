@@ -99,6 +99,41 @@ test('review hints need a single valid task, a supported kind and a non-demo wor
     }
   }
 });
+test('a plan activity hint is one-shot, preserves the project, guide and explicit day, and never changes unrelated parents',()=>{
+  const query='?project=school&activity=task-overnight&guide=1&day=2028-02-29';
+  const host=surface('https://weft.example/project'+query+'#tasks');
+  const frame=surface('https://weft.example/workspace.html'+query+'#timeline');
+  frame.parent=host;
+  const nav=GatherNavigation.create(frame);
+  assert.equal(nav.takeInitialActivityLink(),'task-overnight');
+  assert.equal(nav.takeInitialActivityLink(),'');
+  for(const win of [host,frame]){
+    assert.equal(win.writes.length,1);
+    assert.equal(win.writes[0].state,win.history.state);
+    assert.equal(win.location.search,'?project=school&guide=1&day=2028-02-29');
+  }
+  const unrelated=surface('https://weft.example/other'+query);
+  const standalone=surface('https://weft.example/workspace.html'+query);
+  standalone.parent=unrelated;
+  assert.equal(GatherNavigation.create(standalone).takeInitialActivityLink(),'task-overnight');
+  assert.equal(unrelated.writes.length,0);
+});
+test('activity hints require one exact live project and cannot replace task, review, or message links',()=>{
+  for(const query of [
+    'activity=valid','project=&activity=valid','project=school&project=other&activity=valid',
+    'project=school&activity=first&activity=second','project=school&activity=%22%3E','project=school&activity=',
+    'project=school&activity=valid&demo=1','project=school&activity=valid&task=another',
+    'project=school&activity=valid&review=','project=school&activity=valid&message=another',
+  ]){
+    assert.equal(GatherNavigation.activityLinkFrom(new URLSearchParams(query)),'',query);
+    const win=surface('https://weft.example/workspace.html?'+query);
+    const nav=GatherNavigation.create(win);
+    assert.equal(nav.takeInitialActivityLink(),'',query);
+    assert.equal(win.location.searchParams.has('activity'),false,query);
+    for(const key of ['task','review','message'])
+      assert.deepEqual(win.location.searchParams.getAll(key),new URLSearchParams(query).getAll(key),query);
+  }
+});
 test('hash changes in either surface reach existing guards, rejection restores both and disposal removes listeners',()=>{
   const {nav,host,frame}=pair();let calls=0;
   const unsubscribe=nav.subscribe(view=>{calls++;assert.ok(['tasks','timeline'].includes(view));nav.replace('info');});

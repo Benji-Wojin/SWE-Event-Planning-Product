@@ -2,6 +2,7 @@ import { env } from '@/lib/runtime';
 import { PLAN_AI_CONSENT_VERSION } from './groq';
 import { BREAKDOWN_CONSENT_VERSION, breakdownRequest, breakdownTitleAllowed, generateTaskBreakdown } from './breakdown-generation';
 import { workspaceTaskId } from './workspace-task-link';
+import { workspaceScheduleDate } from './workspace-day';
 import {
   administrator,
   HttpError,
@@ -194,6 +195,12 @@ async function snapshot(c: Context) {
         // Match Timeline's unscheduled activity list. Preparation tasks and
         // completed activities don't need a start time to finish the handoff.
         if(task.eventActivity===true&&!task.schedule&&!completionStates?.get(id))row.needsStartTime=true;
+        const start = task.schedule?.start;
+        if (!c.demo && !task.archivedAt && typeof start === 'string' &&
+          /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(start)) {
+          const day = workspaceScheduleDate(start.slice(0, 10));
+          if (day) row.scheduleDay = day;
+        }
         // Match Timeline's saved reconfirmation marker, including a removed
         // slot. Only the current state is needed; don't project the old slot.
         const needsScheduleAcceptance=!!task.owner&&task.scheduleReconfirmation?.owner===task.owner&&

@@ -976,6 +976,7 @@ export async function eventPlanTests({
       const activity = state.tasks.find(task => task.title === 'Welcome attendees');
       assert.equal(activity?.eventActivity, true);
       assert.deepEqual(applied.receiptTasks.filter(task => task.needsStartTime === true).map(task => task.id), [activity.id]);
+      assert.ok(applied.receiptTasks.every(task => !Object.hasOwn(task, 'scheduleDay')));
       assert.equal(applied.receiptTasks.filter(task => task.id !== activity.id).length, 2);
       assert.ok(applied.receiptTasks.filter(task => task.id !== activity.id).every(task => !Object.hasOwn(task, 'needsStartTime')));
 
@@ -994,7 +995,19 @@ export async function eventPlanTests({
         { start: '2030-10-04T09:00', end: '2030-10-04T09:30', location: 'Fictional welcome hall' }]);
       assert.equal(saved.result.schedule.start, '2030-10-04T09:00');
       const refreshed = await refreshWithoutWrites();
-      assert.deepEqual(refreshed.receiptTasks, applied.receiptTasks.map(({needsStartTime, ...task}) => task));
+      assert.deepEqual(refreshed.receiptTasks, applied.receiptTasks.map(({needsStartTime, ...task}) =>
+        needsStartTime ? { ...task, scheduleDay: '2030-10-04' } : task));
+      const moved = await change(project, 'setTaskSchedule', [activity.id,
+        { start: '2030-10-05T23:15', end: '2030-10-06T00:15', location: 'Fictional late hall' }]);
+      assert.equal(moved.result.schedule.start, '2030-10-05T23:15');
+      const afterMove = await refreshWithoutWrites();
+      assert.deepEqual(afterMove.receiptTasks, refreshed.receiptTasks.map(task => task.id === activity.id
+        ? { ...task, scheduleDay: '2030-10-05' } : task), 'use the current event-local start date, not UTC, end date, or the old date');
+      assert.doesNotMatch(JSON.stringify(afterMove.receiptTasks), /Fictional (?:welcome|late) hall|23:15|00:15/);
+      const removed = await change(project, 'setTaskSchedule', [activity.id, null]);
+      assert.deepEqual((await refreshWithoutWrites()).receiptTasks, applied.receiptTasks);
+      await change(project, 'deleteTask', [activity.id, removed.result.revision]);
+      assert.deepEqual((await refreshWithoutWrites()).receiptTasks, applied.receiptTasks.filter(task => task.id !== activity.id));
     });
     await t.test('AI leaves nonexistent and repeated event-local endpoints unscheduled, but keeps valid times across a clock change', async () => {
       const zone = 'America/Los_Angeles';
@@ -1245,7 +1258,7 @@ export async function eventPlanTests({
         assert.deepEqual(refreshed.receipt, applied.receipt);
         assert.deepEqual(refreshed.receiptTasks.find(task => task.id === activityId), {
           id: activityId, title: activity.title,
-          ...(needsStartTime ? { needsStartTime: true } : {}),
+          ...(needsStartTime ? { needsStartTime: true } : { scheduleDay: '2030-10-04' }),
           handoff: expected,
         });
         assert.deepEqual(refreshed.receiptTasks.find(task => task.id === preparation.id)?.handoff,

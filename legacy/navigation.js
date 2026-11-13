@@ -12,6 +12,11 @@
     const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment','owner','schedule'].includes(hints[0])?hints[0]:'';
     return {id,review};
   }
+  function activityLinkFrom(params) {
+    const hints=params.getAll('activity'),projects=params.getAll('project');
+    return hints.length===1&&taskIdPattern.test(hints[0])&&projects.length===1&&projects[0]&&
+      !params.getAll('demo').includes('1')&&!['task','review','message'].some(key=>params.has(key))?hints[0]:'';
+  }
   function scheduleDate(value) {
     if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-'))return '';
     const date=new Date(value+'T00:00:00Z');
@@ -43,6 +48,16 @@
         return viewFrom(host.location.hash) || viewFrom(frame.location.hash) || (initialScheduleDate()?'timeline':'overview');
       },
       initialScheduleDate,
+      takeInitialActivityLink() {
+        const search=new URLSearchParams(frame.location.search);
+        for(const target of new Set([frame,host])){
+          const url=new URL(target.location.href);
+          if(!url.searchParams.has('activity'))continue;
+          url.searchParams.delete('activity');
+          target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+        }
+        return activityLinkFrom(search);
+      },
       takeJoinWelcome() {
         const hints=new URLSearchParams(frame.location.search).getAll('welcome');
         if(!hints.length)return false;
@@ -95,5 +110,5 @@
       },
     };
   }
-  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink, taskLinkFrom };
+  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink, taskLinkFrom, activityLinkFrom };
 })(typeof window !== 'undefined' ? window : globalThis);

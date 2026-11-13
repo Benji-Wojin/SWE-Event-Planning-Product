@@ -10,10 +10,12 @@
     const query=new URLSearchParams(demo?{as:actor}:{});
     const day=window.GatherNavigation?.scheduleDateFrom?.(source);
     const task=window.GatherNavigation?.taskLinkFrom?.(source);
+    const activity=window.GatherNavigation?.activityLinkFrom?.(source);
     if(!demo&&day)query.set('day',day);
     if(!demo&&source.get('guide')==='1')query.set('guide','1');
     if(task?.id)query.set('task',task.id);
     if(!demo&&task?.review)query.set('review',task.review);
+    if(!demo&&activity)query.set('activity',activity);
     const path=(demo?'/demo':'/project')+'?'+query;
     return '/sign-in?return_to=' + encodeURIComponent(demo?path:projectUrl(path));
   };

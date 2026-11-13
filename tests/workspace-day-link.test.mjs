@@ -51,6 +51,20 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
     }
     assert.equal(await landing({project:'school',task:['task-123','task-456'],review:'completion'}),'/workspace.html?project=school');
     assert.equal(await landing({project:'school',review:'completion'}),'/workspace.html?project=school');
+    const scheduled=await Project({searchParams:Promise.resolve({project:'school',guide:'1',activity:'task-123',welcome:'1'})});
+    globalThis.__signedOut=true;
+    await assert.rejects(scheduled.type(scheduled.props),/sign-in/);
+    assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&activity=task-123');
+    globalThis.__signedOut=false;
+    assert.equal((await scheduled.type(scheduled.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&activity=task-123#timeline');
+    for (const activity of [['task-123','task-456'],'bad activity','']) {
+      assert.equal(await landing({project:'school',activity}),'/workspace.html?project=school');
+    }
+    assert.equal(await landing({activity:'task-123'}),'/workspace.html?project=main');
+    assert.equal(await landing({project:'school',activity:'task-123',demo:['0','1']}),'/workspace.html?project=school');
+    assert.equal(await landing({project:'school',activity:'task-123',task:'task-456',review:'owner'}),'/workspace.html?project=school&task=task-456&review=owner#tasks');
+    assert.equal(await landing({project:'school',activity:'task-123',message:'mail-1'}),'/workspace.html?project=school&message=mail-1#inbox');
+    assert.equal(await landing({project:'school',activity:'task-123',review:'owner'}),'/workspace.html?project=school');
     assert.equal(await landing({project:'school',welcome:'1',invite:'not-forwarded'}),'/workspace.html?project=school&welcome=1');
     assert.equal(globalThis.__returnPath,'/project?project=school&welcome=1');
     for (const welcome of [['1'],['1','1'],'0','true','']) {

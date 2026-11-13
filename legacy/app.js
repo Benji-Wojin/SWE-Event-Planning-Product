@@ -4594,18 +4594,29 @@
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   setDrawer(false);
   ui.scheduleDate=navigation.initialScheduleDate();
+  const activityHint=navigation.takeInitialActivityLink();
+  const initialActivity=window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost?activityHint:'';
   const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();
   const welcomeHint=navigation.takeJoinWelcome();
   if(initialTask){
     ui.tab='all';
     taskLinkUnavailable=!store.getState().tasks.some(task=>task.id===initialTask);
   }
-  joinWelcome=welcomeHint&&!initialTask&&navigation.initial()==='overview'&&isLiveTeammate();
-  navigate(initialTask?'tasks':navigation.initial());
+  joinWelcome=welcomeHint&&!initialTask&&!initialActivity&&navigation.initial()==='overview'&&isLiveTeammate();
+  const activityDay=initialActivity?GatherScheduleUI.scheduledTimelineDay(store.getState().tasks.find(task=>task.id===initialActivity)):'';
+  if(initialActivity)navigate('timeline',{scheduleDay:activityDay});
+  else navigate(initialTask?'tasks':navigation.initial());
   if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   void syncGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
+  if(initialActivity&&!window.GatherAccessLost&&ui.view==='timeline'){
+    if(activityDay)focusTimelineRow(initialActivity,activityDay);
+    else{
+      focusScheduleTarget($('#schedulePanelHeading',$('#viewRoot')));
+      toast('This activity is no longer available on the schedule.');
+    }
+  }
   if(initialTask&&!window.GatherAccessLost){
     if(taskLinkUnavailable){
       const title=$('#taskLinkUnavailableTitle');

@@ -978,12 +978,17 @@ test('the organizer receipt flags untimed activities in place and ignores a regr
     const next=copy(context.saved);
     next.workspaceRevision=reads===2?14:reads===3?16:17;
     delete next.receiptTasks[0].needsStartTime;
+    next.receiptTasks[0].scheduleDay=reads===4?'2030-10-05':'2030-10-04';
     if(reads===3)next.receiptTasks[1].needsStartTime=true;
-    else delete next.receiptTasks[1].needsStartTime;
+    else {
+      delete next.receiptTasks[1].needsStartTime;
+      next.receiptTasks[1].scheduleDay='2030-10-06';
+    }
     context.value=next;
   },initial,'project=p_school',false,true);
   const receipt=()=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='plan-receipt-heading');
   const link=label=>nodes(receipt()).find(node=>node.type==='a'&&text(node)===label);
+  const timelineLinks=()=>nodes(receipt()).filter(node=>node.type==='a'&&text(node)==='Show in Timeline').map(node=>node.props.href);
   const tagged=()=>nodes(receipt()).filter(node=>node.type==='li'&&text(node).includes('Needs a start time'))
     .map(row=>nodes(row).find(node=>node.type==='a'&&node.props['data-handoff-task'])?.props['data-handoff-task']);
   try{
@@ -997,16 +1002,23 @@ test('the organizer receipt flags untimed activities in place and ignores a regr
       '/project?project=p_school&task=one&guide=1&review=schedule',
       '/project?project=p_school&task=two&guide=1&review=schedule',
     ]);
+    assert.deepEqual(timelineLinks(),[]);
     await app.click('Refresh task handoff');
     assert.match(text(app.tree),/Could not confirm the latest handoff/);
     assert.equal(tagged().length,2);
+    assert.deepEqual(timelineLinks(),[],'regressed workspace cannot add row shortcuts');
     await app.click('Refresh task handoff');
     assert.match(text(receipt()),/1 activity needs a start time.*before it can appear on the run sheet/);
     assert.equal(tagged().length,1);
     assert.deepEqual(nodes(receipt()).filter(node=>node.type==='a'&&text(node)==='Set start time').map(node=>node.props['aria-label']),['Set start time for Fictional cleanup']);
+    assert.deepEqual(timelineLinks(),['/project?project=p_school&activity=one&guide=1']);
     await app.click('Refresh task handoff');
     assert.equal(tagged().length,0);
     assert.equal(link('Set start time'),undefined);
+    assert.deepEqual(timelineLinks(),[
+      '/project?project=p_school&activity=one&guide=1',
+      '/project?project=p_school&activity=two&guide=1',
+    ],'the moved activity keeps its stable target, and the newly scheduled row gets its own');
     assert.doesNotMatch(text(receipt()),/run sheet/);
     assert.deepEqual(app.requests,Array.from({length:4},()=>({action:'get'})));
   }finally{app.dispose();}
@@ -1408,6 +1420,53 @@ test('untimed activity shortcuts are separate from task review links and limited
           assert.equal(schedule.props['data-handoff-task'], id);
           assert.equal(schedule.props['data-handoff-intent'], 'schedule', 'secondary link retains its distinct focus intent');
           assert.equal(schedule.props.onClick, undefined);
+        }
+      }
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+    } finally { app.dispose(); }
+  }
+});
+
+test('scheduled receipt shortcuts target the exact activity without replacing task review links', async () => {
+  for (const [query, embedded, guided, shortcut] of [
+    ['project=p_school', false, false, true],
+    ['project=p_school', false, true, true],
+    ['project=p_school', true, true, false],
+    ['project=p_school&mode=suggestions', false, true, false],
+    ['project=p_school&mode=assistant', false, true, false],
+    ['demo=1', false, true, false],
+  ]) {
+    const initial = fixture();
+    initial.receiptTasks = [
+      { id: 'welcome', title: 'Welcome desk', scheduleDay: '2030-10-04', handoff: { state: 'needs-owner' } },
+      { id: 'rehearsal', title: 'Run rehearsal', scheduleDay: '2030-10-05', handoff: { state: 'needs-review' } },
+      { id: 'amendment', title: 'Check venue handback', scheduleDay: '2030-10-06', handoff: { state: 'needs-amendment-review' } },
+      { id: 'untimed', title: 'Unscheduled activity', needsStartTime: true, handoff: { state: 'accepted' } },
+      { id: 'prep', title: 'Review the checklist', handoff: { state: 'complete' } },
+      { id: 'bad-day', title: 'Invalid date', scheduleDay: '2030-02-30', handoff: { state: 'accepted' } },
+      { id: 'bad task', title: 'Invalid task ID', scheduleDay: '2030-10-04', handoff: { state: 'accepted' } },
+    ];
+    initial.receipt = { taskIds: initial.receiptTasks.map(task => task.id) };
+    const app = harness(undefined, initial, query, embedded, guided);
+    try {
+      await app.start();
+      const links = nodes(app.tree).filter(node => node.type === 'a' && text(node) === 'Show in Timeline');
+      assert.equal(links.length, shortcut ? 3 : 0, `${query}, embedded=${embedded}, guided=${guided}`);
+      if (shortcut) {
+        const suffix = guided ? '&guide=1' : '';
+        for (const [id, title, review] of [
+          ['welcome', 'Welcome desk', 'owner'],
+          ['rehearsal', 'Run rehearsal', 'completion'],
+          ['amendment', 'Check venue handback', 'amendment'],
+        ]) {
+          const task = planLink(app.tree, title);
+          const timeline = links.find(node => node.props['aria-label'] === `Show ${title} in Timeline`);
+          assert.equal(task?.props.href, '/project?project=p_school&task=' + id + suffix + '&review=' + review);
+          assert.equal(task.props['data-handoff-task'], id);
+          assert.equal(timeline?.props.href, '/project?project=p_school&activity=' + id + suffix);
+          assert.equal(timeline.props['data-handoff-task'], id);
+          assert.equal(timeline.props['data-handoff-intent'], 'timeline');
+          assert.equal(timeline.props.onClick, undefined);
         }
       }
       assert.deepEqual(app.requests, [{ action: 'get' }]);
