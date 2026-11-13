@@ -2337,6 +2337,8 @@
     const reviewedWorkspace=store.getSnapshotRevision?.();
     const completionReviewAttributes=`data-id="${h(id)}" data-revision="${h(task.revision)}"`+
       (Number.isSafeInteger(reviewedWorkspace)?` data-workspace-revision="${reviewedWorkspace}"`:'');
+    const completionSource=task.completionReportSourceId&&taskState.messages?.find(message=>
+      message.id===task.completionReportSourceId&&message.appliedTaskId===id);
     const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
     const teammateReconfirmation=organizer&&!own&&schedule.awaitingScheduleAcceptance?.(task,taskState.members||[]);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
@@ -2351,7 +2353,7 @@
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
-      ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked,workspaceRevision:store.getSnapshotRevision?.()})||''}
+      ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked,workspaceRevision:reviewedWorkspace,completionSource})||''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.
         ${completionBlocked?`<p id="verificationRequiredWork">Verification is waiting on required work. See Task relationships below.${organizer?' You can still request changes to this report.':''}</p>`:''}
         ${organizer?`<button type="button" class="btn btn-primary btn-small" data-action="verify-task" ${completionReviewAttributes} ${completionBlocked?'disabled aria-describedby="verificationRequiredWork"':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" ${completionReviewAttributes} class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
@@ -2824,7 +2826,7 @@
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='verify-task'||action==='review-completion-evidence'){await saveReviewedCompletion(el);return;}
-    if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
+    if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId&&$('#dialogBackdrop').hidden)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');

@@ -296,7 +296,10 @@
       task.updatedAt = timestamp();
       task.updatedBy = actor;
       if (task.status === "done" && previousStatus !== "done") { task.completedAt = task.updatedAt; task.completedBy = actor; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
-      else if (task.status !== "done") { task.completedAt = ""; task.completedBy = ""; task.completionReportedBy = ""; task.completionReportSourceId = ""; }
+      else if (task.status !== "done") {
+        task.completedAt = ""; task.completedBy = ""; task.completionReportedBy = "";
+        if(!task.reportedAt)task.completionReportSourceId = "";
+      }
       if (task.status === 'done' && previousStatus !== 'done') captureCompletion(task, actor);
       else if (task.status !== 'done') task.completionResult = null;
       return changed;
@@ -532,7 +535,11 @@
       const changed = patchTask(task, patch, actor,patch.confirmHardDeadline===true);
       const ownerReport=task.owner===actor&&Object.keys(patch).every(field=>['status','note'].includes(field))&&['progress','blocked'].includes(patch.status)&&clean(patch.note);
       if(ownerReport&&!changed.length&&!supersedesReport){task.ownerRespondedAt=timestamp();task.updatedAt=timestamp();task.updatedBy=actor;task.revision++;changed.push('note');}
-      if (supersedesReport) { task.reportedAt = ''; task.reportedBy = ''; task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note'); }
+      if (supersedesReport) {
+        task.reportedAt = ''; task.reportedBy = ''; task.completionReportSourceId = '';
+        archiveEvidence(task);task.completionEvidence=null;task.completionEvidenceReviewAt='';
+        task.revision++; task.updatedAt = timestamp(); task.updatedBy = actor; if (!changed.length) changed.push('note');
+      }
       if (ownerReport) recordNoteAttribution(task, actor, task.updatedAt);
       // Status/assignment edits must not turn an old context note into a blocker.
       const blockerReport = patch.note !== undefined && (changed.includes('note') ||
@@ -676,14 +683,19 @@
         delete task.scheduleReconfirmation;
         closeRecovery(task,'superseded',actor);
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
+        task.completionReportSourceId = message.id;
+        archiveEvidence(task);
+        // The organizer-approved note is the report. Earlier links and files
+        // are kept in history, not silently attached to this email.
+        task.completionEvidence = {...completionEvidence({note:completionExcerpt(task.note)}),at:task.reportedAt,actor};
+        task.completionEvidenceReviewAt = '';
         task.completionReview=null;
         task.verifiedAt = ''; task.verifiedBy = '';
       }
-      if (completionReport && proposed.status === "done" && !task.verifiedAt && (!task.completedAt || !task.completionReportedBy)) {
+      if (completionReport && task.status === "done" && !task.verifiedAt) {
         task.completedAt = task.updatedAt;
         task.completedBy = actor;
         task.completionReportedBy = message.sender;
-        task.completionReportSourceId = message.id;
       }
       if (completionReport && task.status === 'done' && !task.verifiedAt) captureCompletion(task, actor, message.sender);
       message.appliedTaskId = task.id;
@@ -754,6 +766,11 @@
       if(pending.length)save();
       return tasks.map(copy);
     }
+    function completionExcerpt(note) {
+      const marker=' [Excerpt of the reviewed task note.]';
+      const text=note.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'\ufffd');
+      return text.length>3000?text.slice(0,3000-marker.length)+marker:text;
+    }
     function archiveEvidence(task) {
       if(task.completionEvidence)task.completionEvidenceHistory=[copy(task.completionEvidence),...(task.completionEvidenceHistory||[])].slice(0,10);
     }
@@ -793,6 +810,7 @@
       delete task.scheduleReconfirmation;
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
+      task.completionReportSourceId = '';task.completionReportedBy = '';
       recordNoteAttribution(task, actor, task.reportedAt);
       task.completionReview=null;
       task.verifiedAt = ''; task.verifiedBy = '';
@@ -819,7 +837,7 @@
       archiveEvidence(task);task.completionEvidence=null;task.completionEvidenceReviewAt='';
       task.completionReview={note:reason,at,actor,reportedAt,reportedBy};
       task.comments.push({id:id('comment'),actor,at,kind:'completion-returned',text:'Completion returned for changes.\n'+reason+'\nEarlier report by '+(reportedBy||'the task owner')+' at '+reportedAt+':\n'+task.note});
-      task.reportedAt='';task.reportedBy='';task.completionResult=null;task.revision++;
+      task.reportedAt='';task.reportedBy='';task.completionReportSourceId='';task.completionResult=null;task.revision++;
       entry(actor,'requested changes to the completion of '+task.title,task.id,'completion-returned');
       // A review decision is not an owner progress update or a completion.
       save(true,false);return copy(task);
@@ -832,7 +850,7 @@
       if (!task.reportedAt) throw new Error('There is no completion report to verify.');
       if (task.verifiedAt) return copy(task);
       requireResolvedDependencies(task);
-      const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };
+      const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy, completionReportSourceId:task.completionReportSourceId };
       patchTask(task, { status: 'done' }, actor); Object.assign(task, report);
       task.verifiedAt = timestamp(); task.verifiedBy = actor; task.revision++;
       task.completionReview=null;
