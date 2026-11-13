@@ -64,27 +64,35 @@
     const attempt=original&&uploadAttempts.get(original);
     if(attempt&&replacement&&attempt.url===endpoint())uploadAttempts.set(replacement,attempt);
   }
-  function restoreDraft(form,draft) {
-    const {file}=draft,attempt=file&&uploadAttempts.get(file),reusable=attempt?.url===endpoint()?attempt:null;
-    const ids=[...new Set([...draft.fileIds,...(reusable?.fileId?[reusable.fileId]:[])])];
-    const note=form.elements.note||form.elements.completionNote;
-    note.value=draft.note;
-    form.elements.completionLinks.value=draft.rawLinks;
+  function restoreSelectedFile(input,file) {
+    const attempt=file&&uploadAttempts.get(file),reusable=attempt?.url===endpoint()?attempt:null;
+    if(!file)return '';
+    try{
+      const transfer=new DataTransfer();
+      transfer.items.add(file);input.files=transfer.files;
+      if(!input.files?.[0])throw new Error();
+      carryUploadAttempt(file,input.files[0]);
+      return reusable&&!reusable.fileId?'pending':'selected';
+    }catch{return reusable?.fileId?{fileId:reusable.fileId}:reusable?'check-file':'select-file';}
+  }
+  function restoreFileSelection(form,ids) {
     // Rebuild the visible Remove controls together with the actual selection.
     const choices=form.elements.completionFileIds,defaults=[...choices.options].filter(option=>option.defaultSelected).map(option=>option.value);
     choices.innerHTML=[...new Set([...defaults,...ids])].map(id=>'<option value="'+h(id)+'"'+
       (defaults.includes(id)?' selected':'')+'>Saved project file · '+h(id.slice(0,8))+'</option>').join('');
     for(const option of choices.options)option.selected=ids.includes(option.value);
     form.querySelector('[data-submission-files]').innerHTML=ids.map(id=>'<p class="submission-file"><span>Attached file</span><button type="button" class="text-button" data-remove-submission-file="'+h(id)+'">Remove file</button></p>').join('');
+  }
+  function restoreDraft(form,draft) {
+    const {file}=draft,attempt=file&&uploadAttempts.get(file),reusable=attempt?.url===endpoint()?attempt:null;
+    const ids=[...new Set([...draft.fileIds,...(reusable?.fileId?[reusable.fileId]:[])])];
+    const note=form.elements.note||form.elements.completionNote;
+    note.value=draft.note;
+    form.elements.completionLinks.value=draft.rawLinks;
+    restoreFileSelection(form,ids);
     if(reusable?.fileId)return 'saved';
     if(!file)return draft.attachmentRecovery||'';
-    try{
-      const transfer=new DataTransfer(),input=form.elements.completionUpload;
-      transfer.items.add(file);input.files=transfer.files;
-      if(!input.files?.[0])throw new Error();
-      carryUploadAttempt(file,input.files[0]);
-      return reusable?'pending':'selected';
-    }catch{return reusable?'check-file':'select-file';}
+    return restoreSelectedFile(form.elements.completionUpload,file);
   }
   async function prepare(form, details, file, {stillCurrent=()=>true}={}) {
     function checkReview() {
@@ -325,5 +333,5 @@
     document.body.append(el);
     feedbackTimer = setTimeout(() => el.remove(), 6000);
   }
-  root.GatherCompletionUI = { fields, collect, prepare, section, mount, celebrate, captureDraft, restoreDraft, carryUploadAttempt };
+  root.GatherCompletionUI = { fields, collect, prepare, section, mount, celebrate, captureDraft, restoreDraft, restoreSelectedFile, restoreFileSelection };
 })(typeof window !== 'undefined' ? window : globalThis);

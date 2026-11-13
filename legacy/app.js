@@ -353,12 +353,16 @@
   function hasUnsavedFields(root,exclude=[]) {
     return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||
       root.dataset?.budgetUnconfirmed==='true'||root.dataset?.budgetRecoveryDraft==='true'||
+      !!root.dataset?.completionAttachmentRecovery||root.dataset?.completionSaveUnconfirmed==='true'||
+      !!root.dataset?.completionModeUnavailable||
+      !!root.querySelector?.('[data-completion-attachment-recovery],[data-completion-save-unconfirmed="true"],[data-completion-mode-unavailable="true"]')||
       !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"]')||$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'&&((input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')||
         (input.name==='assignTask'&&input.form?.id==='assignTasksForm')))return input.checked;
       if(input.name==='owner'&&input.form?.id==='assignTasksForm')return !!input.value;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
+      if(input.type==='file')return !!input.files?.length;
       if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
       const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
       return input.value!==(original??'');
@@ -2302,14 +2306,99 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked,...(input.type==='file'?{files:[...input.files]}:{}),...(input.multiple?{selected:[...input.selectedOptions].map(option=>({value:option.value,text:option.textContent}))}:{})})));
   }
-  const completionDraftKeys=['revision','workspaceRevision','reviewNeedsRefresh','completionUploaded','completionSaveUnconfirmed','completionAttachmentRecovery','completionDemoGeneration'];
+  function completionDraftHasEdits(form,{completing=form?.elements?.response?.value==='completed'}={}) {
+    if(!form)return false;
+    if(form.dataset.completionSaveUnconfirmed==='true'||form.dataset.completionAttachmentRecovery||form.dataset.completionModeUnavailable)return true;
+    if(form.id==='completionEvidenceForm')return hasUnsavedFields(form);
+    const {note,completionLinks,completionUpload,completionFileIds}=form.elements;
+    return !!(completing&&note&&note.value!==note.defaultValue||
+      completionLinks&&completionLinks.value!==completionLinks.defaultValue||completionUpload?.files?.length||
+      [...(completionFileIds?.options||[])].some(option=>option.selected!==option.defaultSelected));
+  }
+  function completionDraftAtRisk(task,kind,patch={}) {
+    if(!task||ui.dialogKind!=='task'||ui.detailId!==task.id||window.GatherAccessLost)return null;
+    const dialog=$('#dialog');
+    if(!dialog)return null;
+    const report=$('#responseForm',dialog),evidence=$('#completionEvidenceForm',dialog);
+    const owner=patch.owner??task.owner,status=patch.status??task.status;
+    const noteChanged=patch.note!==undefined&&String(patch.note).trim()!==task.note;
+    const leavingOwner=owner!==task.owner;
+    if((kind==='details'&&(leavingOwner||status==='done'||status==='blocked'&&noteChanged)||kind==='reassign'&&leavingOwner||kind==='required-link')&&
+      report?.dataset.id===task.id&&completionDraftHasEdits(report,{completing:report.dataset.responseMode==='completed'||report.elements.response?.value==='completed'}))return report;
+    const removesEvidence=kind==='details'&&status!=='done'&&
+      (leavingOwner||status!==task.status||task.status!=='done'&&task.reportedAt&&!task.verifiedAt&&noteChanged)||
+      kind==='reassign'&&leavingOwner&&task.status!=='done'&&!!task.reportedAt||
+      kind==='resume'&&!!task.reportedAt||
+      kind==='response'&&['progress','blocked'].includes(patch.response)&&!!task.reportedAt;
+    if(removesEvidence&&evidence?.dataset.id===task.id&&completionDraftHasEdits(evidence))return evidence;
+    return null;
+  }
+  function protectCompletionDraft(task,kind,patch={},writer) {
+    const draft=completionDraftAtRisk(task,kind,patch);
+    if(!draft)return true;
+    const message=draft.dataset.completionSaveUnconfirmed==='true'
+      ? 'Check whether your completion save went through before making this change.'
+      : 'This change would hide your unsent completion draft. Finish or clear that draft before trying again.';
+    if(writer)formError(writer,new Error(message));
+    else toast(message);
+    offerCompletionDraftDiscard(draft);
+    return false;
+  }
+  function offerCompletionDraftDiscard(draft) {
+    if(draft.dataset.completionSaveUnconfirmed!=='true'&&!$('[data-action="discard-completion-draft"]',draft)){
+      const button=document.createElement('button');
+      button.type='button';button.className='btn btn-secondary';button.dataset.action='discard-completion-draft';
+      button.textContent='Discard completion draft…';
+      draft.prepend(button);
+    }
+  }
+  function completionDraftDiscardWarning(form) {
+    if(form.dataset.completionUploaded==='true')return ' The uploaded file stays in Event info.';
+    if(form.dataset.completionAttachmentRecovery==='check-file')return ' An earlier upload could not be confirmed. Check Event info before trying to upload that file again.';
+    return '';
+  }
+  function syncTaskResponseMode(form) {
+    if(form.dataset.completionModeUnavailable){
+      const note=form.elements.note;
+      if(note)note.readOnly=true;
+      const attachments=form.querySelector('[data-completion-only]');
+      if(attachments)attachments.hidden=false;
+      const links=form.elements.completionLinks;
+      if(links){links.disabled=false;links.readOnly=true;}
+      formError(form,new Error('The task no longer allows a completion report. Your original draft is still here to copy or discard. It won’t be sent as a different update.'));
+      offerCompletionDraftDiscard(form);
+      return false;
+    }
+    const select=form.elements.response,previous=form.dataset.responseMode;
+    if(previous==='completed'&&select.value!=='completed'&&completionDraftHasEdits(form,{completing:true})){
+      const uncertain=form.dataset.completionSaveUnconfirmed==='true';
+      if(uncertain||!window.confirm('Discard this unsent completion draft and switch update type?'+completionDraftDiscardWarning(form))){
+        select.value='completed';recovery.syncResponse(form);
+        if(uncertain)formError(form,new Error('Check whether your completion save went through before switching update type.'));
+        return false;
+      }
+      for(const name of ['note','completionLinks','completionUpload']){
+        const input=form.elements[name];if(input)input.value=input.defaultValue||'';
+      }
+      for(const option of form.elements.completionFileIds?.options||[])option.selected=option.defaultSelected;
+      clearCompletionAttachmentRecovery(form);
+      delete form.dataset.completionUploaded;
+      $('[data-completion-draft-recovery]',form)?.remove();
+      $('[data-action="discard-completion-draft"]',form)?.remove();
+      const status=$('[data-submission-status]',form);if(status)status.textContent='';
+      window.GatherCompletionUI?.mount(form);
+    }
+    recovery.syncResponse(form);
+    return true;
+  }
+  const completionDraftKeys=['revision','workspaceRevision','reviewNeedsRefresh','completionUploaded','completionSaveUnconfirmed','completionAttachmentRecovery','completionDemoGeneration','completionModeUnavailable'];
   function taskCompletionDraftContext(drafts,exclude) {
     return ['responseForm','completionEvidenceForm'].filter(id=>id!==exclude).flatMap(id=>{
       const form=$('#'+id,$('#dialog'));
       if(!form)return [];
       const completionDraft=drafts.some(draft=>draft.form===id&&(id==='completionEvidenceForm'||
-        form.elements.response?.value==='completed'||draft.name.startsWith('completion')));
-      if(!completionDraft&&form.dataset.completionSaveUnconfirmed!=='true'&&!form.dataset.completionAttachmentRecovery)return [];
+        draft.name==='note'&&form.elements.response?.value==='completed'||draft.name.startsWith('completion')));
+      if(!completionDraft&&!completionDraftHasEdits(form))return [];
       return [{id,data:completionDraftKeys.map(key=>[key,form.dataset[key]])}];
     });
   }
@@ -2399,9 +2488,34 @@
       if(form)form.dataset.completionDemoGeneration=String(taskState.demoGeneration??'');
     }
     if(sameTask){
-      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.files){const transfer=new DataTransfer();for(const file of draft.files)transfer.items.add(file);input.files=transfer.files;if(input.name==='completionUpload')window.GatherCompletionUI?.carryUploadAttempt(draft.files[0],input.files[0]);}else if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
-      for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       restoreTaskCompletionDraftContext(completionDraftContext);
+      const uploadedFiles=[];
+      for(const draft of drafts){
+        const form=document.getElementById(draft.form),input=form?.elements.namedItem(draft.name);
+        if(!input)continue;
+        if(draft.files){
+          const result=window.GatherCompletionUI.restoreSelectedFile(input,draft.files[0]);
+          if(result==='check-file'||result==='select-file')form.dataset.completionAttachmentRecovery=result;
+          else if(result?.fileId)uploadedFiles.push([form,result.fileId]);
+        }else if(draft.selected&&draft.name==='completionFileIds'){
+          window.GatherCompletionUI.restoreFileSelection(form,draft.selected.map(option=>option.value));
+        }else if(draft.selected){
+          for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){
+            const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);
+          }
+          for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);
+        }else if(draft.form==='responseForm'&&draft.name==='response'&&draft.value==='completed'&&
+          ![...input.options].some(option=>option.value==='completed')){
+          if(completionDraftContext.some(saved=>saved.id===draft.form))form.dataset.completionModeUnavailable='true';
+        }
+        else input.value=draft.value;
+        if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;
+      }
+      for(const [form,fileId] of uploadedFiles){
+        const current=[...form.elements.completionFileIds.selectedOptions].map(option=>option.value);
+        window.GatherCompletionUI.restoreFileSelection(form,[...new Set([...current,fileId])]);
+      }
+      for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
       requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
@@ -2409,6 +2523,7 @@
     window.GatherCompletionUI?.mount($('#dialog'));
     for(const {id:formId} of completionDraftContext){
       const form=$('#'+formId,$('#dialog'));
+      if(form?.dataset.completionModeUnavailable)syncTaskResponseMode(form);
       if(form?.dataset.reviewNeedsRefresh==='true'&&form.dataset.completionSaveUnconfirmed!=='true')
         paintCompletionDraftRecovery(form,'Check the latest task before submitting this draft.');
       if(form?.dataset.completionAttachmentRecovery)paintCompletionAttachmentRecovery(form);
@@ -2428,7 +2543,15 @@
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
-    if(response)recovery.syncResponse(response);
+    if(response){
+      const type=response.elements.response;
+      if(response.dataset.completionModeUnavailable&&[...type.options].some(option=>option.value==='completed')){
+        type.value='completed';
+        delete response.dataset.completionModeUnavailable;
+        response.dataset.reviewNeedsRefresh='true';
+      }
+      recovery.syncResponse(response);
+    }
     if(decision)recovery.syncDecision(decision);
   }
   function isActionableLesson(lesson) {
@@ -3065,6 +3188,15 @@
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
+    if(action==='discard-completion-draft'){
+      const form=el.closest('form'),dialog=$('#dialog');
+      if(ui.dialogKind==='task'&&!window.GatherAccessLost&&form?.dataset.id===ui.detailId&&
+        ['responseForm','completionEvidenceForm'].includes(form.id)&&form===$('#'+form.id,dialog)&&
+        el===$('[data-action="discard-completion-draft"]',form)&&form.dataset.completionSaveUnconfirmed!=='true'&&
+        window.confirm('Discard this unsent completion draft?'+completionDraftDiscardWarning(form)))
+        taskDialog(ui.detailId,form.id,false,true,'',undefined,'',{readOnly:true});
+      return;
+    }
     if(action==='continue-without-completion-file'){
       const form=el.closest('form'),dialog=$('#dialog'),submit=form&&$('button[type="submit"]',form);
       if(form?.dataset.completionAttachmentRecovery&&ui.dialogKind==='task'&&!window.GatherAccessLost&&form.dataset.id===ui.detailId&&
@@ -3271,7 +3403,10 @@
       if(action==='report-task')responseDialog(id);
       if(action==='prepare-completion')recovery.prepareCompletion(el.closest('#responseForm'));
       if(action==='prepare-revised-completion')prepareRevisedCompletion(id);
-      if(action==='resume-task'){el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}}
+      if(action==='resume-task'){
+        if(!protectCompletionDraft(store.getState().tasks.find(task=>task.id===id),'resume'))return;
+        el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}
+      }
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);
       if(action==='verification-toggle'){const task=store.getState().tasks.find(t=>t.id===id);store.updateTask(id,{requiresVerification:!task.requiresVerification},ui.actor);render();taskDialog(id);}
@@ -3346,6 +3481,7 @@
       }
       return;
     }
+    if(form.id==='responseForm'&&form.querySelector('[data-proposed-date]')&&!syncTaskResponseMode(form))return;
     const data=Object.fromEntries(new FormData(form));
     let taskAcceptance,taskAcceptanceRevision;
     if(form.id==='nextUpForm'&&data.enabled==='true'){
@@ -3455,9 +3591,11 @@
       }
       if(form.id==='taskDetailForm'){
         const before=store.getState().tasks.find(task=>task.id===form.dataset.id);
+        if(!protectCompletionDraft(before,'details',data,form))return;
         if(!confirmFixedDate(form.dataset.id,data)||!confirmTaskOwnerChange(before,data))return;
         store.updateTask(form.dataset.id,data,ui.actor);
-        const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;
+        const after=store.getState().tasks.find(task=>task.id===form.dataset.id),drafts=taskDrafts(form.id),
+          keepDrafts=drafts.length>0||taskCompletionDraftContext(drafts,form.id).length>0;
         render();if(keepDrafts||(ui.overlapComparison&&activeOverlapComparison()))taskDialog(form.dataset.id,form.id);else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
@@ -3483,6 +3621,7 @@
       }
       if(form.id==='recoveryDecisionForm'){
         const id=form.dataset.id;
+        if(data.action==='reassign'&&!protectCompletionDraft(store.getState().tasks.find(task=>task.id===id),'reassign',data,form))return;
         if(workspaceUpdatesPending()){
           showPendingUpdate();
           throw new Error('Refresh the project before confirming this decision. Your draft is unchanged.');
@@ -3493,7 +3632,14 @@
         toast(data.requestId?'Organizer response saved to the task.':'Plan agreed. The owner can see your decision.');
       }
       if(form.id==='commentForm'){store.addComment(form.dataset.id,data.text,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Comment posted.');}
-      if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
+      if(form.id.startsWith('handoffForm-')){
+        const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;
+        const task=store.getState().tasks.find(task=>task.id===form.dataset.id);
+        const suggestion=task?.handoffs.find(item=>item.id===form.dataset.suggestion);
+        if(action!=='dismiss'&&suggestion?.status==='pending'&&suggestion.kind!=='related'&&!protectCompletionDraft(task,'required-link',{},form))return;
+        const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};
+        store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');
+      }
       if(form.id==='emailReviewForm'){
         if(ui.savingProposal)return;
         if(data.mode==='update'){
@@ -3507,13 +3653,24 @@
       if(form.id==='pasteForm'){const m=store.addMessage(data,ui.actor);ui.messageId=m.id;closeDialog();release();navigate('inbox');toast('Message saved. Review its next step before applying.');}
       if(form.id==='feedbackForm'){const lesson=store.addMemory({...data,rating:Number(data.rating)},ui.actor);if(!finishWrapUpLesson(lesson?.id)&&!window.GatherAccessLost)thoughtDialog();toast('Lesson saved.');}
       if(form.id==='followupForm'){const text=data.text.trim();store.saveDraft(form.dataset.id,text,ui.actor);const copied=await copyText(text);closeDialog();render();if(copied)toast('Draft saved and copied. Nothing sent.');else {toast('Draft saved in Team updates.');copyFallback(text,'Your saved follow-up draft');}}
-      if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
-      if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
-      if(form.id==='relationshipAddForm'){store.addDependency(form.dataset.id,{taskId:data.taskId,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Tasks linked. Task status is unchanged.');}
-      if(form.id==='linkedTaskForm'){store.addLinkedTask(form.dataset.id,{title:data.title,note:data.note,scope:data.scope,owner:data.owner,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('New task created and linked. Review its owner and dates before starting.');}
+      if(form.id==='dependencyForm'||form.id==='relationshipAddForm'||form.id==='linkedTaskForm'||form.classList.contains('relationship-form')){
+        const isRequired=form.id==='dependencyForm'||data.kind==='dependency';
+        if(isRequired){
+          const state=store.getState(),task=state.tasks.find(task=>task.id===form.dataset.id);
+          const linked=state.tasks.find(task=>task.id===(form.dataset.prerequisite||data.taskId||data.existingTask));
+          if(!(linked?.status==='done'&&(!linked.requiresVerification||linked.verifiedAt))&&
+            !protectCompletionDraft(task,'required-link',{},form))return;
+        }
+        if(form.id==='dependencyForm'){store.addDependency(form.dataset.id,{...(data.existingTask?{taskId:data.existingTask}:{title:data.newTitle}),additional:data.additional==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Follow-up saved.');}
+        if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
+        if(form.id==='relationshipAddForm'){store.addDependency(form.dataset.id,{taskId:data.taskId,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Tasks linked. Task status is unchanged.');}
+        if(form.id==='linkedTaskForm'){store.addLinkedTask(form.dataset.id,{title:data.title,note:data.note,scope:data.scope,owner:data.owner,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('New task created and linked. Review its owner and dates before starting.');}
+      }
       if(form.id==='relatedReviewForm')await saveRelatedReview(form,data.items);
       if(form.id==='responseForm'){
         const id=form.dataset.id,response=event.submitter?.value||data.response,isRequest=response==='date'||response==='help';
+        if(completionDraftHasEdits(form)){formError(form,new Error('Finish or discard your unsent completion draft before sending another update.'));return;}
+        if(!protectCompletionDraft(store.getState().tasks.find(task=>task.id===id),'response',{response},form))return;
         if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');
         if(response==='accepted'){store.acceptTask(id,ui.actor);store.addComment(id,data.note,ui.actor);}
         else if(response==='blocked'||response==='progress')store.updateTask(id,{status:response,note:data.note},ui.actor);
@@ -3575,7 +3732,7 @@
     if(el.matches('[data-reuse-choice]'))syncReuseChecklist();
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
     if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'),el.name==='confirmed');
-    if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
+    if(el.name==='response'&&el.form?.id==='responseForm'&&el.form.querySelector('[data-proposed-date]'))syncTaskResponseMode(el.form);
     if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
     if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}

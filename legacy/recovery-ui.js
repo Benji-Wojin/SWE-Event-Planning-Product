@@ -141,6 +141,7 @@
     }
     function syncResponse(form) {
       const response=form.elements.response.value,date=response==='date',help=response==='help';form.querySelector('[data-proposed-date]').hidden=!date;form.elements.proposedDate.required=date;
+      if(form.dataset)form.dataset.responseMode=response;
       form.elements.proposedDate.disabled=!date;
       form.elements.proposedDate.min=dateKey();
       const evidence=form.querySelector('[data-completion-only]');if(evidence){evidence.hidden=form.elements.response.value!=='completed';for(const input of evidence.querySelectorAll('input,select,textarea,button'))input.disabled=evidence.hidden;}

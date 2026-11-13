@@ -254,10 +254,10 @@ test('upload and task failures preserve the draft and never announce or render a
 test('same-task sibling saves cannot give a dirty completion draft a newer review revision',()=>{
   const forms={
     responseForm:{elements:{response:{value:'completed'}},dataset:{revision:'4',workspaceRevision:'21'}},
-    completionEvidenceForm:{dataset:{revision:'4',workspaceRevision:'21',reviewNeedsRefresh:'true',completionUploaded:'true'}},
+    completionEvidenceForm:{id:'completionEvidenceForm',dataset:{revision:'4',workspaceRevision:'21',reviewNeedsRefresh:'true',completionUploaded:'true'}},
   };
-  const context=vm.createContext({$:selector=>forms[selector.slice(1)]||null});
-  vm.runInContext(app.slice(app.indexOf('  const completionDraftKeys'),app.indexOf('  function priorityMarkup(')),context);
+  const context=vm.createContext({$:selector=>forms[selector.slice(1)]||null,hasUnsavedFields:()=>false});
+  vm.runInContext(app.slice(app.indexOf('  function completionDraftHasEdits('),app.indexOf('  function priorityMarkup(')),context);
   const draftFields=[{form:'responseForm',name:'note'},{form:'completionEvidenceForm',name:'completionUpload'}];
   const captured=context.taskCompletionDraftContext(draftFields);
   for(const form of Object.values(forms))form.dataset={revision:'5',workspaceRevision:'22'};
