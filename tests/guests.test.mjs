@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import '../legacy/guests.js';
 const G = globalThis.GatherGuests;
 
+test('lookup tolerates Latin accents, word order and phone formatting without searching notes or mutating the contact',()=>{
+  const guest=G.normalize({name:'José de la Cruz',email:'guest@example.com',phone:'+1 (415) 555-0142',group:'Stage crew',notes:'fictional private detail'});
+  const before=structuredClone(guest);
+  for(const query of ['jose cruz','de la cruz jose','  José  de  la   Cruz  ','jose\u0301 crew','4155550142','４１５５５５０１４２','+1 (415) 555-0142','guest@example.com','  '])
+    assert.equal(G.guestSearch(query)(guest),true,query);
+  for(const query of ['private detail','unrelated 0142','4155550143','jose catering'])
+    assert.equal(G.guestSearch(query)(guest),false,query);
+  assert.deepEqual(guest,before);
+  assert.equal(G.guestSearch('सिमा')({name:'सीमा'}),false,'non-Latin vowel marks are meaningful');
+  assert.equal(G.guestSearch('한글')({name:'한글'}),true,'canonically equivalent spellings still match');
+});
+
 test('guest normalization keeps contacts distinct from project identities', () => {
   const guest = G.normalize({
     name: '  Avery  ',

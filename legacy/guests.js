@@ -167,11 +167,27 @@
       attending: active.filter((guest) => guest.attendance === 'attending').length,
     };
   }
+  // Normalize only for lookup. Keep the saved spelling and non-Latin marks.
+  const searchText = value => String(value ?? '').normalize('NFD').toLowerCase()
+    .replace(/(\p{Script=Latin})\p{M}+/gu, '$1').normalize('NFC');
+  function guestSearch(query) {
+    const text=String(query ?? '').trim();
+    if(!text)return ()=>true;
+    const tokens=searchText(text).split(/\s+/);
+    const phoneQuery=text.normalize('NFKC');
+    const digits=/^\+?[0-9\s().-]+$/.test(phoneQuery)?phoneQuery.replace(/[^0-9]/g,''):'';
+    return guest=>{
+      const searchable=searchText([guest.name,guest.email,guest.group,guest.phone].join(' '));
+      return tokens.every(token=>searchable.includes(token))||
+        (digits!==''&&String(guest.phone??'').normalize('NFKC').replace(/[^0-9]/g,'').includes(digits));
+    };
+  }
   root.GatherGuests = {
     fields,
     types,
     attendance,
     normalize,
+    guestSearch,
     parseCSV,
     preview,
     arrivalSummary,

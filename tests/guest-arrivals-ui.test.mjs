@@ -11,6 +11,7 @@ async function harness(guests) {
   let snapshot={revision:7,identity:{admin:false},uploadsAvailable:false,guests:structuredClone(guests),files:[]};
   let failure=null,delay=null,closed=0,form;
   const requests=[],dialogs=[],toasts=[],focused=[],listNode={innerHTML:''};
+  const search={value:'',focus(){focused.push('search');}},typeControl={value:''},arrivalControl={value:''},clear={hidden:true},status={textContent:''};
   const newForm=()=>{
     const reload={listeners:{},addEventListener(e,fn){this.listeners[e]=fn;},setAttribute(){},removeAttribute(){},focus(){if(!this.disabled)focused.push('reload');}};
     const confirm={};
@@ -19,7 +20,10 @@ async function harness(guests) {
     return next;
   };
   const host={isConnected:true,innerHTML:'',listeners:{},contains:()=>false,addEventListener(e,fn){this.listeners[e]=fn;},
-    querySelector(selector){return selector==='[data-info-search]'?{focus(){focused.push('search');}}:listNode;},
+    querySelector(selector){return ({
+      '[data-info-search]':search,'[data-info-type]':typeControl,'[data-info-arrival-filter]':arrivalControl,
+      '[data-info-clear-filters]':clear,'[data-info-guest-results]':status,'[data-info-list]':listNode,
+    })[selector];},
     querySelectorAll(selector){return selector==='[data-info-arrival]'?[...this.innerHTML.matchAll(/data-info-arrival="([^"]+)"/g)]
       .map(([,id])=>({dataset:{infoArrival:id},focus(){focused.push(id);}})):[];}};
   const window={GatherGuests,GatherMode:{projectId:'fictional-arrivals'}};
@@ -40,12 +44,37 @@ async function harness(guests) {
   ui.mount(host);await setImmediate();
   const click=attrs=>host.listeners.click({target:{closest:()=>({dataset:Object.fromEntries(Object.entries(attrs).map(([k,v])=>[k.replace(/^data-/,'').replace(/-([a-z])/g,(_,l)=>l.toUpperCase()),v])),hasAttribute:k=>Object.hasOwn(attrs,k)})}});
   const change=(attribute,value,checked=false)=>host.listeners.change({target:{value,checked,hasAttribute:k=>k===attribute}});
-  return{host,listNode,dialogs,toasts,focused,requests,click,change,get form(){return form;},get reload(){return form.reload;},
+  const input=value=>{search.value=value;host.listeners.input({target:{value,hasAttribute:k=>k==='data-info-search'}});};
+  return{host,listNode,dialogs,toasts,focused,requests,click,change,input,search,typeControl,arrivalControl,clear,status,get form(){return form;},get reload(){return form.reload;},
     get closed(){return closed;},get error(){return form?.error?.textContent;},setFailure(v){failure=v;},setDelay(v){delay=v;},
     remote(update){update(snapshot);snapshot.revision++;},submit:()=>form.listeners.submit({preventDefault(){},stopPropagation(){},submitter:{}})};
 }
 const guest=(extra={})=>({id:'guest-a',name:'Fictional <Guest>',attendance:'attending',type:'attendee',email:'',phone:'',group:'',notes:'',...extra});
 
+test('guest lookup announces filtered counts and clear resets criteria without leaving the archived list or requesting data',async()=>{
+  const h=await harness([
+    guest({name:'José de la Cruz',phone:'(415) 555-0142'}),
+    guest({id:'guest-b',name:'Sam Park'}),
+    guest({id:'guest-c',name:'Former guest',type:'vendor',archivedAt:'archived'}),
+  ]);
+  assert.match(h.host.innerHTML,/data-info-guest-results role="status">2 active guests shown/);
+  for(const query of ['jose cruz','4155550142']){
+    h.input(query);assert.match(h.listNode.innerHTML,/guest-a/);assert.doesNotMatch(h.listNode.innerHTML,/guest-b/);
+    assert.equal(h.status.textContent,'1 active guest shown.');assert.equal(h.clear.hidden,false);
+  }
+  h.change('data-info-archived','',true);
+  h.typeControl.value='attendee';h.change('data-info-type','attendee');
+  h.arrivalControl.value='arrived';h.change('data-info-arrival-filter','arrived');
+  assert.equal(h.status.textContent,'0 archived guests shown.');
+  h.click({'data-info-clear-filters':''});
+  assert.deepEqual([h.search.value,h.typeControl.value,h.arrivalControl.value],['','','']);
+  assert.equal(h.status.textContent,'1 archived guest shown.');
+  assert.equal(h.clear.hidden,true);
+  assert.equal(h.focused.at(-1),'search');
+  assert.match(h.listNode.innerHTML,/guest-c/);
+  assert.doesNotMatch(h.listNode.innerHTML,/guest-a|data-info-arrival="/);
+  assert.equal(h.requests.length,1,'search and filter changes are local');
+});
 test('arrival summary and filters distinguish RSVP, record state and archived history with escaped names',async()=>{
   const h=await harness([guest(),guest({id:'guest-b',name:'Other guest',attendance:'unknown',arrival:{at:'2026-10-23T19:00:00Z',name:'<Recorder>'}}),guest({id:'guest-c',archivedAt:'archived',arrival:{at:'2026-10-23T19:00:00Z',name:'Recorder'}})]);
   assert.match(h.host.innerHTML,/1 arrival record<\/strong>/);assert.match(h.host.innerHTML,/1 RSVP attending · 2 guest records/);

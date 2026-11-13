@@ -134,19 +134,29 @@
       return '<div id="eventInfo"><h1>Event info</h1><p class="muted" role="status">Loading…</p></div>';
     }
     function rows() {
+      const matches = G.guestSearch(query);
       return (state?.guests || []).filter(
         (g) =>
           Boolean(g.archivedAt) === archived &&
           (!type || g.type === type) &&
           (!arrival || (arrival === 'arrived') === !!g.arrival?.at) &&
-          (!query ||
-            [g.name, g.email, g.group, g.phone]
-              .join(' ')
-              .toLowerCase()
-              .includes(query.toLowerCase())),
+          matches(g),
       );
     }
-    function list() {
+    const hasGuestFilters = () => Boolean(query || type || arrival);
+    const guestResultText = count => `${count} ${archived ? 'archived' : 'active'} ${count===1?'guest':'guests'} shown.`;
+    function updateGuestResults() {
+      if(tab!=='guests'||!state)return;
+      const guests=rows();
+      const listNode=host.querySelector('[data-info-list]');
+      if(listNode)listNode.innerHTML=list(guests);
+      const status=host.querySelector('[data-info-guest-results]');
+      const count=guestResultText(guests.length);
+      if(status&&status.textContent!==count)status.textContent=count;
+      const clear=host.querySelector('[data-info-clear-filters]');
+      if(clear)clear.hidden=!hasGuestFilters();
+    }
+    function list(guests) {
       if (tab === 'files') {
         const files = state.files.filter(
           (f) => Boolean(f.archivedAt) === archived,
@@ -164,18 +174,15 @@
               (archived ? 'No archived files.' : 'No files yet.') +
               '</p>';
       }
-      const guests = rows();
-      return (
-        `<div class="info-count muted">${guests.length} ${guests.length === 1 ? 'guest' : 'guests'}</div>` +
-        (guests.length
+      return (guests.length
           ? `<div class="info-table-wrap"><table class="info-table"><thead><tr><th>Name / contact</th><th>Type</th><th>Group</th><th>RSVP response</th><th>Arrival record</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${guests.map((g) => `<tr><td><strong>${h(g.name)}</strong><span>${h(g.email || g.phone || 'No contact details')}</span></td><td>${h(g.type)}</td><td>${h(g.group || '—')}</td><td>${h(g.attendance === 'unknown' ? 'Not recorded' : g.attendance)}</td><td>${g.arrival?.at ? `<strong>Arrival recorded</strong><span>${h(new Date(g.arrival.at).toLocaleString())} · ${h(g.arrival.name)}</span>` : 'No arrival recorded'}${!archived ? `<button class="text-button" data-info-arrival="${h(g.id)}" aria-label="${g.arrival?.at ? 'Review arrival for ' : 'Record arrival for '}${h(g.name)}">${g.arrival?.at ? 'Review / undo' : 'Record arrival'}</button>` : ''}</td><td><button class="text-button" data-info-guest="${h(g.id)}">${archived ? 'View' : 'Edit'}</button></td></tr>`).join('')}</tbody></table></div>`
           : '<p class="notice">' +
-            (query || type || arrival
+            (hasGuestFilters()
               ? 'No guests match these filters.'
               : archived
                 ? 'No archived guests.'
                 : 'No guests yet. Add one or import a CSV.') +
-            '</p>')
+            '</p>'
       );
     }
     function render() {
@@ -191,6 +198,7 @@
           ? [active.selectionStart, active.selectionEnd]
           : null;
       const summary = G.arrivalSummary(state.guests);
+      const guests=tab==='guests'?rows():[];
       const expanded=new Set([...(host.querySelectorAll?.('details[data-info-responses][open]')||[])].map(el=>el.dataset.infoResponses));
       if(tab==='dates') host.innerHTML=datePollMarkup();
       else host.innerHTML = `<div class="page-heading"><h1>Event info</h1><div class="header-actions"><button class="btn btn-secondary btn-small" data-info-refresh>Refresh</button>${tab === 'guests' && !archived ? '<button class="btn btn-secondary" data-info-import>Import CSV</button><button class="btn btn-primary" data-info-add>Add guest</button>' : tab === 'files' && !archived && state.uploadsAvailable === true ? '<button class="btn btn-primary" data-info-upload>Upload file</button>' : ''}</div></div><section class="panel"><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Event info views">${[
@@ -204,13 +212,15 @@
         )
         .join(
           '',
-        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent. Arrival records are manual, separate from RSVP responses, and are not a live headcount or a release/safeguarding system.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<p class="info-arrival-summary" role="status">Active guest list: <strong>${summary.arrived} arrival record${summary.arrived === 1 ? '' : 's'}</strong> · ${summary.attending} RSVP attending · ${summary.total} guest record${summary.total === 1 ? '' : 's'}. Totals exclude archived guests and do not change with filters.</p><div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Find a guest, email or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select><select data-info-arrival-filter aria-label="Filter arrival records"><option value="" ${!arrival ? 'selected' : ''}>All arrival records</option><option value="waiting" ${arrival === 'waiting' ? 'selected' : ''}>No arrival recorded</option><option value="arrived" ${arrival === 'arrived' ? 'selected' : ''}>Arrival recorded</option></select></div>` : ''}<div data-info-list>${list()}</div></section>`;
+        )}</div><label class="check-field"><input type="checkbox" data-info-archived ${archived ? 'checked' : ''}> Archived</label></div><p class="info-access muted">${tab === 'guests' ? 'Guests are contacts, not project members. No messages are sent. Arrival records are manual, separate from RSVP responses, and are not a live headcount or a release/safeguarding system.' : 'Shared with project members. Downloads require sign-in.'}</p>${tab === 'files' && state.uploadsAvailable !== true ? '<p class="notice" role="status">File uploads are unavailable. You can still manage the guest list.</p>' : ''}${tab === 'guests' ? `<p class="info-arrival-summary" role="status">Active guest list: <strong>${summary.arrived} arrival record${summary.arrived === 1 ? '' : 's'}</strong> · ${summary.attending} RSVP attending · ${summary.total} guest record${summary.total === 1 ? '' : 's'}. Totals exclude archived guests and do not change with filters.</p><div class="info-filters"><label class="field"><span class="sr-only">Find a guest</span><input type="search" data-info-search value="${h(query)}" placeholder="Name, email, phone or group…"></label><select data-info-type aria-label="Filter guest type"><option value="">All types</option>${opts(G.types, type)}</select><select data-info-arrival-filter aria-label="Filter arrival records"><option value="" ${!arrival ? 'selected' : ''}>All arrival records</option><option value="waiting" ${arrival === 'waiting' ? 'selected' : ''}>No arrival recorded</option><option value="arrived" ${arrival === 'arrived' ? 'selected' : ''}>Arrival recorded</option></select><button type="button" class="btn btn-secondary" data-info-clear-filters ${hasGuestFilters()?'':'hidden'}>Clear filters</button></div><p class="info-count muted" data-info-guest-results role="status">${guestResultText(guests.length)}</p>` : ''}<div data-info-list>${list(guests)}</div></section>`;
       for(const el of host.querySelectorAll?.('details[data-info-responses]')||[])el.open=expanded.has(el.dataset.infoResponses);
       if (focus) {
         const next = [...host.querySelectorAll('button,input,select,summary')].find(
           (element) => element.getAttribute(focus.name) === focus.value,
         );
         next?.focus({ preventScroll: true });
+        if(!next&&tab==='guests'&&['data-info-arrival','data-info-guest'].includes(focus.name))
+          host.querySelector('[data-info-search]')?.focus({preventScroll:true});
         if (selection && next?.setSelectionRange && selection[0] !== null)
           next.setSelectionRange(...selection);
       }
@@ -556,6 +566,16 @@
         const el = event.target.closest('button');
         if (!el) return;
         if (el.hasAttribute('data-info-refresh')) load();
+        if (el.hasAttribute('data-info-clear-filters')&&tab==='guests'&&state) {
+          query=type=arrival='';
+          const search=host.querySelector('[data-info-search]');
+          if(search){search.value='';search.focus();}
+          for(const key of ['[data-info-type]','[data-info-arrival-filter]']){
+            const control=host.querySelector(key);
+            if(control)control.value='';
+          }
+          updateGuestResults();
+        }
         if (el.dataset.infoTab) {
           tab = el.dataset.infoTab;
           archived = false;
@@ -574,17 +594,17 @@
       host.addEventListener('input', (event) => {
         if (event.target.hasAttribute('data-info-search')) {
           query = event.target.value;
-          host.querySelector('[data-info-list]').innerHTML = list();
+          updateGuestResults();
         }
       });
       host.addEventListener('change', (event) => {
         if (event.target.hasAttribute('data-info-type')) {
           type = event.target.value;
-          host.querySelector('[data-info-list]').innerHTML = list();
+          updateGuestResults();
         }
         if (event.target.hasAttribute('data-info-arrival-filter')) {
           arrival = event.target.value;
-          host.querySelector('[data-info-list]').innerHTML = list();
+          updateGuestResults();
         }
         if (event.target.hasAttribute('data-info-archived')) {
           archived = event.target.checked;
