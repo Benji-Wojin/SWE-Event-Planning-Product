@@ -232,7 +232,7 @@ test('hosted schedule save awaits success and keeps the draft intact on failure'
   }
 });
 
-test('saving from the event review updates only the fixed activity, then reopens the review after success',async()=>{
+test('the hosted submit dispatcher awaits the reviewed schedule save without a second generic write',async()=>{
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const app=readFileSync('public/gather-assets/app.js','utf8');
   const start=app.indexOf("      if(form.id==='reviewScheduleForm')");
@@ -240,19 +240,12 @@ test('saving from the event review updates only the fixed activity, then reopens
   const events=[];
   let release;
   const pending=new Promise(resolve=>{release=resolve;});
-  const context=vm.createContext({form:{id:'reviewScheduleForm',dataset:{id:'fixed',revision:'3'}},
-    data:{...slot,taskId:'other'},ui:{dialogKind:'schedule-from-review',actor:'jack'},
-    window:{GatherAccessLost:false},isOrganizer:()=>true,
-    store:{getState:()=>({tasks:[{id:'fixed',revision:3},{id:'other',revision:3}]}),setTaskSchedule(id,data,actor){
-      events.push(['save',id,data.start,data.end,data.location,actor]);return pending;
-    }},
-    render:()=>events.push('render'),beforeEventReview:()=>events.push('review'),toast:text=>events.push(text)});
-  const submit=()=>vm.runInContext(`(async()=>{${fragment}})()`,context);
-  context.form.dataset.revision='2';await assert.rejects(submit(),/activity changed/i);
-  context.form.dataset.revision='3';context.window.GatherAccessLost=true;
-  await assert.rejects(submit(),/reopen the event review as the organizer/i);assert.deepEqual(events,[]);
-  context.window.GatherAccessLost=false;const result=submit();
-  assert.deepEqual(events,[['save','fixed',slot.start,slot.end,slot.location,'jack']]);
+  const form={id:'reviewScheduleForm',dataset:{id:'fixed',revision:'3'}},data={...slot,taskId:'other'};
+  const context=vm.createContext({form,data,events,saveEventReviewSchedule(form,data){
+    events.push(['save',form,data]);return pending;
+  }});
+  const result=vm.runInContext(`(async()=>{${fragment};events.push('continued')})()`,context);
+  assert.deepEqual(events,[['save',form,data]]);
   release();await result;
-  assert.deepEqual(events.slice(1),['render','review','Schedule saved. Event review updated.']);
+  assert.equal(events[1],'continued');
 });

@@ -1215,6 +1215,8 @@
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(kind!=='task')ui.notificationScheduleReview=null;
     if(kind!=='first-schedule')ui.firstScheduleEditor=null;
+    if(kind!=='before-event-review')ui.eventReviewSnapshot=null;
+    if(kind!=='schedule-from-review')ui.eventScheduleEditor=null;
     if(!['related-checklist','related-review'].includes(kind))ui.relatedChecklistDraft=null;
     if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.relatedBatch=null;
     if(kind!=='guest-agenda')ui.guestAgenda=null;
@@ -1262,6 +1264,8 @@
     ui.dialogKind='';
     ui.notificationScheduleReview=null;
     ui.firstScheduleEditor=null;
+    ui.eventReviewSnapshot=null;
+    ui.eventScheduleEditor=null;
     ui.overlapReviewDay='';
     ui.overlapComparison=null;
     ui.eventTaskReview=null;
@@ -1522,12 +1526,15 @@
     const refresh=store.refresh
       ? '<button type="button" class="btn btn-secondary" data-action="refresh-event-review" data-id="'+h(group)+'">Refresh event review</button>'
       : '<button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button>';
-    return '<p role="status" id="eventReviewRefreshStatus">Newer project changes are available. This review shows the last loaded plan. Refresh before responding to a request.</p>'+refresh;
+    return '<p role="status" id="eventReviewRefreshStatus">Newer project changes are available. This review shows the last loaded plan. Refresh before making a change.</p>'+refresh;
   }
   function beforeEventReview(group='') {
     if(window.GatherAccessLost)return;
+    const state=store.getState(),scope=eventReviewScope();
+    ui.eventReviewSnapshot={scope,key:scheduleWorkspaceKey(),mode:ui.timelineMode,date:ui.scheduleDate,
+      workspaceRevision:store.getSnapshotRevision?.(),zone:state.event?.timeZone};
     const pending=workspaceUpdatesPending()?'<div id="dialogStaleNotice" class="notice">'+eventReviewRefreshNotice(group)+'</div>':'';
-    openDialog('Before the event',pending+schedule.preparationReview(store.getState(),Date.now(),eventReviewScope(),isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
+    openDialog('Before the event',pending+schedule.preparationReview(state,Date.now(),scope,isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
     const title=$('#dialogTitle');
     requestAnimationFrame(()=>{
       if(!title||ui.dialogKind!=='before-event-review'||window.GatherAccessLost||$('#dialogTitle')!==title)return;
@@ -1556,13 +1563,13 @@
     if(button)button.setAttribute('aria-disabled','true');
     if(status)status.textContent='Refreshing event review…';
     try{
-      const result=await store.refresh(stillOpen);
+      const result=await store.refresh(revision=>stillOpen()&&!recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
       if(!stillOpen()){
         if(sameReview()&&status)status.textContent='Refresh paused while this tab was hidden. Try again.';
         return;
       }
       if(result.pending)rememberNewerSchedule(null,result.newerRevision);
-      if(result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()))
+      if(!result.verified||result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()))
         throw new Error('A newer project snapshot is not ready.');
       const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
       ui.toolUpdatePending=false;
@@ -1574,6 +1581,81 @@
       ui.syncing=false;
       if(button?.isConnected)button.removeAttribute('aria-disabled');
     }
+  }
+  function eventScheduleContextMatches(context) {
+    return !!context&&!window.GatherAccessLost&&isOrganizer()&&ui.view==='timeline'&&
+      context.key===scheduleWorkspaceKey()&&context.mode===ui.timelineMode&&context.date===ui.scheduleDate&&
+      context.scope.mine===eventReviewScope().mine;
+  }
+  function eventScheduleReviewStale(context) {
+    const revision=store.getSnapshotRevision?.();
+    return workspaceUpdatesPending()||scheduleRevisionIsStale(revision)||context.workspaceRevision!==revision;
+  }
+  function openEventReviewSchedule(id,opener) {
+    const context=ui.eventReviewSnapshot,dialog=$('#dialog'),group=opener?.closest('[data-event-review-group]')?.dataset.eventReviewGroup;
+    if(!eventScheduleContextMatches(context)||ui.dialogKind!=='before-event-review'||$('#dialogBackdrop').hidden||
+      !opener?.isConnected||!dialog?.contains(opener)||opener.dataset.action!=='schedule-review-activity'||opener.dataset.id!==id)return;
+    const state=store.getState();
+    if(eventScheduleReviewStale(context)||state.event.timeZone!==context.zone){
+      showPendingUpdate(undefined,group);
+      const refresh=$('[data-action="refresh-event-review"]',dialog);
+      if(refresh){refresh.dataset.id=group||'';refresh.focus();}
+      toast('Refresh the event review before editing this activity.');return;
+    }
+    const task=schedule.reviewScheduleTask(state,context.scope,group,id);
+    if(!task){toast('This activity is no longer in that review group.');return;}
+    const body=schedule.activityReviewForm(state,id);
+    ui.eventScheduleEditor={...context,group,id,taskRevision:task.revision,zone:state.event.timeZone};
+    openDialog('Review activity schedule',body,'<button type="button" class="btn btn-secondary" data-action="return-from-event-review-schedule">Back to event review</button>',false,'schedule-from-review',true);
+  }
+  function returnFromEventReviewSchedule() {
+    const editor=ui.eventScheduleEditor;
+    if(ui.dialogKind!=='schedule-from-review'||$('#dialogBackdrop').hidden||!eventScheduleContextMatches(editor))return false;
+    beforeEventReview(editor.group);
+    return true;
+  }
+  async function saveEventReviewSchedule(form,data) {
+    const editor=ui.eventScheduleEditor;
+    const sameEditor=()=>eventScheduleContextMatches(editor)&&ui.eventScheduleEditor===editor&&
+      ui.dialogKind==='schedule-from-review'&&!$('#dialogBackdrop').hidden&&$('#reviewScheduleForm')===form&&
+      form.isConnected&&form.dataset.id===editor.id;
+    if(!sameEditor())throw new Error('Reopen the event review as the organizer before saving.');
+    if(editor.unconfirmed)throw new Error('The previous save couldn’t be confirmed. Return to the event review and refresh before trying again.');
+    const state=store.getState(),task=schedule.reviewScheduleTask(state,editor.scope,editor.group,editor.id);
+    if(eventScheduleReviewStale(editor)||!task||task.revision!==editor.taskRevision||
+      String(task.revision)!==form.dataset.revision||state.event.timeZone!==editor.zone){
+      showPendingUpdate();
+      throw new Error('This activity or project changed. Your edits are still here. Review the latest schedule before saving.');
+    }
+    const slot={start:data.start,end:data.end,location:data.location};
+    const write=store.setTaskSchedule;
+    let saved;
+    try{saved=await write(task.id,slot,ui.actor);}
+    catch(error){
+      if(!sameEditor())return;
+      if(error.status===409){
+        if(['The plan changed in another tab.','Someone updated this demo.','Another profile saved first.'].some(prefix=>error.message?.startsWith(prefix)))
+          showRecoveryWriteConflict(editor.workspaceRevision);
+        else showPendingUpdate();
+        throw new Error('The project changed before this schedule was saved. Your edits are still here. Return to the event review to refresh it.');
+      }
+      if(Number.isSafeInteger(editor.workspaceRevision)&&(!error.status||error.status===408||error.status>=500)){
+        editor.unconfirmed=true;
+        showPendingUpdate();
+        throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Return to the event review and refresh before trying again.');
+      }
+      throw error;
+    }
+    if(!sameEditor())return;
+    if(saved?.id!==editor.id||saved.schedule?.start!==slot.start||saved.schedule?.end!==slot.end||
+      saved.schedule?.location!==slot.location.trim()||!Number.isSafeInteger(saved.revision)){
+      editor.unconfirmed=true;
+      showPendingUpdate();
+      throw new Error('We couldn’t confirm the schedule save. Your edits are still here. Return to the event review and refresh before trying again.');
+    }
+    const reconfirm=(task.acceptedAt||task.nextUpAt)&&!saved.acceptedAt&&!saved.nextUpAt;
+    render();beforeEventReview(editor.group);
+    toast('Schedule saved. Event review updated.'+(reconfirm?' The owner needs to accept again.':''));
   }
   function returnToEventTaskReview() {
     const source=ui.eventTaskReview;
@@ -1806,7 +1888,7 @@
       if(button.isConnected)button.removeAttribute('aria-disabled');
     }
   }
-  function showPendingUpdate(newerRevision) {
+  function showPendingUpdate(newerRevision,reviewGroup='') {
     if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
@@ -1817,8 +1899,9 @@
     if(ui.dialogKind==='task'){paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
-    const group=ui.dialogKind==='before-event-review'?document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
+    const group=ui.dialogKind==='before-event-review'?reviewGroup||document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
     note.innerHTML=ui.dialogKind==='before-event-review'?eventReviewRefreshNotice(group):
+      ui.dialogKind==='schedule-from-review'?'<p>This editor may not reflect the latest schedule. Your edits are still here. Copy them if needed, then use Back to event review to refresh the plan.</p>':
       ui.dialogKind==='task'&&canRefreshActivityReview(store.getState().tasks.find(task=>task.id===ui.detailId))?activityReviewRefreshNotice(!!taskAcceptanceButton(),!!completionReviewControls().length):
       '<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
@@ -3209,7 +3292,7 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId&&$('#dialogBackdrop').hidden)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
+    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-from-event-review-schedule','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
     const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
@@ -3306,7 +3389,8 @@
       if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);
-      if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
+      if(action==='schedule-review-activity')openEventReviewSchedule(id,el);
+      if(action==='return-from-event-review-schedule')returnFromEventReviewSchedule();
       if(action==='print-run-sheet')printRunSheet();
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
@@ -3581,14 +3665,7 @@
         const reconfirm=(before?.acceptedAt||before?.nextUpAt)&&saved&&!saved.acceptedAt&&!saved.nextUpAt;
         render();taskDialog(taskId,form.id);toast((remove?'Removed from schedule. The task was kept.':'Schedule saved.')+(reconfirm?' The owner needs to accept again.':''));
       }
-      if(form.id==='reviewScheduleForm'){
-        if(ui.dialogKind!=='schedule-from-review'||!isOrganizer()||window.GatherAccessLost)throw new Error('Reopen the event review as the organizer.');
-        const task=store.getState().tasks.find(item=>item.id===form.dataset.id);
-        if(!task||task.revision!==Number(form.dataset.revision))throw new Error('This activity changed. Reopen the event review before saving.');
-        const saved=store.setTaskSchedule(task.id,{start:data.start,end:data.end,location:data.location},ui.actor);
-        const reconfirm=(task.acceptedAt||task.nextUpAt)&&saved&&!saved.acceptedAt&&!saved.nextUpAt;
-        render();beforeEventReview();toast('Schedule saved. Event review updated.'+(reconfirm?' The owner needs to accept again.':''));
-      }
+      if(form.id==='reviewScheduleForm')await saveEventReviewSchedule(form,data);
       if(form.id==='taskDetailForm'){
         const before=store.getState().tasks.find(task=>task.id===form.dataset.id);
         if(!protectCompletionDraft(before,'details',data,form))return;

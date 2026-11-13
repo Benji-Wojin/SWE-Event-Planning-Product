@@ -133,6 +133,8 @@ Unselected tasks, catering cutoffs, budget due dates, bookings, saved planning b
 
 **Timeline → Before the event** reviews the current saved plan: open preparation, required verification, blocked work, ownership/acceptance, overdue deadlines, unfinished prerequisites, owner overlaps and missing activity details. It follows All/My scope (preparation-deadline view reviews all tasks). Sections can overlap; zero findings never certifies safety, approvals, bookings or readiness. After opening a task, **Back to event review** returns to the same section and recalculates it from the workspace’s current saved state. No automatic task changes or messages are made.
 
+Organizers can fix missing activity times or locations from that review. **Back to event review** and a confirmed save both return to the same section. If the project changes or the save can’t be confirmed, the editor keeps the entered values visible and asks the organizer to refresh the review before trying again.
+
 The event schedule keeps unfinished activities in **Check progress** after their entered end time, or once a start time is reached without an end set. Open an activity to check with its owner and record the real outcome. Time alone never changes task status; reported work awaiting verification stays in the dated timetable rather than asking for another progress report. The section follows the current All activities / My activities scope and refreshes with the schedule clock.
 
 If a live refresh moves a keyboard-focused activity, Timeline keeps focus on the same activity and brings it into view if needed. If it leaves the current scope, focus moves to the activity scope control or the schedule heading, not to another task.

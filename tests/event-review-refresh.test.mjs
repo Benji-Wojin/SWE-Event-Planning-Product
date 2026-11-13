@@ -23,11 +23,11 @@ function fixture() {
     ui, window, document: { hidden: false, activeElement: null },
     store: {
       getState: () => ({ snapshot, tasks: [] }), getSnapshotRevision: () => snapshot === 'fresh' ? 4 : 3,
-      refresh(canApply) {
+      refresh(canApply,options) {
         return new Promise((resolve, reject) => requests.push({
-          canApply,
-          finish(result = { changed: true }) {
-            const allowed = canApply();
+          canApply:()=>canApply(4),options,
+          finish(result = { changed: true, verified: true }) {
+            const allowed = canApply(result.changed?4:3);
             if (allowed && result.changed) snapshot = 'fresh';
             resolve(allowed ? result : { pending: true });
           },
@@ -103,6 +103,7 @@ test('refresh applies a single read and reopens the same event review group with
   const { ctx, ui, sync, status, attributes, events, requests, refresh } = load(fixture());
   const first = refresh('plan-requests');
   assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.requireFresh,true);
   assert.equal(ui.syncing, true);
   assert.equal(attributes.get('aria-disabled'), 'true');
   assert.match(status.textContent, /Refreshing event review/);

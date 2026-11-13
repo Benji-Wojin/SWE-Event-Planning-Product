@@ -423,6 +423,11 @@
       if(!state.event.timeZone)return needsZone();
       return `<p><strong>${h(task.title)}</strong></p><form id="reviewScheduleForm" data-id="${h(task.id)}" data-revision="${h(task.revision)}">${zone(state.event)}${scheduleCommitmentHint(task)}${fields(task.schedule||{})}<div class="form-actions"><button class="btn btn-primary" type="submit">Save schedule</button></div></form>`;
     }
+    function reviewScheduleTask(state,scope,group,id) {
+      const task=scoped(state.tasks,scope).find(item=>item.id===id);
+      return task&&(group==='activity-time'&&needsActivityTime(task)||
+        group==='activity-details'&&needsActivityDetails(task))?task:null;
+    }
     function firstTimeTask(state,taskId,scope) {
       return scoped(state.tasks,scope).find(task=>task.id===taskId&&needsActivityTime(task));
     }
@@ -578,7 +583,7 @@
         <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
-    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
+    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

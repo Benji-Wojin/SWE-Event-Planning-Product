@@ -195,7 +195,7 @@ test('review handler uses current scope, blocks lost access, and participates in
   const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function eventReviewScope(');
   const fragment=source.slice(start,source.indexOf('  function showPendingUpdate(',start));const calls=[];
   const context=vm.createContext({action:'before-event-review',window:{GatherAccessLost:false},Date,$:()=>null,
-    requestAnimationFrame:()=>{},isOrganizer:()=>false,
+    requestAnimationFrame:()=>{},isOrganizer:()=>false,scheduleWorkspaceKey:()=> 'fixture',
     ui:{timelineMode:'schedule',scheduleMine:true,actor:'maya'},store:{getState:()=>({marker:true})},
     schedule:{preparationReview(s,now,scope,organizer){calls.push({...scope});assert.equal(s.marker,true);assert.equal(organizer,false);return 'review';}},
     openDialog(title,body,footer,wide,kind){assert.equal(title,'Before the event');assert.equal(body,'review');assert.equal(kind,'before-event-review');}});
@@ -218,7 +218,7 @@ test('returning to an event review opens and focuses the original group on curre
   let activeElement,markup='',groupsInDialog=[],title;
   const focusable=(textContent)=>({textContent,focus(){activeElement=this;},scrollIntoView(options){this.scrollOptions=options;}});
   const context=vm.createContext({window:{GatherAccessLost:false},ui:activeUI,store,schedule:ui,Date,
-    isOrganizer:()=>false,requestAnimationFrame:frame=>frames.push(frame),
+    isOrganizer:()=>false,scheduleWorkspaceKey:()=> 'fixture',requestAnimationFrame:frame=>frames.push(frame),
     $(selector,root){if(selector==='#dialog')return dialog;if(selector==='#workspaceSyncNotice')return sync;assert.equal(selector,'#dialogTitle');if(root)assert.equal(root,dialog);return title;},
     $$(selector,root){assert.equal(selector,'[data-event-review-group]');assert.equal(root,dialog);return groupsInDialog;},
     openDialog(label,body,_footer,_wide,kind,focusHeading){
