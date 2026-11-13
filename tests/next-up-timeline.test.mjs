@@ -108,7 +108,8 @@ function route({ overview = false } = {}) {
     toast: message => calls.push(['toast', message]), render: () => calls.push(['render']),
     requestAnimationFrame: callback => frames.push(callback),
   });
-  vm.runInContext(fragment('  function jumpFromNextUpToTimeline(', '  function openScheduleReconfirmation('), context);
+  vm.runInContext(fragment('  function focusTimelineRow(', '  function timelineView(')+
+    fragment('  function jumpFromNextUpToTimeline(', '  function openScheduleReconfirmation('), context);
   return { s, ui, window, document, backdrop, opener, panel, heading, calls, rows, exact,
     set blocked(value) { blocked = value; }, set knownStale(value) { knownStale = value; },
     set denied(value) { denied = value; }, set closedDisclosure(value) { closedDisclosure = value; },
