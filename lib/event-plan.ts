@@ -183,6 +183,7 @@ async function snapshot(c: Context) {
     const owners=c.purpose==='plan'?new Map<string,string>(c.state.members
       .filter((member:any)=>member.active!==false&&(c.demo||!member.role?.includes('· example')))
       .map((member:any)=>[member.id,member.name])):null;
+    const completionStates: Map<string, boolean> | null = owners ? c.store.taskCompletionStates() : null;
     for(const id of data.receipt.taskIds){
       const task=tasks.get(id);
       if(!task)continue;
@@ -191,7 +192,9 @@ async function snapshot(c: Context) {
         const ownerName=owners.get(task.owner);
         const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
           :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
-          :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt?'needs-review'
+          :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt
+            ? task.reportedAt&&task.dependencies?.some((link:{kind?:string;taskId:string})=>link.kind!=='related'&&!completionStates?.get(link.taskId))
+              ? 'review-blocked' : 'needs-review'
           :!task.owner?'needs-owner'
           :!owners.has(task.owner)?'needs-reassignment'
           :task.status!=='done'&&!task.reportedAt&&task.completionReview?'changes-requested'

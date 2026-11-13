@@ -2,7 +2,7 @@ export type PlanReceiptTask = {
   id: string;
   title: string;
   handoff?: {
-    state: 'needs-owner'|'needs-reassignment'|'awaiting-acceptance'|'accepted'|'needs-review'|'needs-amendment-review'|'changes-requested'|'complete';
+    state: 'needs-owner'|'needs-reassignment'|'awaiting-acceptance'|'accepted'|'needs-review'|'review-blocked'|'needs-amendment-review'|'changes-requested'|'complete';
     ownerName?: string;
   };
 };
@@ -10,6 +10,7 @@ export type PlanReceiptTask = {
 const handoffSections = [
   { id: 'owner', title: 'Assign an owner', help: 'Open a task and choose an active owner in Edit task details.' },
   { id: 'review', title: 'Review completion', help: 'Open a task to review its completion or updated evidence.' },
+  { id: 'required-work', title: 'Review required work', help: 'Open the task and check Task relationships. The report is still on file, but verification must wait until the required work is resolved.' },
   { id: 'acceptance', title: 'Waiting for acceptance', help: 'The assigned person still needs to accept responsibility.' },
   { id: 'revision', title: 'Waiting for a revised submission', help: 'The owner needs to address the requested changes and resubmit.' },
   { id: 'settled', title: 'Accepted or complete', help: '' },
@@ -20,6 +21,7 @@ const sectionByState = {
   'needs-owner': 'owner',
   'needs-reassignment': 'owner',
   'needs-review': 'review',
+  'review-blocked': 'required-work',
   'needs-amendment-review': 'review',
   'awaiting-acceptance': 'acceptance',
   'changes-requested': 'revision',
@@ -44,6 +46,7 @@ export function handoffLabel({state,ownerName}: NonNullable<PlanReceiptTask['han
     case 'awaiting-acceptance': return ownerName?`Assigned to ${ownerName} · awaiting acceptance`:'Awaiting owner acceptance';
     case 'accepted': return ownerName?`Accepted by ${ownerName}`:'Owner accepted';
     case 'needs-review': return 'Completion needs verification';
+    case 'review-blocked': return 'Verification waiting on required work';
     case 'needs-amendment-review': return 'Complete · updated evidence needs review';
     case 'changes-requested': return ownerName? `Changes requested · waiting for ${ownerName}` : 'Completion changes requested';
     case 'complete': return 'Complete';

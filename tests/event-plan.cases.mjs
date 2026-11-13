@@ -1120,6 +1120,49 @@ export async function eventPlanTests({
       assert.deepEqual(deleted.receipt,applied.receipt);
       assert.equal(deleted.receiptTasks.some(task=>task.id===second.id),false);
     });
+    await t.test('a receipt reports when required work blocks verification without treating related work or amendments as blocked',async(test)=>{
+      const project=await setup();
+      test.after(()=>{owner();sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);});
+      const required=(await change(project,'addTask',[{title:baseItem.title,owner:'jack',requiresVerification:true}])).result;
+      await change(project,'reportCompletion',[required.id,'Fictional approval recorded.']);
+      await change(project,'verifyTask',[required.id]);
+      const related=(await change(project,'addTask',[{title:'Parallel fictional welcome setup',owner:'jack'}])).result;
+      const snap=await ready(project);
+      assert.equal(snap.draft.items[0].included,false,'the draft can reuse the already verified prerequisite');
+      snap.draft.items[1].owner='jack';
+      const response=await post(project,approval(snap));
+      assert.equal(response.status,200,await response.clone().text());
+      const applied=await response.json();
+      const receiptTask=applied.receiptTasks.find(task=>task.title==='Welcome attendees');
+      assert.ok(receiptTask);
+      for(const prerequisite of [required,related])assert.ok(!applied.receipt.taskIds.includes(prerequisite.id));
+      await change(project,'addDependency',[receiptTask.id,{taskId:related.id,kind:'related',reason:'Share context without blocking completion.'}]);
+      await change(project,'updateTask',[receiptTask.id,{requiresVerification:true}]);
+      await change(project,'reportCompletion',[receiptTask.id,'FICTIONAL_PRIVATE_RECEIPT_REPORT']);
+      const workspaceRow=()=>sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+      async function check(expected) {
+        const before=workspaceRow(),draftBefore=row(project);
+        const refreshed=await read(project);
+        assert.deepEqual(refreshed.receipt,applied.receipt);
+        const item=refreshed.receiptTasks.find(task=>task.id===receiptTask.id);
+        assert.equal(item?.handoff?.state,expected);
+        assert.doesNotMatch(JSON.stringify(item),/FICTIONAL_PRIVATE_RECEIPT_|Parallel fictional welcome setup/);
+        assert.deepEqual(workspaceRow(),before,'receipt GET must not write the workspace');
+        assert.deepEqual(row(project),draftBefore,'receipt GET must not rewrite the private draft');
+      }
+      await check('needs-review');
+      await change(project,'updateTask',[required.id,{status:'todo'}]);
+      await check('review-blocked');
+      await change(project,'reportCompletion',[required.id,'Fictional approval reconfirmed.']);
+      await check('review-blocked');
+      await change(project,'verifyTask',[required.id]);
+      await check('needs-review');
+      await change(project,'verifyTask',[receiptTask.id]);
+      await change(project,'updateTask',[required.id,{status:'todo'}]);
+      await change(project,'setCompletionEvidence',[receiptTask.id,{note:'FICTIONAL_PRIVATE_RECEIPT_AMENDMENT'}]);
+      await check('needs-amendment-review');
+      assert.equal(calls.length,1,'receipt refreshes must not call the provider');
+    });
     await t.test('semantic duplicate review persists choices, reuses an existing prerequisite and preserves its details', async () => {
       const project = await setup();
       await change(project, 'addTask', [{ title: 'Get approval for the event', owner: 'jack', note: 'Keep original note.' }]);

@@ -770,6 +770,39 @@ test('the organizer handoff separates next actions and refresh moves the same ta
     assert.doesNotMatch(text(app.tree),/Choose a fresh starter|Generate a new draft before adding it/);
   }finally{app.dispose();}
 });
+test('the handoff shows verification blockers separately and the same link moves back to review on refresh',async()=>{
+  const initial=fixture();
+  initial.status='applied';
+  initial.receipt={taskIds:['task-blocked','task-amended']};
+  initial.receiptTasks=[
+    {id:'task-blocked',title:'Confirm foyer handoff',handoff:{state:'review-blocked'}},
+    {id:'task-amended',title:'Confirm room handback',handoff:{state:'needs-amendment-review'}},
+  ];
+  let reads=0;
+  const app=harness(context=>{
+    if(!context.input&&++reads===2){
+      const next=copy(context.saved);
+      next.receiptTasks[0].handoff.state='needs-review';
+      context.value=next;
+    }
+  },initial,'project=p_school',false,true);
+  const group=id=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='handoff-'+id);
+  const taskLink=section=>nodes(section).find(node=>node.props?.href==='/project?project=p_school&task=task-blocked&guide=1');
+  try{
+    await app.start();
+    const blocked=group('required-work'),review=group('review');
+    assert.match(text(blocked),/Review required work.*Task relationships.*report is still on file.*Verification waiting on required work/);
+    assert.equal(text(taskLink(blocked)),'Confirm foyer handoff');
+    assert.equal(taskLink(review),undefined);
+    assert.match(text(review),/Confirm room handback.*updated evidence needs review/);
+    await app.click('Refresh task handoff');
+    assert.equal(group('required-work'),undefined);
+    assert.equal(text(taskLink(group('review'))),'Confirm foyer handoff');
+    assert.match(text(group('review')),/Completion needs verification/);
+    assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
+  }finally{app.dispose();}
+});
+
 test('context refresh discards a rejected stale generation payload and uses the current revision', async () => {
   let failed = false;
   const app = harness((context) => {
