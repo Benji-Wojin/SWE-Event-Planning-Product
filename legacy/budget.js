@@ -128,6 +128,24 @@
     return { minimum: Math.max(planned ?? 0, row.paid ?? 0),
       missing: planned === null ? cancelled ? 'payment' : 'planned' : '' };
   }
+  function compareCostEdits(opening, latest, draft) {
+    const merged = {}, conflicts = [], changed = [];
+    const amounts = ['estimate','committed','paid'];
+    const localStatus = draft.status !== opening.status && draft.status !== latest.status;
+    const remoteStatus = latest.status !== opening.status && latest.status !== draft.status;
+    const localAmount = amounts.some(key=>draft[key] !== opening[key] && draft[key] !== latest[key]);
+    const remoteAmount = amounts.some(key=>latest[key] !== opening[key] && latest[key] !== draft[key]);
+    const coupled = (localStatus && remoteAmount) || (remoteStatus && localAmount);
+    for (const key of ['title',...amounts,'owner','taskId','dueDate','status']) {
+      const remote = latest[key] !== opening[key], local = draft[key] !== opening[key];
+      if (remote) changed.push(key);
+      if (remote && local && draft[key] !== latest[key]) {
+        conflicts.push(key);
+        merged[key] = latest[key];
+      } else merged[key] = local ? draft[key] : latest[key];
+    }
+    return { merged, conflicts, changed, coupled };
+  }
   function totals(budget) {
     const result = Object.fromEntries(
       ['estimate', 'committed', 'paid', 'forecast'].map((key) => [
@@ -161,6 +179,7 @@
     inputAmount,
     format,
     forecastAmount,
+    compareCostEdits,
     totals,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

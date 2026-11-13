@@ -271,24 +271,151 @@
         finishLinkedTaskFocus(allowFocus);
       }
     }
-    function dialog(title, markup, action, fields) {
-      const revision = state.revision,
-        ids = new Map();
+    function dialog(title, markup, action, fields, cost = null) {
+      let revision = state.revision, opening = cost?.row, blocked = false, checked = null, checking = false;
+      const ids = new Map(), scope = scopeKey(), identity = state.identity.actor;
       openDialog(
         title,
-        `<form id="budgetForm">${markup}<p class="muted">Shared with project members. Saving only records information; it never moves money.</p><div class="form-error" role="alert"></div><div class="form-actions">${fields ? '<button class="btn btn-primary" type="submit">Save</button>' : ''}<button class="btn btn-secondary" type="button" data-budget-close>Cancel</button></div></form>`,
+        `<form id="budgetForm">${markup}<p class="muted">Shared with project members. Saving only records information; it never moves money.</p><div class="form-error" role="alert" tabindex="-1"></div><div class="form-actions">${fields ? '<button class="btn btn-primary" type="submit">Save</button>' : ''}<button class="btn btn-secondary" type="button" data-budget-close>Cancel</button></div></form>`,
         '',
         false,
         'budget',
       );
       const form = document.getElementById('budgetForm');
+      const live = () => !root.GatherAccessLost && scopeKey() === scope && form.isConnected !== false &&
+        document.getElementById('budgetForm') === form;
+      const labels = {title:'Cost name',estimate:'Estimate',committed:'Committed amount',paid:'Payment recorded',
+        owner:'Owner',taskId:'Linked task',dueDate:'Due date',status:'Status'};
+      function message(text) {
+        const node = form.querySelector('.form-error');
+        const hadFocus = node.contains?.(document.activeElement);
+        node.textContent = text;
+        if (hadFocus && document.activeElement !== node) node.focus();
+      }
+      function recoveryButton(attribute, text, callback) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-secondary btn-small';
+        button.setAttribute(attribute, '');
+        button.textContent = text;
+        button.addEventListener('click', callback);
+        form.querySelector('.form-error').append(button);
+      }
+      function compare() {
+        return B.compareCostEdits(opening, checked.row, B.item(Object.fromEntries(new FormData(form)), cost.currency));
+      }
+      function savedValue(key) {
+        const value = checked.row[key];
+        if (['estimate','committed','paid'].includes(key)) return B.format(value,cost.currency);
+        if (key==='owner'||key==='taskId') {
+          if (!value) return 'None';
+          const workspace=getWorkspace();
+          return (key==='owner'?workspace.members.find(member=>member.id===value)?.name:
+            workspace.tasks.find(task=>task.id===value)?.title) || 'Unavailable selection';
+        }
+        return value||'Not recorded';
+      }
+      function setBlocked(value) {
+        blocked=value;
+        const save=form.querySelector('button[type="submit"]');
+        if (save) save.setAttribute('aria-disabled',String(value));
+      }
+      async function hideUnavailableBudget() {
+        state = null;
+        if (host?.isConnected)
+          host.innerHTML = '<h1 id="budgetHeading" tabindex="-1">Budget</h1><p role="status">Checking budget access…</p>';
+        closeDialog();
+        await load();
+      }
+      function drawRecovery() {
+        if (!live()) return;
+        let text = 'The budget changed. Your draft is still here. Review the latest saved cost before saving again.';
+        if (checked) {
+          const {changed,conflicts,coupled} = checked.comparison;
+          text = conflicts.length
+            ? 'You and the saved budget changed the same fields: '+conflicts.map(key=>labels[key]).join(', ')+'. Your draft is unchanged. Match the current values in those fields, or copy your edits and reopen the cost.'
+            : changed.length ? 'Use the latest values for fields you did not edit, then review and save.'
+            : 'The saved cost fields are unchanged. Keep your draft, review it, then save again.';
+          if (coupled) text = 'Status and amount changes affect the forecast together. Your draft is unchanged. Match the saved status and amounts where they changed, or copy your edits and reopen the cost.';
+          if (changed.length) text += ' Saved now: '+changed.map(key=>labels[key]+': '+savedValue(key)).join(' · ')+'.';
+        }
+        message(text);
+        recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
+        if (checked && !checked.comparison.conflicts.length && !checked.comparison.coupled)
+          recoveryButton('data-budget-adopt-current','Use latest saved values',adoptCurrent);
+      }
+      async function checkCurrent() {
+        if (!live() || !blocked || checking || form.dataset.saving) return;
+        checking = true;
+        checked = null;
+        message('Checking the latest cost. Your draft is unchanged.');
+        try {
+          const next = await request();
+          if (!live()) return;
+          if (next.identity?.actor !== identity) {
+            await hideUnavailableBudget();
+            return;
+          }
+          const row = next.budget?.items?.find(item=>item.id===cost.row.id);
+          if (!next.identity?.admin || !next.budget?.enabled || next.budget.currency!==cost.currency ||
+            !row || row.archivedAt || !Number.isSafeInteger(next.revision) || next.revision<revision) {
+            message('This cost cannot be safely refreshed here. Your draft is still here. Copy your edits before closing.');
+            return;
+          }
+          checked = {next,row};
+          try { checked.comparison = compare(); } catch {
+            checked = null;
+            message('Check your entered fields before comparing. Your draft is unchanged.');
+            recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
+            return;
+          }
+          drawRecovery();
+        } catch (error) {
+          if (live()) {
+            checked = null;
+            if ([401,403,404].includes(error.status)) { await hideUnavailableBudget(); return; }
+            message('Could not review the latest cost. Your draft is unchanged.');
+            recoveryButton('data-budget-check-current','Try reviewing latest cost again',checkCurrent);
+          }
+        } finally { checking = false; }
+      }
+      function adoptCurrent() {
+        if (!live() || !blocked || !checked || checking || form.dataset.saving) return;
+        let comparison;
+        try { comparison = compare(); } catch {
+          message('Check your entered amounts before using the latest values. Your draft is unchanged.');
+          recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
+          return;
+        }
+        if (comparison.conflicts.length || comparison.coupled) {
+          checked.comparison = comparison;
+          drawRecovery();
+          return;
+        }
+        const fields = comparison.changed.map(key=>[key,form.elements.namedItem(key)]);
+        if (fields.some(([key,field])=>!field || (field.options &&
+          ![...field.options].some(option=>option.value===comparison.merged[key])))) {
+          message('A saved selection is not available in this form. Your draft is unchanged. Copy your edits before closing.');
+          return;
+        }
+        for (const [key,field] of fields) field.value = ['estimate','committed','paid'].includes(key)
+          ? B.inputAmount(comparison.merged[key],cost.currency) : comparison.merged[key];
+        state = checked.next;
+        revision = state.revision;
+        opening = checked.row;
+        checked = null;
+        setBlocked(false);
+        render();
+        message('Latest saved values loaded. Review this draft, then choose Save to apply it.');
+        form.elements.namedItem('title')?.focus();
+      }
       form
         .querySelector('[data-budget-close]')
         .addEventListener('click', closeDialog);
       async function submit(event, build) {
         event.preventDefault();
         event.stopPropagation();
-        if (form.dataset.saving) return;
+        if (!live() || form.dataset.saving || checking || blocked) return;
         // Capture successful controls before saveLock disables them.
         const data = { ...build(), revision },
           key = JSON.stringify(data);
@@ -303,13 +430,23 @@
           if (!ids.has(key)) ids.set(key, crypto.randomUUID());
           ++ticket;
           const next = await request({ ...data, requestId: ids.get(key) });
+          if (!live()) return;
+          if (next.identity?.actor !== identity) { await hideUnavailableBudget(); return; }
           state = next;
           render();
           closeDialog();
           toast('Budget saved. No payment was made.');
         } catch (error) {
+          if (!live()) return;
           errorNode.textContent = error.message;
           if (error.status === 409) {
+            if (cost && data.action === 'budgetItem') {
+              ids.delete(key); // The server definitively rejected this exact body.
+              setBlocked(true);
+              checked = null;
+              drawRecovery();
+              return;
+            }
             const reload = document.createElement('button');
             reload.type = 'button';
             reload.className = 'text-button';
@@ -325,9 +462,7 @@
             error.status === 403 ||
             error.status === 404
           ) {
-            state = null;
-            closeDialog();
-            await load();
+            await hideUnavailableBudget();
           }
         } finally {
           delete form.dataset.saving;
@@ -424,6 +559,7 @@
           )}<label class="field">Owner<select name="owner">${ownerOptions}</select></label><label class="field">Linked task<select name="taskId">${taskOptions}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(value.dueDate)}"></label><label class="field">Status<select name="status">${option('active', 'Active', value.status === 'active')}${option('cancelled', 'Cancelled', value.status === 'cancelled')}</select></label></div></fieldset>${historicalNote}<p class="muted">Blank = not recorded, not zero. Enter plain numbers with up to ${B.currencies[budget.currency]} decimal places. Committed means an agreed cost; payment recorded means a payment you manually report. Record net paid after any refunds. Cancelling keeps recorded payments in totals.</p>${row ? `<button class="text-button" type="button" data-budget-archive>${inactive ? 'Restore cost' : 'Archive cost (still included in totals)'}</button>` : ''}`,
         (data) => ({ action: 'budgetItem', id: row?.id || '', item: data }),
         !inactive,
+        row && !inactive ? {row,currency:budget.currency} : null,
       );
       form.dataset.itemId = row?.id || '';
     }
