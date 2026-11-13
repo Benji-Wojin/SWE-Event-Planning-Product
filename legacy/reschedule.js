@@ -12,14 +12,7 @@
     return shifted;
   }
   function uniqueLocalTime(value,timeZone) {
-    try {
-      const formatter=new Intl.DateTimeFormat('en-US',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
-      const key=epoch=>{const p=Object.fromEntries(formatter.formatToParts(new Date(epoch)).map(part=>[part.type,part.value]));return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`;};
-      const nominal=Date.parse(value+':00Z'),offsets=new Set();
-      // Discover offsets around the target, including date-line and DST changes.
-      for(let hours=-48;hours<=48;hours+=6){const epoch=nominal+hours*3600000;offsets.add(Date.parse(key(epoch)+'Z')-epoch);}
-      return [...offsets].filter(offset=>key(nominal-offset)===value+':00').length===1;
-    }catch{return false;}
+    return root.GatherCalendar.localTimeState(value,timeZone)==='unique';
   }
   // Shift calendar keys, never elapsed hours in the viewer's time zone.
   function preview(state,toDate) {

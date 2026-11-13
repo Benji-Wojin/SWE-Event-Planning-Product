@@ -11,7 +11,7 @@ const now=Date.parse('2026-10-01T12:00:00Z');
 const slot={start:'2026-10-03T09:30',end:'2026-10-03T10:00',location:'East entrance'};
 const create=()=>{const store=GatherStore.createStore({storage:null,now});store.completeSetup({timeZone:'America/Los_Angeles'});return store;};
 const task=(store,id='dietary')=>store.getState().tasks.find(task=>task.id===id);
-const reload=raw=>GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem(){}}});
+const reload=raw=>GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,setItem(key,value){if(key===GatherStore.STORAGE_KEY)raw=value;}}});
 
 test('schedule persists without changing preparation deadlines, progress, reports or other tasks',()=>{
   const store=create();
@@ -81,6 +81,61 @@ test('schedule rejects malformed values and unauthorized edits atomically',()=>{
   assert.throws(()=>store.addTask({title:'Invalid activity',schedule:{...slot,end:slot.start}}));assert.equal(store.exportState(),before);
   const fresh=GatherStore.createStore({storage:null,now}),raw=fresh.exportState();
   assert.throws(()=>fresh.addTask({title:'No time zone',schedule:slot}),/time zone/);assert.equal(fresh.exportState(),raw);
+});
+
+test('new and changed schedule boundaries must occur once in the event zone',()=>{
+  const store=create(), before=store.exportState();
+  for(const [start,end,error] of [
+    ['2026-03-08T02:15','2026-03-08T03:15',/Start time .*does not exist in America\/Los_Angeles/],
+    ['2026-03-08T01:15','2026-03-08T02:15',/End time .*does not exist in America\/Los_Angeles/],
+    ['2026-11-01T01:15','2026-11-01T02:15',/Start time .*occurs twice in America\/Los_Angeles/],
+    ['2026-11-01T00:15','2026-11-01T01:15',/End time .*occurs twice in America\/Los_Angeles/],
+  ]){
+    const schedule={start,end,location:''};
+    assert.throws(()=>store.setTaskSchedule('dietary',schedule),error);
+    assert.throws(()=>store.addTask({title:'Do not save',schedule}),error);
+    assert.equal(store.exportState(),before);
+  }
+  const crossing={start:'2026-03-08T01:45',end:'2026-03-08T03:15',location:''};
+  assert.deepEqual(store.setTaskSchedule('dietary',crossing).schedule,crossing);
+});
+
+test('older saved times stay editable and visible with a warning, without live clock cues',()=>{
+  const raw=JSON.parse(create().exportState()), existing=raw.tasks.find(item=>item.id==='dietary');
+  const schedule={start:'2026-11-01T01:15',end:'2026-11-01T02:15',location:'East'};
+  existing.schedule=schedule;
+  const store=reload(JSON.stringify(raw));
+  assert.equal(store.getState().persistence,'saved');
+  assert.deepEqual(task(store).schedule,schedule);
+  const edited=store.setTaskSchedule('dietary',{...schedule,location:'West'});
+  assert.equal(edited.schedule.location,'West');
+  store.addTask({title:'Valid overlapping wall labels',owner:edited.owner,
+    schedule:{start:'2026-11-01T00:45',end:'2026-11-01T02:30',location:'West'}});
+  const current=store.getState(), now='2026-11-01T08:30:00Z';
+  assert.equal(GatherScheduleUI.timing(current.tasks,current.event.timeZone,now).labels.has('dietary'),false);
+  assert.deepEqual(GatherScheduleUI.reviewItems(current,now).find(group=>group.key==='clock-times').tasks.map(t=>t.id),['dietary']);
+  const ui=GatherScheduleUI.create({h:String,options:()=>'',statusBadge:String});
+  assert.match(ui.view(current,true,now),/Start time .*occurs twice/);
+  assert.match(ui.details(edited,true,current.event),/Start time .*occurs twice/);
+  const sheet=ui.runSheetModel(current,now);
+  assert.match(ui.runSheetMarkup(sheet),/Start time .*occurs twice/);
+  assert.match(ui.runSheetText(sheet),/Start time .*occurs twice/);
+  assert.doesNotMatch(ui.runSheetText(sheet),/Owner overlap|Potential location overlap/);
+  const guest=GatherScheduleUI.guestAgendaSnapshot(current);
+  assert.equal(guest.invalidTimes,1);
+  assert.deepEqual(guest.activities.map(item=>item.title),['Valid overlapping wall labels']);
+  const corrected=store.setTaskSchedule('dietary',{...edited.schedule,start:'2026-11-01T00:45'});
+  assert.equal(corrected.schedule.start,'2026-11-01T00:45');
+  assert.equal(GatherScheduleUI.timing(store.getState().tasks,current.event.timeZone,now).labels.get('dietary'),'Scheduled now');
+});
+
+test('changing the event zone cannot introduce ambiguous or missing schedule times',()=>{
+  const store=create();store.completeSetup({timeZone:'UTC'});
+  store.addTask({title:'Fictional early activity',schedule:{start:'2026-03-08T02:15',end:'',location:''}});
+  const before=store.exportState();
+  assert.throws(()=>store.updateEvent({timeZone:'America/Los_Angeles',confirmScheduleTimeZone:true}),/Fictional early activity.*does not exist/);
+  assert.equal(store.exportState(),before);
+  assert.equal(store.updateEvent({timeZone:'Asia/Kolkata',confirmScheduleTimeZone:true}).timeZone,'Asia/Kolkata');
 });
 
 test('multi-day and overnight activities keep explicit dates; zone changes require acknowledgment',()=>{

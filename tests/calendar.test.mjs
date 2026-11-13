@@ -37,6 +37,18 @@ test('calendar offsets cross DST, leap day, and year end without adding 24-hour 
   assert.throws(()=>GatherCalendar.dayKey(at,'Not/AZone'));
 });
 
+test('local minute validation handles missing and repeated half-hour shifts and skipped days',()=>{
+  const state=GatherCalendar.localTimeState;
+  assert.equal(state('2026-10-04T02:15','Australia/Lord_Howe'),'missing');
+  assert.equal(state('2026-04-05T01:45','Australia/Lord_Howe'),'repeated');
+  assert.equal(state('2026-04-05T02:15','Australia/Lord_Howe'),'unique');
+  assert.equal(state('2011-12-30T10:00','Pacific/Apia'),'missing');
+  assert.equal(state('2026-11-01T01:15','UTC'),'unique');
+  assert.equal(state('2026-11-01T01:15','Asia/Kolkata'),'unique');
+  assert.equal(state('2026-02-30T01:15','UTC'),'invalid');
+  assert.equal(state('2026-01-01T01:15','Not/AZone'),'invalid');
+});
+
 test('deadline history and downstream urgency use the same event day', () => {
   const prerequisite=task({id:'collect',dueDate:'',status:'todo'});
   const parent=task({id:'approve',dueDate:'2026-10-14',hardDeadline:true,dependencies:[{taskId:'collect'}]});

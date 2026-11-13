@@ -4,6 +4,7 @@ import {
   fitsGroqRequest,
   groqFailure,
 } from './groq';
+import '@/legacy/calendar.js';
 
 export const eventKinds = [
   'school',
@@ -437,15 +438,19 @@ async function generateEventPlanAttempt(
                 (item.end.slice(0, 10) !== item.start.slice(0, 10) ||
                   item.end.slice(11) > context.brief.endTime))))
         );
+        const calendar=(globalThis as any).GatherCalendar;
+        const timeIssue=!unsupportedTime&&item.start?calendar.scheduleTimeIssue(item,context.event.timeZone):null;
         if (pastDeadline)
           scheduleWarnings.push(`${item.title}: the proposed deadline was in the past and was left blank.`);
         if (unsupportedTime)
           scheduleWarnings.push(`${item.title}: the proposed time was outside the supplied event schedule or event hours were missing. It was left unscheduled.`);
+        if(timeIssue)
+          scheduleWarnings.push(`${item.title}: ${calendar.scheduleTimeMessage(timeIssue,context.event.timeZone)} The activity was left unscheduled.`);
         return {
           ...item,
           dueDate: pastDeadline ? '' : item.dueDate,
-          start: unsupportedTime ? '' : item.start,
-          end: unsupportedTime ? '' : item.end,
+          start: unsupportedTime || timeIssue ? '' : item.start,
+          end: unsupportedTime || timeIssue ? '' : item.end,
         };
     });
     if (scheduleWarnings.length) plan.scheduleWarnings = scheduleWarnings;

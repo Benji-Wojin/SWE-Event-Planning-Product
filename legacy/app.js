@@ -1653,7 +1653,7 @@
     const state=store.getState(), scope={mine:allActivitiesFrom?false:ui.scheduleMine,actor:ui.actor,date:allActivitiesFrom?allActivitiesFrom.date:ui.scheduleDate};
     const snapshot=GatherScheduleUI.guestAgendaSnapshot(state,scope);
     const {activities,timeZone}=snapshot;
-    if(!activities.length){toast('No scheduled activities in this view. Choose a different day or activity filter.');return;}
+    if(!activities.length){toast(snapshot.invalidTimes?'Correct the saved activity times in Timeline before drafting this agenda.':'No scheduled activities in this view. Choose a different day or activity filter.');return;}
     if(activities.length>80){toast(allActivitiesFrom?'All activities has more than 80 entries in this date range. Your draft is unchanged. Choose a narrower date on Timeline to include the whole team.':'Choose a day or My activities to review at most 80 activities at a time.');return;}
     if(!GatherScheduleUI.momentKey(Date.now(),timeZone)){toast('Set the event time zone in Project settings before drafting an agenda.');return;}
     if(allActivitiesFrom&&!confirmDiscard(allActivitiesFrom.form))return;

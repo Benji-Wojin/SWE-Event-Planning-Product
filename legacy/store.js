@@ -322,15 +322,17 @@
       save();
       return copy(task);
     }
-    function scheduleFields(data, actor) {
+    function scheduleFields(data, actor, previous=null) {
       if (actor !== 'jack') throw new Error('Only the organizer can change the schedule.');
       if (!validSchedule(data)) throw new Error('Use a valid start time, a later end time (optional), and a location under 241 characters.');
       if (data && !validZone(state.event.timeZone)) throw new Error('Set the event time zone in Project settings first.');
+      const calendar=globalThis.GatherCalendar, issue=calendar.scheduleTimeIssue(data,state.event.timeZone,previous);
+      if(issue)throw new Error(calendar.scheduleTimeMessage(issue,state.event.timeZone));
       return data ? {start:data.start,end:data.end,location:data.location.trim()} : null;
     }
     function setTaskSchedule(taskId, data, actor = 'jack') {
       actorId(actor);
-      const schedule = scheduleFields(data, actor), task = taskById(taskId);
+      const task = taskById(taskId), schedule = scheduleFields(data, actor, task.schedule);
       if (JSON.stringify(task.schedule) === JSON.stringify(schedule)) return copy(task);
       const hadSchedule=!!task.schedule;
       const reconfirm=task.owner&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&(task.acceptedAt||task.nextUpAt);
@@ -837,6 +839,11 @@
         if (data.timeZone !== next.timeZone && state.tasks.some(task=>task.schedule)) {
           if (!data.timeZone) throw new Error('Scheduled activities need an event time zone.');
           if (!data.confirmScheduleTimeZone) throw new Error('Confirm the time zone change. Existing schedule times will stay the same in the new zone.');
+          const calendar=globalThis.GatherCalendar;
+          for(const task of state.tasks){
+            const issue=calendar.scheduleTimeIssue(task.schedule,data.timeZone);
+            if(issue)throw new Error(`Can’t change the event time zone with the current schedule for “${task.title}”. ${calendar.scheduleTimeMessage(issue,data.timeZone)} Edit the activity before changing the time zone.`);
+          }
         }
         next.timeZone = data.timeZone;
       }

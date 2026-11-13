@@ -17,9 +17,11 @@
     task.schedule.start<day+'T00:00'&&task.schedule.end>day+'T00:00'));
   function guestAgendaSnapshot(state,scope={}) {
     const date=selectedDate(scope);
+    const candidates=ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)));
+    const activities=candidates.filter(task=>!wallTimeIssue(task,state.event.timeZone));
     return {date,mine:!!scope.mine,timeZone:state.event.timeZone,
-      activities:ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)))
-        .map(task=>({title:task.title,start:task.schedule.start,end:task.schedule.end}))};
+      ...(activities.length<candidates.length?{invalidTimes:candidates.length-activities.length}:{}),
+      activities:activities.map(task=>({title:task.title,start:task.schedule.start,end:task.schedule.end}))};
   }
   const agendaText = value => typeof value==='string' ? value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,' ').trim().slice(0,180) : '';
   const agendaTime = slot => slot.start.replace('T',' ') + (slot.end ? ' – ' +
@@ -130,6 +132,12 @@
   const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId))));
   const linkedResultsReady = (task,byId) => task.status==='blocked'&&!waitingVerification(task)&&
     (task.dependencies||[]).some(link=>link.kind!=='related')&&!unfinishedRequiredWork(task,byId);
+  const wallTimeIssue=(task,zone)=>zone&&root.GatherCalendar?.scheduleTimeIssue(task.schedule,zone);
+  const usableWallTimes=(tasks,zone)=>tasks.filter(task=>!wallTimeIssue(task,zone));
+  const wallTimeWarning=(task,zone)=>{
+    const issue=wallTimeIssue(task,zone);
+    return issue?root.GatherCalendar.scheduleTimeMessage(issue,zone):'';
+  };
   const clockFormatters = new Map();
   function momentKey(now,timeZone) {
     if(!timeZone)return null;
@@ -151,6 +159,7 @@
     let nextStart='';
     for(const task of ordered(tasks)) {
       if(resolved(task)||waitingVerification(task))continue;
+      if(wallTimeIssue(task,timeZone))continue;
       const slot=task.schedule;
       if(slot.start>local){
         if(!nextStart)nextStart=slot.start;
@@ -192,8 +201,9 @@
     const tasks=scoped(state.tasks,scope),open=tasks.filter(task=>!resolved(task));
     const byId=new Map(state.tasks.map(task=>[task.id,task]));
     const day=momentKey(now,state.event.timeZone)?.slice(0,10);
-    const overlapIds=ownerOverlaps(tasks),locationIds=locationOverlaps(state.tasks);
+    const overlapIds=ownerOverlaps(usableWallTimes(tasks,state.event.timeZone)),locationIds=locationOverlaps(usableWallTimes(state.tasks,state.event.timeZone));
     return [
+      {key:'clock-times',title:'Activity times need correction',help:'These saved times do not identify a single time in the event time zone. Open the task to review and correct its schedule. Until corrected, they do not appear as Scheduled now, Next, or Check progress.',tasks:tasks.filter(task=>wallTimeIssue(task,state.event.timeZone))},
       {key:'activity-time',title:'Activities need a start time',help:'These planned activities are not on the schedule or run sheet yet. Open the task or visit Timeline to coordinate a start time.',tasks:open.filter(needsActivityTime)},
       {key:'preparation',title:'Preparation still open',help:'Open preparation tasks that are not awaiting verification.',tasks:open.filter(task=>!task.schedule&&task.eventActivity!==true&&!waitingVerification(task))},
       {key:'verification',title:'Completion needs verification',help:'A completion report or completed record still needs the required organizer verification.',tasks:open.filter(waitingVerification)},
@@ -227,14 +237,19 @@
       const start=task.schedule.start.slice(0,10);
       return start<day?`<span class="muted">Continues from ${h(dateLabel(start))}</span>`:'';
     }
+    function scheduleTimeWarning(task,zone) {
+      const warning=wallTimeWarning(task,zone);
+      return warning?`<span class="schedule-overlap-label">${h(warning)}</span>`:'';
+    }
     function liveOwner(task,state) {
       return `<span class="person-chip schedule-owner-label">${h(scheduleOwnerLabel(task.owner,state.members))}</span>`;
     }
     // Use the same saved-fact predicates as Before event and the run sheet.
     // A clock cue is never a readiness decision or an automatic status change.
     function liveWarnings(task,state,byId) {
-      if(resolved(task)&&!evidenceAmended(task))return '';
-      const labels=[];
+      const wallWarning=wallTimeWarning(task,state.event.timeZone);
+      if(resolved(task)&&!evidenceAmended(task))return wallWarning?`<span class="schedule-warnings"><span>${h(wallWarning)}</span></span>`:'';
+      const labels=wallWarning?[wallWarning]:[];
       if(evidenceAmended(task))labels.push('Evidence amended after verification');
       if(changesRequested(task))labels.push('Changes requested');
       const request=planRequestKind(task);
@@ -243,7 +258,7 @@
       if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
       if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
       if(linkedResultsReady(task,byId))labels.push('Review linked results');
-      return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${label}</span>`).join('')}</span>`:'';
+      return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${h(label)}</span>`).join('')}</span>`:'';
     }
     function locationWarning(tasks,locations) {
       const count=tasks.filter(task=>locations.has(task.id)).length;
@@ -284,7 +299,7 @@
     function view(state,organizer,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
       const tasks=ordered(visible.filter(task=>onDate(task,day))),days=activityDateGroups(tasks,day);
-      const overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks.filter(task=>onDate(task,day)));
+      const overlaps=ownerOverlaps(usableWallTimes(tasks,state.event.timeZone)),locations=locationOverlaps(usableWallTimes(state.tasks.filter(task=>onDate(task,day)),state.event.timeZone));
       const pending=visible.filter(needsActivityTime);
       const live=clock(state,now,scope,organizer),hasActivities=state.tasks.some(task=>task.schedule||needsActivityTime(task)),byId=new Map(state.tasks.map(task=>[task.id,task]));
       const shortcuts=Object.entries(activityDays(state,now,scope)).filter(([,date])=>date).map(([key])=>`<button class="btn btn-secondary" type="button" id="schedule-jump-${key}" data-action="jump-schedule-date" data-id="${key}">${activityDayLabels[key]}</button>`).join('');
@@ -297,10 +312,11 @@
     }
     function details(task,organizer,event,tasks=[]) {
       const current=task.schedule;
-      const overlaps=ownerOverlaps(tasks).get(task.id)||[],locations=locationOverlaps(tasks).get(task.id)||[];
+      const usable=usableWallTimes(tasks,event.timeZone);
+      const overlaps=ownerOverlaps(usable).get(task.id)||[],locations=locationOverlaps(usable).get(task.id)||[];
       const warning=overlaps.length?`<details class="schedule-overlap-details"><summary>Owner overlap · ${overlaps.length} ${overlaps.length===1?'activity':'activities'}</summary><p>The same owner is scheduled at overlapping times. ${organizer?'Review the times or choose another owner.':'Ask the organizer to review the times or owner.'}</p><ul>${overlaps.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul>${!current?.end||overlaps.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
       const locationWarning=locations.length?`<details class="schedule-overlap-details"><summary>Potential location overlap · ${locations.length} ${locations.length===1?'activity':'activities'}</summary><p>Matching location labels have overlapping entered times. The space may be shared or divisible. ${organizer?'Confirm whether these activities can share the space, or edit the times or activity location.':'Ask the organizer to confirm shared space, times or activity locations.'}</p><ul>${locations.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(other.schedule.location)} · ${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul><p class="muted">Only matching labels are checked, ignoring case and extra spaces. Different room names, capacity, travel and external bookings are not checked.</p>${!current?.end||locations.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
-      const facts=current?`<section class="schedule-facts"><h3>Scheduled activity</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(event.timeZone)}${current.location?' · '+h(current.location):''}</p>${warning}${locationWarning}</section>`:needsActivityTime(task)?'<section class="schedule-facts"><h3>Planned activity · no start time</h3><p class="muted">This activity is not on the schedule or run sheet yet.</p></section>':'';
+      const facts=current?`<section class="schedule-facts"><h3>Scheduled activity</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(event.timeZone)}${current.location?' · '+h(current.location):''}</p>${scheduleTimeWarning(task,event.timeZone)}${warning}${locationWarning}</section>`:needsActivityTime(task)?'<section class="schedule-facts"><h3>Planned activity · no start time</h3><p class="muted">This activity is not on the schedule or run sheet yet.</p></section>':'';
       return facts+(organizer?`<details class="task-schedule task-organizer section-gap"><summary>${current?'Edit schedule':'Add to event schedule'}</summary>${event.timeZone?`<form id="scheduleForm" data-id="${h(task.id)}" class="section-gap">${zone(event)}${scheduleCommitmentHint(task)}${fields(current||{})}<div class="form-actions"><button class="btn btn-secondary" type="submit" value="save">Save schedule</button>${current?'<button class="text-button" type="submit" value="remove" formnovalidate>Remove from schedule</button>':''}</div></form>`:needsZone()}</details>`:'');
     }
     function picker(state,taskId='') {
@@ -353,7 +369,8 @@
     }
     function runSheetModel(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
-      const tasks=ordered(visible.filter(task=>onDate(task,day))),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks.filter(task=>onDate(task,day)));
+      const tasks=ordered(visible.filter(task=>onDate(task,day)));
+      const overlaps=ownerOverlaps(usableWallTimes(tasks,state.event.timeZone)),locations=locationOverlaps(usableWallTimes(state.tasks.filter(task=>onDate(task,day)),state.event.timeZone));
       const untimed=visible.filter(needsActivityTime).length;
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
       const name=id=>scheduleOwnerLabel(id,state.members);
@@ -380,7 +397,7 @@
         const start=task.schedule.start.slice(0,10),id=task.id;
         return {title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:task.schedule.location,
           continues:start<date?'Continues from '+dateLabel(start):'',
-          activityWarnings:[overlapsOnDay(overlaps,task,date)?'Owner overlap':'',overlapsOnDay(locations,task,date)?'Potential location overlap':''].filter(Boolean),
+          activityWarnings:[wallTimeWarning(task,state.event.timeZone),overlapsOnDay(overlaps,task,date)?'Owner overlap':'',overlapsOnDay(locations,task,date)?'Potential location overlap':''].filter(Boolean),
           owner:name(task.owner),acceptance:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
           statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
@@ -424,6 +441,7 @@
     function guestAgendaForm(snapshot,title) {
       return `<p>Choose only the activities guests should see, then review their titles and the preview. Check each title for internal details. Notes, owners, statuses, saved locations, bookings and guest records are not copied. Nothing is saved or sent.</p>
         <p><strong>${snapshot.mine?'My activities only':'All activities'}</strong> · ${snapshot.date?h(dateLabel(snapshot.date)):'All dates'} · ${h(snapshot.timeZone)}</p>
+        ${snapshot.invalidTimes?`<p class="notice">${snapshot.invalidTimes} ${snapshot.invalidTimes===1?'activity was':'activities were'} left out because the saved time needs correction. Review the schedule in Timeline before sharing.</p>`:''}
         ${snapshot.mine?'<div class="notice"><p>Activities assigned to someone else or with no owner are not listed. If you need them, start a new draft with all activities. This replaces your current draft.</p><button type="button" class="btn btn-secondary" data-action="all-guest-agenda-activities">Start over with all activities</button></div>':''}
         <p id="guestAgendaWarning" class="notice" role="status" hidden></p>
         <form id="guestAgendaForm" class="section-gap">

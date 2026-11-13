@@ -972,6 +972,75 @@ export async function eventPlanTests({
       assert.equal(state.tasks.length, 3);
       assert.equal(state.tasks.some(task => !!task.schedule?.start), false);
     });
+    await t.test('AI leaves nonexistent and repeated event-local endpoints unscheduled, but keeps valid times across a clock change', async () => {
+      const zone = 'America/Los_Angeles';
+      for (const [start, end, expectedWarning] of [
+        ['2030-03-10T02:15', '2030-03-10T03:30', /does not exist|time change/i],
+        ['2030-03-10T01:30', '2030-03-10T02:15', /does not exist|time change/i],
+        ['2030-11-03T01:15', '2030-11-03T02:30', /occurs twice|time change/i],
+        ['2030-11-03T00:30', '2030-11-03T01:15', /occurs twice|time change/i],
+        ['2030-03-10T01:30', '2030-03-10T03:15', null],
+      ]) {
+        const date = start.slice(0, 10), location = 'Fictional welcome hall';
+        const plan = output();
+        Object.assign(plan.items[1], { start, end, location });
+        provider(plan);
+        const result = await planGeneration.generateEventPlan({
+          event: { date, timeZone: zone, location },
+          brief: { ...brief, endDate: date, startTime: '00:00', endTime: '04:00' },
+          today: '2030-01-01',
+        }, 'test-only-placeholder');
+        assert.deepEqual(result.items.map(item => item.id), plan.items.map(item => item.id));
+        const activity = result.items.find(item => item.id === 'arrive');
+        assert.equal(activity.kind, 'activity');
+        assert.equal(activity.title, plan.items[1].title);
+        assert.equal(activity.note, plan.items[1].note);
+        assert.equal(activity.location, location);
+        assert.deepEqual(activity.dependsOn, ['approval']);
+        if (expectedWarning) {
+          assert.deepEqual([activity.start, activity.end], ['', '']);
+          assert.equal(result.scheduleWarnings.length, 1);
+          assert.match(result.scheduleWarnings[0], expectedWarning);
+          assert.match(result.scheduleWarnings[0], /Welcome attendees/);
+        } else {
+          assert.deepEqual([activity.start, activity.end], [start, end]);
+          assert.equal(result.scheduleWarnings, undefined);
+        }
+      }
+    });
+    await t.test('invalid edited event-local times cannot partially approve a plan or consume its private draft', async () => {
+      const project = await setup(), zone = 'America/Los_Angeles', date = '2030-03-10';
+      try {
+        await change(project, 'completeSetup', [{ date, timeZone: zone }]);
+        await change(project, 'addTask', [{ title: 'Existing fictional work', note: 'Keep this unchanged.' }]);
+        const outputWithTime = output();
+        Object.assign(outputWithTime.items[1], { start: date + 'T01:30', end: date + 'T03:15', location: 'School hall' });
+        provider(outputWithTime);
+        const generated = await post(project, generation(await read(project), { brief: { ...brief, endDate: date, startTime: '00:00', endTime: '04:00' } }));
+        assert.equal(generated.status, 200, await generated.clone().text());
+        const snap = await generated.json();
+        assert.equal(snap.status, 'ready');
+        const valid = snap.draft.items.find(item => item.id === 'arrive');
+        assert.equal(valid.start, date + 'T01:30');
+        assert.equal(valid.end, date + 'T03:15');
+        const before = sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
+        const draftBefore = row(project);
+        for (const [field, label] of [['start', /Start time/i], ['end', /End time/i]]) {
+          const items = snap.draft.items.map(item => item.id === valid.id ? { ...item, [field]: date + 'T02:15' } : item);
+          const response = await post(project, approval(snap, { items }));
+          assert.equal(response.status, 400, await response.clone().text());
+          const { error } = await response.json();
+          assert.match(error, label);
+          assert.ok(error.includes(zone), error);
+          assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project), before);
+          assert.deepEqual(row(project), draftBefore);
+        }
+        assert.equal((await post(project, approval(snap))).status, 200, 'the saved valid draft is still available to approve');
+        const after = (await (await realRead(project)).json()).state.tasks;
+        assert.deepEqual(after.find(task => task.title === valid.title).schedule, { start: valid.start, end: valid.end, location: valid.location });
+        assert.equal(after.find(task => task.title === 'Existing fictional work').note, 'Keep this unchanged.');
+      } finally { sqlite.prepare('DELETE FROM projects WHERE id=?').run(project); }
+    });
     await t.test(
       'approval is atomic, preserves existing work, links dependencies and retries lost responses once',
       async () => {
