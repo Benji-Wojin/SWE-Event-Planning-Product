@@ -553,6 +553,7 @@ test('an event-day request link rechecks the task before focusing recovery and k
   const el={dataset:{},hasAttribute:name=>name==='data-open-recovery'};
   const ctx=vm.createContext({el,ui,$:()=>backdrop,id:task.id,action:'task',eventReviewGroup:'plan-requests',
     store:{getState:()=>({tasks:[task]})},GatherPriorities,focusTaskRecovery:id=>calls.push(['focus request',id]),
+    timelineOverlapIntent:()=>'',isScheduleControl:()=>false,
     taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=task.id;}});
   const open=()=>vm.runInContext(source.slice(start,end),ctx);
   open();
@@ -580,7 +581,7 @@ test('My tasks reply shortcut opens only a still-current response and retains th
   const recovery=GatherRecoveryUI.create({store,ui,h:String,options:()=>'',dayLabel:String,member:id=>({name:id})});
   const el={dataset:{taskFocus:'details'},hasAttribute:name=>name==='data-open-recovery-reply'};
   const ctx=vm.createContext({el,ui,$:()=>backdrop,id,action:'task',eventReviewGroup:'',store,GatherPriorities,recovery,
-    focusTaskRecovery:(...args)=>calls.push(args),
+    focusTaskRecovery:(...args)=>calls.push(args),timelineOverlapIntent:()=>'',isScheduleControl:()=>false,
     taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=id;}});
   const open=()=>vm.runInContext(source.slice(start,end),ctx);
   let before=store.exportState();

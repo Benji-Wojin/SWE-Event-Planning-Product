@@ -64,9 +64,28 @@ test('Review owner opens and focuses only the current organizer task form, prese
     const form={dataset:{id:mode==='stale-form'?'other':'activity'},closest:()=>mode==='missing-details'?null:details};
     const context=vm.createContext({action:'review-task-owner',id:'activity',window:{GatherAccessLost:mode==='lost'},isOrganizer:()=>mode!=='member',
       ui:{dialogKind:mode==='other-dialog'?'other':'task',detailId:mode==='other-task'?'other':'activity'},
+      focusTaskDialogControl:target=>target.focus(),
       $:(selector,root)=>selector==='#taskDetailForm'?(mode==='missing-form'?null:form):root===form?field:null});
     vm.runInContext(handler,context);
     assert.equal(details.open,mode==='allowed');assert.equal(focused,mode==='allowed'?1:0);assert.equal(field.value,'unsaved-owner');
+  }
+  assert.doesNotMatch(handler,/store\.|fetch|render\(|taskDialog\(|closeDialog\(|reset\(/);
+});
+
+test('Review overlap schedule opens only the current organizer edit form without saving or resetting it',()=>{
+  const begin=source.indexOf("      if(action==='review-overlap-schedule'");
+  const handler=source.slice(begin,source.indexOf("      if(action==='quick-tour'",begin));
+  for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details']){
+    const details={open:false},start={value:'2026-11-20T14:15'},focus=[];
+    const form={dataset:{id:mode==='stale-form'?'other':'activity'},closest:()=>mode==='missing-details'?null:details};
+    const dialog={};
+    const context=vm.createContext({action:'review-overlap-schedule',id:'activity',window:{GatherAccessLost:mode==='lost'},isOrganizer:()=>mode!=='member',
+      ui:{dialogKind:mode==='other-dialog'?'other':'task',detailId:mode==='other-task'?'other':'activity'},
+      focusTaskDialogControl:(target,root)=>focus.push([target,root]),
+      $:(selector,root)=>selector==='#dialog'?dialog:root===dialog&&mode!=='missing-form'?form:root===form?start:null});
+    vm.runInContext(handler,context);
+    assert.equal(details.open,mode==='allowed');assert.deepEqual(focus,mode==='allowed'?[[start,dialog]]:[]);
+    assert.equal(start.value,'2026-11-20T14:15');
   }
   assert.doesNotMatch(handler,/store\.|fetch|render\(|taskDialog\(|closeDialog\(|reset\(/);
 });

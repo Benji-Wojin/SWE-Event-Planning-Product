@@ -879,6 +879,7 @@
     document.body.style.overflow='';
     $('#dialog').replaceChildren();
     ui.dialogKind='';
+    ui.overlapReviewDay='';
     ui.eventTaskReview=null;
     ui.acceptanceReturn=null;
     ui.guestAgenda=null;
@@ -923,6 +924,37 @@
     requestAnimationFrame(()=>{
       if(window.GatherAccessLost||ui.actor!==actor||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
       $(selector,$('#dialog'))?.focus();
+    });
+  }
+  function focusTaskDialogControl(target,dialog) {
+    if(!target)return;
+    target.focus({preventScroll:true});
+    if(document.activeElement!==target)return;
+    const rect=target.getBoundingClientRect(),bounds=dialog.getBoundingClientRect();
+    const top=Math.max(bounds.top,$('.dialog-header',dialog)?.getBoundingClientRect().bottom||0)+8;
+    const bottom=bounds.bottom-8;
+    if(bottom<=top)return;
+    if(rect.top<top||rect.height>bottom-top)dialog.scrollTop+=rect.top-top;
+    else if(rect.bottom>bottom)dialog.scrollTop+=rect.bottom-bottom;
+  }
+  function timelineOverlapIntent(el,id) {
+    const requested=el.dataset.openScheduleOverlap;
+    if(!['owner','location','both'].includes(requested)||!isScheduleControl(el)||!el.isConnected||
+      ui.view!=='timeline'||ui.timelineMode==='deadlines'||window.GatherAccessLost||
+      !$('#dialogBackdrop').hidden||el.dataset.scheduleFocusKind||el.hasAttribute('data-open-recovery')||el.hasAttribute('data-open-recovery-reply'))return '';
+    const day=el.dataset.scheduleDay||el.dataset.scheduleFocusDay;
+    const current=GatherScheduleUI.overlapKindForDay(store.getState(),id,day,{mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate});
+    // An old card may now have fewer overlaps, but must not open an unrelated kind.
+    return current==='both'?requested:requested==='both'||current===requested?current:'';
+  }
+  function focusTaskOverlap(id,kind) {
+    const actor=ui.actor,project=window.GatherMode?.projectId,dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||$('#dialogTitle',dialog)!==title||window.GatherAccessLost||ui.actor!==actor||
+        window.GatherMode?.projectId!==project||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
+      const disclosures=$$('[data-schedule-overlap-kind]',dialog).filter(el=>kind==='both'||el.dataset.scheduleOverlapKind===kind);
+      for(const disclosure of disclosures)disclosure.open=true;
+      if(disclosures.length)focusTaskDialogControl($('summary',disclosures[0]),dialog);
     });
   }
   function openReturnedCompletion(id) {
@@ -1493,11 +1525,12 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds) {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='') {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
+    ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
     const previousFocus=sameTask?document.activeElement:null;
@@ -1515,7 +1548,7 @@
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
-      ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
+      ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
@@ -2038,15 +2071,18 @@
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task'){
         const requestLink=el.hasAttribute('data-open-recovery'),replyLink=el.hasAttribute('data-open-recovery-reply');
-        const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink||replyLink)&&$('#dialogBackdrop').hidden;
+        const overlap=timelineOverlapIntent(el,id);
+        const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink||replyLink||isScheduleControl(el))&&$('#dialogBackdrop').hidden;
         const current=(requestLink||replyLink)&&store.getState().tasks.find(task=>task.id===id);
         const toRecovery=current&&current.status!=='done'&&!(current.requiresVerification&&current.reportedAt&&!current.verifiedAt)&&
           requestLink&&['date','help'].includes(GatherPriorities.pendingRequest(current)?.kind);
         const toReply=current&&replyLink&&ui.view==='tasks'&&ui.tab==='mine'&&current.owner===ui.actor&&recovery.recoveryReply(current,false);
-        taskDialog(id,'',false,captureOrigin||requestLink||replyLink,eventReviewGroup);
+        if(overlap)taskDialog(id,'',false,true,eventReviewGroup,undefined,el.dataset.scheduleDay||el.dataset.scheduleFocusDay);
+        else taskDialog(id,'',false,captureOrigin||requestLink||replyLink,eventReviewGroup);
         if(captureOrigin&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
         if(toReply)focusTaskRecovery(id,'#recoveryReplyHeading');
         else if(toRecovery)focusTaskRecovery(id);
+        else if(overlap)focusTaskOverlap(id,overlap);
       }
       if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -2061,8 +2097,12 @@
         toast('Task deleted.');
       }
       if(action==='review-task-owner'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
-        const form=$('#taskDetailForm'),owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
-        if(details){details.open=true;owner.focus();}
+        const dialog=$('#dialog'),form=$('#taskDetailForm',dialog),owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
+        if(details){details.open=true;focusTaskDialogControl(owner,dialog);}
+      }
+      if(action==='review-overlap-schedule'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
+        const dialog=$('#dialog'),form=$('#scheduleForm',dialog),start=form?.dataset.id===id?$('input[name="start"]',form):null,details=start?form.closest('details'):null;
+        if(details){details.open=true;focusTaskDialogControl(start,dialog);}
       }
       if(action==='quick-tour'){if(confirmCloseDialog()&&confirmDiscard($('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}

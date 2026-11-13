@@ -89,6 +89,20 @@ test('an unusually tall activity reveals its beginning rather than centering bel
   assert.deepEqual(f.calls, [['focus', 'tall card', true], ['scroll window', -33, 'instant']]);
 });
 
+test('an overlap summary or edit field scrolls only inside the dialog and stays below its sticky heading', () => {
+  const f=fixture(),titleBottom=192;
+  f.ctx.$=(selector)=>selector==='.dialog-header'?{getBoundingClientRect:()=>({bottom:titleBottom})}:null;
+  vm.runInContext(excerpt('  function focusTaskDialogControl(', '  function timelineOverlapIntent('),f.ctx);
+  for(const [top,bottom,expected] of [[230,274,500],[160,204,460],[640,684,542],[150,680,450]]){
+    const dialog={scrollTop:500,getBoundingClientRect:()=>({top:120,bottom:650})};
+    const target={focus(options){assert.equal(options.preventScroll,true);f.ctx.document.activeElement=this;},
+      getBoundingClientRect:()=>({top,bottom,height:bottom-top})};
+    f.ctx.focusTaskDialogControl(target,dialog);
+    assert.equal(dialog.scrollTop,expected);
+  }
+  assert.deepEqual(f.calls,[],'the underlying page does not scroll');
+});
+
 test('an exact review card wins; a changed review falls back to that activity’s dated row, never another card', () => {
   const f = fixture(), day = '2026-11-20', id = 'arrival';
   const old = f.card('old completion', id, day, 'completion', { isConnected: false });
