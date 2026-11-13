@@ -51,8 +51,8 @@ test('the first missing-detail target follows date and owner scope and uses the 
   assert.deepEqual(state,before);
 });
 
-function fixture({hosted=true}={}){
-  const ui={actor:'maya',view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:today,dialogKind:''};
+function fixture({hosted=true,date=today}={}){
+  const ui={actor:'maya',view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:date,dialogKind:''};
   const window={GatherMode:{projectId:'fictional-project'},print:()=>calls.push(['print'])},document={hidden:false};
   const state=stateFixture(),calls=[],requests=[],frames=[],busyRunSheetRevisions=new Set();
   let revision=hosted?21:undefined,known=0,body='',footer='';
@@ -73,13 +73,34 @@ function fixture({hosted=true}={}){
   const stale=control('stale'),print=control('print marker'),refresh=control('run sheet refresh'),
     checkStatus=control('check status'),refreshStatus=control('refresh status');
   let button=control('handoff'),handoffStatus=control('handoff status'),title=control('dialog title');
-  const dialog={contains:node=>node===button||node===title,querySelector:selector=>select(selector)};
+  let rowButtons=[],sheet;
+  function connectRunSheetRows(markup){
+    for(const button of rowButtons)button.isConnected=false;
+    rowButtons=[];
+    sheet={id:'eventRunSheet',contains:node=>rowButtons.includes(node),querySelector:selector=>select(selector),
+      querySelectorAll:selector=>selector.includes('review-run-sheet-row')?rowButtons:[]};
+    const findButton=/<button\b[^>]*\bdata-action="review-run-sheet-row"[^>]*>/g;
+    for(const [tag] of markup.matchAll(findButton)){
+      const key=tag.match(/\bdata-run-sheet-row="([^"]*)"/)?.[1];
+      assert.ok(key,'screen row button has a snapshot-local key');
+      const node=control('run sheet row '+key);
+      node.tagName='BUTTON';node.localName='button';
+      node.dataset={action:'review-run-sheet-row',runSheetRow:key};
+      node.closest=selector=>selector==='#eventRunSheet'?sheet:selector==='#dialog'?dialog:null;
+      rowButtons.push(node);
+    }
+  }
+  const dialog={contains:node=>node===button||node===title||node===sheet||rowButtons.includes(node),querySelector:selector=>select(selector)};
   panel.contains=node=>rows.includes(node)||node===heading;
   view.contains=node=>panel.contains(node);
   function select(selector){
+    if(selector.includes('data-run-sheet-row="')){
+      const key=selector.match(/data-run-sheet-row="([^"]*)"/)?.[1];
+      return rowButtons.find(node=>node.dataset.runSheetRow===key)??null;
+    }
     return ({
       '#dialog':dialog,'#dialogTitle':title,'#dialogBackdrop':backdrop,'#viewRoot':view,
-      '#workspaceSyncNotice':sync,'#eventRunSheet':{},'#runSheetStale':stale,
+      '#workspaceSyncNotice':sync,'#eventRunSheet':sheet,'#runSheetStale':stale,
       '#runSheetPrintBlocked':print,'#runSheetRefresh':refresh,'#runSheetCheckStatus':checkStatus,
       '#runSheetRefreshStatus':refreshStatus,'#runSheetReviewDetails':button,'#runSheetReviewDetailsStatus':handoffStatus,
       '[data-action="review-run-sheet-details"]':button,
@@ -95,7 +116,7 @@ function fixture({hosted=true}={}){
     }}));
   const context=vm.createContext({
     ui,window,document,store,schedule,GatherScheduleUI,h,busyRunSheetRevisions,runSheetCheckOutcome:null,
-    $:select,$$:selector=>selector.includes('schedule-row')?rows:[],
+    $:select,$$:selector=>selector.includes('schedule-row')?rows:selector.includes('review-run-sheet-row')?rowButtons:[],
     focusable:()=>rows,focusScheduleTarget:target=>{target?.focus();return !!target;},
     requestAnimationFrame:fn=>frames.push(fn),
     workspaceUpdatesPending:()=>!sync.hidden,
@@ -105,7 +126,7 @@ function fixture({hosted=true}={}){
       if(Number.isSafeInteger(value)){known=Math.max(known,value);if(snapshot&&snapshot.revision<value)snapshot.stale=true;}
     },
     showPendingUpdate(value){sync.hidden=false;calls.push(['pending',value]);},
-    openDialog(_title,markup,actions,_wide,kind){body=markup;footer=actions;backdrop.hidden=false;ui.dialogKind=kind;},
+    openDialog(_title,markup,actions,_wide,kind){body=markup;footer=actions;backdrop.hidden=false;ui.dialogKind=kind;connectRunSheetRows(markup);},
     closeDialog(target){calls.push(['close',target]);backdrop.hidden=true;ui.dialogKind='';ui.runSheet=null;},
     toast:message=>calls.push(['toast',message]),
   });
@@ -114,6 +135,11 @@ function fixture({hosted=true}={}){
   context.openRunSheet();
   return {ui,window,document,state,sync,backdrop,exact,previous,other,heading,calls,requests,busyRunSheetRevisions,
     get body(){return body;},get footer(){return footer;},get status(){return handoffStatus;},get button(){return button;},
+    get rowButtons(){return rowButtons;},row,
+    rowButton(target,day){
+      const key=[...ui.runSheet.liveTargets].find(([,item])=>item.id===target&&item.day===day)?.[0];
+      return rowButtons.find(node=>node.dataset.runSheetRow===key);
+    },
     set known(value){known=value;},set revision(value){revision=value;},set rows(value){rows=value;},
     handoff(opener=button){return context.reviewRunSheetMissingDetails(opener);},
     reopen(){
@@ -132,15 +158,16 @@ function fixture({hosted=true}={}){
 
 const closes=f=>f.calls.filter(([kind])=>kind==='close');
 
-test('the missing-detail shortcut is screen-only, not in printed HTML or downloaded text',()=>{
+test('the live Run sheet shortcuts are screen-only, not in standalone HTML or downloaded text',()=>{
   const f=fixture(),model=f.ui.runSheet.model,text=f.ui.runSheet.text;
   assert.match(f.body+f.footer,/Go to first activity with missing details/i);
   assert.match(f.body,/id="runSheetReviewDetails" data-action="review-run-sheet-details"/);
+  assert.match(f.body,/data-action="review-run-sheet-row" data-run-sheet-row="0-\d+"/);
   const print=schedule.runSheetMarkup(model);
-  assert.ok(f.body.includes(print));
+  assert.ok(f.body.includes(schedule.runSheetMarkup(model,f.ui.runSheet.liveTargets)));
   assert.match(print,/missing an end time or location/i);
   assert.match(text,/missing an end time or location/i);
-  assert.doesNotMatch(print+text,/Go to first activity with missing details|data-action|runSheetReviewDetails/);
+  assert.doesNotMatch(print+text,/Go to first activity with missing details|Show in Timeline|data-action|runSheetReviewDetails/);
   assert.match(styles,/\.dialog-body>:not\(#eventRunSheet\):not\(#runSheetPrintBlocked\)\{display:none!important\}/);
 });
 
@@ -159,6 +186,69 @@ test('a hosted handoff confirms the exact revision before focusing the date-matc
   assert.equal(f.busyRunSheetRevisions.size,0);
   assert.equal(f.ui.scheduleDate,today);
   assert.equal(f.ui.scheduleMine,true);
+});
+
+test('a Run sheet row opens the chosen complete-details activity rather than the first missing-detail row',async()=>{
+  const f=fixture(),targetId='fictional-complete-fields';
+  const target=f.row(targetId,today),opener=f.rowButton(targetId,today);
+  const before=structuredClone(f.state);
+  assert.ok(opener,'a row with complete details still offers a live shortcut');
+  f.rows=[f.previous,f.exact,f.other,target];
+  const pending=f.handoff(opener);
+  assert.equal(f.requests.length,1);
+  assert.equal(f.requests[0].expected,21);
+  assert.deepEqual(closes(f),[]);
+  assert.ok(f.rowButtons.every(button=>button.getAttribute('aria-disabled')==='true'));
+  await f.handoff(f.rowButton(id,today));
+  await f.handoff();
+  assert.equal(f.requests.length,1,'row and first-missing controls share the pending check');
+  f.requests[0].finish();
+  await pending;
+  f.flush();
+  assert.deepEqual(closes(f),[['close',target]]);
+  assert.deepEqual(f.state,before);
+  assert.equal(f.ui.scheduleDate,today);
+  assert.equal(f.ui.scheduleMine,true);
+});
+
+test('an overnight Run sheet row in all dates keeps the date on the clicked occurrence',async()=>{
+  for(const day of [yesterday,today]){
+    const f=fixture({hosted:false,date:''});
+    const start=f.rowButton(id,yesterday),carryover=f.rowButton(id,today);
+    assert.ok(start&&carryover);
+    assert.notEqual(start.dataset.runSheetRow,carryover.dataset.runSheetRow,'two displayed rows have separate snapshot targets');
+    const target=day===today?f.exact:f.previous,otherDay=day===today?f.previous:f.exact;
+    f.rows=[otherDay,target];
+    await f.handoff(day===today?carryover:start);
+    f.flush();
+    assert.deepEqual(closes(f),[['close',target]]);
+    assert.equal(f.ui.scheduleDate,'','the action preserves the all-dates scope');
+    assert.equal(f.requests.length,0);
+  }
+  const f=fixture({hosted:false,date:''});
+  f.rows=[f.previous];
+  await f.handoff(f.rowButton(id,today));
+  f.flush();
+  assert.deepEqual(closes(f),[['close',f.heading]],'a missing carryover row must not focus the start-day occurrence');
+  assert.match(f.calls.find(([kind])=>kind==='toast')?.[1],/no longer visible/i);
+});
+
+test('forged Run sheet row controls and stale snapshots cannot trigger a confirmation',async()=>{
+  for(const reason of ['copied control','unknown key','unsafe key','action changed','detached','stale revision']){
+    const f=fixture(),real=f.rowButton('fictional-complete-fields',today);
+    assert.ok(real);
+    let opener=real;
+    if(reason==='copied control')opener={...real,dataset:{...real.dataset}};
+    if(reason==='unknown key')real.dataset.runSheetRow='90-99';
+    if(reason==='unsafe key')real.dataset.runSheetRow='0-1"]';
+    if(reason==='action changed')real.dataset.action='review-run-sheet-details';
+    if(reason==='detached')real.isConnected=false;
+    if(reason==='stale revision')f.known=22;
+    await f.handoff(opener);
+    assert.equal(f.requests.length,0,reason);
+    assert.deepEqual(closes(f),[],reason);
+    if(reason==='stale revision')assert.equal(real.getAttribute('aria-disabled'),'true');
+  }
 });
 
 test('exact date row is required; local demo and row fallback never choose another day',async()=>{
@@ -221,18 +311,21 @@ test('failed, changed, and late confirmations never jump into another live conte
       assert.match(f.status.textContent,/Refresh the Run sheet/i);
     }
     if(reason==='button')assert.equal(f.status.textContent,'','late result cannot repaint replacement status');
+    if(reason==='hidden')assert.match(f.status.textContent,/Jump paused/);
   }
 });
 
 test('a pending handoff check cannot leave a reopened same-revision Run sheet printable after a stale result',async()=>{
-  for(const outcome of ['newer','inconclusive']){
-    const f=fixture(),original=f.ui.runSheet,pending=f.handoff(),[read]=f.requests;
+  for(const [outcome,byRow] of [['newer',false],['inconclusive',false],['newer',true],['inconclusive',true]]){
+    const f=fixture(),original=f.ui.runSheet;
+    const opener=()=>byRow?f.rowButton('fictional-complete-fields',today):f.button;
+    const pending=f.handoff(opener()),[read]=f.requests;
     assert.equal(f.busyRunSheetRevisions.has(21),true);
     f.reopen();
     const replacement=f.ui.runSheet;
     assert.notEqual(replacement,original);
     assert.equal(replacement.revision,original.revision);
-    assert.equal(f.button.getAttribute('aria-disabled'),'true','replacement stays busy until the old read settles');
+    assert.equal(opener().getAttribute('aria-disabled'),'true','replacement stays busy until the old read settles');
     f.print();
     read.finish(false,outcome==='newer'?22:undefined);
     await pending;
@@ -241,11 +334,11 @@ test('a pending handoff check cannot leave a reopened same-revision Run sheet pr
     assert.equal(f.ui.runSheet,replacement);
     assert.equal(f.ui.dialogKind,'run-sheet');
     assert.equal(f.current(),null,'replacement inherits the freshness result, not the old busy lock');
-    assert.equal(f.button.getAttribute('aria-disabled'),'true');
+    assert.equal(opener().getAttribute('aria-disabled'),'true');
     assert.equal(f.status.textContent,'','late result does not repaint the replacement action status');
     f.print();
     assert.deepEqual(f.calls.filter(([kind])=>['close','toast','print'].includes(kind)),[],outcome);
-    await f.handoff();
+    await f.handoff(opener());
     assert.equal(f.requests.length,1,'stale replacement cannot start another targeted check before refresh');
   }
 });

@@ -496,7 +496,8 @@
       };
       return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(groupMarkup).join('')}</article>`;
     }
-    function runSheetModel(state,now=Date.now(),scope={}) {
+    function runSheetModel(state,now=Date.now(),scope={},liveTargets) {
+      liveTargets?.clear();
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
       const tasks=scheduledInScope(state.tasks,scope);
       const matches=scheduleOverlaps(state,tasks,day),{overlaps,locations}=matches;
@@ -531,8 +532,9 @@
       const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
       // Deliberately project only schedule facts. Never serialize the workspace,
       // notes, comments, guest records, email, files or private booking details.
-      const days=activityDateGroups(tasks,day).filter(group=>group.tasks.length).map(({date,tasks:dayTasks})=>({label:dateLabel(date),rows:dayTasks.map(task=>{
+      const days=activityDateGroups(tasks,day).filter(group=>group.tasks.length).map(({date,tasks:dayTasks},dayIndex)=>({label:dateLabel(date),rows:dayTasks.map((task,rowIndex)=>{
         const start=task.schedule.start.slice(0,10),id=task.id;
+        liveTargets?.set(`${dayIndex}-${rowIndex}`,{id,day:date});
         return {title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:activityLocation(task.schedule),
           continues:start<date?'Continues from '+dateLabel(start):'',
           activityWarnings:[wallTimeWarning(task,state.event.timeZone),...overlapLabels(matches,task,date)].filter(Boolean),
@@ -548,10 +550,15 @@
     }
     const snapshotDisclaimer='This copy is not live. Confirm changes with your team; scheduled times never mark work complete.';
     const sharingDisclaimer='Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.';
-    function runSheetMarkup(model) {
+    function runSheetMarkup(model,liveTargets) {
       const {title,scopeLabel,timestamp,timeZone,cautions,locationWarning,days,empty}=model;
       const spans=(values)=>values.filter(Boolean).map(value=>`<span>${h(value)}</span>`).join('');
-      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(timeZone)}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. ${snapshotDisclaimer}</p><p class="muted">${sharingDisclaimer}</p></header>${cautions.map(warning=>`<p class="notice">${h(warning)}</p>`).join('')}${locationWarning?`<p class="schedule-overlap-summary">${h(locationWarning)}</p>`:''}${days.map(({label,rows})=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(label)}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(label)}<span>${h(scopeLabel)} · All activity times: ${h(timeZone)}</span><span>Team only · Not live · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${rows.map(row=>`<tr><td data-label="Time">${h(row.range)}${row.openEnded?`<span>${noActivityEnd}</span>`:''}</td><th scope="row">${h(row.title)}${row.continues?`<span class="muted">${h(row.continues)}</span>`:''}${spans([row.location||noActivityLocation,...row.activityWarnings])}</th><td data-label="Owner">${h(row.owner)}${spans([row.acceptance])}</td><td data-label="Status at snapshot">${h(row.status)}${spans(row.statusWarnings)}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${h(empty)}</p>`}</article>`;
+      const liveAction=(row,label,dayIndex,rowIndex)=>{
+        const key=`${dayIndex}-${rowIndex}`;
+        if(!liveTargets?.has(key))return '';
+        return `<button type="button" class="text-button run-sheet-live-action" data-action="review-run-sheet-row" data-run-sheet-row="${key}" aria-describedby="runSheetReviewDetailsStatus" aria-label="${h('Show in Timeline: '+row.title+' · '+label+' · '+row.range)}">Show in Timeline</button>`;
+      };
+      return `<article id="eventRunSheet" class="event-run-sheet"><header><p class="eyebrow">EVENT RUN SHEET</p><h2>${h(title)}</h2><p>${h(scopeLabel)}</p><p>All activity times: ${h(timeZone)}</p><p class="run-sheet-snapshot">Snapshot: ${h(timestamp)}. ${snapshotDisclaimer}</p><p class="muted">${sharingDisclaimer}</p></header>${cautions.map(warning=>`<p class="notice">${h(warning)}</p>`).join('')}${locationWarning?`<p class="schedule-overlap-summary">${h(locationWarning)}</p>`:''}${days.map(({label,rows},dayIndex)=>`<div class="run-sheet-table-wrap"><table class="run-sheet-table"><caption>${h(label)}</caption><thead><tr class="run-sheet-repeat-heading"><th colspan="4">${h(title)} · ${h(label)}<span>${h(scopeLabel)} · All activity times: ${h(timeZone)}</span><span>Team only · Not live · Snapshot: ${h(timestamp)}</span></th></tr><tr><th scope="col">Time</th><th scope="col">Activity / location</th><th scope="col">Owner</th><th scope="col">Status at snapshot</th></tr></thead><tbody>${rows.map((row,rowIndex)=>`<tr><td data-label="Time">${h(row.range)}${row.openEnded?`<span>${noActivityEnd}</span>`:''}</td><th scope="row">${h(row.title)}${row.continues?`<span class="muted">${h(row.continues)}</span>`:''}${spans([row.location||noActivityLocation,...row.activityWarnings])}${liveAction(row,label,dayIndex,rowIndex)}</th><td data-label="Owner">${h(row.owner)}${spans([row.acceptance])}</td><td data-label="Status at snapshot">${h(row.status)}${spans(row.statusWarnings)}</td></tr>`).join('')}</tbody></table></div>`).join('')||`<p>${h(empty)}</p>`}</article>`;
     }
     function runSheetText(model) {
       // User-entered fields stay on one line so they cannot masquerade as

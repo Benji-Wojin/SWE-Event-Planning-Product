@@ -2299,7 +2299,8 @@
   }
   function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
-    const model=schedule.runSheetModel(store.getState(),Date.now(),scope);
+    const liveTargets=new Map();
+    const model=schedule.runSheetModel(store.getState(),Date.now(),scope,liveTargets);
     const hasRows=model.days.length>0;
     const text=hasRows?schedule.runSheetText(model):'';
     const emptyHelp=model.day
@@ -2307,15 +2308,16 @@
         :'Go back to the schedule to choose another date or clear the date filter.'
       : model.mine?'Go back to the schedule to review your activities or switch to All activities.'
         :'Go back to the schedule to check for activities that still need a start time.';
-    ui.runSheet={model,text,scope,key:scheduleWorkspaceKey(),revision:store.getSnapshotRevision?.(),stale:false};
+    ui.runSheet={model,text,scope,liveTargets,key:scheduleWorkspaceKey(),revision:store.getSnapshotRevision?.(),stale:false};
     openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. '+
       (hasRows?'Refresh it before printing or downloading.':'Refresh it to check the same date and activity scope again.')+'</p>'+
       (store.refresh?'<button type="button" class="btn btn-secondary" id="runSheetRefresh" data-action="refresh-run-sheet">Refresh run sheet</button>':'')+
       '</div><p id="runSheetCheckStatus" class="muted" role="status"></p><p id="runSheetRefreshStatus" class="muted" role="status"></p>'+
-      (model.missingDetails?'<div class="notice"><button type="button" class="btn btn-secondary" id="runSheetReviewDetails" data-action="review-run-sheet-details" aria-describedby="runSheetReviewDetailsStatus">Go to first activity with missing details</button><p id="runSheetReviewDetailsStatus" class="muted" role="status"></p></div>':'')+
+      (model.missingDetails?'<div class="notice"><button type="button" class="btn btn-secondary" id="runSheetReviewDetails" data-action="review-run-sheet-details" aria-describedby="runSheetReviewDetailsStatus">Go to first activity with missing details</button></div>':'')+
+      (hasRows?'<p id="runSheetReviewDetailsStatus" class="muted" role="status"></p>':'')+
       '<p id="runSheetPrintBlocked" data-blocked>'+
       (hasRows?'Run sheet isn’t ready to print. Return to Weft to check or refresh it.':'No run sheet to print: this view has no scheduled activities. Return to Weft to check the schedule.')+
-      '</p>'+schedule.runSheetMarkup(model)+
+      '</p>'+schedule.runSheetMarkup(model,liveTargets)+
       (hasRows?'':'<p id="runSheetEmpty" class="notice">There’s nothing to print or download from this view. '+emptyHelp+'</p>')+
       (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
@@ -2338,6 +2340,8 @@
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
     $('#runSheetReviewDetails')?.setAttribute('aria-disabled',String(blocked));
+    for(const button of $$('#eventRunSheet [data-action="review-run-sheet-row"]'))
+      button.setAttribute('aria-disabled',String(blocked));
     const noRows=!snapshot.model.days.length;
     const checkStatus=$('#runSheetCheckStatus');
     const message=outcome==='checking'?'Checking the saved plan…':
@@ -2356,13 +2360,21 @@
   }
   async function reviewRunSheetMissingDetails(button) {
     const snapshot=ui.runSheet,title=$('#dialogTitle'),status=$('#runSheetReviewDetailsStatus');
+    const firstMissing=$('#runSheetReviewDetails')===button;
+    const key=firstMissing?'':button?.dataset.runSheetRow;
+    const sheet=$('#eventRunSheet');
+    const targetForRow=key&&/^\d+-\d+$/.test(key)?snapshot?.liveTargets?.get(key):null;
+    const currentButton=()=>firstMissing?$('#runSheetReviewDetails')===button:
+      !!targetForRow&&sheet===$('#eventRunSheet')&&button.dataset.action==='review-run-sheet-row'&&
+      button.dataset.runSheetRow===key&&$(`[data-action="review-run-sheet-row"][data-run-sheet-row="${key}"]`,sheet)===button;
     const sameWorkspace=()=>!!snapshot&&!window.GatherAccessLost&&snapshot.key===scheduleWorkspaceKey();
-    const sameSheet=()=>sameWorkspace()&&!!title&&!!status&&!!button?.isConnected&&
+    const sameSheet=()=>sameWorkspace()&&!!title&&!!status&&status===$('#runSheetReviewDetailsStatus')&&
+      sheet===$('#eventRunSheet')&&!!button?.isConnected&&!button.closest('[hidden],[inert]')&&button.getClientRects().length>0&&
       ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&ui.dialogKind==='run-sheet'&&ui.runSheet===snapshot&&
       snapshot.scope.actor===ui.actor&&
       snapshot.scope.mine===ui.scheduleMine&&snapshot.scope.date===ui.scheduleDate&&
-      !$('#dialogBackdrop').hidden&&$('#dialogTitle')===title&&$('#runSheetReviewDetails')===button;
-    if(!sameSheet()||ui.pendingSave||ui.syncing||document.hidden||!snapshot.model.missingDetails)return;
+      !$('#dialogBackdrop').hidden&&$('#dialogTitle')===title&&currentButton();
+    if(!sameSheet()||ui.pendingSave||ui.syncing||document.hidden||(firstMissing&&!snapshot.model.missingDetails))return;
     if(busyRunSheetRevisions.has(snapshot.revision))return;
     if(!currentRunSheet()){
       status.textContent='Refresh the Run sheet before jumping to an activity.';return;
@@ -2380,7 +2392,8 @@
           if(store.getSnapshotRevision?.()===snapshot.revision&&!scheduleRevisionIsStale(snapshot.revision))
             runSheetCheckOutcome={revision:snapshot.revision,kind:'inconclusive'};
         }
-        if(!sameSheet()||document.hidden||ui.pendingSave)return;
+        if(!sameSheet())return;
+        if(document.hidden||ui.pendingSave){status.textContent='Jump paused. Choose the activity again to open it in Timeline.';return;}
         if(!confirmed){
           status.textContent='The schedule could not be confirmed. Refresh the Run sheet before jumping to an activity.';
           return;
@@ -2395,11 +2408,14 @@
     }
     if(!sameSheet()||document.hidden||ui.pendingSave)return;
     if(!currentRunSheet()){status.textContent='Refresh the Run sheet before jumping to an activity.';return;}
-    const target=schedule.firstMissingRunSheetDetail(store.getState(),snapshot.scope);
+    const target=firstMissing?schedule.firstMissingRunSheetDetail(store.getState(),snapshot.scope):targetForRow;
     const root=$('#viewRoot');
-    const row=target&&root&&$$('.schedule-row',root).find(el=>el.isConnected&&el.dataset.id===target.id&&el.dataset.scheduleDay===target.day);
+    // The modal makes the entire app shell inert. Reject only hidden or inert
+    // ancestors inside the Timeline; closeDialog releases the shell before focus.
+    const row=target&&root&&$$('.schedule-row',root).find(el=>el.isConnected&&el.dataset.id===target.id&&el.dataset.scheduleDay===target.day&&
+      el.getClientRects().length&&!root.contains(el.closest('[hidden],[inert]')));
     closeDialog(row||(root&&$('#schedulePanelHeading',root)));
-    if(!row)toast(target?'Check missing details in the schedule below.':'No activities in this view still need those details.');
+    if(!row)toast(firstMissing?(target?'Check missing details in the schedule below.':'No activities in this view still need those details.'):'This activity is no longer visible in this Timeline view.');
   }
   function printRunSheet() {
     if(currentRunSheet()?.model.days.length)window.print();
@@ -4009,7 +4025,7 @@
         }
       }
       if(action==='run-sheet')openRunSheet();
-      if(action==='review-run-sheet-details')await reviewRunSheetMissingDetails(el);
+      if(action==='review-run-sheet-details'||action==='review-run-sheet-row')await reviewRunSheetMissingDetails(el);
       if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);

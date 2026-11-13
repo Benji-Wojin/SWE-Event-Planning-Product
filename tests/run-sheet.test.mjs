@@ -79,6 +79,43 @@ test('a carryover row only warns about overlaps that actually reach its displaye
   assert.doesNotMatch(carriedRow,/Owner overlap/);
 });
 
+test('live Run sheet row targets use a separate ordinal map and leave every export fact unchanged',()=>{
+  const input=state(),overnight='private-overnight-id',later='private-later-id';
+  input.tasks=[
+    activity(later,'maya','2026-11-21T04:00','2026-11-21T04:30',{title:'Same <hall> title'}),
+    activity(overnight,'maya','2026-11-20T22:00','2026-11-21T01:00',{title:'Same <hall> title'}),
+    activity('private-other-id','dev','2026-11-21T01:15','2026-11-21T02:00',{title:'Other scope'}),
+  ];
+  const before=structuredClone(input),scope={mine:true,actor:'maya'},targets=new Map([['discard-me',{}]]);
+  const model=ui.runSheetModel(input,now,scope,targets),plain=ui.runSheetModel(input,now,scope);
+  assert.deepEqual([...targets],[
+    ['0-0',{id:overnight,day:'2026-11-20'}],
+    ['1-0',{id:overnight,day:'2026-11-21'}],
+    ['1-1',{id:later,day:'2026-11-21'}],
+  ]);
+  assert.deepEqual(model,plain);
+  assert.deepEqual(input,before);
+  const interactive=ui.runSheetMarkup(model,targets),printable=ui.runSheetMarkup(plain);
+  const buttons=[...interactive.matchAll(/<button[^>]*data-action="review-run-sheet-row"[^>]*>Show in Timeline<\/button>/g)].map(([markup])=>markup);
+  assert.equal(buttons.length,3);
+  assert.match(buttons[0],/type="button".*run-sheet-live-action.*data-run-sheet-row="0-0".*aria-describedby="runSheetReviewDetailsStatus"/);
+  assert.match(buttons[0],/aria-label="Show in Timeline: Same &lt;hall&gt; title · Fri, Nov 20, 2026 · 10:00 PM/);
+  assert.match(buttons[1],/aria-label="Show in Timeline: Same &lt;hall&gt; title · Sat, Nov 21, 2026 · 10:00 PM/);
+  assert.match(buttons[2],/aria-label="Show in Timeline: Same &lt;hall&gt; title · Sat, Nov 21, 2026 · 4:00 AM/);
+  assert.doesNotMatch(interactive,/private-(?:overnight|later|other)-id|Other scope|data-id=/);
+  assert.equal(interactive.replace(/<button[^>]*data-action="review-run-sheet-row"[^>]*>Show in Timeline<\/button>/g,''),printable);
+  assert.equal(ui.runSheet(input,now,scope),printable);
+  assert.equal(ui.runSheetText(model),ui.runSheetText(plain));
+  assert.doesNotMatch(ui.runSheetText(model),/Show in Timeline|private-(?:overnight|later|other)-id/);
+  assert.match(readFileSync('legacy/styles.css','utf8'),/@media print\{\s*#eventRunSheet \.run-sheet-live-action\{display:none!important\}/);
+  const dated=ui.runSheetModel(input,now,{...scope,date:'2026-11-21'},targets);
+  assert.equal(dated.days.length,1);
+  assert.deepEqual([...targets],[['0-0',{id:overnight,day:'2026-11-21'}],['0-1',{id:later,day:'2026-11-21'}]]);
+  const empty=ui.runSheetModel(input,now,{...scope,date:'2026-11-22'},targets);
+  assert.equal(targets.size,0);
+  assert.doesNotMatch(ui.runSheetMarkup(empty,targets),/review-run-sheet-row/);
+});
+
 test('explicitly planned but untimed activities stay visible in the right scope, outside the run sheet',()=>{
   const input=state();
   input.tasks=[
