@@ -703,6 +703,9 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .related-review .form-actions{flex-wrap:wrap}
 .related-review .btn,.related-receipt .text-button{min-height:44px;white-space:normal;overflow-wrap:anywhere}
 .related-receipt .text-button{text-align:left}
+.related-receipt-meta{margin:0 0 8px}
+.related-batch-child-actions{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-top:12px}
+.related-batch-child-actions :is(.btn,.text-button){min-height:44px;white-space:normal;text-align:left}
 .related-review [data-related-check-status]:empty{display:none}
 .schedule-overlap-summary{padding:12px;border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:6px;font-size:.875rem;line-height:1.5;margin:0 0 18px}
 .schedule-overlap-label{font-size:.75rem;font-weight:600;text-decoration:underline;text-underline-offset:3px}

@@ -758,7 +758,7 @@
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
-    if (ui.view!==view) guideViewReady='';
+    if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;}
     if(view!=='tasks')taskLinkUnavailable=false;
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
@@ -796,6 +796,7 @@
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(!['related-checklist','related-review'].includes(kind))ui.relatedChecklistDraft=null;
+    if(!['task','delete-task','related-checklist','related-review'].includes(kind))ui.relatedBatch=null;
     if(kind!=='guest-agenda')ui.guestAgenda=null;
     if(kind!=='reuse-checklist')ui.reuseChecklist=null;
     if(kind!=='run-sheet')ui.runSheet=null;
@@ -841,6 +842,7 @@
     ui.reuseChecklist=null;
     ui.runSheet=null;
     ui.relatedChecklistDraft=null;
+    ui.relatedBatch=null;
     const view=$('#viewRoot');
     if(!restoreFocus(ui.lastFocus)&&!restoreViewFocus(ui.lastFocus,view))view.querySelector('button')?.focus();
     ui.lastFocus=null;
@@ -1207,8 +1209,49 @@
     if(!ids?.length)return '';
     const related=new Map(relatedTasksFor(task,state).map(item=>[item.id,item]));
     const saved=ids.map(id=>related.get(id)).filter(Boolean);
-    if(!saved.length)return '';
-    return `<section class="notice related-receipt section-gap" aria-labelledby="relatedReceiptHeading"><h3 id="relatedReceiptHeading" tabindex="-1">${saved.length===1?'1 smaller task added':saved.length+' smaller tasks added'}</h3><p>These started To do and unassigned. They’re related to this task, so they don’t block its completion. Open any step to assign an owner or set a due date.</p><ul>${saved.map(item=>`<li><button type="button" class="text-button" data-action="task" data-id="${h(item.id)}">${h(item.title)}</button></li>`).join('')}</ul></section>`;
+    if(!saved.length)return '<section id="relatedReceipt" class="notice related-receipt section-gap" aria-labelledby="relatedReceiptHeading"><h3 id="relatedReceiptHeading" tabindex="-1">No steps from this batch are still linked</h3><p>See Task relationships for the current links.</p></section>';
+    return `<section id="relatedReceipt" class="notice related-receipt section-gap" aria-labelledby="relatedReceiptHeading"><h3 id="relatedReceiptHeading" tabindex="-1">${saved.length===ids.length?(saved.length===1?'1 smaller task added':saved.length+' smaller tasks added'):'Smaller tasks still linked'}</h3><p>These related tasks don’t block completion of the original task. Open a step to assign an owner or set a due date.</p><ul>${saved.map(item=>{
+      const owner=item.owner?state.members?.find(person=>person.id===item.owner&&person.active!==false)?.name||'Owner unavailable':'Unassigned';
+      const due=item.dueDate?'Due '+dayLabel(item.dueDate):'No due date';
+      return `<li><button type="button" class="text-button" data-action="open-related-batch-child" data-id="${h(item.id)}">${h(item.title)}</button><p class="muted related-receipt-meta">${h(owner)} · ${h(due)}</p></li>`;
+    }).join('')}</ul></section>`;
+  }
+  function relatedBatchInScope(batch) {
+    return !!batch&&!window.GatherAccessLost&&isOrganizer()&&batch.actor===ui.actor&&batch.view===ui.view&&
+      batch.project===(window.GatherMode?.projectId||'');
+  }
+  function relatedBatchChildMarkup(batch,task) {
+    if(!batch||batch.childId!==task.id)return '';
+    return `<div class="related-batch-child-actions"><button type="button" class="text-button" data-action="return-to-related-batch">← Back to added tasks</button><button type="button" class="btn btn-secondary" data-action="review-task-owner" data-id="${h(task.id)}">Edit owner and due date</button></div>`;
+  }
+  function openRelatedBatchChild(id,opener) {
+    const batch=ui.relatedBatch,receipt=$('#relatedReceipt',$('#dialog'));
+    if(!relatedBatchInScope(batch)||ui.dialogKind!=='task'||ui.detailId!==batch.parentId||batch.childId||
+      !receipt?.contains(opener)||opener.dataset.id!==id||!batch.ids.includes(id))return;
+    const state=store.getState(),parent=state.tasks.find(task=>task.id===batch.parentId);
+    if(!relatedTasksFor(parent,state).some(task=>task.id===id)){toast('That step is no longer linked to this task.');return;}
+    batch.childId=id;
+    taskDialog(id,'',false,true);
+  }
+  function returnToRelatedBatch() {
+    const batch=ui.relatedBatch;
+    if(!relatedBatchInScope(batch)||!['task','delete-task'].includes(ui.dialogKind)||!batch.childId||ui.detailId!==batch.childId)return false;
+    const childId=batch.childId, parentId=batch.parentId;
+    if(!store.getState().tasks.some(task=>task.id===parentId)){
+      closeDialog();toast('The original task is no longer available.');return true;
+    }
+    batch.childId='';
+    taskDialog(parentId,'',false,true);
+    const dialog=$('#dialog'),heading=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!relatedBatchInScope(batch)||ui.relatedBatch!==batch||ui.dialogKind!=='task'||ui.detailId!==parentId||
+        !heading||$('#dialogTitle',dialog)!==heading)return;
+      const receipt=$('#relatedReceipt',dialog);
+      const opener=receipt&&$$('[data-action="open-related-batch-child"]',receipt).find(el=>el.dataset.id===childId);
+      const target=opener||(receipt&&$('#relatedReceiptHeading',receipt))||heading;
+      target.focus({preventScroll:true});target.scrollIntoView({block:'nearest',inline:'nearest'});
+    });
+    return true;
   }
   function paintRelatedSaveState(form) {
     const failure=form.dataset.saveUnconfirmed;
@@ -1416,9 +1459,15 @@
     const scroll=sameTask?$('#dialog').scrollTop:0;
     ui.detailId=id;
     const organizer=isOrganizer(), own=task.owner===ui.actor,ownerInfo=taskOwnerPresentation(task,taskState,organizer);
+    if(relatedReceiptIds&&organizer&&!window.GatherAccessLost)ui.relatedBatch={actor:ui.actor,view:ui.view,
+      project:window.GatherMode?.projectId||'',parentId:id,ids:[...relatedReceiptIds],childId:''};
+    let batch=ui.relatedBatch;
+    if(!relatedBatchInScope(batch)||(id!==batch.parentId&&id!==batch.childId)){ui.relatedBatch=null;batch=null;}
+    if(batch?.parentId===id)batch.childId='';
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
-      ${relatedReceiptMarkup(task,taskState,relatedReceiptIds)}
+      ${relatedBatchChildMarkup(batch,task)}
+      ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
@@ -1449,6 +1498,7 @@
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
     window.GatherResourcesUI?.mount(id,$('#dialog'));
+    if(batch&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -1855,7 +1905,7 @@
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
     const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
-    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review');
+    replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-to-acceptance-review','open-related-batch-child','return-to-related-batch');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
     const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
@@ -1871,6 +1921,8 @@
       if(action==='close-dialog')closeDialog();
       if(action==='return-to-event-task-review')returnToEventTaskReview();
       if(action==='return-to-acceptance-review')returnToAcceptanceReview();
+      if(action==='open-related-batch-child')openRelatedBatchChild(id,el);
+      if(action==='return-to-related-batch')returnToRelatedBatch();
       if(action==='continue-task-search')continueFromTaskLinkNotice();
       if(action==='notifications')showNotifications();
       if(action==='toggle-task-reminders')toggleTaskReminders();
@@ -1960,7 +2012,7 @@
       if(action==='confirm-delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='delete-task'&&ui.detailId===id){
         await store.deleteTask(id,Number(el.dataset.revision),ui.actor);
         if(ui.mapFocus===id)ui.mapFocus='';
-        render();if(!returnToEventTaskReview())closeDialog();ui.detailId='';
+        render();if(!returnToRelatedBatch()){if(!returnToEventTaskReview())closeDialog();ui.detailId='';}
         toast('Task deleted.');
       }
       if(action==='review-task-owner'&&!window.GatherAccessLost&&isOrganizer()&&ui.dialogKind==='task'&&ui.detailId===id){
@@ -2149,7 +2201,7 @@
         if(!confirmFixedDate(form.dataset.id,data)||!confirmTaskOwnerChange(before,data))return;
         store.updateTask(form.dataset.id,data,ui.actor);
         const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;
-        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else if(!returnToEventTaskReview())closeDialog();
+        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
       }
