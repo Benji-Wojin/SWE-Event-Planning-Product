@@ -37,7 +37,7 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.match(guide.html(),/Optional walkthrough[\s\S]*Draft the rest of your plan with AI/);
   assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
   assert.match(guide.html(),/won’t send anything to AI or change your project/);
-  assert.match(guide.html(),/Find the plan builder later in <strong>Overview/);
+  assert.match(guide.html(),/You can skip this and come back from <strong>Overview → Build a plan/);
   assert.equal(guide.changes(),2);assert.equal(guide.focuses(),2);
   guide.context.guideProgress.events.push({checkpoint:'budget_viewed'});guide.paint();
   assert.match(guide.html(),/Step 4 of 5/);
@@ -45,7 +45,8 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
   guide.context.guideProgress.events.push({checkpoint:'event_details_viewed'});guide.paint();
   assert.match(guide.html(),/Step 5 of 5[\s\S]*Invite a teammate/);
-  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
+  assert.match(guide.html(),/Open invitation form[\s\S]*<section[^>]+aria-labelledby="workspaceGuidePlanTitle"/);
+  assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
 });
 
 test('a committed task does not offer to create a duplicate while progress reloads',()=>{
@@ -66,7 +67,7 @@ test('the finished solo state never represents an invitation as sent, and unrela
   assert.match(finished.html(),/data-guide-state="skipped"[\s\S]*Invite/);
   assert.match(finished.html(),/invite a teammate later/);
   assert.match(finished.html(),/Back to planning/);
-  assert.doesNotMatch(finished.html(),/invitation is ready/);
+  assert.doesNotMatch(finished.html(),/invitation is ready|workspaceGuidePlanTitle/);
   const unrelated=fixture(steps,{bound:false});unrelated.paint();
   assert.equal(unrelated.host.hidden,true);assert.equal(unrelated.changes(),0);
 });

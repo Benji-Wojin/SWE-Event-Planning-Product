@@ -3,7 +3,6 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { PlanReview } from './plan-client';
 import {SuggestionFeed} from './suggestion-feed';
 import { ASK_WEFT_ENABLED } from '@/lib/release-policy';
-import { PlanGuideHint } from './guide-hint';
 
 export const dynamic = 'force-dynamic';
 export default async function Plan({
@@ -46,7 +45,6 @@ export default async function Plan({
       <p className="mb-6 text-sm text-muted-foreground">
         {suggestions ? 'A focused AI review of what’s missing—not another generic checklist. ' : ''}Private until you add selected items to the project.
       </p>
-      {guided && <PlanGuideHint />}
       <PlanReview query={query} guided={guided} />
     </main>
   );

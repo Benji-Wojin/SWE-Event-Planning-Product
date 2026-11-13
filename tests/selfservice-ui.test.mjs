@@ -78,15 +78,18 @@ function render(component, props, values = []) {
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 test('optional planner walkthrough teaches the actual controls, fallback and shared destinations', () => {
-  const guide = PlanGuideHint();
+  const guide = PlanGuideHint({ hasDraft: false, locked: false });
   const tree = nodes(guide);
   const steps = tree.filter((node) => node.type === 'li');
   assert.equal(steps.length, 3);
   assert.match(text(steps[0]), /Event type.*What are you planning\?.*Example:.*40 people/);
-  assert.match(text(steps[1]), /Groq.*Generate draft.*Generate another draft.*Opening this page alone.*checklist without using AI/);
+  assert.match(text(steps[1]), /Groq.*Generate draft.*Generate another draft.*Opening this page alone.*Use starter checklist/);
   assert.match(text(steps[1]), /Example suggestions:.*check-in table.*choose a greeter.*schedule cleanup.*Your draft will depend on your brief/);
   assert.match(text(steps[2]), /deselect.*Add selected items to project.*Shared tasks.*Timeline/);
   assert.match(text(guide), /Return to your guide.*without generating or adding anything/);
+  assert.equal(tree.find((node) => node.type === 'details')?.props.open, undefined);
+  assert.equal(tree.find((node) => node.props.href === '#plan-kind' && text(node) === 'Start the event brief')?.type, 'a');
+  assert.ok(!tree.some((node) => node.props.href === '#plan-proposed-items'));
   assert.equal(tree.some((node) => ['button', 'input', 'form'].includes(node.type)), false);
 });
 test('invitation states remain textual, distinct and recoverable with scanable badges', () => {

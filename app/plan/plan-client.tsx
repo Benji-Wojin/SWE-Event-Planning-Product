@@ -11,6 +11,7 @@ import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
+import { PlanGuideHint } from './guide-hint';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
   eventKinds,
@@ -426,7 +427,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
             Try again
           </Button>
         )}
-        <a href={guideReturn ? projectUrl : '/'} target={embedded ? '_top' : undefined} className="mt-5 block text-sm underline">
+        <a href={guideReturn ? projectUrl : '/'} target={embedded ? '_top' : undefined} className={guideReturn ? 'mt-2 inline-flex min-h-11 items-center text-sm text-primary underline' : 'mt-5 block text-sm underline'}>
           {guideReturn ? 'Return to your guide' : 'All projects'}
         </a>
       </section>
@@ -454,7 +455,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {data.event.name}
           {demo ? ' · Demo' : ''}
         </p>
-        <a href={projectUrl} className="text-primary underline">
+        <a href={projectUrl} className={guideReturn ? 'inline-flex min-h-11 items-center text-primary underline' : 'text-primary underline'}>
           {guideReturn ? 'Return to your guide' : applied ? 'Open project' : 'Skip / open project'}
         </a>
       </div>}
@@ -469,6 +470,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           again.
         </p>
       )}
+      {guideReturn && <PlanGuideHint hasDraft={!!data.draft && !applied} locked={locked} />}
       {applied && (
         <section aria-labelledby="plan-receipt-heading" className="mb-5 space-y-3 rounded-lg border border-primary/40 p-4">
           <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="font-medium">Plan added to the project</h2>
@@ -514,7 +516,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
               <Label htmlFor="plan-kind">Event type</Label>
               <NativeSelect
                 id="plan-kind"
-                className="w-full"
+                className={guideReturn ? 'w-full [&_select]:scroll-mt-6' : 'w-full'}
                 value={brief.kind}
                 onChange={(e) => updateBrief('kind', e.target.value)}
               >
@@ -676,7 +678,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
-            <h2 className="text-xl font-semibold">Review proposed items</h2>
+            <h2 id={guideReturn ? 'plan-proposed-items' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-xl font-semibold">Review proposed items</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Adds to your {data.existingTaskCount} existing tasks. Dates,
               owners, and activities below are proposals.

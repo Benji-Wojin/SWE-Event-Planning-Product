@@ -36,7 +36,7 @@
     const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
     const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
     const finished=bound&&reached.has('event_details_viewed')&&(reached.has('invite_created')||reached.has('invite_skipped'));
-    const showPlanTip=next?.[0]==='budget_viewed'||next?.[0]==='event_details_viewed';
+    const showPlanTip=bound&&reached.has('task_created')&&!!next;
     host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
@@ -61,9 +61,9 @@
       <div class="workspace-guide-plan-content">
         <p class="workspace-guide-plan-kicker">Optional walkthrough</p>
         <h3 id="workspaceGuidePlanTitle">Draft the rest of your plan with AI</h3>
-        <p>Describe your event, review the suggested tasks, then add only the ones you want. Opening the planner won’t send anything to AI or change your project.</p>
+        <p>Turn a short event brief into a private draft of tasks and activities. Review it and add only what you want. Opening the planner won’t send anything to AI or change your project.</p>
         <a class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a>
-        <p class="workspace-guide-plan-later">Find the plan builder later in <strong>Overview</strong>.</p>
+        <p class="workspace-guide-plan-later">You can skip this and come back from <strong>Overview → Build a plan</strong>.</p>
       </div>
     </section>`;
   }

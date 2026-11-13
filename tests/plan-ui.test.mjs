@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 
 // Hook-level interaction tests, not a substitute for real-browser layout/accessibility QA.
-let PlanReview;
+let PlanReview, PlanGuideHint;
 before(async () => {
   const bundle = await build({
-    entryPoints: ['app/plan/plan-client.tsx'],
+    stdin: {
+      contents: "export {PlanReview} from './app/plan/plan-client'; export {PlanGuideHint} from './app/plan/guide-hint';",
+      resolveDir: process.cwd(),
+    },
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -37,7 +40,7 @@ before(async () => {
       },
     ],
   });
-  ({ PlanReview } = await import(
+  ({ PlanReview, PlanGuideHint } = await import(
     'data:text/javascript;base64,' +
       Buffer.from(bundle.outputFiles[0].text).toString('base64')
   ));
@@ -98,7 +101,19 @@ function nodes(node) {
     ? []
     : Array.isArray(node)
       ? node.flatMap(nodes)
+      : node.type === PlanGuideHint
+        ? nodes(PlanGuideHint(node.props))
       : [node, ...nodes(node.props?.children)];
+}
+const planLink = (tree, label) => nodes(tree).find(node => node.type === 'a' && text(node) === label);
+const planHint = tree => nodes(tree).find(node => node.props?.id === 'plan-guide-hint');
+function assertGuideReturn(tree) {
+  const ordered = nodes(tree);
+  const link = ordered.find(node => node.type === 'a' && text(node) === 'Return to your guide');
+  assert.equal(link?.props.href, '/project?project=p_example&guide=1');
+  assert.equal(link.props.onClick, undefined);
+  const hint = ordered.find(node => node.props?.id === 'plan-guide-hint');
+  if (hint) assert.ok(ordered.indexOf(link) < ordered.indexOf(hint), 'return precedes the walkthrough');
 }
 const existingTaskLinks = (tree, title) => nodes(tree).filter(node =>
   node.type === 'a' && (title === undefined
@@ -275,6 +290,96 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     },
   };
 }
+test('guided planner return stays available before the project loads and on load failure', async () => {
+  let failLoad;
+  const pending = new Promise(resolve => { failLoad = resolve; });
+  const app = harness(() => pending, fixture(), 'project=p_example', false, true);
+  try {
+    await app.start();
+    assertGuideReturn(app.tree);
+    assert.match(text(app.tree), /Loading project/);
+    assert.equal(planLink(app.tree, 'Start the event brief'), undefined);
+    assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
+
+    failLoad(Response.json({ error: 'Fictional load failure' }, { status: 503 }));
+    await app.start();
+    assertGuideReturn(app.tree);
+    assert.match(text(app.tree), /Fictional load failure/);
+    assert.equal(planLink(app.tree, 'Start the event brief'), undefined);
+    assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
+    assert.deepEqual(app.requests.map(row => row.action), ['get']);
+  } finally { app.dispose(); }
+});
+
+test('guided planner links to the real brief, then to the review only after a draft exists', async () => {
+  const initial = { ...fixture(), draft: null, status: 'empty' };
+  const app = harness(context => {
+    if (context.input?.action === 'generate') {
+      context.value = { ...context.saved, status: 'ready', draft: fixture().draft };
+    }
+  }, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    assert.ok(planHint(app.tree));
+    assertGuideReturn(app.tree);
+    const briefLink = planLink(app.tree, 'Start the event brief');
+    assert.equal(briefLink?.props.href, '#plan-kind');
+    assert.equal(briefLink.props.onClick, undefined);
+    assert.equal(app.find('plan-kind')?.type, 'select');
+    assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
+    assert.equal(app.find('plan-proposed-items'), undefined);
+    assert.deepEqual(app.requests.map(row => row.action), ['get']);
+    assert.deepEqual(app.saved, initial);
+
+    await app.click('Generate draft');
+    const review = planLink(app.tree, 'Review proposed items');
+    const heading = app.find('plan-proposed-items');
+    assert.equal(review?.props.href, '#plan-proposed-items');
+    assert.equal(review.props.onClick, undefined);
+    assert.equal(heading?.type, 'h2');
+    assert.equal(heading.props.tabIndex, -1);
+    assert.equal(text(heading), 'Review proposed items');
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate']);
+    assert.equal(app.saved.receipt, null);
+  } finally { app.dispose(); }
+});
+
+test('guided planner does not send organizers to stale or already applied proposals', async () => {
+  for (const status of ['generating', 'applied']) {
+    const initial = { ...fixture(), status,
+      receipt: status === 'applied' ? { taskIds: [] } : null };
+    const app = harness(undefined, initial, 'project=p_example', false, true);
+    try {
+      await app.start();
+      assert.ok(planHint(app.tree));
+      assertGuideReturn(app.tree);
+      assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
+      assert.equal(Boolean(planLink(app.tree, 'Start the event brief')), status === 'applied');
+      assert.deepEqual(app.requests.map(row => row.action), ['get']);
+    } finally { app.dispose(); }
+  }
+});
+
+test('planner walkthrough stays out of regular, embedded, demo, and other planning modes', async () => {
+  for (const [query, embedded, guided] of [
+    ['project=p_example', false, false],
+    ['project=p_example', true, true],
+    ['demo=1', false, true],
+    ['project=p_example&mode=suggestions', false, true],
+    ['project=p_example&mode=assistant', false, true],
+  ]) {
+    const app = harness(undefined, fixture(), query, embedded, guided);
+    try {
+      await app.start();
+      assert.equal(planHint(app.tree), undefined);
+      for (const label of ['Return to your guide', 'Start the event brief', 'Review proposed items']) {
+        assert.equal(planLink(app.tree, label), undefined);
+      }
+      assert.deepEqual(app.requests.map(row => row.action), ['get']);
+    } finally { app.dispose(); }
+  }
+});
+
 test('embedded task context is only an offer; cancel preserves edits and accepting seeds a new private message without a request',async()=>{
   const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Existing private conversation'}]);
   const app=harness(undefined,initial,'project=p_example&mode=assistant',true);
