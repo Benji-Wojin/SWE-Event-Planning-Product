@@ -14,7 +14,10 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     '#taskLinkUnavailableTitle':{focus(){events.push('notice focus');},scrollIntoView(){events.push('notice visible');}},
     '#taskLinkNotice':{remove(){events.push('dismissed');}},
     '#taskSearch':{focus(){events.push('search focus');}},
-    '#viewRoot':{querySelector(){return {focus(){events.push('opener focus');}};}},
+    '#viewRoot':{querySelector(){return {
+      scrollIntoView(options){assert.equal(options.block,'center');assert.equal(options.inline,'nearest');assert.equal(options.behavior,'instant');events.push('opener visible');},
+      focus(options){assert.equal(options.preventScroll,true);events.push('opener focus');},
+    };}},
     '#workspaceHandoffTitle':{focus(){events.push('welcome focus');}},
   };
   const context=vm.createContext({
@@ -49,7 +52,7 @@ test('an unavailable task link lands on All tasks with a persistent, focused exp
 test('current links open the matching task with heading focus, ordinary navigation never shows the notice',()=>{
   const id='current-task',current=land(id,[{id}]);
   assert.equal(current.ui.tab,'all');
-  assert.deepEqual(current.events,['tasks','ready','opener focus',[id,'',false,true]]);
+  assert.deepEqual(current.events,['tasks','ready','opener visible','opener focus',[id,'',false,true]]);
   assert.equal(current.markup(),'');
   const ordinary=land('',[],{welcome:true});
   assert.deepEqual(ordinary.events,['overview','welcome focus','ready']);
@@ -60,15 +63,15 @@ test('authorized hosted receipt hints try the current organizer review, with qui
   const id='current-task',tasks=[{id}],mode={demo:false};
   for(const review of ['completion','amendment']){
     const current=land(id,tasks,{review,organizer:true,mode,openReview:true});
-    assert.deepEqual(current.events,['tasks','ready','opener focus',['review',id,review,'',true]]);
+    assert.deepEqual(current.events,['tasks','ready','opener visible','opener focus',['review',id,review,'',true]]);
     assert.equal(current.markup(),'');
     const stale=land(id,tasks,{review,organizer:true,mode,openReview:false});
-    assert.deepEqual(stale.events,['tasks','ready','opener focus',['review',id,review,'',true],[id,'',false,true]]);
+    assert.deepEqual(stale.events,['tasks','ready','opener visible','opener focus',['review',id,review,'',true],[id,'',false,true]]);
     assert.equal(stale.markup(),'');
   }
   for(const options of [{mode,organizer:false},{mode:{demo:true},organizer:true},{organizer:true}]){
     const ordinary=land(id,tasks,{review:'completion',openReview:true,...options});
-    assert.deepEqual(ordinary.events,['tasks','ready','opener focus',[id,'',false,true]]);
+    assert.deepEqual(ordinary.events,['tasks','ready','opener visible','opener focus',[id,'',false,true]]);
   }
   assert.deepEqual(land(id,tasks,{review:'completion',organizer:true,mode,accessLost:true}).events,['tasks','ready']);
   assert.deepEqual(land(id,[],{review:'completion',organizer:true,mode}).events,['tasks','ready','notice focus','notice visible']);

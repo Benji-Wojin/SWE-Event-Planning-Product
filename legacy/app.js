@@ -1986,7 +1986,11 @@
       title?.focus({preventScroll:true});
       title?.scrollIntoView({block:'center',behavior:'instant'});
     }else{
-      $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
+      const opener=$('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`);
+      // Closing the dialog restores focus without scrolling. Reveal the row
+      // first so keyboard users can see where focus will return.
+      opener?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+      opener?.focus({preventScroll:true});
       if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))
         taskDialog(initialTask,'',false,true);
     }
