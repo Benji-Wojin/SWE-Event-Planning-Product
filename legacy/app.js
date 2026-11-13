@@ -16,6 +16,7 @@
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   let guideTaskId = '', guideTaskNeedsReveal = false;
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
+  const unconfirmedRelatedSaves=new Map();
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
@@ -1128,10 +1129,124 @@
     showRelatedReview(task,GatherPlanningUI.relatedChecklistTitles(form.elements.checklist.value),false);
   }
   function showRelatedReview(task,items,ai) {
-    openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" data-id="'+h(task.id)+'" data-revision="'+task.revision+'">'+
+    openDialog('Review smaller steps for '+task.title,'<form id="relatedReviewForm" class="related-review" data-id="'+h(task.id)+'" data-revision="'+task.revision+'" data-actor="'+h(ui.actor)+'" data-project="'+h(window.GatherMode?.projectId||'')+'">'+
+      '<section class="notice" data-related-check-panel hidden><p data-related-save-message tabindex="-1"></p><button type="button" class="btn btn-secondary" data-action="check-related-review" hidden>Check current linked tasks</button><a class="btn btn-secondary" data-related-projects href="/" target="_top" hidden>Return to Projects</a><p role="status" data-related-check-status></p><div data-related-current-links></div></section>'+
       (ai?'<p class="notice">Drafted by AI using only the task title. Check each step for accuracy and avoid private details. None are selected.</p>':'')+
       GatherPlanningUI.relatedChecklistReview(items,h)+
-      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(task.id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review');
+      '<div class="form-actions"><button type="button" class="btn btn-secondary" data-action="task" data-id="'+h(task.id)+'">Back to task</button><button class="btn btn-primary" type="submit">Add selected related tasks</button></div></form>','',false,'related-review',true);
+    const form=$('#relatedReviewForm'), previous=unconfirmedRelatedSaves.get(relatedReviewKey(form));
+    if(previous){
+      form.dataset.saveUnconfirmed=previous.failure;
+      requestAnimationFrame(()=>paintRelatedSaveState(form));
+    }
+  }
+  function activeRelatedReview(form) {
+    return !!form?.isConnected&&$('#relatedReviewForm')===form&&ui.dialogKind==='related-review'&&
+      ui.actor===form.dataset.actor&&(window.GatherMode?.projectId||'')===form.dataset.project&&isOrganizer()&&!window.GatherAccessLost;
+  }
+  function relatedReviewKey(form) {
+    return JSON.stringify([form.dataset.project,form.dataset.actor,form.dataset.id]);
+  }
+  function relatedTasksFor(task,state) {
+    const related=new Set((task?.dependencies||[]).filter(link=>link.kind==='related').map(link=>link.taskId));
+    return state.tasks.filter(item=>related.has(item.id));
+  }
+  function relatedReceiptMarkup(task,state,ids) {
+    if(!ids?.length)return '';
+    const related=new Map(relatedTasksFor(task,state).map(item=>[item.id,item]));
+    const saved=ids.map(id=>related.get(id)).filter(Boolean);
+    if(!saved.length)return '';
+    return `<section class="notice related-receipt section-gap" aria-labelledby="relatedReceiptHeading"><h3 id="relatedReceiptHeading" tabindex="-1">${saved.length===1?'1 smaller task added':saved.length+' smaller tasks added'}</h3><p>These started To do and unassigned. They’re related to this task, so they don’t block its completion. Open any step to assign an owner or set a due date.</p><ul>${saved.map(item=>`<li><button type="button" class="text-button" data-action="task" data-id="${h(item.id)}">${h(item.title)}</button></li>`).join('')}</ul></section>`;
+  }
+  function paintRelatedSaveState(form) {
+    const failure=form.dataset.saveUnconfirmed;
+    if(!failure||!activeRelatedReview(form))return;
+    const panel=$('[data-related-check-panel]',form);
+    if(!panel)return;
+    const first=panel.hidden;
+    panel.hidden=false;
+    const message=$('[data-related-save-message]',form);
+    if(first&&message){
+      message.textContent=failure==='stale'?'The project changed before these steps could be added. Check the current links and reopen the task before making another review.':
+        failure==='access'?'Weft couldn’t save these steps with your current project access. Return to Projects if you need to sign in again.':
+        'Weft couldn’t confirm whether the previous save added any tasks. Check the current links before making another review.';
+      message.focus();
+    }
+    const check=$('[data-action="check-related-review"]',form);
+    if(check)check.hidden=!store.refresh||failure==='access';
+    const projects=$('[data-related-projects]',form);
+    if(projects)projects.hidden=failure!=='access';
+    const submit=$('button[type="submit"]',form);
+    if(submit)submit.disabled=true;
+    for(const row of $$('[data-related-row]',form))row.disabled=true;
+  }
+  async function saveRelatedReview(form,items) {
+    if(!activeRelatedReview(form))throw new Error('Reopen the original task as the organizer.');
+    if(form.dataset.saveUnconfirmed||unconfirmedRelatedSaves.has(relatedReviewKey(form)))return;
+    if(!items.length)throw new Error('Select at least one step to add.');
+    const id=form.dataset.id,actor=ui.actor;
+    const attemptedRevision=store.getSnapshotRevision?.();
+    const priorIds=new Set(store.getState().tasks.map(task=>task.id));
+    let ids;
+    try {
+      const saved=await store.addRelatedTasks(id,{revision:Number(form.dataset.revision),items},actor);
+      if(!activeRelatedReview(form))return;
+      const state=store.getState(), parent=state.tasks.find(task=>task.id===id);
+      const related=new Set(relatedTasksFor(parent,state).map(task=>task.id));
+      ids=Array.isArray(saved)?saved.map(task=>task?.id):[];
+      if(ids.length!==items.length||new Set(ids).size!==ids.length||ids.some(id=>typeof id!=='string'||!id||priorIds.has(id)||!related.has(id)))
+        throw new Error('The saved tasks could not be confirmed.');
+    } catch(error) {
+      if(!activeRelatedReview(form))return;
+      if(!store.refresh||[400,413,422,429].includes(error.status))throw error;
+      form.dataset.saveUnconfirmed=error.status===409?'stale':[401,403,404].includes(error.status)?'access':'unknown';
+      unconfirmedRelatedSaves.set(relatedReviewKey(form),{failure:form.dataset.saveUnconfirmed,revision:attemptedRevision});
+      paintRelatedSaveState(form);
+      return;
+    }
+    render();taskDialog(id,'',true,false,'',ids);
+    const heading=$('#relatedReceiptHeading');
+    requestAnimationFrame(()=>{
+      if(heading&&$('#relatedReceiptHeading')===heading&&!window.GatherAccessLost&&ui.actor===actor&&ui.dialogKind==='task'&&ui.detailId===id)heading.focus();
+    });
+  }
+  async function checkRelatedReview(form) {
+    const active=()=>activeRelatedReview(form)&&!ui.pendingSave;
+    const canApply=()=>active()&&!document.hidden&&!unsavedReview();
+    if(!store.refresh||!canApply()||!form.dataset.saveUnconfirmed||form.dataset.saveUnconfirmed==='access')return;
+    const status=$('[data-related-check-status]',form), current=$('[data-related-current-links]',form);
+    const button=$('[data-action="check-related-review"]',form);
+    const key=relatedReviewKey(form), previous=unconfirmedRelatedSaves.get(key);
+    if(!status||!current)return;
+    if(ui.syncing){
+      if(button?.getAttribute('aria-disabled')!=='true')status.textContent='The project is already refreshing. Try checking again in a moment.';
+      return;
+    }
+    ui.syncing=true;button?.setAttribute('aria-disabled','true');
+    status.textContent='Checking current linked tasks…';current.replaceChildren();
+    try {
+      const result=await store.refresh(canApply,{requireFresh:true});
+      if(!active())return;
+      if(!canApply()||!result.verified)throw new Error('The latest links are not available.');
+      const revision=store.getSnapshotRevision?.();
+      if(form.dataset.saveUnconfirmed==='stale'&&(!Number.isSafeInteger(revision)||!Number.isSafeInteger(previous?.revision)||revision<=previous.revision))
+        throw new Error('The conflicting project update is not available.');
+      const state=store.getState(),parent=state.tasks.find(task=>task.id===form.dataset.id);
+      const related=relatedTasksFor(parent,state),limit=20;
+      current.innerHTML=parent
+        ? '<h3>Current related tasks</h3><p>This list shows what’s linked now. It doesn’t verify which tasks came from your save attempt.</p>'+
+          (related.length?'<ul>'+related.slice(0,limit).map(task=>'<li>'+h(task.title)+'</li>').join('')+'</ul>':'<p>No related tasks were linked at the time of this check.</p>')+
+          (related.length>limit?'<p>Open the original task to see all '+related.length+' related tasks.</p>':'')
+        : '<p>The original task isn’t in the current project. This doesn’t verify the result of your save attempt.</p>';
+      status.textContent='Checked current linked tasks.';
+      if(previous?.failure!=='stale'||revision>previous.revision)unconfirmedRelatedSaves.delete(key);
+      if(result.changed&&ui.view!=='details')render();
+    } catch {
+      if(active())status.textContent='Could not check the latest links. Your review is unchanged. Try checking again.';
+    } finally {
+      ui.syncing=false;
+      if(button?.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   async function relatedAi(generate) {
     const form=$('#relatedChecklistForm'),status=$('#relatedAiStatus'), mode=window.GatherMode;
@@ -1236,7 +1351,7 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='') {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
@@ -1249,6 +1364,7 @@
     const organizer=isOrganizer(), own=task.owner===ui.actor,ownerInfo=taskOwnerPresentation(task,taskState,organizer);
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
+      ${relatedReceiptMarkup(task,taskState,relatedReceiptIds)}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks)}
@@ -1715,6 +1831,7 @@
         if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
       }
       if(action==='related-checklist')openRelatedBatch(id);
+      if(action==='check-related-review')await checkRelatedReview(el.closest('#relatedReviewForm'));
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
@@ -1896,6 +2013,7 @@
     event.preventDefault();
     if(form.id==='guestAgendaForm')return;
     if(ui.pendingSave||form.dataset.saving==='true')return;
+    if(form.id==='relatedReviewForm'&&form.dataset.saveUnconfirmed)return;
     if(form.id==='relatedChecklistForm'){
       $('.form-error',form)?.remove();
       try{reviewRelatedBatch(form);}catch(error){formError(form,error);}
@@ -2026,14 +2144,7 @@
       if(form.classList.contains('relationship-form')){store.setDependencyKind(form.dataset.id,{taskId:form.dataset.prerequisite,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Relationship updated. Task status is unchanged.');}
       if(form.id==='relationshipAddForm'){store.addDependency(form.dataset.id,{taskId:data.taskId,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Tasks linked. Task status is unchanged.');}
       if(form.id==='linkedTaskForm'){store.addLinkedTask(form.dataset.id,{title:data.title,note:data.note,scope:data.scope,owner:data.owner,kind:data.kind,reason:data.reason},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('New task created and linked. Review its owner and dates before starting.');}
-      if(form.id==='relatedReviewForm'){
-        if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='related-review')throw new Error('Reopen the original task as the organizer.');
-        if(!data.items.length)throw new Error('Select at least one step to add.');
-        const saved=store.addRelatedTasks(form.dataset.id,{revision:Number(form.dataset.revision),items:data.items},ui.actor);
-        render();taskDialog(form.dataset.id,'',true);
-        requestAnimationFrame(()=>{const heading=$('#dialog .task-dependencies h3');if(heading){heading.tabIndex=-1;heading.focus();}});
-        toast(saved.length===1?'1 related task added.':'Added '+saved.length+' related tasks.');
-      }
+      if(form.id==='relatedReviewForm')await saveRelatedReview(form,data.items);
       if(form.id==='responseForm'){
         const id=form.dataset.id,response=event.submitter?.value||data.response,isRequest=response==='date'||response==='help';
         if(!String(data.note||'').trim())throw new Error('Add a short note so the team knows what happened.');
@@ -2070,7 +2181,7 @@
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
     }catch(error){if(error.status===409){if(form.id==='recoveryDecisionForm')showRecoveryWriteConflict();else showPendingUpdate();}if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
-    finally{release();if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
+    finally{release();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 
   document.addEventListener('change',event=>{

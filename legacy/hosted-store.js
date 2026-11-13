@@ -73,7 +73,7 @@
     window.GatherAccessLost = true;
     window.top.location.replace('/');
   }
-  async function request(body) {
+  async function request(body, timeout) {
     if(accessLost)throw new Error('Project access changed. Return to Projects.');
     const response = await fetch(endpoint, {
       method: body ? 'POST' : 'GET',
@@ -83,14 +83,17 @@
       body: body ? JSON.stringify(body) : undefined,
       credentials: 'same-origin',
       cache: 'no-store',
+      ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
     });
     if (response.status === 401) window.top.location.href = signIn();
+    if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
     const result = await response.json().catch(() => {
-      throw new Error('Weft could not complete the request. Reload or sign in again.');
+      const error = new Error('Weft could not complete the request. Reload or sign in again.');
+      if(!response.ok)error.status=response.status;
+      throw error;
     });
     if (!response.ok) {
-      if(snapshot && [401,403,404].includes(response.status) && !body) stopAccess();
-      const error = new Error(result.error || 'Unable to save. Reload and try again.');
+      const error = new Error(result?.error || 'Unable to save. Reload and try again.');
       error.status = response.status;
       throw error;
     }
@@ -188,11 +191,12 @@
         listeners.add(fn);
         return () => listeners.delete(fn);
       },
-      refresh: async (canApply) => {
+      refresh: async (canApply, {requireFresh=false}={}) => {
         await queue;
         const base=snapshot.revision, generation=mutationGeneration, refreshId=++refreshGeneration;
-        const latest=await request();
+        const latest=await request(undefined,requireFresh?10000:undefined);
         validateIdentity(latest);
+        if(requireFresh&&(!Number.isSafeInteger(latest.revision)||!Array.isArray(latest.state?.tasks)))return {changed:false};
         if(refreshId!==refreshGeneration)return {changed:false};
         if(latest.revision<snapshot.revision)return {changed:false};
         if(snapshot.revision!==base||mutationGeneration!==generation)return latest.revision>snapshot.revision
@@ -200,12 +204,15 @@
         const suggestionsChanged=JSON.stringify(latest.suggestions)!==JSON.stringify(snapshot.suggestions);
         // Clock-driven checks can change without a persisted workspace edit.
         // Updating only derived suggestions cannot overwrite an in-progress form.
+        // Shared task links are revisioned; a matching authorized GET confirms
+        // those links without replacing local views with another state object.
         if(latest.revision===snapshot.revision){
+          if(requireFresh&&!canApply())return {changed:false};
           if(suggestionsChanged)snapshot={...snapshot,suggestions:latest.suggestions};
-          return {changed:false,suggestionsChanged};
+          return {changed:false,suggestionsChanged, ...(requireFresh?{verified:true}:{})};
         }
         if(!canApply())return {pending:true,newerRevision:latest.revision};
-        publish(latest);return {changed:true,suggestionsChanged};
+        publish(latest);return {changed:true,suggestionsChanged, ...(requireFresh?{verified:true}:{})};
       },
     };
     const count = {
@@ -255,7 +262,9 @@
           while (args.length < count[method]) args.push(null);
           const revision = snapshot.revision;
           const next = queue.then(async () => {
-            const response = await request({ method, args, revision });
+            const response = await request({ method, args, revision },method==='addRelatedTasks'?15000:undefined);
+            if(method==='addRelatedTasks'&&(!Number.isSafeInteger(response?.revision)||response.revision<=revision||!Array.isArray(response.state?.tasks)))
+              throw new Error('Weft could not confirm the saved project.');
             publish(response);
             return response.result;
           });

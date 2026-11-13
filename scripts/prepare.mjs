@@ -82,7 +82,8 @@ const mutations = [
   'setTaskSchedule',
   'setTaskOutcome',
   'resolveHandoff',
-  'addDependency', 'addLinkedTask', 'addRelatedTasks', 'setDependencyKind', 'removeDependency', 'resumeTask',
+  // addRelatedTasks is already awaited by the shared breakdown review.
+  'addDependency', 'addLinkedTask', 'setDependencyKind', 'removeDependency', 'resumeTask',
   'claimTask',
   'resetDemo',
   'addTask',

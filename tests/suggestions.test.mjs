@@ -14,7 +14,7 @@ async function hosted(initial) {
   let redirected=false;
   const window = {top:{location:{replace(){redirected=true;}}},addEventListener(){}};
   const document = { getElementById:()=>({}), querySelectorAll: () => [], querySelector:()=>null, body: { classList: { toggle() {} }, append() {},replaceChildren(){} }, createElement: () => ({style:{}}) };
-  await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone,
+  await vm.runInNewContext(source, { window, document, location: { search: '', origin: 'https://gather.example' }, URL, URLSearchParams, structuredClone, AbortSignal,
     fetch: async (_, options) => {const value=await respond(options);return {ok:!value.httpStatus,status:value.httpStatus||200,json:async()=>value};} });
   assert.ok(window.GatherStore, 'Hosted store initialized');
   return { store: window.GatherStore.createStore(), respond: fn => { respond = fn; },redirected:()=>redirected };
@@ -38,6 +38,42 @@ test('hosted time-zone accessor follows refreshed project state',async()=>{
   respond(async()=>({...snapshot(2),state:{event:{timeZone:'Asia/Tokyo'}}}));
   await store.refresh(()=>true);
   assert.equal(store.getTimeZone(),'Asia/Tokyo');
+});
+
+test('a breakdown check verifies only a fresh authorized GET that can still apply',async()=>{
+  const initial={...snapshot(1),state:{tasks:[]}};
+  const {store,respond}=await hosted(initial);
+  const requests=[];
+  respond(async options=>{requests.push(options);return initial;});
+  assert.equal((await store.refresh(()=>false,{requireFresh:true})).verified,undefined);
+  assert.equal((await store.refresh(()=>true,{requireFresh:true})).verified,true);
+  const latest={...snapshot(2),state:{tasks:[{id:'fictional-linked-task'}]}};
+  respond(async options=>{requests.push(options);return latest;});
+  assert.equal((await store.refresh(()=>false,{requireFresh:true})).verified,undefined);
+  assert.deepEqual(store.getState(),{tasks:[]});
+  assert.equal((await store.refresh(()=>true,{requireFresh:true})).verified,true);
+  assert.deepEqual(store.getState(),latest.state);
+  assert.ok(requests.every(request=>request.method==='GET'&&!request.body&&request.signal instanceof AbortSignal));
+  respond(async()=>({...snapshot(3),state:{}}));
+  assert.equal((await store.refresh(()=>true,{requireFresh:true})).verified,undefined);
+  assert.equal(store.getSnapshotRevision(),2);
+});
+
+test('a malformed breakdown save does not publish a snapshot and can be checked without resending',async()=>{
+  const initial={...snapshot(1),state:{tasks:[]}};
+  const {store,respond}=await hosted(initial);
+  const requests=[];
+  const latest={...snapshot(2),state:{tasks:[{id:'fictional-linked-task'}]}};
+  respond(async options=>{
+    requests.push(options);
+    return options.method==='POST'?{...latest,state:{}}:latest;
+  });
+  await assert.rejects(store.addRelatedTasks('parent',{revision:1,items:[{title:'Review layout'}]}),/could not confirm/);
+  assert.equal(store.getSnapshotRevision(),1);
+  assert.equal((await store.refresh(()=>true,{requireFresh:true})).verified,true);
+  assert.equal(store.getSnapshotRevision(),2);
+  assert.deepEqual(requests.map(request=>request.method),['POST','GET']);
+  assert.ok(requests.every(request=>request.signal instanceof AbortSignal));
 });
 
 test('hosted schedule RPC strips actor arguments and preserves the snapshot on rejected save',async()=>{
