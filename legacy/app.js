@@ -1973,6 +1973,7 @@
     if(batch?.parentId===id)batch.childId='';
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
     const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
+    const teammateReconfirmation=organizer&&!own&&schedule.awaitingScheduleAcceptance?.(task,taskState.members||[]);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       ${relatedBatchChildMarkup(batch,task)}
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
@@ -1980,6 +1981,7 @@
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
       ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}</section>`:''}
+      ${teammateReconfirmation?'<p class="notice">The schedule changed after this teammate accepted. Ask the assigned owner to review the current plan and accept again.</p>':''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
@@ -2013,8 +2015,9 @@
     const notificationReview=ui.notificationScheduleReview;
     const fromScheduleReconfirmation=(ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id)||
       (notificationReview?.id===id&&notificationReview.actor===ui.actor&&notificationReview.project===window.GatherMode?.projectId);
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation});
-    if((batch||ui.overlapComparison||fromScheduleReconfirmation||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
+    const fromEventScheduleReview=ui.eventTaskReview?.group==='schedule-reconfirmation'&&ui.eventTaskReview.actor===ui.actor;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview});
+    if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -2561,6 +2564,9 @@
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task'){
         const requestLink=el.hasAttribute('data-open-recovery'),replyLink=el.hasAttribute('data-open-recovery-reply');
+        if(eventReviewGroup==='schedule-reconfirmation'&&workspaceUpdatesPending()){
+          showPendingUpdate();toast('Refresh the event review before opening this schedule change.');return;
+        }
         const overlap=timelineOverlapIntent(el,id);
         const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink||replyLink||isScheduleControl(el))&&$('#dialogBackdrop').hidden;
         const current=(requestLink||replyLink)&&store.getState().tasks.find(task=>task.id===id);
@@ -2568,7 +2574,7 @@
           requestLink&&['date','help'].includes(GatherPriorities.pendingRequest(current)?.kind);
         const toReply=current&&replyLink&&ui.view==='tasks'&&ui.tab==='mine'&&current.owner===ui.actor&&recovery.recoveryReply(current,false);
         if(overlap)taskDialog(id,'',false,true,eventReviewGroup,undefined,el.dataset.scheduleDay||el.dataset.scheduleFocusDay);
-        else taskDialog(id,'',false,captureOrigin||requestLink||replyLink,eventReviewGroup);
+        else taskDialog(id,'',false,captureOrigin||requestLink||replyLink||eventReviewGroup==='schedule-reconfirmation',eventReviewGroup);
         if(captureOrigin&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
         if(toReply)focusTaskRecovery(id,'#recoveryReplyHeading');
         else if(toRecovery)focusTaskRecovery(id);

@@ -47,7 +47,7 @@ test('changing, adding or removing a schedule clears only open-work commitments 
     assert.match(comment.text,/accept responsibility again/);
     assert.equal(comment.actor,'jack');
     assert.equal(task(reload(store.exportState()),id).acceptedAt,'');
-    assert.equal(GatherScheduleUI.reviewItems(store.getState(),now,{mine:true,actor:'maya'}).find(group=>group.key==='acceptance').tasks.some(t=>t.id===id),true);
+    assert.equal(GatherScheduleUI.reviewItems(store.getState(),now,{mine:true,actor:'maya'}).find(group=>group.key==='schedule-reconfirmation').tasks.some(t=>t.id===id),true);
     store.setNextUp(id,{enabled:true},'maya');
     before=task(store,id);
     assert.ok(before.acceptedAt&&before.nextUpAt);

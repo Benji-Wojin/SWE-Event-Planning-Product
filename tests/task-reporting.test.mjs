@@ -555,7 +555,7 @@ test('an event-day request link rechecks the task before focusing recovery and k
     store:{getState:()=>({tasks:[task]})},GatherPriorities,focusTaskRecovery:id=>calls.push(['focus request',id]),
     timelineOverlapIntent:()=>'',isScheduleControl:()=>false,
     taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=task.id;}});
-  const open=()=>vm.runInContext(source.slice(start,end),ctx);
+  const open=()=>vm.runInContext('(()=>{'+source.slice(start,end)+'})()',ctx);
   open();
   assert.deepEqual(calls.splice(0),[[task.id,'',false,true,'plan-requests'],['focus request',task.id]]);
   assert.equal(ui.lastFocus,el);
@@ -564,6 +564,19 @@ test('an event-day request link rechecks the task before focusing recovery and k
   open();
   assert.deepEqual(calls.splice(0),[[task.id,'',false,true,'plan-requests']]);
   assert.equal(ui.lastFocus,original,'drilling in from Before the event preserves its original return focus');
+
+  ctx.eventReviewGroup='schedule-reconfirmation';
+  let stale=true;
+  ctx.workspaceUpdatesPending=()=>stale;
+  ctx.showPendingUpdate=()=>calls.push(['warning']);
+  ctx.toast=message=>calls.push(['toast',message]);
+  open();
+  assert.deepEqual(calls.splice(0),[['warning'],['toast','Refresh the event review before opening this schedule change.']]);
+  stale=false;
+  el.hasAttribute=()=>false;
+  open();
+  assert.deepEqual(calls,[[task.id,'',false,true,'schedule-reconfirmation']]);
+  assert.equal(ui.lastFocus,original);
 });
 
 test('My tasks reply shortcut opens only a still-current response and retains the row opener',()=>{
@@ -583,7 +596,7 @@ test('My tasks reply shortcut opens only a still-current response and retains th
   const ctx=vm.createContext({el,ui,$:()=>backdrop,id,action:'task',eventReviewGroup:'',store,GatherPriorities,recovery,
     focusTaskRecovery:(...args)=>calls.push(args),timelineOverlapIntent:()=>'',isScheduleControl:()=>false,
     taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=id;}});
-  const open=()=>vm.runInContext(source.slice(start,end),ctx);
+  const open=()=>vm.runInContext('(()=>{'+source.slice(start,end)+'})()',ctx);
   let before=store.exportState();
   open();
   assert.deepEqual(calls.splice(0),[[id,'',false,true,''],[id,'#recoveryReplyHeading']]);

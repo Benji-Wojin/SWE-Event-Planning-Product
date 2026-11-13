@@ -138,6 +138,8 @@
   const changesRequested = task => task.status!=='done'&&!task.reportedAt&&Boolean(task.completionReview);
   const canOpenOverlap = task => !waitingVerification(task)&&!evidenceAmended(task)&&!changesRequested(task)&&!planRequestKind(task);
   const pendingAcceptance = (task,members) => !resolved(task)&&task.owner&&members.some(member=>member.id===task.owner&&member.active!==false)&&!task.acceptedAt&&!task.reportedAt&&!waitingVerification(task);
+  const awaitingScheduleAcceptance = (task,members) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members);
+  const scheduleAcceptanceCue = 'Schedule changed · owner needs to accept again';
   const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId))));
   const linkedResultsReady = (task,byId) => task.status==='blocked'&&!waitingVerification(task)&&
     (task.dependencies||[]).some(link=>link.kind!=='related')&&!unfinishedRequiredWork(task,byId);
@@ -260,7 +262,8 @@
       {key:'blocked',title:'Marked blocked',help:'Review the latest update with the owner; this review does not change task status.',tasks:open.filter(task=>task.status==='blocked'&&!waitingVerification(task)&&!linkedResultsReady(task,byId))},
       {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='unassigned')},
       {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner is missing or inactive in this project. Review who will take responsibility.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='owner-unavailable')},
-      {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members))},
+      {key:'schedule-reconfirmation',title:'Schedule changes awaiting owner acceptance',help:'An earlier acceptance was cleared when the schedule changed. Ask the assigned owner to review the current plan and accept again. This does not change progress.',tasks:open.filter(task=>awaitingScheduleAcceptance(task,state.members))},
+      {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members)&&!awaitingScheduleAcceptance(task,state.members))},
       {key:'overdue',title:'Preparation deadline passed',help:'The entered due date is before today in the event time zone. Check the real progress.',tasks:day?open.filter(task=>task.dueDate&&task.dueDate<day&&!waitingVerification(task)):[]},
       {key:'prerequisites',title:'Required work not complete',help:'One or more required linked tasks are incomplete, awaiting verification, or unavailable. Related links do not block completion.',tasks:open.filter(task=>unfinishedRequiredWork(task,byId))},
       {key:'overlaps',title:'Activities with owner overlaps',help:'The same owner has overlapping entered activity times. Missing end times limit which overlaps can be detected.',tasks:open.filter(task=>overlapIds.has(task.id))},
@@ -301,7 +304,8 @@
       const request=planRequestKind(task);
       if(request)labels.push(planRequestLabels[request]);
       if(state.members?.some(member=>member.id===task.owner&&member.active===false))labels.push('Assigned owner unavailable');
-      if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
+      if(awaitingScheduleAcceptance(task,state.members||[]))labels.push(scheduleAcceptanceCue);
+      else if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
       if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
       if(linkedResultsReady(task,byId))labels.push('Review linked results');
       return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${h(label)}</span>`).join('')}</span>`:'';
@@ -454,9 +458,20 @@
       const groupReviewKind=(group,task)=>group.key==='verification'?'completion':
         group.key==='evidence-amendments'?'amendment':group.key==='plan-requests'?planRequestKind(task):'';
       const requestLabel=(group,task)=>group.key==='plan-requests'?' · '+planRequestLabels[planRequestKind(task)]:'';
+      const currentSchedule=(group,task)=>{
+        if(group.key!=='schedule-reconfirmation')return '';
+        if(!task.schedule)return '<span>Not on the schedule</span>';
+        const activity=activitySummary(task,state.event.timeZone);
+        return `<span>${activity.warning?'Saved time needs correction: ':'Current schedule: '}${h(activity.timing)}</span>`;
+      };
       const acceptanceAction=ownPending
         ? `<p><button class="btn btn-secondary btn-small review-activity-action" data-action="review-event-acceptance">Review my assignments (${ownPending})</button></p>`:'';
-      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(group=>`<details class="before-event-group" data-event-review-group="${h(group.key)}"${group.tasks.length&&(group.tasks.length<=3||['activity-time','plan-requests'].includes(group.key))?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${group.tasks.length?`<ul>${group.tasks.map(task=>`<li><button class="text-button" ${reviewRoute(task,groupReviewKind(group,task),organizer)}>${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${scheduleAction(group,task)}</li>`).join('')}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`).join('')}</article>`;
+      const groupMarkup=group=>{
+        const expanded=group.tasks.length&&(group.tasks.length<=3||['activity-time','plan-requests','schedule-reconfirmation'].includes(group.key));
+        const rows=group.tasks.map(task=>`<li><button class="text-button" ${reviewRoute(task,groupReviewKind(group,task),organizer)}>${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${currentSchedule(group,task)}${scheduleAction(group,task)}</li>`).join('');
+        return `<details class="before-event-group" data-event-review-group="${h(group.key)}"${expanded?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${rows?`<ul>${rows}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`;
+      };
+      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(groupMarkup).join('')}</article>`;
     }
     function runSheetModel(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
@@ -553,7 +568,7 @@
         <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
-    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation};
+    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
