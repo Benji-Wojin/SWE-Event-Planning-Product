@@ -194,6 +194,10 @@ async function snapshot(c: Context) {
         // Match Timeline's unscheduled activity list. Preparation tasks and
         // completed activities don't need a start time to finish the handoff.
         if(task.eventActivity===true&&!task.schedule&&!completionStates?.get(id))row.needsStartTime=true;
+        // Match Timeline's saved reconfirmation marker, including a removed
+        // slot. Only the current state is needed; don't project the old slot.
+        const needsScheduleAcceptance=!!task.owner&&task.scheduleReconfirmation?.owner===task.owner&&
+          !task.acceptedAt&&!task.reportedAt&&!task.verifiedAt&&!task.archivedAt&&task.status!=='done';
         const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
           :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
           :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt
@@ -202,6 +206,7 @@ async function snapshot(c: Context) {
           :!task.owner?'needs-owner'
           :!owners.has(task.owner)?'needs-reassignment'
           :task.status!=='done'&&!task.reportedAt&&task.completionReview?'changes-requested'
+          :needsScheduleAcceptance?'awaiting-schedule-acceptance'
           :task.acceptedAt&&task.acceptedBy===task.owner?'accepted':'awaiting-acceptance';
         row.handoff={state,...(ownerName?{ownerName}:{})};
       }

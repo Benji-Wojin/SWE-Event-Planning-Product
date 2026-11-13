@@ -998,6 +998,39 @@ test('the handoff shows verification blockers separately and the same link moves
     assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
   }finally{app.dispose();}
 });
+test('the receipt separates schedule reacceptance from new assignments, even when a start time was removed',async()=>{
+  const initial=fixture();
+  initial.status='applied';
+  initial.receipt={taskIds:['task-changed','task-first']};
+  initial.receiptTasks=[
+    {id:'task-changed',title:'Welcome desk',needsStartTime:true,handoff:{state:'awaiting-schedule-acceptance',ownerName:'Fictional Planner'}},
+    {id:'task-first',title:'Check supplies',handoff:{state:'awaiting-acceptance',ownerName:'Fictional Planner'}},
+  ];
+  let reads=0;
+  const app=harness(context=>{
+    if(!context.input&&++reads===2){
+      const next=copy(context.saved);
+      next.workspaceRevision++;
+      next.receiptTasks[0].handoff.state='accepted';
+      context.value=next;
+    }
+  },initial,'project=p_school',false,true);
+  const group=id=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='handoff-'+id);
+  const changedLink=()=>nodes(app.tree).filter(node=>node.type==='a'&&text(node)==='Welcome desk');
+  try{
+    await app.start();
+    assert.match(text(group('schedule-acceptance')),/Waiting for renewed acceptance.*Schedule changed · Fictional Planner needs to accept again.*Needs a start time/);
+    assert.match(text(group('acceptance')),/Check supplies.*awaiting acceptance/);
+    assert.doesNotMatch(text(group('acceptance')),/Welcome desk/);
+    assert.deepEqual(changedLink().map(node=>node.props.href),['/project?project=p_school&task=task-changed&guide=1']);
+    await app.click('Refresh task handoff');
+    assert.equal(group('schedule-acceptance'),undefined);
+    assert.match(text(group('settled')),/Welcome desk.*Accepted by Fictional Planner.*Needs a start time/);
+    assert.match(text(group('acceptance')),/Check supplies/);
+    assert.equal(changedLink().length,1);
+    assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
+  }finally{app.dispose();}
+});
 test('receipt review hints are limited to real project plan handoffs',async()=>{
   for(const [query,expected] of [
     ['project=p_school','/project?project=p_school&task=task-a&review=amendment'],

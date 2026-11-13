@@ -1215,6 +1215,75 @@ export async function eventPlanTests({
       assert.deepEqual(deleted.receipt,applied.receipt);
       assert.equal(deleted.receiptTasks.some(task=>task.id===second.id),false);
     });
+    await t.test('the receipt distinguishes renewed schedule acceptance without exposing the earlier schedule', async test => {
+      const project = await setup();
+      test.after(() => {
+        owner();
+        // Don't leave this fixture's invite in the shared owner's daily quota.
+        sqlite.prepare('DELETE FROM project_members WHERE project_id=?').run(project);
+        sqlite.prepare('DELETE FROM project_invites WHERE project_id=?').run(project);
+        sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+      });
+      await joinPerson(project, 'fictional-reconfirm@example.com', 'fictional-reconfirm-user');
+      const teammate = globalThis.__gatherUser;
+      const actor = (await (await realRead(project)).json()).identity.actorId;
+      owner();
+
+      const snap = await ready(project);
+      const earlierLocation = 'Fictional earlier location for schedule acceptance';
+      for (const item of snap.draft.items) item.owner = actor;
+      snap.draft.items[1].location = earlierLocation;
+      const response = await post(project, approval(snap));
+      assert.equal(response.status, 200, await response.clone().text());
+      const applied = await response.json();
+      const [preparation, activity] = applied.receiptTasks;
+      const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+      const activityId = activity.id;
+      async function checkActivity(expected, needsStartTime = false) {
+        const before = workspaceRow(), draftBefore = row(project);
+        const refreshed = await read(project);
+        assert.deepEqual(refreshed.receipt, applied.receipt);
+        assert.deepEqual(refreshed.receiptTasks.find(task => task.id === activityId), {
+          id: activityId, title: activity.title,
+          ...(needsStartTime ? { needsStartTime: true } : {}),
+          handoff: expected,
+        });
+        assert.deepEqual(refreshed.receiptTasks.find(task => task.id === preparation.id)?.handoff,
+          { ...expected, state: expected.state === 'needs-reassignment' ? 'needs-reassignment' : 'awaiting-acceptance' },
+          'the never-accepted preparation task does not ask for renewed acceptance');
+        assert.doesNotMatch(JSON.stringify(refreshed.receiptTasks), /scheduleReconfirmation|Fictional earlier location for schedule acceptance/);
+        assert.deepEqual(workspaceRow(), before, 'receipt GET must not write the workspace');
+        assert.deepEqual(row(project), draftBefore, 'receipt GET must not rewrite the private draft');
+        assert.equal(calls.length, 1, 'receipt GET must not call the provider');
+      }
+      const assigned = state => ({ state, ownerName: 'Maya Real' });
+      await checkActivity(assigned('awaiting-acceptance'));
+      globalThis.__gatherUser = teammate;
+      assert.equal((await get(project)).status, 403);
+      const accepted = await change(project, 'acceptTask', [activityId]);
+      owner();
+      const currentSchedule = accepted.state.tasks.find(task => task.id === activityId).schedule;
+      assert.equal(currentSchedule.location, earlierLocation);
+      await change(project, 'setTaskSchedule', [activityId, currentSchedule]);
+      await checkActivity(assigned('accepted'));
+
+      const removed = await change(project, 'setTaskSchedule', [activityId, null]);
+      const removedActivity = removed.state.tasks.find(task => task.id === activityId);
+      assert.deepEqual(removedActivity.scheduleReconfirmation.previous, currentSchedule);
+      assert.equal(removedActivity.acceptedAt, '');
+      await checkActivity(assigned('awaiting-schedule-acceptance'), true);
+      globalThis.__gatherUser = teammate;
+      const renewed = await change(project, 'acceptTask', [activityId]);
+      assert.equal(renewed.state.tasks.find(task => task.id === activityId).scheduleReconfirmation, undefined);
+      owner();
+      await checkActivity(assigned('accepted'), true);
+
+      await change(project, 'setTaskSchedule', [activityId, currentSchedule]);
+      await checkActivity(assigned('awaiting-schedule-acceptance'));
+      const member = (await (await teamRead(project)).json()).members[0];
+      assert.equal((await teamWrite(project, { action: 'removeMember', id: member.id, revision: member.revision })).status, 200);
+      await checkActivity({ state: 'needs-reassignment' });
+    });
     await t.test('a receipt reports when required work blocks verification without treating related work or amendments as blocked',async(test)=>{
       const project=await setup();
       test.after(()=>{owner();sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);});
