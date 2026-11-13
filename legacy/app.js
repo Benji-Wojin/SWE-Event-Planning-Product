@@ -2945,25 +2945,29 @@
     const draft=ui.reuseChecklist;
     if(!draft||ui.dialogKind!=='reuse-checklist')return false;
     const sync=$('#workspaceSyncNotice');
-    const changed=draft.stale||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
+    const changed=draft.stale||scheduleRevisionIsStale(draft.revision)||recoveryConflictPending(draft.revision)||
+      (sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
     const offline=window.navigator?.onLine===false;
     const message=window.GatherAccessLost||!isOrganizer()?'Project access changed. This checklist cannot be copied.':
-      changed?'The shared plan changed. Close this checklist and reopen it from Wrap up after checking for updates.':
+      changed?(store.refresh?'The shared plan changed. Check for updates to keep any choices that still match.':'The shared plan changed. Close this checklist and reopen it from Wrap up after checking for updates.'):
       offline?'Couldn’t check the shared plan. Reconnect before copying this checklist.':'';
     const warning=$('#reuseChecklistWarning'),preview=$('#reuseChecklistPreview');
     if(warning){if(warning.textContent!==message)warning.textContent=message;warning.hidden=!message;}
-    const visible=message?'':draft.text;
+    const visible=message||draft.refreshing?'':draft.text;
     if(preview&&preview.value!==visible)preview.value=visible;
     $('[data-action="copy-reuse-checklist"]')?.setAttribute('aria-disabled',String(!!message||!visible||draft.copying));
-    return !!message;
+    $('[data-action="refresh-reuse-checklist"]')?.setAttribute('aria-disabled',String(!!(draft.refreshing||draft.copying||offline||window.GatherAccessLost||!isOrganizer())));
+    return !!message||!!draft.refreshing;
   }
   function reuseChecklistDialog() {
     if(ui.view!=='memory'||!isOrganizer()||window.GatherAccessLost)return;
-    const rows=GatherWrapUp.reusableTitles(store.getState(),{mine:ui.wrapMine,actor:ui.actor});
+    const rows=GatherWrapUp.reusableTitles(store.getState(),{mine:ui.wrapMine,actor:ui.actor},{withIdentity:true});
     if(!rows.length){toast('There are no reusable task titles in this view.');return;}
-    ui.reuseChecklist={rows,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false};
+    ui.reuseChecklist={rows,revision:store.getSnapshotRevision?.(),text:'',copying:false,refreshing:false,stale:false};
     openDialog('Reuse tasks for another event',GatherWrapUp.reusablePicker(rows,{mine:ui.wrapMine,h}),
-      '<button class="btn btn-secondary" data-action="close-dialog">Back to Wrap up</button><button class="btn btn-primary" data-action="copy-reuse-checklist" aria-disabled="true">Copy checklist</button>',true,'reuse-checklist');
+      '<button class="btn btn-secondary" data-action="close-dialog">Back to Wrap up</button>'+
+      (store.refresh?'<button type="button" class="btn btn-secondary" data-action="refresh-reuse-checklist" aria-describedby="reuseChecklistRefreshStatus">Check for updates</button>':'')+
+      '<button class="btn btn-primary" data-action="copy-reuse-checklist" aria-disabled="true">Copy checklist</button>',true,'reuse-checklist');
     updateReuseChecklistWarning();
   }
   function filterReuseChecklist() {
@@ -2976,7 +2980,7 @@
       if(!row.hidden)matches++;
     });
     const empty=$('#reuseChecklistNoMatches');
-    if(empty)empty.hidden=matches>0;
+    if(empty){empty.hidden=matches>0;empty.textContent=draft.rows.length?'No titles match your search. Your selection is kept.':'No reusable tasks are left in this view.';}
   }
   function syncReuseChecklist() {
     const draft=ui.reuseChecklist;
@@ -2992,9 +2996,62 @@
     if(count&&count.textContent!==text)count.textContent=text;
     updateReuseChecklistWarning();
   }
+  async function refreshReuseChecklist(button) {
+    const draft=ui.reuseChecklist,status=$('#reuseChecklistRefreshStatus'),rowsHost=$('#reuseChecklistRows'),scope={mine:ui.wrapMine,actor:ui.actor};
+    if(!draft||!status||!rowsHost||!store.refresh||ui.syncing||draft.copying||draft.refreshing||window.navigator?.onLine===false)return;
+    const key=scheduleWorkspaceKey();
+    const sameDialog=()=>ui.reuseChecklist===draft&&ui.view==='memory'&&ui.dialogKind==='reuse-checklist'&&
+      !window.GatherAccessLost&&isOrganizer()&&ui.wrapMine===scope.mine&&scheduleWorkspaceKey()===key&&
+      $('#reuseChecklistRows')===rowsHost&&$('[data-action="refresh-reuse-checklist"]')===button;
+    const safe=()=>sameDialog()&&!document.hidden&&!ui.pendingSave&&!$('#dialogBackdrop').hidden&&window.navigator?.onLine!==false;
+    if(!safe())return;
+    ui.syncing=true;draft.refreshing=true;
+    status.textContent='Checking the current task list…';updateReuseChecklistWarning();
+    try {
+      const result=await store.refresh(revision=>safe()&&!recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(result.pending&&Number.isSafeInteger(result.newerRevision)&&!window.GatherAccessLost&&scheduleWorkspaceKey()===key)
+        showPendingUpdate(result.newerRevision);
+      if(!safe()){
+        if(sameDialog())status.textContent='The check was paused. Your choices are unchanged. Try again.';
+        return;
+      }
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision)){
+        status.textContent='Could not confirm the current task list. Your choices are unchanged. Try again.';return;
+      }
+      const controls=$$('[data-reuse-choice]',rowsHost),titles=$$('[data-reuse-title]',rowsHost);
+      const choices=controls.flatMap((control,index)=>control.checked?[{index,title:titles[index].value}]:[]);
+      const nextRows=GatherWrapUp.reusableTitles(store.getState(),scope,{withIdentity:true});
+      const {choices:kept,cleared}=GatherWrapUp.reconcileReusableChoices(draft.rows,nextRows,choices);
+      const active=document.activeElement,activeTitle=titles.indexOf(active),activeChoice=controls.indexOf(active);
+      const oldActive=draft.rows[Math.max(activeTitle,activeChoice)];
+      const focusedId=oldActive?.id;
+      draft.rows=nextRows;draft.revision=revision;draft.stale=false;
+      rowsHost.innerHTML=GatherWrapUp.reusableRows(nextRows,h);
+      const nextControls=$$('[data-reuse-choice]',rowsHost),nextTitles=$$('[data-reuse-title]',rowsHost);
+      for(const {index,title} of kept){nextControls[index].checked=true;nextTitles[index].value=title;}
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      const needsRender=result.changed||ui.toolUpdatePending;
+      ui.toolUpdatePending=false;
+      syncReuseChecklist();filterReuseChecklist();
+      if(needsRender)render();
+      if(needsRender||result.suggestionsChanged)refreshSuggestionSurfaces();
+      if(focusedId&&document.activeElement===document.body){
+        const index=nextRows.findIndex(row=>row.id===focusedId);
+        const target=index>=0?(activeTitle>=0&&nextControls[index].checked?nextTitles[index]:nextControls[index]):null;
+        focusTaskDialogControl(target&&!target.disabled&&!target.closest('[hidden]')?target:$('#reuseChecklistSearch'),$('#dialog'));
+      }
+      status.textContent=`Task list updated. ${kept.length} kept · ${cleared} cleared.${cleared?' Review changed or missing tasks before copying.':' Review your checklist before copying.'}`;
+    }catch{
+      if(sameDialog())status.textContent='Could not check for updates. Your choices are unchanged. Try again.';
+    }finally{
+      ui.syncing=false;draft.refreshing=false;
+      if(sameDialog())updateReuseChecklistWarning();
+    }
+  }
   async function copyReuseChecklist() {
     const draft=ui.reuseChecklist,preview=$('#reuseChecklistPreview');
-    if(!draft||!preview||draft.copying||ui.dialogKind!=='reuse-checklist'||!isOrganizer()||window.GatherAccessLost)return;
+    if(!draft||!preview||draft.copying||draft.refreshing||ui.dialogKind!=='reuse-checklist'||!isOrganizer()||window.GatherAccessLost)return;
     const shown=preview.value;
     syncReuseChecklist();
     if(updateReuseChecklistWarning()||!draft.text)return;
@@ -3004,7 +3061,9 @@
     try {
       if(store.confirmSnapshotRevision){
         let current;
-        try{current=await store.confirmSnapshotRevision(draft.revision);}
+        try{current=await store.confirmSnapshotRevision(draft.revision,newer=>{
+          if(ui.reuseChecklist===draft&&!window.GatherAccessLost)showPendingUpdate(newer);
+        });}
         catch{
           if(ui.reuseChecklist===draft&&!window.GatherAccessLost)toast('Could not confirm the latest plan. Try again before copying.');
           return;
@@ -3616,6 +3675,7 @@
       if(action==='open-first-schedule-receipt')openFirstScheduleReceipt(id,el);
       if(action==='wrap-up-scope'){ui.wrapMine=id==='mine';render();}
       if(action==='reuse-checklist')reuseChecklistDialog();
+      if(action==='refresh-reuse-checklist')await refreshReuseChecklist(el);
       if(action==='copy-reuse-checklist')await copyReuseChecklist();
       if(action==='timeline-mode'){ui.timelineMode=id==='deadlines'?'deadlines':'schedule';render();}
       if(action==='schedule-scope'){ui.scheduleMine=id==='mine';render();}
@@ -4102,6 +4162,8 @@
   document.addEventListener('copy',guardGuestAgendaPreviewCopy);
   window.addEventListener('offline',resetGuestAgendaManualCopy);
   window.addEventListener('online',resetGuestAgendaManualCopy);
+  window.addEventListener('offline',updateReuseChecklistWarning);
+  window.addEventListener('online',updateReuseChecklistWarning);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)resetGuestAgendaManualCopy();});
   document.addEventListener('keydown',event=>{
     if(event.key==='Escape'&&!ui.pendingSave){if(!$('#dialogBackdrop').hidden){if(confirmCloseDialog())closeDialog();}else setDrawer(false);}

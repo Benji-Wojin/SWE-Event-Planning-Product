@@ -151,9 +151,10 @@ test('reusable checklist keeps selection through search, guards copying, and fal
   const status={},search={value:''},warning={},none={},button={setAttribute(k,v){this[k]=v;}};
   const actions=[],preview={value:'',isConnected:true,focus(){actions.push('focus');},select(){actions.push('select');}};
   const sync={hidden:true};
-  let revision=1,organizer=false,copied=true,duringCopy,opened,newer=false;
+  let revision=1,organizer=false,copied=true,duringCopy,opened,newer=false,knownFloor=0;
   const context=vm.createContext({GatherWrapUp,h,ui:{view:'memory',wrapMine:true,actor:'maya'},
     window:{navigator:{onLine:true}},isOrganizer:()=>organizer,
+    scheduleRevisionIsStale:value=>value<=knownFloor,recoveryConflictPending:()=>false,
     store:{getState:()=>state([row('a',{title:'Signage'}),row('b',{title:'Room layout'})]),getSnapshotRevision:()=>revision,confirmSnapshotRevision:async expected=>!newer&&expected===revision},
     $:id=>({'#reuseChecklistWarning':warning,'#reuseChecklistPreview':preview,'#reuseChecklistSearch':search,
       '#reuseChecklistCount':status,'#reuseChecklistNoMatches':none,'#workspaceSyncNotice':sync,
@@ -168,6 +169,9 @@ test('reusable checklist keeps selection through search, guards copying, and fal
   assert.equal(button['aria-disabled'],'true');assert.equal(preview.value,'');
   controls[0].checked=true;context.syncReuseChecklist();
   assert.equal(edits[0].hidden,false);assert.equal(edits[1].hidden,true);
+  knownFloor=1;await context.copyReuseChecklist();
+  assert.equal(preview.value,'');assert.match(warning.textContent,/shared plan changed/);assert.deepEqual(actions,[]);
+  knownFloor=0;context.syncReuseChecklist();
   search.value='layout';context.filterReuseChecklist();
   assert.equal(rows[0].hidden,true);assert.equal(rows[1].hidden,false);
   controls[1].checked=true;context.syncReuseChecklist();

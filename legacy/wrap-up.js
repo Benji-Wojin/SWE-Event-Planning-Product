@@ -41,9 +41,24 @@
   }
   const reuseLimit=24; // Match the private starting plan import.
   const reusableTitle=value=>String(value??'').replace(/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]+/g,' ').trim();
-  function reusableTitles(state,scope={}) {
-    return groups(state,scope).flatMap(group=>group.tasks.map(task=>({title:reusableTitle(task.title),group:group.title})))
+  function reusableTitles(state,scope={},{withIdentity=false}={}) {
+    return groups(state,scope).flatMap(group=>group.tasks.map(task=>({title:reusableTitle(task.title),group:group.title,...(withIdentity?{id:task.id}:{})})))
       .filter(({title})=>title.length>0);
+  }
+  function reconcileReusableChoices(previousRows,nextRows,choices) {
+    const indexById=rows=>{
+      const map=new Map();
+      rows.forEach(({id},index)=>{if(typeof id==='string'&&id)map.set(id,map.has(id)?-1:index);});
+      return map;
+    };
+    const previous=indexById(previousRows),next=indexById(nextRows);
+    const kept=[];
+    for(const {index,title} of choices){
+      const old=previousRows[index],nextIndex=next.get(old?.id),current=nextRows[nextIndex];
+      if(current&&previous.get(old.id)===index&&current.title===old.title&&current.group===old.group)
+        kept.push({index:nextIndex,title});
+    }
+    return {choices:kept.sort((a,b)=>a.index-b.index),cleared:choices.length-kept.length};
   }
   function reusableChecklist(rows,choices) {
     if(!choices.length||choices.length>reuseLimit)return '';
@@ -57,16 +72,20 @@
     // starts with its own number or checkmark still remains the literal title.
     return rows.flatMap((_,index)=>titles.has(index)?['- [ ] '+titles.get(index)]:[]).join('\n');
   }
+  function reusableRows(rows,h=escape) {
+    return rows.map(({title,group},index)=>`<div data-reuse-row><label class="check-field"><input type="checkbox" data-reuse-choice value="${index}"><span>${h(title)}<small class="muted">${h(group)}</small></span></label><label class="field reuse-checklist-title" data-reuse-edit hidden>Title to copy for item ${index+1}<input data-reuse-title maxlength="180" value="${h(title)}"></label></div>`).join('');
+  }
   function reusablePicker(rows,{mine=false,h=escape}={}) {
     return `<p>Choose up to ${reuseLimit} tasks from ${mine?'My tasks':'All tasks'}. In your next event, open <strong>Build a plan → Paste a checklist</strong> and review the titles there before adding any shared tasks.</p>
       <p class="muted">Only selected task titles are copied. You can remove event-specific details from the copy without editing the original tasks. No owners, dates, notes, links or completion records are carried over.</p>
       <p id="reuseChecklistWarning" class="notice" role="status" hidden></p>
+      <p id="reuseChecklistRefreshStatus" role="status" class="muted"></p>
       <label class="field section-gap">Find a task title<input type="search" id="reuseChecklistSearch" aria-controls="reuseChecklistChoices"></label>
       <p id="reuseChecklistNoMatches" class="muted" role="status" hidden>No titles match your search. Your selection is kept.</p>
       <fieldset id="reuseChecklistChoices" class="reuse-checklist-choices" aria-describedby="reuseChecklistCount"><legend>Choose reusable tasks</legend>
-      ${rows.map(({title,group},index)=>`<div data-reuse-row><label class="check-field"><input type="checkbox" data-reuse-choice value="${index}"><span>${h(title)}<small class="muted">${h(group)}</small></span></label><label class="field reuse-checklist-title" data-reuse-edit hidden>Title to copy for item ${index+1}<input data-reuse-title maxlength="180" value="${h(title)}"></label></div>`).join('')}</fieldset>
+      <div id="reuseChecklistRows">${reusableRows(rows,h)}</div></fieldset>
       <p id="reuseChecklistCount" role="status" class="muted">0 of ${reuseLimit} selected.</p>
       <label class="field section-gap">Checklist to paste<textarea id="reuseChecklistPreview" rows="7" readonly></textarea></label>`;
   }
-  root.GatherWrapUp={groups,markup,reuseLimit,reusableTitles,reusableChecklist,reusablePicker};
+  root.GatherWrapUp={groups,markup,reuseLimit,reusableTitles,reconcileReusableChoices,reusableChecklist,reusableRows,reusablePicker};
 })(typeof window!=='undefined'?window:globalThis);
