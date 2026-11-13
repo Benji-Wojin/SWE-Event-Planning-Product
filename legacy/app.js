@@ -355,7 +355,9 @@
       root.dataset?.budgetUnconfirmed==='true'||root.dataset?.budgetRecoveryDraft==='true'||
       !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"]')||$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
-      if(input.type==='checkbox'&&input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')return input.checked;
+      if(input.type==='checkbox'&&((input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')||
+        (input.name==='assignTask'&&input.form?.id==='assignTasksForm')))return input.checked;
+      if(input.name==='owner'&&input.form?.id==='assignTasksForm')return !!input.value;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
       if(input.tagName==='SELECT'&&input.multiple)return [...input.options].some(option=>option.selected!==option.defaultSelected);
       const original=input.tagName==='SELECT'?([...input.options].find(option=>option.defaultSelected)||input.options[0])?.value:input.defaultValue;
@@ -559,28 +561,124 @@
     });
   }
   function assignmentCandidates(tasks) {
-    return tasks.filter(task=>task.status!=='done'&&!task.reportedAt&&!task.verifiedAt).slice(0,100);
+    return tasks.filter(task=>task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&!task.archivedAt).slice(0,100);
   }
-  function assignmentDialog(reviewGroup='') {
+  function assignmentDialog(reviewGroup='',resume=null) {
     if(!isOrganizer()||window.GatherAccessLost)return;
     const state=store.getState(),tasks=assignmentCandidates(reviewGroup
       ?schedule.reviewAssignmentTasks(state,eventReviewScope(),reviewGroup):filteredTasks(state));
-    if(!tasks.length){toast('No open tasks in this view can be assigned together. Review completed or reported work separately.');return;}
+    if(!tasks.length){
+      if(resume){if(reviewGroup)beforeEventReview(reviewGroup);else closeDialog();}
+      toast('No open tasks in this view can be assigned together. Review completed or reported work separately.');return;
+    }
     const people=state.members.filter(person=>person.active!==false&&(!window.GatherMode||window.GatherMode.demo||!person.role?.includes('· example')));
     const title=reviewGroup==='unassigned'?'Assign unowned tasks':reviewGroup==='owner-unavailable'?'Reassign tasks with unavailable owners':'Assign tasks to a teammate';
     const source=reviewGroup?'this event review section':'the current filtered view';
+    const stale=acceptanceReviewPending(null),revision=store.getSnapshotRevision?.();
+    const owner=resume?.owner&&people.find(person=>person.id===resume.owner&&person.name===resume.ownerName)?.id||'';
+    const previous=new Map(resume?.selected.map(item=>[item.id,item]));
+    const owners=new Map(state.members.map(person=>[person.id,person]));
     const currentOwner=task=>{
       if(!task.owner)return 'Unassigned';
-      const person=state.members.find(item=>item.id===task.owner);
+      const person=owners.get(task.owner);
       return person?person.name+(person.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
     };
-    openDialog(title,`<p>Choose tasks from ${source}, up to 100 at a time, then choose one owner. Nothing is selected for you. Repeat for another teammate.</p><p class="notice">Only open work without a completion report is included. Reassignment clears the previous owner’s acceptance, Next up commitment and pending plan requests; the new owner must accept responsibility. Task progress, instructions, dates, schedules and prerequisites stay unchanged. No messages are sent.</p><form id="assignTasksForm" data-actor="${h(ui.actor)}"${reviewGroup?' data-return-to="event-review"':''}><label class="field">New owner<select name="owner" required>${options([['','Choose a teammate'],...people.map(person=>[person.id,person.name])],'')}</select></label><div data-owner-load></div><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="none">Select none</button></div><div class="acceptance-list">${tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="assignTask" value="${h(task.id)}" data-revision="${task.revision}" data-owner="${h(task.owner)}"><span><strong>${h(task.title)}</strong><span>Current owner: ${h(currentOwner(task))} · ${h(statuses[task.status]||task.status)}</span><span>${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}${task.schedule?' · Activity '+h(task.schedule.start.replace('T',' '))+' · '+h(state.event.timeZone):''}</span><span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('')}</div><p id="assignmentCount" role="status">0 tasks selected; 0 owner changes.</p><label class="acceptance-item"><input type="checkbox" name="confirmed" required><span>I reviewed these owner changes and the need for renewed acceptance. Tasks already owned by this teammate will stay unchanged.</span></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${reviewGroup?'before-event-review':'close-dialog'}">${reviewGroup?'Back to event review':'Cancel'}</button><button id="assignmentSubmit" class="btn btn-primary" type="submit" disabled>Assign selected tasks</button></div></form>`,'',true,'assignment');
+    const keep=task=>{
+      const reviewed=previous.get(task.id);
+      return !!reviewed&&reviewed.revision===task.revision&&reviewed.ownerLabel===currentOwner(task)&&
+        (!task.schedule||resume.timeZone===state.event.timeZone);
+    };
+    const kept=tasks.filter(keep),cleared=previous.size-kept.length,changes=owner?kept.filter(task=>task.owner!==owner).length:0;
+    const refreshNote=resume?`<p class="notice" role="status">Assignment review refreshed. ${kept.length} kept · ${cleared} cleared. ${resume.owner&&!owner?'The previous recipient changed or is no longer available. Choose a teammate. ':''}Review the current assignments and confirm again before saving.</p>`:'';
+    const rows=tasks.map(task=>`<label class="acceptance-item"><input type="checkbox" name="assignTask" value="${h(task.id)}" data-revision="${task.revision}" data-owner="${h(task.owner)}" data-owner-label="${h(currentOwner(task))}"${keep(task)?' checked':''}><span><strong>${h(task.title)}</strong><span>Current owner: ${h(currentOwner(task))} · ${h(statuses[task.status]||task.status)}</span><span>${task.dueDate?'Due '+h(dayLabel(task.dueDate)):'No preparation deadline'}${task.schedule?' · Activity '+h(task.schedule.start.replace('T',' '))+' · '+h(state.event.timeZone):''}</span><span>${h(task.note||'No instructions recorded.')}</span></span></label>`).join('');
+    openDialog(title,`<p>Choose tasks from ${source}, up to 100 at a time, then choose one owner. ${resume?'':'Nothing is selected for you. '}Repeat for another teammate.</p>${refreshNote}<p class="notice">Only open work without a completion report is included. Reassignment clears the previous owner’s acceptance, Next up commitment and pending plan requests; the new owner must accept responsibility. Task progress, instructions, dates, schedules and prerequisites stay unchanged. No messages are sent.</p>
+      <form id="assignTasksForm" data-actor="${h(ui.actor)}" data-time-zone="${h(state.event.timeZone)}"${Number.isSafeInteger(revision)?' data-workspace-revision="'+revision+'"':''}${reviewGroup?` data-return-to="event-review" data-review-group="${h(reviewGroup)}"`:''}><label class="field">New owner<select name="owner" required>${options([['','Choose a teammate'],...people.map(person=>[person.id,person.name])],owner)}</select></label><div data-owner-load>${owner?recovery.ownerLoad(owner):''}</div><div class="inline"><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="all">Select all shown</button><button type="button" class="btn btn-secondary btn-small" data-action="assignment-select" data-id="none">Select none</button></div><div class="acceptance-list">${rows}</div><p id="assignmentCount" role="status">${assignmentCountText(kept.length,changes)}</p><label class="acceptance-item"><input type="checkbox" name="confirmed" required><span>I reviewed these owner changes and the need for renewed acceptance. Tasks already owned by this teammate will stay unchanged.</span></label><div class="form-actions"><button type="button" class="btn btn-secondary" data-action="${reviewGroup?'before-event-review':'close-dialog'}"${reviewGroup?` data-id="${h(reviewGroup)}"`:''}>${reviewGroup?'Back to event review':'Cancel'}</button><button id="assignmentSubmit" class="btn btn-primary" type="submit" disabled>Assign selected tasks</button></div></form>`,'',true,'assignment',!!resume);
+    if(stale)paintAssignmentRefresh();
   }
-  function syncAssignmentSelection(form) {
+  function assignmentCountText(count,changes) {
+    return `${count} ${count===1?'task':'tasks'} selected; ${changes} owner ${changes===1?'change':'changes'}.`;
+  }
+  function assignmentSelection(form,forReview=false) {
+    return $$('input[name="assignTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision),
+      ...(forReview?{ownerLabel:input.dataset.ownerLabel}:{})}));
+  }
+  function assignmentConfirmationKey(owner,selected) {
+    return JSON.stringify([owner,selected.map(item=>[item.id,item.revision]).sort(([a],[b])=>a.localeCompare(b))]);
+  }
+  function syncAssignmentSelection(form,confirming=false) {
     const selected=$$('input[name="assignTask"]:checked',form),owner=$('select[name="owner"]',form).value;
     const changes=owner?selected.filter(input=>input.dataset.owner!==owner).length:0;
-    $('#assignmentCount',form).textContent=`${selected.length} ${selected.length===1?'task':'tasks'} selected; ${changes} owner ${changes===1?'change':'changes'}.`;
-    $('#assignmentSubmit',form).disabled=!changes||!$('input[name="confirmed"]',form).checked;
+    const stale=acceptanceReviewPending(form),confirmation=$('input[name="confirmed"]',form);
+    const key=assignmentConfirmationKey(owner,assignmentSelection(form));
+    const changed=!!form.dataset.confirmedBatch&&form.dataset.confirmedBatch!==key;
+    if(confirming&&confirmation.checked&&changes&&!stale)form.dataset.confirmedBatch=key;
+    if(!changes||!confirmation.checked||stale||form.dataset.confirmedBatch!==key){
+      delete form.dataset.confirmedBatch;confirmation.checked=false;
+    }
+    $('#assignmentCount',form).textContent=assignmentCountText(selected.length,changes)+
+      (changed&&!stale?' The batch changed. Confirm again before assigning.':'');
+    $('#assignmentSubmit',form).disabled=!confirmation.checked;
+    if(stale)paintAssignmentRefresh();
+  }
+  function paintAssignmentRefresh() {
+    const form=$('#assignTasksForm');
+    if(!form||ui.dialogKind!=='assignment'||!acceptanceReviewPending(form))return;
+    form.dataset.reviewNeedsRefresh='true';
+    delete form.dataset.confirmedBatch;
+    $('input[name="confirmed"]',form).checked=false;
+    const focused=document.activeElement;
+    if(!$('#dialogStaleNotice')){
+      const notice=document.createElement('div');notice.id='dialogStaleNotice';notice.className='notice';
+      notice.innerHTML='<p id="assignmentRefreshStatus" role="status">The project changed. Your choices are held until you refresh this review.</p>'+
+        (store.refresh?'<button type="button" id="assignmentRefresh" class="btn btn-secondary" data-action="refresh-assignment-review" aria-describedby="assignmentRefreshStatus">Refresh assignment review</button>':
+          '<button type="button" class="btn btn-secondary" data-action="reload-workspace">Reload project</button>');
+      $('.dialog-body').prepend(notice);
+    }
+    const controls=$$('input,select,[data-action="assignment-select"],#assignmentSubmit',form);
+    for(const control of controls)control.disabled=true;
+    if(controls.includes(focused))$('#assignmentRefresh')?.focus();
+  }
+  async function refreshAssignmentReview(button) {
+    const form=$('#assignTasksForm'),status=$('#assignmentRefreshStatus');
+    if(!form||!status||!store.refresh||button!==$('#assignmentRefresh')||!isOrganizer()||window.GatherAccessLost||
+      ui.dialogKind!=='assignment'||form.dataset.actor!==ui.actor||!acceptanceReviewPending(form)||ui.pendingSave||document.hidden)return;
+    if(ui.syncing){
+      if(button.getAttribute('aria-disabled')!=='true')status.textContent='The project is already checking for changes. Try again in a moment.';
+      return;
+    }
+    const {reviewGroup=''}=form.dataset,actor=ui.actor,project=window.GatherMode?.projectId;
+    const scope=()=>JSON.stringify(reviewGroup?[ui.view,ui.timelineMode,eventReviewScope().mine]:
+      [ui.view,ui.tab,ui.owner,ui.status,ui.search]);
+    const openedScope=scope();
+    const sameWorkspace=()=>!window.GatherAccessLost&&isOrganizer()&&ui.actor===actor&&window.GatherMode?.projectId===project;
+    const sameReview=()=>sameWorkspace()&&ui.dialogKind==='assignment'&&$('#assignTasksForm')===form&&
+      $('#assignmentRefresh')===button&&scope()===openedScope&&!$('#dialogBackdrop').hidden;
+    const ready=()=>sameReview()&&!ui.pendingSave&&!document.hidden;
+    const picker=$('select[name="owner"]',form);
+    const resume={selected:assignmentSelection(form,true),owner:picker.value,ownerName:picker.selectedOptions[0]?.textContent,timeZone:form.dataset.timeZone};
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Refreshing assignment review…';
+    try{
+      const result=await store.refresh(revision=>ready()&&Number.isSafeInteger(revision)&&
+        !recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(result.pending&&sameWorkspace())rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){
+        if(sameReview())status.textContent='Refresh paused. Your choices are still here. Try again.';
+        return;
+      }
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))
+        throw new Error('A newer project snapshot is not ready.');
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();assignmentDialog(reviewGroup,resume);
+    }catch{
+      if(sameReview())status.textContent='Could not refresh assignments. Your choices are still here. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
   }
   function focusAfterAcceptance() {
     // The review button disappears when all visible assignments are accepted.
@@ -1016,6 +1114,7 @@
   }
   function render() {
     if(ui.dialogKind==='acceptance')paintAcceptanceRefresh();
+    if(ui.dialogKind==='assignment')paintAssignmentRefresh();
     projectBudget?.unmount(ui.view==='budget');
     const taskListScroll=ui.view==='tasks'&&ui.taskView==='list'?$('.task-table-wrap')?.scrollLeft:undefined;
     const scheduleDateDraft=captureScheduleDateDraft();
@@ -1544,6 +1643,7 @@
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if(ui.dialogKind==='acceptance'){paintAcceptanceRefresh();return;}
+    if(ui.dialogKind==='assignment'){paintAssignmentRefresh();return;}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     const group=ui.dialogKind==='before-event-review'?document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
@@ -2651,7 +2751,7 @@
         }
       }
       if(action==='run-sheet')openRunSheet();
-      if(action==='before-event-review')beforeEventReview();
+      if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
@@ -2734,9 +2834,13 @@
       if(action==='refresh-acceptance-review')await refreshAcceptanceReview(el);
       if(action==='review-assignments')assignmentDialog();
       if(action==='review-event-assignments'&&ui.dialogKind==='before-event-review'&&['unassigned','owner-unavailable'].includes(id))assignmentDialog(id);
+      if(action==='refresh-assignment-review')await refreshAssignmentReview(el);
       if(action==='assignment-select'){
         const form=$('#assignTasksForm');
-        if(form){$$('input[name="assignTask"]',form).forEach(input=>input.checked=id==='all');syncAssignmentSelection(form);}
+        if(form&&ui.dialogKind==='assignment'&&form.contains(el)){
+          if(acceptanceReviewPending(form))paintAssignmentRefresh();
+          else{$$('input[name="assignTask"]',form).forEach(input=>input.checked=id==='all');syncAssignmentSelection(form);}
+        }
       }
       if(action==='acceptance-select'){
         const form=$('#acceptTasksForm');
@@ -2806,6 +2910,10 @@
       if(ui.dialogKind!=='acceptance'||form!==$('#acceptTasksForm'))return;
       if(acceptanceReviewPending(form)){paintAcceptanceRefresh();return;}
     }
+    if(form.id==='assignTasksForm'){
+      if(ui.dialogKind!=='assignment'||form!==$('#assignTasksForm'))return;
+      if(acceptanceReviewPending(form)){paintAssignmentRefresh();return;}
+    }
     if(form.id==='relatedReviewForm'&&form.dataset.saveUnconfirmed)return;
     if(form.id==='relatedChecklistForm'){
       $('.form-error',form)?.remove();
@@ -2827,11 +2935,12 @@
     const submissionFile=isSubmission?form.elements.completionUpload?.files?.[0]:null;
     if(form.id==='rescheduleReviewForm')data.tasks=$$('[data-reschedule-row]',form).map(row=>({id:row.dataset.rescheduleRow,revision:Number(row.dataset.revision),moveDue:!!$('[data-move-due]',row)?.checked,moveSchedule:!!$('[data-move-schedule]',row)?.checked})).filter(row=>row.moveDue||row.moveSchedule);
     if(form.id==='acceptTasksForm')data.selections=acceptanceSelections(form);
-    if(form.id==='assignTasksForm')data.tasks=$$('input[name="assignTask"]:checked',form).map(input=>({id:input.value,revision:Number(input.dataset.revision)}));
+    if(form.id==='assignTasksForm')data.tasks=assignmentSelection(form);
     if(form.id==='relatedReviewForm')data.items=$$('[data-related-row]',form).filter(row=>$('[data-related-include]',row).checked)
       .map(row=>({title:$('[data-related-title]',row).value,scope:$('[data-related-scope]',row).value}));
     $('.form-error',form)?.remove();
-    const acceptanceRevision=form.id==='acceptTasksForm'?store.getSnapshotRevision?.():undefined;
+    const assignmentReview=['acceptTasksForm','assignTasksForm'].includes(form.id);
+    const assignmentReviewRevision=assignmentReview?store.getSnapshotRevision?.():undefined;
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='rescheduleDateForm'){
@@ -2847,9 +2956,10 @@
       }
       if(form.id==='assignTasksForm'){
         if(!isOrganizer()||window.GatherAccessLost||form.dataset.actor!==ui.actor)throw new Error('Your account changed. Reopen task assignment.');
-        if(data.confirmed!=='on')throw new Error('Confirm that you reviewed the owner changes.');
+        if(data.confirmed!=='on'||form.dataset.confirmedBatch!==assignmentConfirmationKey(data.owner,data.tasks))
+          throw new Error('Confirm the selected tasks and recipient before assigning.');
         const result=store.assignTasks({owner:data.owner,tasks:data.tasks},ui.actor);
-        if(form.dataset.returnTo==='event-review'){render();beforeEventReview();}
+        if(form.dataset.returnTo==='event-review'){render();beforeEventReview(form.dataset.reviewGroup);}
         else{closeDialog();render();}
         toast(`${result.changedTaskCount} ${result.changedTaskCount===1?'task assigned':'tasks assigned'}. New owners still need to accept; progress is unchanged.`);
       }
@@ -2998,12 +3108,16 @@
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
     }catch(error){
-      if(error.status===409&&form.id==='acceptTasksForm'){showRecoveryWriteConflict(acceptanceRevision);return;}
+      if(error.status===409&&assignmentReview){showRecoveryWriteConflict(assignmentReviewRevision);return;}
+      if(error.status===400&&form.id==='assignTasksForm'&&
+        ['Choose an active teammate.','Choose an active project teammate.'].includes(error.message)){
+        form.dataset.reviewNeedsRefresh='true';paintAssignmentRefresh();return;
+      }
       if(error.status===409){if(form.id==='recoveryDecisionForm'||((form.id==='scheduleForm'||form.id==='taskDetailForm')&&ui.dialogKind==='task'&&ui.detailId===form.dataset.id))showRecoveryWriteConflict();else showPendingUpdate();}
       if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';
       formError(form,error);toast(error.message||'Please check the form and try again.');
     }
-    finally{release();if(form.id==='acceptTasksForm'&&form.isConnected)paintAcceptanceRefresh();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
+    finally{release();if(form.id==='acceptTasksForm'&&form.isConnected)paintAcceptanceRefresh();if(form.id==='assignTasksForm'&&form.isConnected)paintAssignmentRefresh();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 
   document.addEventListener('change',event=>{
@@ -3013,7 +3127,7 @@
     if(el.closest('#guestAgendaForm'))syncGuestAgenda(el.closest('#guestAgendaForm'));
     if(el.matches('[data-reuse-choice]'))syncReuseChecklist();
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
-    if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'));
+    if(el.closest('#assignTasksForm'))syncAssignmentSelection(el.closest('form'),el.name==='confirmed');
     if(el.closest('#responseForm')?.querySelector('[data-proposed-date]'))recovery.syncResponse(el.closest('form'));
     if(el.closest('#recoveryDecisionForm'))recovery.syncDecision(el.closest('form'));
     if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
