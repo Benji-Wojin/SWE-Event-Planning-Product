@@ -70,7 +70,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     request = useRef<any>(null),
     starterRequest = useRef<any>(null),
     checklistRequest = useRef<{key:string;requestId:string}|null>(null),
-    focusImportNotice = useRef(false),
+    focusNotice = useRef(false),
     focusReceipt = useRef(false),
     errorBox = useRef<HTMLParagraphElement>(null),
     noticeBox = useRef<HTMLParagraphElement>(null),
@@ -225,8 +225,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     if (error) errorBox.current?.focus();
   }, [error]);
   useEffect(()=>{
-    if(!notice||!focusImportNotice.current)return;
-    focusImportNotice.current=false;
+    if(!notice||!focusNotice.current)return;
+    focusNotice.current=false;
     noticeBox.current?.focus();
   },[notice]);
   // Recover a running request after refresh; polling only reads, never generates another plan.
@@ -274,7 +274,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     setError('');
     setNotice('Private draft updated. Review the items before adding them; shared tasks have not changed.');
   }
-  async function save() {
+  async function save(forApproval = false) {
     const result = await api(query, {
       action: 'save',
       revision: data.revision,
@@ -282,6 +282,16 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       items,
       generation: data.draft?.generation,
     });
+    // The save response is a fresh read. Another tab can change the draft after
+    // our save commits but before that read. Keep this tab's inputs in that case.
+    if (forApproval && (
+      result.revision !== data.revision + 1 ||
+      !result.draft ||
+      result.draft.generation !== data.draft?.generation ||
+      result.receipt
+    )) {
+      throw new Error('The private draft changed while saving. This action did not add any tasks. Your edits are still visible here. Copy what you want to keep, then use Reload saved draft to review the latest version.');
+    }
     accept(result, false);
     request.current = null;
     starterRequest.current = null;
@@ -305,7 +315,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
         request.current=null;
         starterRequest.current=null;
       }
-      focusImportNotice.current=true;
+      focusNotice.current=true;
       setNotice((added?`${added} ${added===1?'task added':'tasks added'} unchecked to your private draft.`:'Nothing was added to your draft.')+
         (skipped?` ${skipped} matching ${skipped===1?'line was':'lines were'} skipped.`:'')+
         (added?' Select what you want to share in Review proposed items. No AI was used.':' Edit the pasted text to try again.'));
@@ -1146,7 +1156,24 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                 }
                 onClick={() =>
                   void run(async () => {
-                    const latest = draftDirty ? await save() : data;
+                    const reviewedWorkspaceRevision = data.workspaceRevision;
+                    const latest = draftDirty ? await save(true) : data;
+                    // Saving a private draft also reads the current project. Do not
+                    // use that newer revision as approval the organizer never gave.
+                    if (latest.workspaceRevision !== reviewedWorkspaceRevision || latest.contextChanged) {
+                      focusNotice.current = true;
+                      setNotice(
+                        'Your private edits were saved. The project changed; no tasks were added. ' +
+                          (latest.contextChanged
+                            ? latest.draft?.source === 'starter'
+                              ? 'Choose a fresh starter checklist before adding tasks.'
+                              : latest.draft?.source === 'pasted'
+                                ? 'Recheck the pasted draft before adding tasks.'
+                                : 'Generate a new draft before adding tasks.'
+                            : 'Review the selected items, owners, and links again, then choose Add selected items.'),
+                      );
+                      return;
+                    }
                     const result = await api(query, {
                       action: 'apply',
                       revision: latest.revision,

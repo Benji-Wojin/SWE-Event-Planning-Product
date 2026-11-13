@@ -419,6 +419,98 @@ test('apply saves brief edits and sends normalized reviewed items, without losin
     active.dispose();
   }
 });
+for (const contextChanged of [false, true]) {
+  test(`saving dirty approval pauses when the workspace revision advances${contextChanged ? ' and the draft needs a new context review' : ' with the same context hash'}`, async () => {
+    const initial = fixture();
+    const prerequisite = { id: 'old-prerequisite', title: 'Confirm venue', start: '' };
+    initial.existingTasks = [prerequisite];
+    initial.existingTaskCount = 1;
+    initial.draft.items = [
+      { ...initial.draft.items[0], dependsOn: ['venue'] },
+      { ...copy(item), id: 'venue', title: prerequisite.title, included: false },
+      { ...copy(item), id: 'signs', title: 'Print welcome signs', included: false },
+    ];
+    const replacement = { ...prerequisite, id: 'new-prerequisite' };
+    const existingTasks = contextChanged
+      ? [replacement, { id: 'task-added', title: 'Check the room layout', start: '' }]
+      : [replacement];
+    const active = harness(context => {
+      const { input, saved } = context;
+      if (input?.action === 'save') {
+        assert.equal(input.revision, initial.revision);
+        assert.equal(input.generation, initial.draft.generation);
+        // A private save may return a newer workspace, even if its context hash is unchanged.
+        context.value = {
+          ...saved,
+          revision: saved.revision + 1,
+          workspaceRevision: saved.workspaceRevision + 1,
+          existingTasks,
+          existingTaskCount: existingTasks.length,
+          contextChanged,
+          brief: input.brief,
+          draft: { ...saved.draft, items: input.items },
+        };
+      }
+    }, initial);
+    try {
+      await active.start();
+      await active.edit('plan-brief', 'Fictional updated brief');
+      await active.edit('title-one', 'Confirm the evening activities');
+      await active.check('include-signs', true);
+      await active.click('Add 2 selected items to project');
+      assert.deepEqual(active.requests.map(({ action }) => action), ['get', 'save']);
+      assert.equal(active.find('plan-brief').props.value, 'Fictional updated brief');
+      assert.equal(active.find('title-one').props.value, 'Confirm the evening activities');
+      assert.equal(active.find('include-one').props.checked, true);
+      assert.equal(active.find('include-venue').props.checked, false);
+      assert.equal(active.find('include-signs').props.checked, true);
+      assert.deepEqual(active.saved.draft.items[0].dependsOn, ['venue']);
+      const add = nodes(active.tree).find(node => node.type === 'button' && text(node) === 'Add 2 selected items to project');
+      assert.ok(add, 'the reviewed selection remains visible');
+      assert.equal(Boolean(add.props.disabled), contextChanged);
+      if (contextChanged) return;
+
+      await active.click('Add 2 selected items to project');
+      assert.deepEqual(active.requests.map(({ action }) => action), ['get', 'save', 'apply']);
+      assert.deepEqual(active.requests.at(-1), {
+        action: 'apply',
+        revision: initial.revision + 1,
+        workspaceRevision: initial.workspaceRevision + 1,
+        generation: initial.draft.generation,
+        items: active.saved.draft.items,
+        confirm: true,
+      });
+    } finally {
+      active.dispose();
+    }
+  });
+}
+test('a newer private draft from another tab does not replace local review or get applied', async () => {
+  const initial = fixture();
+  const active = harness(context => {
+    if (context.input?.action !== 'save') return;
+    context.value = {
+      ...context.saved,
+      revision: initial.revision + 2,
+      brief: { ...brief, description: 'Fictional brief from another tab' },
+      draft: { ...initial.draft, items: [{ ...item, title: 'Other tab task', included: false }] },
+    };
+  }, initial);
+  try {
+    await active.start();
+    await active.edit('plan-brief', 'Fictional brief in this tab');
+    await active.edit('title-one', 'Task reviewed in this tab');
+    await active.click('Add 1 selected items to project');
+    assert.deepEqual(active.requests.map(({ action }) => action), ['get', 'save']);
+    assert.equal(active.find('plan-brief').props.value, 'Fictional brief in this tab');
+    assert.equal(active.find('title-one').props.value, 'Task reviewed in this tab');
+    assert.equal(active.find('include-one').props.checked, true);
+    const alert = nodes(active.tree).find(node => node.props.role === 'alert');
+    assert.match(text(alert), /draft changed while saving.*did not add any tasks.*Reload saved draft/);
+  } finally {
+    active.dispose();
+  }
+});
 test('the plan receipt links only current created tasks in order and reports unavailable tasks',async()=>{
   for(const [query,embedded,expected] of [
     ['project=p_school&mode=suggestions',false,'/project?project=p_school&task='],
@@ -669,6 +761,7 @@ test('unchecking an existing prerequisite keeps the remaining draft items addabl
     if (context.input?.action === 'save')
       context.value = {
         ...context.saved,
+        revision: context.saved.revision + 1,
         draft: { ...context.saved.draft, items: context.input.items },
       };
   }, initial);
@@ -762,7 +855,7 @@ test('semantic duplicate choices are visible, preserve links, and are saved befo
     initial.draft.items.push({ ...copy(item), id: 'two', title: 'Prepare arrival', dependsOn: ['one'] });
     const app = harness(context => {
       if (context.input?.action === 'save') context.value = {
-        ...context.saved, draft: { ...context.saved.draft, items: context.input.items },
+        ...context.saved, revision: context.saved.revision + 1, draft: { ...context.saved.draft, items: context.input.items },
       };
     }, initial);
     try {
@@ -981,7 +1074,7 @@ test('batch edits invalidate an uncertain generation retry and preserve the upda
 test('Ask Weft shows proposed prerequisites for human review and preserves an explicit removal on apply',async()=>{
   const initial=fixture();initial.brief.description=JSON.stringify([{role:'user',content:'Break this preparation into two steps.'}]);
   initial.draft.items.push({...copy(item),id:'two',title:'Prepare final briefing',note:'Needs the reviewed programme.',dependsOn:['one']});
-  const app=harness(context=>{if(context.input?.action==='save')context.value={...context.saved,draft:{...context.saved.draft,items:context.input.items}};},initial,'project=p_example&mode=assistant');
+  const app=harness(context=>{if(context.input?.action==='save')context.value={...context.saved,revision:context.saved.revision+1,draft:{...context.saved.draft,items:context.input.items}};},initial,'project=p_example&mode=assistant');
   try{
     await app.start();assert.match(text(app.tree),/Required before completion/);assert.match(text(app.tree),/Related work can run in parallel/);
     assert.equal(app.find('required-two:one').props.checked,true);

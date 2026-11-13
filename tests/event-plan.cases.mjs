@@ -1165,6 +1165,44 @@ export async function eventPlanTests({
       assert.equal((await post(project, approval(snap))).status, 200);
       assert.equal((await (await realRead(project)).json()).state.tasks.length, 4);
     });
+    await t.test('saving after a same-title prerequisite replacement stays private and reveals the new workspace revision',async test=>{
+      const project=await setup();
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const seeded=await change(project,'addTask',[{title:baseItem.title,owner:'jack',note:'Fictional original approval.'}]);
+      const original=seeded.state.tasks[0],reviewed=await ready(project);
+      const match=reviewed.draft.items.find(item=>item.id===baseItem.id);
+      const dependent=reviewed.draft.items.find(item=>item.dependsOn.includes(match.id));
+      assert.equal(match.included,false,'the matching shared prerequisite is not selected for creation');
+      assert.ok(dependent?.included);
+      assert.deepEqual(reviewed.existingTasks,[{id:original.id,title:original.title,start:''}]);
+
+      await change(project,'deleteTask',[original.id,original.revision]);
+      const replaced=await change(project,'addTask',[{title:original.title,owner:'jack',note:'Fictional replacement approval.'}]);
+      const replacement=replaced.state.tasks[0];
+      assert.notEqual(replacement.id,original.id);
+      assert.deepEqual(replaced.state.tasks.map(task=>task.id),[replacement.id]);
+      const beforeSave=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
+
+      const edit='Fictional updated notes for the reviewed arrival.';
+      const items=reviewed.draft.items.map(item=>item.id===dependent.id?{...item,note:edit}:item);
+      const response=await post(project,save(reviewed,{items}));
+      assert.equal(response.status,200,await response.clone().text());
+      const saved=await response.json();
+      assert.ok(saved.revision>reviewed.revision);
+      assert.ok(saved.workspaceRevision>reviewed.workspaceRevision);
+      assert.equal(saved.workspaceRevision,replaced.revision);
+      assert.equal(saved.contextChanged,false,'the generation inputs did not change: same title and start time');
+      assert.deepEqual(saved.existingTasks,[{id:replacement.id,title:original.title,start:''}]);
+      assert.equal(saved.draft.items.find(item=>item.id===dependent.id).note,edit);
+      assert.equal(saved.receipt,null);
+      assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),beforeSave,'Save changes only the private draft');
+
+      const staleApply=await post(project,approval(saved,{workspaceRevision:reviewed.workspaceRevision}));
+      assert.equal(staleApply.status,409,await staleApply.clone().text());
+      assert.match((await staleApply.json()).error,/project changed/i);
+      assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),beforeSave,'stale Apply creates no tasks or links');
+      assert.deepEqual(await read(project),saved,'stale Apply neither consumes nor changes the saved private draft');
+    });
     await t.test(
       'invalid owners, hidden status, duplicates and unchecked prerequisites add no tasks',
       async () => {
