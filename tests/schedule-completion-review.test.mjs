@@ -87,7 +87,9 @@ test('future and overnight pending reviews remain factual across viewer zones an
       assert.match(html,/Completion awaiting verification · 1/);assert.match(html,/Nov 21, 2026/);assert.match(html,/Nov 22, 2026/);
       assert.doesNotMatch(html,/schedule-focus-reason|>Next<\/span>|>Scheduled now<\/span>/);
     }
-    const html=ui.view(input,false,now);assert.equal(ids(html).filter(id=>id==='Future report').length,2,'focus card plus dated timetable row');
+    const html=ui.view(input,false,now);
+    assert.equal(ids(html).filter(id=>id==='Future report').length,3,'one review card plus the start and continuation rows');
+    assert.match(html,/data-id="Future report" data-schedule-day="2026-11-22"/);
     assert.doesNotMatch(ui.clock(state([]),now).markup,/Completion awaiting verification/);
   }finally{if(previous===undefined)delete process.env.TZ;else process.env.TZ=previous;}
   const css=readFileSync('legacy/styles.css','utf8');assert.match(css,/\.schedule-follow-up,\.schedule-completion-review\{grid-column:1\/-1/);

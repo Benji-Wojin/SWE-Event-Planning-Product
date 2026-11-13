@@ -148,6 +148,26 @@ test('focus stays on the same schedule review or falls back only to that activit
   for(const other of [otherRow,genericCard,amendment])assert.notEqual(other.focused,true);
 });
 
+test('an overnight activity restores focus to the same dated row after a render',()=>{
+  const f=fixture(),row=day=>element('BUTTON',{dataset:{action:'task',id:'overnight',scheduleDay:day},
+    classList:{contains:name=>name==='schedule-row'}});
+  const original=row('2026-11-20'),continuation=row('2026-11-21'),previous=row('2026-11-21');
+  previous.isConnected=false;
+  append(f.root,original,continuation);f.controls.push(original,continuation);
+  assert.equal(f.ctx.restore(previous,f.root),true);
+  assert.notEqual(original.focused,true);
+  assert.equal(continuation.focused,true);
+  continuation.focused=false;
+  for(const action of ['task','review-organizer-item']){
+    const card=element('BUTTON',{isConnected:false,dataset:{action,id:'overnight',scheduleFocusDay:'2026-11-21'},
+      classList:{contains:name=>name==='schedule-focus-task'}});
+    assert.equal(f.ctx.restore(card,f.root),true);
+    assert.notEqual(original.focused,true);
+    assert.equal(continuation.focused,true);
+    continuation.focused=false;
+  }
+});
+
 function taskListFixture(){
   const body=element('BODY'),root=element('DIV',{id:'viewRoot'}),rows=element('TBODY',{id:'taskRows'});
   const document={

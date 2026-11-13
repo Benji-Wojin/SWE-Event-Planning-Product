@@ -42,6 +42,57 @@ test('selected event-local date includes overnight work, not exact-midnight ends
   assert.deepEqual(state,before);
 });
 
+test('all-dates Timeline and run sheet include the overnight handoff under each displayed day',()=>{
+  const before=structuredClone(state),allDates={...scope,date:''};
+  const model=ui.runSheetModel(state,today,allDates),selected=ui.runSheetModel(state,today,scope);
+  const [friday,saturday,sunday]=model.days;
+  assert.deepEqual(model.days.map(day=>day.label),['Fri, Nov 20, 2026','Sat, Nov 21, 2026','Sun, Nov 22, 2026']);
+  assert.deepEqual(friday.rows.map(row=>row.title),['Ends at midnight','Overnight desk','No end time']);
+  assert.deepEqual(saturday.rows.map(row=>row.title),['Overnight desk','Morning opening']);
+  assert.deepEqual(sunday.rows.map(row=>row.title),['Sunday teardown']);
+  assert.equal(saturday.rows[0].range,friday.rows[1].range,'carry-in preserves the entered time range');
+  assert.equal(friday.rows[1].continues,'');
+  assert.equal(saturday.rows[0].continues,'Continues from Fri, Nov 20, 2026');
+  assert.deepEqual(saturday,selected.days[0]);
+
+  const timeline=ui.view(state,false,today,allDates);
+  const timelineRows=[...timeline.matchAll(/<button class="schedule-row"([^>]*)>([\s\S]*?)<\/button>/g)];
+  const overnight=timelineRows.filter(([,attributes])=>attributes.includes('data-id="Overnight desk"'));
+  assert.deepEqual(overnight.map(([,attrs])=>attrs.match(/data-schedule-day="([^"]+)"/)?.[1]),['2026-11-20','2026-11-21']);
+  assert.doesNotMatch(overnight[0][2],/Continues from/);
+  assert.match(overnight[1][2],/Continues from Fri, Nov 20, 2026/);
+  assert.deepEqual(timelineRows.filter(([,attrs])=>attrs.includes('data-schedule-day="2026-11-21"'))
+    .map(([,attrs])=>attrs.match(/data-id="([^"]+)"/)?.[1]),['Overnight desk','Morning opening']);
+
+  const print=ui.runSheetMarkup(model),text=ui.runSheetText(model);
+  const saturdayPrint=print.split('<caption>Sat, Nov 21, 2026</caption>')[1]?.split('</table>')[0]||'';
+  const saturdayText=text.split('\nSat, Nov 21, 2026\n')[1]?.split('\nSun, Nov 22, 2026\n')[0]||'';
+  for(const output of [saturdayPrint,saturdayText]){
+    assert.match(output,/Overnight desk[\s\S]*Continues from Fri, Nov 20, 2026[\s\S]*Morning opening/);
+    assert.doesNotMatch(output,/Ends at midnight|No end time|Sunday teardown/);
+  }
+  for(const output of [print,text]){
+    assert.equal((output.match(/1 activity has unfinished required work/g)||[]).length,1);
+    assert.doesNotMatch(output,/2 activities have unfinished required work/);
+    assert.equal((output.match(/3 activities have potential location overlap/g)||[]).length,1,
+      'each scoped activity contributes once even if its warning is on multiple date rows');
+    assert.doesNotMatch(output,/4 activities have potential location overlap/);
+  }
+  for(const output of [timeline,print,text])assert.doesNotMatch(output,/Another team checks in|PRIVATE-/);
+  assert.deepEqual(state,before);
+});
+
+test('the live phase follows an overnight activity to the right day at midnight',()=>{
+  const fixture={...state,tasks:[state.tasks[0]]},allDates={...scope,date:''};
+  const read=at=>[...ui.view(fixture,false,at,allDates).matchAll(/data-schedule-phase="Overnight desk" data-schedule-phase-day="([^"]+)"( hidden)?>([^<]*)</g)]
+    .map(([,date,hidden,label])=>[date,hidden?'':label]);
+  const friday='2026-11-20',saturday='2026-11-21';
+  assert.deepEqual(read('2026-11-21T07:00Z'),[[friday,'Next'],[saturday,'']]);
+  assert.deepEqual(read('2026-11-21T07:45Z'),[[friday,'Scheduled now'],[saturday,'']]);
+  assert.deepEqual(read('2026-11-21T08:15Z'),[[friday,''],[saturday,'Scheduled now']]);
+  assert.deepEqual(read('2026-11-21T10:00Z'),[[friday,''],[saturday,'Past scheduled end']]);
+});
+
 test('date filter keeps activity scope, has a truthful empty state, and safely falls back from invalid dates',()=>{
   const day={...scope,date:'2026-11-23'};
   assert.match(ui.view(state,false,today,day),/No activities assigned to you on this date/);
@@ -61,6 +112,29 @@ test('a multi-day activity is visible on intermediate dates without expanding a 
   assert.match(html,/Multi-day booth/);
   assert.match(html,/Continues from Fri, Nov 20, 2026/);
   assert.equal(html.match(/<caption>/g).length,1);
+});
+
+test('all-dates groups stay bounded to in-scope starts and continuation boundaries',()=>{
+  const fixture={...state,tasks:[
+    activity('Fictional long booth','maya','2026-11-20T19:00','2099-11-24T00:00'),
+    activity('Fictional intermediate check','maya','2026-11-25T08:00','2026-11-25T09:00'),
+    activity('Other owner’s check','dev','2026-11-26T08:00','2026-11-26T09:00'),
+    activity('Fictional same-day slot','maya','2099-11-24T08:00','2099-11-24T09:00'),
+  ]};
+  const personal={...scope,date:''},shared={...personal,mine:false};
+  const labels=['2026-11-20','2026-11-21','2026-11-25','2099-11-23','2099-11-24'];
+  const dates=ui.runSheetModel(fixture,today,personal).days;
+  assert.deepEqual(dates.map(day=>day.label),labels.map(day=>GatherScheduleUI.dateLabel(day)));
+  assert.deepEqual(dates.map(day=>day.rows.map(row=>row.title)),[
+    ['Fictional long booth'],['Fictional long booth'],['Fictional long booth','Fictional intermediate check'],
+    ['Fictional long booth'],['Fictional same-day slot'],
+  ]);
+  assert.equal((ui.view(fixture,false,today,personal).match(/<section class="schedule-day">/g)||[]).length,labels.length);
+  const extra=ui.runSheetModel(fixture,today,shared).days.find(day=>day.label===GatherScheduleUI.dateLabel('2026-11-26'));
+  assert.deepEqual(extra?.rows.map(row=>row.title),['Fictional long booth','Other owner’s check']);
+  const intermediate=ui.runSheetModel(fixture,today,{...personal,date:'2035-05-14'}).days;
+  assert.deepEqual(intermediate.map(day=>day.rows.map(row=>row.title)),[['Fictional long booth']]);
+  assert.equal(intermediate[0].rows[0].continues,'Continues from Fri, Nov 20, 2026');
 });
 
 test('activity-day shortcuts follow scope and skip empty dates without skipping overnight work',()=>{

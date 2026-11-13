@@ -42,6 +42,28 @@
     date.setUTCDate(date.getUTCDate()+step);
     return selectedDate({date:date.toISOString().slice(0,10)});
   }
+  function lastActivityDate(task) {
+    const end=task.schedule.end?.slice(0,10);
+    return !end?task.schedule.start.slice(0,10):onDate(task,end)?end:stepDate(end,-1);
+  }
+  // Include starts and both ends of a multi-day carryover without expanding
+  // arbitrary date ranges. Every activity still appears on any selected day
+  // that it overlaps, including days that have no All dates heading.
+  function activityDateGroups(tasks,day) {
+    if(day)return [{date:day,tasks}];
+    const dates=new Set(),windows=tasks.map(task=>{
+      const start=task.schedule.start.slice(0,10),last=lastActivityDate(task);
+      dates.add(start);
+      if(last>start){dates.add(stepDate(start,1));dates.add(last);}
+      return {task,start,last};
+    });
+    let next=0,active=[];
+    return [...dates].sort().map(date=>{
+      active=active.filter(window=>window.last>=date);
+      while(next<windows.length&&windows[next].start<=date)active.push(windows[next++]);
+      return {date,tasks:active.map(window=>window.task)};
+    });
+  }
   function activityDays(state,now=Date.now(),scope={}) {
     const day=selectedDate(scope);
     const prior=day?stepDate(day,-1):'',later=day?stepDate(day,1):'';
@@ -54,8 +76,7 @@
       const start=schedule.start.slice(0,10);
       if(!first||start<first)first=start;
       if(!day)continue;
-      const endDate=schedule.end?.slice(0,10);
-      const end=!endDate?start:onDate(task,endDate)?endDate:stepDate(endDate,-1);
+      const end=lastActivityDate(task);
       if(prior&&start<=prior){
         const candidate=end<prior?end:prior;
         if(candidate>previous)previous=candidate;
@@ -156,6 +177,7 @@
   // Labels are not venue reservations. Match only the entered location, with
   // compatibility/case/whitespace normalization; never infer aliases or capacity.
   const locationOverlaps = tasks => overlapsBy(tasks,task=>typeof task.schedule.location==='string'?task.schedule.location.normalize('NFKC').trim().replace(/\s+/gu,' ').toLowerCase():'');
+  const overlapsOnDay=(matches,task,date)=>matches.get(task.id)?.some(other=>onDate(other,date));
 
   // A review of saved facts, not a safety certification or a readiness score.
   // Explicitly planned activities retain their intent before a time is set.
@@ -229,26 +251,31 @@
     }
     function clock(state,now=Date.now(),scope={},organizer=false) {
       const day=selectedDate(scope);
-      if(day&&momentKey(now,state.event.timeZone)?.slice(0,10)!==day)return {markup:'',labels:new Map()};
+      if(day&&momentKey(now,state.event.timeZone)?.slice(0,10)!==day)return {markup:'',labels:new Map(),rowDays:new Map()};
       const tasks=scoped(state.tasks,scope).filter(task=>onDate(task,day)),live=timing(tasks,state.event.timeZone,now),byId=new Map(state.tasks.map(task=>[task.id,task]));
-      if(!live.local||!tasks.some(task=>task.schedule))return {markup:'',labels:live.labels};
+      const today=live.local?.slice(0,10),rowDays=new Map([
+        ...live.current.map(task=>[task.id,today]),
+        ...live.next.map(task=>[task.id,task.schedule.start.slice(0,10)]),
+        ...live.followUp.map(task=>[task.id,lastActivityDate(task)]),
+      ]);
+      if(!live.local||!tasks.some(task=>task.schedule))return {markup:'',labels:live.labels,rowDays};
       const verification=ordered(tasks).filter(waitingVerification),amendments=ordered(tasks).filter(evidenceAmended);
-      const group=(title,tasks,empty,{followUp=false,reviewKind=''}={})=>`<div class="schedule-focus-group"><h3>${title}</h3>${reviewKind==='completion'?'<p class="muted schedule-follow-up-help">Recorded completion still needs the required organizer verification. Open an activity to review its result; only the organizer can verify or request changes.</p>':''}${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" ${reviewRoute(task,reviewKind,organizer)}><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span>${liveWarnings(task,state,byId)}</button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
-      return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${verification.length?`<div class="schedule-completion-review">${group('Completion awaiting verification · '+verification.length,verification,'',{reviewKind:'completion'})}</div>`:''}${amendments.length?`<div class="schedule-completion-review"><p class="muted schedule-follow-up-help">The current submission was edited after verification and has not been reviewed. Task verification is unchanged; open the activity to review the amendment.</p>${group('Evidence amended after verification · '+amendments.length,amendments,'',{reviewKind:'amendment'})}</div>`:''}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',{followUp:true})}</div>`:''}</div>`,labels:live.labels};
+      const group=(title,tasks,empty,{followUp=false,reviewKind=''}={})=>`<div class="schedule-focus-group"><h3>${title}</h3>${reviewKind==='completion'?'<p class="muted schedule-follow-up-help">Recorded completion still needs the required organizer verification. Open an activity to review its result; only the organizer can verify or request changes.</p>':''}${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>`<button class="text-button schedule-focus-task" data-schedule-focus-day="${h(rowDays.get(task.id)||today)}" ${reviewRoute(task,reviewKind,organizer)}><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==live.local.slice(0,10)?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}<span class="schedule-focus-meta">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span>${liveWarnings(task,state,byId)}</button>`).join(''):`<p class="muted">${empty}</p>`}</div>`;
+      return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${verification.length?`<div class="schedule-completion-review">${group('Completion awaiting verification · '+verification.length,verification,'',{reviewKind:'completion'})}</div>`:''}${amendments.length?`<div class="schedule-completion-review"><p class="muted schedule-follow-up-help">The current submission was edited after verification and has not been reviewed. Task verification is unchanged; open the activity to review the amendment.</p>${group('Evidence amended after verification · '+amendments.length,amendments,'',{reviewKind:'amendment'})}</div>`:''}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',{followUp:true})}</div>`:''}</div>`,labels:live.labels,rowDays};
     }
     function view(state,organizer,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
-      const tasks=ordered(visible.filter(task=>onDate(task,day))),dates=day?[day]:[...new Set(tasks.map(task=>task.schedule.start.slice(0,10)))];
+      const tasks=ordered(visible.filter(task=>onDate(task,day))),days=activityDateGroups(tasks,day);
       const overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks.filter(task=>onDate(task,day)));
       const pending=visible.filter(needsActivityTime);
       const live=clock(state,now,scope,organizer),hasActivities=state.tasks.some(task=>task.schedule||needsActivityTime(task)),byId=new Map(state.tasks.map(task=>[task.id,task]));
       const shortcuts=Object.entries(activityDays(state,now,scope)).filter(([,date])=>date).map(([key])=>`<button class="btn btn-secondary" type="button" id="schedule-jump-${key}" data-action="jump-schedule-date" data-id="${key}">${activityDayLabels[key]}</button>`).join('');
       const shareDay=day&&scope.shareDay?`<div class="schedule-share"><button class="btn btn-secondary" type="button" data-action="copy-schedule-day" aria-describedby="scheduleDayShareHelp">Copy day link</button><p class="muted" id="scheduleDayShareHelp">Opens this date in the live project. Recipients still need project access. Their view starts with all activities.</p></div>`:'';
-      const dateFilter=(state.tasks.some(task=>task.schedule)||day)?`${shortcuts?`<div class="schedule-date-shortcuts" role="group" aria-label="Jump to an activity day">${shortcuts}</div>`:''}<form id="scheduleDateForm" class="schedule-date-filter"><label class="field">Schedule date<input type="date" id="scheduleDate" name="scheduleDate" value="${h(day)}" min="0001-01-01" max="9999-12-31" required aria-describedby="scheduleDateHelp"></label><button id="applyScheduleDate" class="btn btn-secondary" type="submit">Apply date</button>${day?'<button class="btn btn-secondary" type="button" data-action="clear-schedule-date">Show all dates</button>':''}</form><p class="muted schedule-date-help" id="scheduleDateHelp">${day?'Showing '+h(dateLabel(day))+' in the event time zone. Live clock cues show only for today. The run sheet uses this date.':'All dates shown. Apply a date to focus the schedule and run sheet.'} Before the event still reviews all dates.</p>`:'';
+      const dateFilter=(state.tasks.some(task=>task.schedule)||day)?`${shortcuts?`<div class="schedule-date-shortcuts" role="group" aria-label="Jump to an activity day">${shortcuts}</div>`:''}<form id="scheduleDateForm" class="schedule-date-filter"><label class="field">Schedule date<input type="date" id="scheduleDate" name="scheduleDate" value="${h(day)}" min="0001-01-01" max="9999-12-31" required aria-describedby="scheduleDateHelp"></label><button id="applyScheduleDate" class="btn btn-secondary" type="submit">Apply date</button>${day?'<button class="btn btn-secondary" type="button" data-action="clear-schedule-date">Show all dates</button>':''}</form><p class="muted schedule-date-help" id="scheduleDateHelp">${day?'Showing '+h(dateLabel(day))+' in the event time zone. Live clock cues show only for today. The run sheet uses this date.':'Apply a date to see everything scheduled that day, including activities continuing from an earlier date.'} Before the event still reviews all dates.</p>`:'';
       const awaitingTime=pending.length?`<section class="schedule-pending" aria-labelledby="schedulePendingHeading"><h2 id="schedulePendingHeading">Activities need a start time · ${pending.length}</h2><p class="muted">These are planned activities. They won’t appear on the run sheet until a start time is saved.${day?' Undated activities are shown here regardless of the selected date.':''}</p><ul>${pending.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button>${liveOwner(task,state)}${organizer?`<button class="btn btn-secondary btn-small" data-action="schedule-task" data-id="${h(task.id)}" aria-label="Set start time for ${h(task.title)}">Set start time</button>`:''}</li>`).join('')}</ul></section>`:'';
       const filters=hasActivities?`<div class="schedule-switch" role="group" aria-label="Activity scope"><button class="filter-tab ${scope.mine?'':'active'}" aria-pressed="${!scope.mine}" data-action="schedule-scope" data-id="all">All activities</button><button class="filter-tab ${scope.mine?'active':''}" aria-pressed="${!!scope.mine}" data-action="schedule-scope" data-id="mine">My activities</button></div>`:'';
       const empty=day?`<h2>${scope.mine?'No activities assigned to you on this date':'No scheduled activities on this date'}</h2>${scope.mine&&hasActivities?'<button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':''}`:scope.mine&&hasActivities&&!pending.length?'<h2>No activities assigned to you</h2><button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':pending.length?'<h2>No scheduled activities yet</h2>':`<h2>No scheduled activities</h2>${organizer?(state.event.timeZone?'<p class="muted">Add an activity or schedule an existing task.</p>':needsZone()):'<p class="muted">The organizer can add the event schedule here.</p>'}`;
-      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${dateFilter}${shareDay}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${locationNotice(tasks,locations)}${awaitingTime}${tasks.length?dates.map(date=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${tasks.filter(task=>day||task.schedule.start.startsWith(date)).map(task=>`<button class="schedule-row" data-action="task" data-id="${h(task.id)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}"${live.labels.has(task.id)?'':' hidden'}>${h(live.labels.get(task.id)||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${day?carriedOver(task,day):''}${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlaps.has(task.id)?'<span class="schedule-overlap-label">Owner overlap</span>':''}${locations.has(task.id)?'<span class="schedule-overlap-label">Potential location overlap</span>':''}</span><span class="schedule-owner">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}${liveWarnings(task,state,byId)}</span></button>`).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
+      return `<section class="panel schedule-panel" aria-label="Event schedule">${filters}${dateFilter}${shareDay}${state.event.timeZone?zone(state.event):''}<div data-schedule-clock>${live.markup}</div>${overlaps.size?`<p class="schedule-overlap-summary">${overlaps.size} activities have owner overlaps. Open an activity to review.</p>`:''}${locationNotice(tasks,locations)}${awaitingTime}${tasks.length?days.map(({date,tasks:dayTasks})=>`<section class="schedule-day"><h2>${h(dateLabel(date))}</h2><div class="schedule-list">${dayTasks.map(task=>{const phase=live.rowDays.get(task.id)===date?live.labels.get(task.id):'';return `<button class="schedule-row" data-action="task" data-id="${h(task.id)}" data-schedule-day="${h(date)}"><span class="schedule-time">${h(range(task.schedule))}<span class="schedule-phase" data-schedule-phase="${h(task.id)}" data-schedule-phase-day="${h(date)}"${phase?'':' hidden'}>${h(phase||'')}</span></span><span class="schedule-activity"><strong>${h(task.title)}</strong>${carriedOver(task,date)}${task.schedule.location?`<span class="muted">${h(task.schedule.location)}</span>`:''}${overlapsOnDay(overlaps,task,date)?'<span class="schedule-overlap-label">Owner overlap</span>':''}${overlapsOnDay(locations,task,date)?'<span class="schedule-overlap-label">Potential location overlap</span>':''}</span><span class="schedule-owner">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}${liveWarnings(task,state,byId)}</span></button>`;}).join('')}</div></section>`).join(''):`<div class="schedule-empty">${empty}</div>`}</section>`;
     }
     function details(task,organizer,event,tasks=[]) {
       const current=task.schedule;
@@ -308,7 +335,6 @@
       const tasks=ordered(visible.filter(task=>onDate(task,day))),overlaps=ownerOverlaps(tasks),locations=locationOverlaps(state.tasks.filter(task=>onDate(task,day)));
       const untimed=visible.filter(needsActivityTime).length;
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
-      const days=new Map();
       const name=id=>scheduleOwnerLabel(id,state.members);
       const unavailable=tasks.filter(task=>task.owner&&!resolved(task)&&!state.members.some(member=>member.id===task.owner&&member.active!==false)).length;
       const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
@@ -329,21 +355,20 @@
       const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
       // Deliberately project only schedule facts. Never serialize the workspace,
       // notes, comments, guest records, email, files or private booking details.
-      for(const task of tasks){
-        const start=task.schedule.start.slice(0,10),id=task.id,key=day||start;
-        if(!days.has(key))days.set(key,{label:dateLabel(key),rows:[]});
-        days.get(key).rows.push({title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:task.schedule.location,
-          continues:day&&start<day?'Continues from '+dateLabel(start):'',
-          activityWarnings:[overlaps.has(id)?'Owner overlap':'',locations.has(id)?'Potential location overlap':''].filter(Boolean),
+      const days=activityDateGroups(tasks,day).filter(group=>group.tasks.length).map(({date,tasks:dayTasks})=>({label:dateLabel(date),rows:dayTasks.map(task=>{
+        const start=task.schedule.start.slice(0,10),id=task.id;
+        return {title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:task.schedule.location,
+          continues:start<date?'Continues from '+dateLabel(start):'',
+          activityWarnings:[overlapsOnDay(overlaps,task,date)?'Owner overlap':'',overlapsOnDay(locations,task,date)?'Potential location overlap':''].filter(Boolean),
           owner:name(task.owner),acceptance:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
-          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)});
-      }
+          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
+      })}));
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
         cautions:[untimedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',
-        days:[...days.values()]};
+        days};
     }
     const snapshotDisclaimer='This copy is not live. Confirm changes with your team; scheduled times never mark work complete.';
     const sharingDisclaimer='Team-only schedule facts. Private bookings, guest records and task notes are not included. Share printed or saved copies only with the people who need them; downloaded copies cannot be recalled.';

@@ -163,10 +163,12 @@
       target.focus({preventScroll:true});return true;
     }
     let target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
-      el.tagName===previous.tagName&&['action','id','view','filter','reviewKind'].every(key=>el.dataset[key]===previous.dataset[key])&&
+      el.tagName===previous.tagName&&['action','id','view','filter','reviewKind','scheduleDay'].every(key=>el.dataset[key]===previous.dataset[key])&&
       (previous.dataset.id||el.textContent===previous.textContent));
-    if(!target&&previous.dataset.action==='review-organizer-item'&&previous.classList.contains('schedule-focus-task'))
-      target=focusable(root).find(el=>el.classList.contains('schedule-row')&&el.dataset.action==='task'&&el.dataset.id===previous.dataset.id);
+    if(!target&&['task','review-organizer-item'].includes(previous.dataset.action)&&previous.classList?.contains('schedule-focus-task')){
+      const rows=focusable(root).filter(el=>el.classList.contains('schedule-row')&&el.dataset.action==='task'&&el.dataset.id===previous.dataset.id);
+      target=rows.find(row=>row.dataset.scheduleDay===previous.dataset.scheduleFocusDay)||rows[0];
+    }
     if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
   }
@@ -1925,7 +1927,8 @@
       if(active)restoreFocus(active,$('.schedule-panel'));
     }
     $$('[data-schedule-phase]').forEach(node=>{
-      const label=live.labels.get(node.dataset.schedulePhase)||'';
+      const id=node.dataset.schedulePhase;
+      const label=live.rowDays.get(id)===node.dataset.schedulePhaseDay?live.labels.get(id)||'':'';
       if(node.textContent!==label)node.textContent=label;
       node.hidden=!label;
     });

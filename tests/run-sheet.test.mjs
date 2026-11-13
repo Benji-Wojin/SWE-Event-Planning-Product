@@ -34,6 +34,24 @@ test('personal run sheets contain only the signed-in actor schedule, with truthf
   assert.match(ui.runSheet({...input,tasks:[]},now),/No scheduled activities in this view/);
 });
 
+test('a carryover row only warns about overlaps that actually reach its displayed date',()=>{
+  const input=state();
+  input.tasks=[
+    activity('Overnight check-in','maya','2026-11-20T22:00','2026-11-21T01:00'),
+    activity('Friday handoff','maya','2026-11-20T23:00','2026-11-21T00:00'),
+    activity('Saturday room check','dev','2026-11-21T00:30','2026-11-21T01:30'),
+  ];
+  const model=ui.runSheetModel(input,now),[friday,saturday]=model.days;
+  assert.deepEqual(friday.rows[0].activityWarnings,['Owner overlap','Potential location overlap']);
+  assert.deepEqual(saturday.rows[0].activityWarnings,['Potential location overlap']);
+  assert.deepEqual(saturday,ui.runSheetModel(input,now,{date:'2026-11-21'}).days[0]);
+  assert.match(ui.runSheetMarkup(model),/2 activities have owner overlaps/);
+  const live=GatherScheduleUI.create({h,statusBadge:h}).view(input,false,now);
+  const carriedRow=live.match(/data-id="Overnight check-in" data-schedule-day="2026-11-21"[^>]*>([\s\S]*?)<\/button>/)?.[1];
+  assert.match(carriedRow,/Continues from.*Potential location overlap/);
+  assert.doesNotMatch(carriedRow,/Owner overlap/);
+});
+
 test('explicitly planned but untimed activities stay visible in the right scope, outside the run sheet',()=>{
   const input=state();
   input.tasks=[
