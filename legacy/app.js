@@ -393,12 +393,12 @@
   function hasAcceptanceReturnDraft() {
     return !!(ui.acceptanceReturn?.selected.length&&ui.acceptanceReturn.actor===ui.actor);
   }
-  function confirmCloseDialog() {
+  function confirmCloseDialog(keepAssignmentReview=false) {
     if($('#budgetForm')?.dataset?.budgetUnconfirmed==='true')
       return window.confirm('Close without confirming this Budget change? Your original change may have saved. Check Recent budget changes before entering it again.');
     if($('#dialog [data-completion-save-unconfirmed="true"]'))
       return window.confirm('Close without confirming this completion save? Your edits may have saved. Copy anything you need before closing, then reload the project to check.');
-    if(hasAcceptanceReturnDraft())
+    if(!keepAssignmentReview&&hasAcceptanceReturnDraft())
       return window.confirm('Close the assignment review and discard your selections and any unsaved task edits?');
     return confirmDiscard($('#dialog'));
   }
@@ -1379,6 +1379,7 @@
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
+    if(!['task','delete-task'].includes(kind))ui.completionLinkedReturn=null;
     if(kind!=='first-schedule')ui.firstScheduleEditor=null;
     if(kind!=='before-event-review')ui.eventReviewSnapshot=null;
     if(kind!=='schedule-from-review')ui.eventScheduleEditor=null;
@@ -1402,7 +1403,10 @@
     const assignmentBack=kind==='task'&&ui.acceptanceReturn&&ui.acceptanceReturn.actor===ui.actor&&ui.acceptanceReturn.view===ui.view&&!window.GatherAccessLost;
     const back=assignmentBack?['return-to-acceptance-review','Back to assignment review']:reviewBack?['return-to-event-task-review','Back to event review']:null;
     const comparisonBack=kind==='task'&&ui.overlapComparison&&activeOverlapComparison();
-    const backButtons=(comparisonBack?'<button type="button" class="text-button" data-action="return-to-overlap-review">← Back to overlap review</button>':'')+
+    const requiredBack=kind==='task'&&ui.completionLinkedReturn&&ui.completionLinkedReturn.targetId===ui.detailId&&
+      completionLinkedReturnInScope(ui.completionLinkedReturn);
+    const backButtons=(requiredBack?'<button id="completionLinkedImpactBack" type="button" class="text-button" data-action="return-to-completion-linked-impact">← Back to Required by</button>':'')+
+      (comparisonBack?'<button type="button" class="text-button" data-action="return-to-overlap-review">← Back to overlap review</button>':'')+
       (back?`<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button>`:'');
     $('#dialog').innerHTML=`<div class="dialog-header">${backButtons?`<div class="event-review-task-heading">${heading}${backButtons}</div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
     $('#dialogBackdrop').hidden=false;
@@ -1430,6 +1434,7 @@
     ui.notificationScheduleReview=null;
     ui.linkedResultsReview=null;
     ui.resumeReceipt=null;
+    ui.completionLinkedReturn=null;
     ui.firstScheduleEditor=null;
     ui.eventReviewSnapshot=null;
     ui.eventScheduleEditor=null;
@@ -2912,6 +2917,10 @@
     }).join('')}</ul>`:'';
     return {shownIds,markup:`<section class="section-gap" aria-labelledby="completionLinkedImpactHeading"><h3 id="completionLinkedImpactHeading" tabindex="-1">Required by</h3><p class="muted">These tasks require this result. Completing required work doesn’t resume a blocked task or verify a completion report.</p>${group('Required work complete',complete)}${group('Still waiting on required work',waiting)}</section>`};
   }
+  function completionLinkedReturnInScope(link,state=store.getState()) {
+    return !!link&&!window.GatherAccessLost&&isOrganizer()&&link.actor===ui.actor&&link.view===ui.view&&
+      link.project===window.GatherMode?.projectId&&link.demo===window.GatherMode?.demo&&link.generation===state.demoGeneration;
+  }
   function openCompletionLinkedTarget(id,opener) {
     const dialog=$('#dialog'),heading=$('#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
     if(ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||!id||!opener?.isConnected||
@@ -2924,7 +2933,40 @@
     if(!completionLinkedImpact(source,state,state.tasks).shownIds.has(id)){
       toast('This task is no longer in the required-work review.');return;
     }
+    const batch=ui.relatedBatch,comparison=ui.overlapComparison;
+    ui.completionLinkedReturn={sourceId:source.id,targetId:id,actor:ui.actor,view:ui.view,project:window.GatherMode?.projectId,
+      demo:window.GatherMode?.demo,generation:state.demoGeneration,overlapDay:ui.overlapReviewDay||'',
+      relatedBatch:batch&&{...batch,ids:[...batch.ids]},overlapComparison:comparison?.peerId===source.id?comparison:null};
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+  }
+  function returnToCompletionLinkedImpact(opener) {
+    const link=ui.completionLinkedReturn,dialog=$('#dialog'),state=store.getState();
+    if(!completionLinkedReturnInScope(link,state)||ui.pendingSave||document.hidden||ui.dialogKind!=='task'||
+      ui.detailId!==link.targetId||$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener!==$('#completionLinkedImpactBack',dialog)||opener.dataset.action!=='return-to-completion-linked-impact'||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+      showPendingUpdate();toast('Refresh the project before returning to this review.');return false;
+    }
+    if(!state.tasks.some(task=>task.id===link.sourceId&&!task.archivedAt)){
+      toast('The original task is no longer available.');return false;
+    }
+    if(!confirmCloseDialog(true))return false;
+    const {relatedBatch,overlapComparison,overlapDay}=link;
+    if(relatedBatch&&relatedBatchInScope(relatedBatch))ui.relatedBatch=relatedBatch;
+    if(overlapComparison&&overlapComparisonInScope(overlapComparison)&&state.tasks.some(task=>task.id===overlapComparison.originId&&!task.archivedAt))
+      ui.overlapComparison=overlapComparison;
+    taskDialog(link.sourceId,'',false,true,'',undefined,overlapDay,{readOnly:true});
+    const title=$('#dialogTitle',dialog),revision=store.getSnapshotRevision?.();
+    requestAnimationFrame(()=>{
+      if(document.hidden||!completionLinkedReturnInScope(link)||ui.dialogKind!=='task'||ui.detailId!==link.sourceId||
+        $('#dialogBackdrop').hidden||!title||$('#dialogTitle',dialog)!==title||document.activeElement!==title||
+        store.getSnapshotRevision?.()!==revision||workspaceUpdatesPending()||scheduleRevisionIsStale(revision))return;
+      const heading=$('#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
+      const row=section&&focusable(section).find(el=>el.hasAttribute('data-completion-linked-target')&&el.dataset.id===link.targetId);
+      focusTaskDialogControl(row||heading||title,dialog);
+    });
+    return true;
   }
   function dependencyMarkup(task) {
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
@@ -3099,6 +3141,8 @@
   function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
+    if(ui.completionLinkedReturn&&(ui.completionLinkedReturn.targetId!==id||!completionLinkedReturnInScope(ui.completionLinkedReturn,taskState)))
+      ui.completionLinkedReturn=null;
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
     if(!sameTask){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
@@ -3214,7 +3258,8 @@
     const fromWrapLesson=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='open-lesson-linked-task'&&ui.lastFocus.dataset.id===id;
     const linkedReview=ui.linkedResultsReview;
     const fromLinkedResults=linkedReview?.id===id&&linkedReview.actor===ui.actor&&linkedReview.project===window.GatherMode?.projectId;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
+    const fromRequiredReview=ui.completionLinkedReturn?.targetId===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -4056,6 +4101,7 @@
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
+    if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
     if(action==='use-latest-lesson'){useLatestLesson(el);return;}
     if(action==='discard-completion-draft'){
