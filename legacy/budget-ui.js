@@ -25,6 +25,8 @@
     const mode = () => archived ? 'archived' : 'active';
     function linkedTaskOrigin(opener) {
       const data = opener?.dataset;
+      if (['active','archived'].includes(data?.budgetReviewIncomplete) && data.budgetScope === scopeKey())
+        return {review:data.budgetReviewIncomplete,mode:mode(),scope:data.budgetScope};
       const costId = data?.budgetTask || data?.budgetCostHeading;
       if (!costId || data.budgetMode !== mode() || data.budgetScope !== scopeKey()) return null;
       return {costId,taskId:data.budgetTask ? data.id : '',mode:data.budgetMode,scope:data.budgetScope};
@@ -38,9 +40,10 @@
     }
     function focusLinkedCost(origin) {
       if (!host?.isConnected || root.GatherAccessLost || isDialogOpen() || origin.mode !== mode() || origin.scope !== scopeKey()) return false;
-      const linked = [...host.querySelectorAll('[data-budget-task]')].find(el =>
-        el.dataset.budgetTask === origin.costId && el.dataset.id === origin.taskId);
-      const cost = [...host.querySelectorAll('[data-budget-cost-heading]')].find(el => el.dataset.budgetCostHeading === origin.costId);
+      const linked = origin.review
+        ? [...host.querySelectorAll('[data-budget-review-incomplete]')].find(el => el.dataset.budgetReviewIncomplete === origin.review)
+        : [...host.querySelectorAll('[data-budget-task]')].find(el => el.dataset.budgetTask === origin.costId && el.dataset.id === origin.taskId);
+      const cost = origin.costId && [...host.querySelectorAll('[data-budget-cost-heading]')].find(el => el.dataset.budgetCostHeading === origin.costId);
       return [linked,cost,host.querySelector('#budgetCostsHeading'),host.querySelector('#budgetHeading')]
         .some(el => el && !el.closest('[hidden],[inert]') && focusControl(el));
     }
@@ -121,6 +124,39 @@
       const missing = forecast.unknown;
       return `At least ${money(forecast.known)}<small>${missing} ${missing === 1 ? 'cost is' : 'costs are'} still incomplete</small>`;
     }
+    function incompleteForecast(budget) {
+      return budget.items.filter(row => B.forecastAmount(row).missing);
+    }
+    function incompleteReviewMarkup(budget) {
+      const missing = incompleteForecast(budget);
+      if (!missing.length) return '';
+      const counts = {active:0,archived:0};
+      for (const row of missing) counts[row.archivedAt ? 'archived' : 'active']++;
+      return `<div class="budget-incomplete-review">${Object.entries(counts).filter(([,count])=>count).map(([key,count])=>
+        `<button type="button" class="text-button" data-budget-review-incomplete="${key}" data-budget-scope="${h(scopeKey())}">Review ${count} incomplete ${key==='active'?'current':'archived'} ${count===1?'cost':'costs'}</button>`).join('')}</div>`;
+    }
+    const incompleteCostId = id => 'budget-incomplete-'+String(id).replace(/[^a-zA-Z0-9-]/g,value=>'_'+value.charCodeAt(0).toString(16)+'_');
+    function incompleteCostMarkup(row) {
+      const {missing} = B.forecastAmount(row);
+      if (!missing) return '';
+      const reason = missing === 'payment' ? 'Cancelled: no net payment recorded.' :
+        row.paid === null ? 'Missing an estimate or committed amount.' :
+        'Missing an estimate or committed amount. The payment is only a minimum.';
+      return `<p class="budget-incomplete-cost" id="${h(incompleteCostId(row.id))}"><strong>Incomplete forecast.</strong> ${reason}</p>`;
+    }
+    function reviewIncompleteCosts(button) {
+      const key = button.dataset.budgetReviewIncomplete;
+      if (!['active','archived'].includes(key) || root.GatherAccessLost || isDialogOpen() ||
+        disclosureScope !== scopeKey() || button.dataset.budgetScope !== scopeKey() ||
+        !host?.isConnected || !button.isConnected || !host.contains(button) ||
+        !state?.budget.enabled) return;
+      const nextArchived = key === 'archived';
+      const first = incompleteForecast(state.budget).find(row => Boolean(row.archivedAt) === nextArchived);
+      if (!first) return;
+      archived = nextArchived;
+      render({preserveFocus:false});
+      focusLinkedCost({costId:first.id,taskId:'',mode:mode(),scope:scopeKey()});
+    }
     function targetComparison(target, totals) {
       if (target === null) return 'No target set';
       if (totals.remaining === null) {
@@ -132,9 +168,9 @@
         ? `${money(totals.remaining)} below target`
         : `${money(-totals.remaining)} over target`;
     }
-    function render() {
+    function render({preserveFocus=true}={}) {
       if (!host?.isConnected || !state) return;
-      const active = document.activeElement;
+      const active = preserveFocus ? document.activeElement : null;
       const focus = host.contains?.(active)
         ? [...active.attributes].find(
             (attribute) =>
@@ -160,7 +196,7 @@
       host.innerHTML = `<div class="page-heading"><h1 id="budgetHeading" tabindex="-1">Budget</h1><div class="header-actions">${admin ? '<button class="btn ' + (budget.enabled ? 'btn-secondary' : 'btn-primary') + '" data-budget-settings>' + (budget.enabled ? 'Settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">Shared with your project. Weft tracks amounts you enter and never moves money.</p>${
         !budget.enabled
           ? `<section class="panel"><h2>${budget.items.length ? 'Budget tracking is off' : 'Keep costs in view, when you need to'}</h2><p>${budget.items.length ? 'Saved costs are preserved. The organizer can enable tracking again in Budget settings.' : 'Track estimates, commitments and payments you record yourself. Skip this page if your event does not need a budget.'}</p>${!admin ? '<p class="muted">Only the organizer can enable or edit this tracker.</p>' : ''}</section>`
-          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${forecastSummary(totals.forecast)}</strong></section><section class="panel"><h2>Payments recorded</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2 id="budgetCostsHeading" tabindex="-1">${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
+          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${forecastSummary(totals.forecast)}</strong>${incompleteReviewMarkup(budget)}</section><section class="panel"><h2>Payments recorded</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2 id="budgetCostsHeading" tabindex="-1">${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
               rows.length
                 ? `<ul class="budget-items">${rows
                     .map((row) => {
@@ -174,7 +210,7 @@
                         ? owner.name + (activeBudgetMember(owner) ? '' : ' (former teammate)')
                         : row.owner ? 'Unavailable owner' : '';
                       const metadata=[ownerLabel,row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
-                      return `<li><div class="budget-item-heading"><h3 tabindex="-1" data-budget-cost-heading="${h(row.id)}" data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
+                      return `<li><div class="budget-item-heading"><h3 tabindex="-1" data-budget-cost-heading="${h(row.id)}"${B.forecastAmount(row).missing?` aria-describedby="${h(incompleteCostId(row.id))}"`:''} data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
                         ['estimate', 'Estimate'],
                         ['committed', 'Committed'],
                         ['paid', 'Paid'],
@@ -183,7 +219,7 @@
                           ([key, label]) =>
                             `<div><dt>${label}</dt><dd>${money(row[key])}</dd></div>`,
                         )
-                        .join('')}</dl>${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button type="button" class="text-button" data-action="budget-linked-task" data-id="${h(task.id)}" data-budget-task="${h(row.id)}" aria-label="${h('Task: '+task.title+' · Cost: '+row.title)}" data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
+                        .join('')}</dl>${incompleteCostMarkup(row)}${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button type="button" class="text-button" data-action="budget-linked-task" data-id="${h(task.id)}" data-budget-task="${h(row.id)}" aria-label="${h('Task: '+task.title+' · Cost: '+row.title)}" data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
                     })
                     .join('')}</ul>`
                 : `<p class="notice">${archived ? 'No archived costs.' : 'No costs yet. Add a quote, deposit or other expected expense.'}</p>`
@@ -412,6 +448,7 @@
       host.addEventListener('click', (event) => {
         const button = event.target.closest('button');
         if (!button) return;
+        if (button.dataset.budgetReviewIncomplete) reviewIncompleteCosts(button);
         if (button.hasAttribute('data-budget-refresh')) load();
         if (button.hasAttribute('data-budget-settings')) settingsDialog();
         if (button.hasAttribute('data-budget-add')) itemDialog();

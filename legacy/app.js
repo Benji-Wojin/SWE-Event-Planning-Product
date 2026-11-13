@@ -298,7 +298,7 @@
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
     if(isScheduleControl(previous))
       return restoreScheduleFocus(previous,root);
-    if((previous.dataset.action==='budget-linked-task'||previous.dataset.budgetCostHeading)&&ui.view==='budget')
+    if((previous.dataset.action==='budget-linked-task'||previous.dataset.budgetCostHeading||previous.dataset.budgetReviewIncomplete)&&ui.view==='budget')
       return !!projectBudget?.restoreLinkedTaskFocus(previous);
     if(previous.dataset.action==='wrap-review-task')
       return restoreWrapReviewFocus(previous,root);

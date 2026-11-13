@@ -121,6 +121,13 @@
       status: value.status,
     };
   }
+  function forecastAmount(row) {
+    const cancelled = row.status === 'cancelled';
+    const planned = cancelled ? row.paid : (row.committed ?? row.estimate);
+    // A recorded payment is a minimum even without a planned amount.
+    return { minimum: Math.max(planned ?? 0, row.paid ?? 0),
+      missing: planned === null ? cancelled ? 'payment' : 'planned' : '' };
+  }
   function totals(budget) {
     const result = Object.fromEntries(
       ['estimate', 'committed', 'paid', 'forecast'].map((key) => [
@@ -135,11 +142,9 @@
         if (row[key] === null) result[key].unknown++;
         else result[key].known += row[key];
       }
-      const planned =
-        row.status === 'cancelled' ? row.paid : (row.committed ?? row.estimate);
-      if (planned === null) result.forecast.unknown++;
-      // A recorded payment is a minimum even without a planned amount.
-      result.forecast.known += Math.max(planned ?? 0, row.paid ?? 0);
+      const forecast = forecastAmount(row);
+      if (forecast.missing) result.forecast.unknown++;
+      result.forecast.known += forecast.minimum;
     }
     result.remaining =
       budget.target !== null && result.forecast.unknown === 0
@@ -155,6 +160,7 @@
     amount,
     inputAmount,
     format,
+    forecastAmount,
     totals,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
