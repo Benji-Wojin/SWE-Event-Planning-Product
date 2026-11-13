@@ -2095,6 +2095,9 @@
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
     if(ui.dialogKind==='acceptance'){paintAcceptanceRefresh();return;}
     if(ui.dialogKind==='assignment'){paintAssignmentRefresh();return;}
+    if(ui.dialogKind==='lesson-follow-up'&&store.refresh){
+      markLessonDraftForReview($('#newTaskForm'),{afterRevision:Number.isSafeInteger(newerRevision)?newerRevision-1:undefined});return;
+    }
     if(ui.dialogKind==='task'){paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications')return;
     const previous=$('#dialogStaleNotice');
@@ -2965,6 +2968,133 @@
   function isActionableLesson(lesson) {
     return !!(lesson?.active&&lesson.outcome!=='did-not-help'&&lesson.change?.trim());
   }
+  const lessonDraftReviews=new WeakMap();
+  function lessonDraftContext(form) {
+    return !!(form?.isConnected&&form.id==='newTaskForm'&&form.dataset.lessonFollowUp&&
+      ui.view==='memory'&&ui.dialogKind==='lesson-follow-up'&&!window.GatherAccessLost&&
+      !$('#dialogBackdrop').hidden&&$('#newTaskForm',$('#dialog'))===form);
+  }
+  function markLessonDraftForReview(form,{afterRevision,uncertain=false,reset=false}={}) {
+    if(!lessonDraftContext(form)||!store.refresh)return;
+    const panel=$('#lessonDraftRecovery',form),status=$('#lessonDraftStatus',form);
+    const check=$('[data-action="refresh-lesson-draft"]',form),use=$('[data-action="use-latest-lesson"]',form);
+    if(!panel||!status||!check||!use)return;
+    const previous=lessonDraftReviews.get(form);
+    if(previous?.uncertain)return;
+    const floor=Number.isSafeInteger(afterRevision)?Math.max(afterRevision,previous?.floor??-1):previous?.floor??-1;
+    if(previous&&!uncertain&&!reset&&previous.floor===floor)return;
+    const review={floor,uncertain,actor:ui.actor,project:window.GatherMode?.projectId,generation:store.getState().demoGeneration};
+    lessonDraftReviews.set(form,review);
+    panel.hidden=false;check.hidden=uncertain;use.hidden=true;
+    $('#lessonDraftLatest',form).hidden=true;
+    $('button[type="submit"]',form).setAttribute('aria-disabled','true');
+    const message=uncertain?'We couldn’t confirm whether this task was added. Your draft is still here, but can’t be retried from this form. Check Shared tasks before creating it again.':
+      'Check the latest lesson before adding this task. Your draft hasn’t changed.';
+    if(status.textContent!==message)status.textContent=message;
+  }
+  function currentLessonDraftReview(form,review) {
+    return lessonDraftContext(form)&&!!review&&lessonDraftReviews.get(form)===review&&
+      ui.actor===review.actor&&window.GatherMode?.projectId===review.project&&store.getState().demoGeneration===review.generation;
+  }
+  function clearLessonDraftReview(form,message) {
+    lessonDraftReviews.delete(form);
+    $('[data-action="refresh-lesson-draft"]',form).hidden=true;
+    $('[data-action="use-latest-lesson"]',form).hidden=true;
+    $('#lessonDraftLatest',form).hidden=true;
+    $('.form-error',form)?.remove();
+    $('#lessonDraftStatus',form).textContent=message;
+    const submit=$('button[type="submit"]',form);
+    submit.removeAttribute('aria-disabled');
+    return submit;
+  }
+  function lessonDraftRevisionCurrent(revision,review) {
+    return Number.isSafeInteger(revision)&&revision>review.floor&&!scheduleRevisionIsStale(revision)&&!recoveryConflictPending(revision);
+  }
+  async function refreshLessonDraft(button) {
+    const form=button.closest('form'),review=lessonDraftReviews.get(form);
+    const same=()=>currentLessonDraftReview(form,review)&&button.isConnected&&button===$('[data-action="refresh-lesson-draft"]',form);
+    const ready=()=>same()&&!ui.pendingSave&&!document.hidden;
+    if(!store.refresh||ui.syncing||!ready()||review.uncertain||button.hidden||button.getAttribute('aria-disabled')==='true')return;
+    const status=$('#lessonDraftStatus',form),latest=$('#lessonDraftLatest',form),use=$('[data-action="use-latest-lesson"]',form);
+    const id=form.dataset.lessonFollowUp;
+    delete review.candidate;
+    latest.hidden=true;use.hidden=true;
+    ui.syncing=true;button.setAttribute('aria-disabled','true');
+    status.textContent='Checking the latest lesson…';
+    try{
+      const result=await store.refresh((revision,state)=>ready()&&lessonDraftRevisionCurrent(revision,review)&&
+        Array.isArray(state?.memories)&&state.demoGeneration===review.generation,{requireFresh:true});
+      if(!same())return;
+      if(result.pending&&Number.isSafeInteger(result.newerRevision))review.floor=Math.max(review.floor,result.newerRevision-1);
+      if(!ready()){status.textContent='Check paused. Your draft is still here. Try again.';return;}
+      const revision=store.getSnapshotRevision(),state=store.getState();
+      if(!result.verified||result.pending||!lessonDraftRevisionCurrent(revision,review))throw new Error('Unconfirmed lesson');
+      const matches=state.memories.filter(item=>item.id===id),lesson=matches.length===1?matches[0]:null;
+      const notice=$('#workspaceSyncNotice');if(notice)notice.hidden=true;
+      const repaint=result.changed||ui.toolUpdatePending;
+      ui.toolUpdatePending=false;
+      if(repaint)render();
+      if(!ready())return;
+      if(!canCreateTasks()||!isActionableLesson(lesson)){
+        status.textContent=(!canCreateTasks()?'You can no longer add tasks in this project.':
+          'This lesson is no longer available for follow-up.')+' Your draft is still here to copy. Nothing was added.';
+        return;
+      }
+      refreshLessonDraftOwners(form,state);
+      const editedAt=lesson.editedAt||'';
+      const reference=$('#lessonDraftReference',$('#dialog'));
+      if(editedAt===form.dataset.lessonEditedAt&&reference?.textContent===lesson.change){
+        const focused=document.activeElement===button;
+        const submit=clearLessonDraftReview(form,'The lesson is unchanged. Your draft is still here. Choose Add task when ready.');
+        if(focused)submit.focus();
+        return;
+      }
+      review.candidate={id,editedAt,change:lesson.change,revision};
+      $('blockquote',latest).textContent=lesson.change;
+      const scope=({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[lesson.scope];
+      const details=$('[data-lesson-draft-details]',latest);
+      details.textContent=[scope&&'Applies: '+scope,'Outcome: '+(lesson.outcome==='helped'?'Previously helped':'Not evaluated'),
+        lesson.context&&'Context: '+lesson.context,lesson.outcomeNote&&'Outcome notes: '+lesson.outcomeNote].filter(Boolean).join('\n');
+      latest.hidden=false;use.hidden=false;
+      status.textContent='This lesson was edited. Review the latest version below before using it. Your task draft hasn’t changed.';
+    }catch{
+      if(same())status.textContent='Couldn’t confirm the latest lesson. Your draft is still here. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
+  function useLatestLesson(button) {
+    const form=button.closest('form'),review=lessonDraftReviews.get(form),candidate=review?.candidate;
+    if(!currentLessonDraftReview(form,review)||ui.pendingSave||ui.syncing||document.hidden||review.uncertain||
+      !candidate||button.hidden||!button.isConnected||button!==$('[data-action="use-latest-lesson"]',form))return false;
+    const {id,editedAt,change,revision}=candidate,state=store.getState();
+    const matches=state.memories.filter(item=>item.id===id),lesson=matches.length===1?matches[0]:null;
+    const reference=$('#lessonDraftReference',$('#dialog'));
+    if(!reference||!canCreateTasks()||form.dataset.lessonFollowUp!==id||store.getSnapshotRevision()!==revision||
+      !lessonDraftRevisionCurrent(revision,review)||!isActionableLesson(lesson)||(lesson.editedAt||'')!==editedAt||lesson.change!==change){
+      markLessonDraftForReview(form,{reset:true});$('[data-action="refresh-lesson-draft"]',form)?.focus();return false;
+    }
+    form.dataset.lessonEditedAt=editedAt;
+    reference.textContent=change;
+    clearLessonDraftReview(form,'Latest lesson selected. Your draft is still here. Choose Add task when ready.').focus();
+    return true;
+  }
+  function lessonDraftRecoveryMarkup() {
+    return '<div class="notice lesson-follow-up-reference" id="lessonDraftRecovery" hidden><p id="lessonDraftStatus" role="status" tabindex="-1"></p>'+
+      '<div id="lessonDraftLatest" hidden><p><strong>Latest version</strong></p><blockquote></blockquote><p data-lesson-draft-details></p></div>'+
+      '<div class="inline"><button type="button" class="btn btn-secondary" data-action="refresh-lesson-draft">Check latest lesson</button>'+
+      '<button type="button" class="btn btn-secondary" data-action="use-latest-lesson" hidden>Use this lesson</button></div></div>';
+  }
+  function refreshLessonDraftOwners(form,state) {
+    const select=form.elements.owner;
+    if(!isOrganizer()||!select?.options)return;
+    const selected=select.value;
+    const current=state.members.find(person=>person.id===selected&&person.active!==false);
+    select.innerHTML=ownerOptions('')+(selected&&!current?`<option value="${h(selected)}">Previous owner unavailable — choose another</option>`:'');
+    select.value=selected;
+    const load=$('[data-owner-load]',form);if(load)load.innerHTML=recovery.ownerLoad(selected);
+  }
   function openLessonFollowUp(id,opener) {
     if(ui.view!=='memory'||window.GatherAccessLost||!canCreateTasks()||!$('#dialogBackdrop').hidden||
       !opener?.isConnected||opener.dataset.action!=='draft-lesson-follow-up'||opener.dataset.id!==id||
@@ -2975,6 +3105,7 @@
     if(!isActionableLesson(lesson)){render();toast('This lesson is no longer available for a follow-up.');return false;}
     newTaskDialog(false,lesson);
     ui.lastFocus=opener;
+    if(store.refresh&&workspaceUpdatesPending())markLessonDraftForReview($('#newTaskForm'));
     return true;
   }
   function newTaskDialog(firstTask=false,lesson=null,wrapFollowUp=!!lesson) {
@@ -2999,9 +3130,9 @@
       return;
     }
     const organizer=isOrganizer();
-    const reference=lesson?`<section class="notice lesson-follow-up-reference" aria-label="Source lesson"><p><strong>From this lesson</strong></p><blockquote>${h(lesson.change)}</blockquote><p>Write the action you want the team to take. When you save, the task will be linked here in Wrap up. The lesson text won’t be copied into the task.</p></section>`:'';
+    const reference=lesson?`<section class="notice lesson-follow-up-reference" aria-label="Source lesson"><p><strong>From this lesson</strong></p><blockquote id="lessonDraftReference">${h(lesson.change)}</blockquote><p>Write the action you want the team to take. When you save, the task will be linked here in Wrap up. The lesson text won’t be copied into the task.</p></section>`:'';
     const source=lesson?` data-lesson-follow-up="${h(lesson.id)}" data-lesson-edited-at="${h(lesson.editedAt||'')}"`:'';
-    openDialog(lesson?'Draft follow-up task':'Add task',`${reference}${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"${wrapFollowUp?' data-wrap-follow-up="true"':''}${source}><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="Describe the result that means this task is finished."></textarea><small>Shared with the team and kept separately from progress updates. Do not include private booking codes or credentials.</small></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions">${wrapFollowUp?'<button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button>':''}<button class="btn btn-primary" type="submit">Add task</button></div></form>`,'',false,lesson?'lesson-follow-up':wrapFollowUp?'wrap-follow-up':'');
+    openDialog(lesson?'Draft follow-up task':'Add task',`${reference}${organizer?'':'<p class="notice">Add a task for yourself or leave it unassigned for someone to claim. New tasks start as To do.</p>'}<form id="newTaskForm"${wrapFollowUp?' data-wrap-follow-up="true"':''}${source}>${lesson&&store.refresh?lessonDraftRecoveryMarkup():''}<div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" placeholder="What needs to happen?"></label><label class="field">Owner<select name="owner">${organizer?ownerOptions(''):options([['','Unassigned'],[ui.actor,'Me · '+member(ui.actor).name]],'')}</select></label><div data-owner-load class="full-width"></div><label class="field">Due date<input name="dueDate" type="date"></label><label class="field">Category<select name="category">${options(['Guest care','Food & drink','Transport','Venue','Program'].map(x=>[x,x]),'Guest care')}</select></label>${organizer?`<label class="field">Status<select name="status">${statusOptions('todo')}</select></label>`:''}<label class="field full-width">Done when (optional)<textarea name="scope" rows="2" maxlength="3000" placeholder="Describe the result that means this task is finished."></textarea><small>Shared with the team and kept separately from progress updates. Do not include private booking codes or credentials.</small></label><label class="field full-width">Context<textarea name="note" rows="3" maxlength="3000" placeholder="What does the owner need to know?"></textarea></label></div><div class="form-actions">${wrapFollowUp?'<button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button>':''}<button class="btn btn-primary" type="submit">Add task</button></div></form>`,'',false,lesson?'lesson-follow-up':wrapFollowUp?'wrap-follow-up':'');
   }
   function followupDialog(id) {
     const task=store.getState().tasks.find(t=>t.id===id);
@@ -3658,6 +3789,8 @@
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
+    if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
+    if(action==='use-latest-lesson'){useLatestLesson(el);return;}
     if(action==='discard-completion-draft'){
       const form=el.closest('form'),dialog=$('#dialog');
       if(ui.dialogKind==='task'&&!window.GatherAccessLost&&form?.dataset.id===ui.detailId&&
@@ -3926,6 +4059,13 @@
     event.preventDefault();
     if(form.id==='guestAgendaForm')return;
     if(ui.pendingSave||form.dataset.saving==='true')return;
+    if(form.id==='newTaskForm'&&ui.dialogKind==='lesson-follow-up'&&lessonDraftReviews.has(form)){
+      const action=lessonDraftReviews.get(form).candidate?'use-latest-lesson':'refresh-lesson-draft';
+      const control=$('[data-action="'+action+'"]',form);
+      if(control&&!control.hidden)control.focus();
+      else focusScheduleTarget($('#lessonDraftStatus',form));
+      return;
+    }
     if(form.id==='returnCompletionForm'){await saveReviewedCompletion(form,form.elements.note.value);return;}
     if(form.id==='acceptTasksForm'){
       if(ui.dialogKind!=='acceptance'||form!==$('#acceptTasksForm'))return;
@@ -3982,6 +4122,8 @@
     $('.form-error',form)?.remove();
     const assignmentReview=['acceptTasksForm','assignTasksForm'].includes(form.id);
     const assignmentReviewRevision=assignmentReview?store.getSnapshotRevision?.():undefined;
+    const lessonSave=form.id==='newTaskForm'&&ui.dialogKind==='lesson-follow-up'&&store.refresh&&lessonDraftContext(form)?{revision:store.getSnapshotRevision(),actor:ui.actor,
+      project:window.GatherMode?.projectId,generation:store.getState().demoGeneration}:null;
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='rescheduleDateForm'){
@@ -4026,7 +4168,15 @@
           throw new Error('Review the source lesson before saving this follow-up.');
         const taskData=lessonDraft?{...data,lessonId,lessonEditedAt:form.dataset.lessonEditedAt}:
           activity?GatherScheduleUI.newActivityTask(data):data;
+        if(lessonSave){lessonSave.attempted=true;lessonSave.priorIds=new Set(store.getState().tasks.map(item=>item.id));}
         const task=store.addTask(taskData,actor);
+        if(lessonSave){
+          const current=store.getState().tasks.find(item=>item.id===task?.id),revision=store.getSnapshotRevision();
+          if(typeof task?.id!=='string'||!task.id||lessonSave.priorIds.has(task.id)||task.memoryId!==lessonId||
+            current?.memoryId!==lessonId||!Number.isSafeInteger(revision)||revision<=lessonSave.revision)
+            throw new Error('Could not confirm the linked task.');
+        }
+        if(lessonSave)lessonSave.confirmed=true;
         if(wrapDraft){
           if(sameWrapDraft()){
             if(typeof task?.id==='string'&&task.id)
@@ -4168,6 +4318,20 @@
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
     }catch(error){
+      if(lessonSave?.attempted&&!lessonSave.confirmed&&lessonDraftContext(form)&&ui.actor===lessonSave.actor&&window.GatherMode?.projectId===lessonSave.project&&
+        store.getState().demoGeneration===lessonSave.generation){
+        const staleLesson=error.status===400&&['This lesson changed after you opened the draft. Review the current lesson before saving.',
+          'This lesson is no longer available for a follow-up. Review the current lesson before saving.'].includes(error.message);
+        const rejected=error.status===409||staleLesson||[401,403,404].includes(error.status);
+        if(rejected||!Number.isInteger(error.status)||[408,429].includes(error.status)||error.status>=500){
+          markLessonDraftForReview(form,{afterRevision:error.status===409?lessonSave.revision:undefined,uncertain:!rejected,reset:true});
+          queueMicrotask(()=>{if(lessonDraftContext(form)&&lessonDraftReviews.has(form)&&document.activeElement===event.submitter){
+            const button=$('[data-action="refresh-lesson-draft"]',form);
+            if(button&&!button.hidden)button.focus();else focusScheduleTarget($('#lessonDraftStatus',form));
+          }});
+          return;
+        }
+      }
       if(error.status===409&&assignmentReview){showRecoveryWriteConflict(assignmentReviewRevision);return;}
       if(error.status===409&&taskAcceptance&&!window.GatherAccessLost){
         if(taskAcceptanceButton()===taskAcceptance)taskAcceptance.dataset.reviewNeedsRefresh='true';

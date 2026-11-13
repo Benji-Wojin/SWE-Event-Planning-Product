@@ -23,7 +23,7 @@ test('the lesson is an escaped reference outside a blank existing task form', ()
   const context = vm.createContext({ ui, h, guidedWorkspace: false, canCreateTasks: () => true, isOrganizer: () => true,
     ownerOptions: selected => `<option value=""${selected ? '' : ' selected'}>Unassigned</option>`,
     options: () => '<option>Default</option>', statusOptions: value => `<option value="${value}">To do</option>`,
-    openDialog(...args) { events.push(args); },
+    store: {}, openDialog(...args) { events.push(args); },
   });
   vm.runInContext(fragment('  function newTaskDialog(', '  function followupDialog('), context);
   const before = structuredClone(original);
@@ -164,7 +164,7 @@ test('hosted confirmation awaits the existing task write, sending only user fiel
   assert.match(prepare, /'addTask'/);
   assert.match(prepare, /'await store\.\$1\('/);
   const submit = fragment("      if(form.id==='newTaskForm')", "      if(form.id==='scheduleForm'").replace('store.addTask(', 'await store.addTask(');
-  vm.runInContext(`async function submit(form,data) {${submit}}`, context);
+  vm.runInContext(`async function submit(form,data) {const lessonSave=null;${submit}}`, context);
   const save = context.submit(form, data);
   assert.deepEqual(events, [['write', linkedData, 'maya']]);
   assert.doesNotMatch(JSON.stringify(events), /Review <hall>|outcomeNote|memoryId/);
@@ -218,7 +218,7 @@ test('generic Wrap up confirmation records a receipt while an ordinary task form
     store:{addTask:async()=>({id:'confirmed-task'})},closeDialog:()=>events.push('close'),render:()=>events.push('render'),
     focusWrapFollowUpReceipt:id=>events.push(id),toast:()=>{},syncGuide:()=>{}});
   const submit=fragment("      if(form.id==='newTaskForm')","      if(form.id==='scheduleForm'").replace('store.addTask(','await store.addTask(');
-  vm.runInContext(`async function submit(form,data){${submit}}`,ctx);
+  vm.runInContext(`async function submit(form,data){const lessonSave=null;${submit}}`,ctx);
   await ctx.submit(form,{title:'Manually written'});
   assert.deepEqual(events.splice(0),['close','render','confirmed-task']);
   assert.equal(ui.wrapFollowUpReceipt.taskId,'confirmed-task');
