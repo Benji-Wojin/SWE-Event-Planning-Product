@@ -10,7 +10,10 @@
   function taskLinkFrom(params) {
     const id=taskIdFrom(params),hints=params.getAll('review');
     const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment','owner','schedule'].includes(hints[0])?hints[0]:'';
-    return {id,review};
+    const from=params.getAll('from'),projects=params.getAll('project');
+    const fromPlanReceipt=(review==='owner'||review==='schedule')&&from.length===1&&from[0]==='plan-receipt'&&
+      projects.length===1&&!!projects[0]&&!['activity','message','day','welcome'].some(key=>params.has(key));
+    return {id,review,...(fromPlanReceipt?{fromPlanReceipt:true}:{})};
   }
   function activityLinkFrom(params) {
     const hints=params.getAll('activity'),projects=params.getAll('project');
@@ -35,6 +38,8 @@
     return url.href;
   }
   function create(frame) {
+    // Evaluate conflicting one-shot hints together, before either consumer removes one.
+    const linkHints=new URLSearchParams(frame.location.search);
     let host = frame;
     try {
       const parent = frame.parent;
@@ -49,14 +54,14 @@
       },
       initialScheduleDate,
       takeInitialActivityLink() {
-        const search=new URLSearchParams(frame.location.search);
+        if(!new URLSearchParams(frame.location.search).has('activity'))return '';
         for(const target of new Set([frame,host])){
           const url=new URL(target.location.href);
           if(!url.searchParams.has('activity'))continue;
           url.searchParams.delete('activity');
           target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
         }
-        return activityLinkFrom(search);
+        return activityLinkFrom(linkHints);
       },
       takeJoinWelcome() {
         const hints=new URLSearchParams(frame.location.search).getAll('welcome');
@@ -71,16 +76,20 @@
       },
       takeInitialTaskLink() {
         const search=new URLSearchParams(frame.location.search);
-        if(search.has('task')||search.has('review')){
+        const hasReceipt=params=>params.getAll('from').includes('plan-receipt');
+        const result=search.has('task')||search.has('review')?taskLinkFrom(linkHints):{id:'',review:''};
+        if(search.has('task')||search.has('review')||hasReceipt(search)){
           for(const target of new Set([frame,host])){
             const url=new URL(target.location.href);
-            if(!url.searchParams.has('task')&&!url.searchParams.has('review'))continue;
+            const receipt=hasReceipt(url.searchParams);
+            if(!url.searchParams.has('task')&&!url.searchParams.has('review')&&!receipt)continue;
             url.searchParams.delete('task');
             url.searchParams.delete('review');
+            if(receipt)url.searchParams.delete('from');
             target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
           }
         }
-        return taskLinkFrom(search);
+        return result;
       },
       replaceScheduleDate(value) {
         if(new URLSearchParams(frame.location.search).get('demo')==='1')return;

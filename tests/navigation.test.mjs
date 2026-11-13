@@ -99,6 +99,56 @@ test('review hints need a single valid task, a supported kind and a non-demo wor
     }
   }
 });
+test('a planner editor origin is consumed with the task and review on the frame and visible URL',()=>{
+  for(const review of ['owner','schedule']){
+    const query=`?project=school&guide=1&task=task-current&review=${review}&from=plan-receipt&unrelated=keep`;
+    const host=surface('https://weft.example/project'+query+'#timeline');
+    const frame=surface('https://weft.example/workspace.html'+query+'#tasks');
+    frame.parent=host;
+    const nav=GatherNavigation.create(frame);
+    assert.equal(nav.takeInitialActivityLink(),'');
+    assert.deepEqual(nav.takeInitialTaskLink(),{id:'task-current',review,fromPlanReceipt:true});
+    assert.deepEqual(nav.takeInitialTaskLink(),{id:'',review:''});
+    for(const win of [host,frame]){
+      assert.equal(win.location.search,'?project=school&guide=1&unrelated=keep');
+      assert.equal(win.writes.length,1);
+      assert.equal(win.writes[0].state,win.history.state);
+    }
+  }
+});
+test('a planner origin needs one valid live project, task and editor review, without competing hints',()=>{
+  for(const query of [
+    'task=current&review=owner&from=plan-receipt',
+    'project=&task=current&review=owner&from=plan-receipt',
+    'project=school&project=other&task=current&review=owner&from=plan-receipt',
+    'project=school&task=current&review=owner&from=plan-receipt&from=plan-receipt',
+    'project=school&task=current&review=owner&from=not-plan-receipt',
+    'project=school&task=current&review=owner&review=owner&from=plan-receipt',
+    'project=school&task=current&task=other&review=owner&from=plan-receipt',
+    'project=school&task=%22%3E&review=owner&from=plan-receipt',
+    'project=school&task=current&review=completion&from=plan-receipt',
+    'project=school&task=current&from=plan-receipt',
+    ...['demo=1','day=','activity=other','welcome=1','message=other'].map(hint=>`project=school&task=current&review=schedule&from=plan-receipt&${hint}`),
+  ]){
+    const params=new URLSearchParams(query);
+    assert.equal(Object.hasOwn(GatherNavigation.taskLinkFrom(params),'fromPlanReceipt'),false,query);
+    const frame=surface('https://weft.example/workspace.html?'+query);
+    const nav=GatherNavigation.create(frame);
+    assert.equal(nav.takeInitialActivityLink(),'',query);
+    const result=nav.takeInitialTaskLink();
+    assert.equal(Object.hasOwn(result,'fromPlanReceipt'),false,query);
+    assert.deepEqual(frame.location.searchParams.getAll('from'),params.getAll('from').includes('plan-receipt')?[]:params.getAll('from'),query);
+  }
+});
+test('a standalone stale planner marker is consumed without changing an unrelated parent',()=>{
+  const query='?project=school&guide=1&from=plan-receipt';
+  const frame=surface('https://weft.example/workspace.html'+query);
+  const parent=surface('https://weft.example/other'+query);
+  frame.parent=parent;
+  assert.deepEqual(GatherNavigation.create(frame).takeInitialTaskLink(),{id:'',review:''});
+  assert.equal(frame.location.search,'?project=school&guide=1');
+  assert.equal(parent.writes.length,0);
+});
 test('a plan activity hint is one-shot, preserves the project, guide and explicit day, and never changes unrelated parents',()=>{
   const query='?project=school&activity=task-overnight&guide=1&day=2028-02-29';
   const host=surface('https://weft.example/project'+query+'#tasks');
@@ -157,6 +207,52 @@ test('hosted build loads navigation before the workspace and retains dirty-form 
   assert.match(html, /<script defer src="\/gather-assets\/versioned\/[a-f0-9]{20}-navigation.js"><\/script>/);
   assert.match(app,/ui.pendingSave\)\{navigation.replace\(ui.view\)/);
   assert.match(app,/!confirmCloseDialog\(\)\|\|!confirmDiscard\(\$\('#emailReviewForm'\)\)\)\{navigation.replace\(ui.view\)/);
+});
+
+test('the hosted owner form retains the planner return only after a successful shared save',async()=>{
+  const app=readFileSync('public/gather-assets/app.js','utf8');
+  const start=app.indexOf("      if(form.id==='taskDetailForm'){\n        const before="),end=app.indexOf("      if(form.id==='priorityForm')",start);
+  assert.ok(start>=0&&end>start,'use the prepared hosted submission branch');
+  const body=app.slice(start,end);
+  assert.match(body,/await store\.updateTask\(/);
+  const id='exact-task';
+  const fixture=({scoped=true,draft=false}={})=>{
+    const form={id:'taskDetailForm',dataset:{id}},frames=[],calls=[],document={activeElement:null};
+    const link=scoped?{id}:null,ui={detailId:id,planReceiptReturn:link},details={id,status:'todo'};
+    const back={isConnected:true,focus(options){assert.equal(options.preventScroll,true);calls.push('back focus');document.activeElement=back;}},title={},decoy={};
+    const dialog={};
+    const controls={'#dialog':dialog,'#planReceiptBack':back,'#dialogTitle':title};
+    let success,fail;
+    const savePromise=new Promise((resolve,reject)=>{success=resolve;fail=reject;});
+    const run=vm.runInNewContext(`(async()=>{${body}})`,{form,ui,document,data:{owner:'teammate'},
+      store:{getState:()=>({tasks:[details]}),updateTask(...args){calls.push(['save',...args]);return savePromise;}},
+      protectCompletionDraft:()=>true,confirmFixedDate:()=>true,confirmTaskOwnerChange:()=>true,
+      taskDrafts:()=>draft?[{}]:[],taskCompletionDraftContext:()=>[],activePlanReceiptReturn:key=>key===id?link:null,
+      render(){calls.push('render');},taskDialog(...args){calls.push(['dialog',...args]);if(args[3])frames.push(()=>{document.activeElement=title;});},closeDialog(){calls.push('close');},
+      returnToRelatedBatch:()=>false,returnToEventTaskReview:()=>false,requestAnimationFrame:fn=>frames.push(fn),
+      $:selector=>controls[selector],toast:()=>{},member:()=>({name:'Organizer'}),window:{},
+    });
+    return {run,success,fail,frames,calls,document,title,decoy,controls};
+  };
+  for(const options of [{},{draft:true},{scoped:false}]){
+    const f=fixture(options),saving=f.run();
+    assert.equal(f.calls.length,1,'wait for the actual task save before rendering or focusing');
+    f.success();await saving;
+    const scoped=options.scoped!==false,focusBack=scoped&&!options.draft;
+    const redraw=scoped||options.draft?['dialog',id,'taskDetailForm',...(focusBack?[true,true]:[])]:null;
+    assert.deepEqual(f.calls.slice(1),['render',redraw||'close']);
+    assert.equal(f.frames.length,focusBack?2:0);
+    f.frames.forEach(fn=>fn());
+    assert.equal(f.calls.includes('back focus'),focusBack);
+  }
+  for(const change of [f=>{f.document.activeElement=f.decoy;},f=>{f.controls['#dialogTitle']={};},f=>{f.controls['#planReceiptBack']={};}]){
+    const moved=fixture(),saving=moved.run();moved.success();await saving;
+    moved.frames[0]();change(moved);moved.frames[1]();
+    assert.equal(moved.calls.includes('back focus'),false,'never steal moved focus or focus a replaced dialog');
+  }
+  const failed=fixture(),rejected=failed.run();failed.fail(new Error('fictional failure'));
+  await assert.rejects(rejected,/fictional failure/);
+  assert.equal(failed.calls.length,1);assert.equal(failed.frames.length,0);
 });
 
 test('mobile drawer focuses its container, traps Tab, and restores the opener without removing link focus styles',()=>{

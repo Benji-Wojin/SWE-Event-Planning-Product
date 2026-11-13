@@ -169,6 +169,8 @@ In the private plan, **Paste a checklist** imports one title per line without ca
 
 After adding a reviewed plan, open a task directly from the receipt. The organizer can refresh **Team handoff** to see which new tasks need assignment or completion review, which are waiting for acceptance or a revised submission, and which have been accepted or completed. Completion links open the current evidence or **Task relationships** when required work blocks verification; if the review is no longer pending, the link opens the task normally. Returned work with no active owner appears under assignment so it doesn't stall unnoticed.
 
+When a receipt opens the owner or start-time editor, **Back to plan receipt** reopens the current receipt and focuses that task’s row. Save any edits before going back; the return itself only reads the current receipt and does not assign, schedule or generate anything. If that task is no longer available, the planner explains why it cannot focus the row.
+
 Verifying, returning a report for changes, and acknowledging amended evidence apply to the version the organizer reviewed. If the report changes, use **Refresh completion review** to see the current evidence without making a decision. An unsent note stays in place until you copy or clear it; review the refreshed evidence before submitting a decision. Acknowledging an amendment does not reverify the task.
 
 Accepting a completion report from **Email briefing** records the reviewed note and links to that exact shared email from **Completion details**. Any previous submission, including its links and shared files, moves to **Earlier submissions**. No email attachments are imported, and a later email does not replace an already verified submission.

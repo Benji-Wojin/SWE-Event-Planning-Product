@@ -1379,6 +1379,7 @@
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
+    if(kind!=='task')ui.planReceiptReturn=null;
     if(!['task','delete-task'].includes(kind))ui.completionLinkedReturn=null;
     if(kind!=='first-schedule')ui.firstScheduleEditor=null;
     if(kind!=='before-event-review')ui.eventReviewSnapshot=null;
@@ -1405,7 +1406,9 @@
     const comparisonBack=kind==='task'&&ui.overlapComparison&&activeOverlapComparison();
     const requiredBack=kind==='task'&&ui.completionLinkedReturn&&ui.completionLinkedReturn.targetId===ui.detailId&&
       completionLinkedReturnInScope(ui.completionLinkedReturn);
-    const backButtons=(requiredBack?'<button id="completionLinkedImpactBack" type="button" class="text-button" data-action="return-to-completion-linked-impact">← Back to Required by</button>':'')+
+    const receiptBack=kind==='task'&&ui.planReceiptReturn&&activePlanReceiptReturn(ui.detailId);
+    const backButtons=(receiptBack?'<button id="planReceiptBack" type="button" class="text-button" data-action="return-to-plan-receipt">← Back to plan receipt</button>':'')+
+      (requiredBack?'<button id="completionLinkedImpactBack" type="button" class="text-button" data-action="return-to-completion-linked-impact">← Back to Required by</button>':'')+
       (comparisonBack?'<button type="button" class="text-button" data-action="return-to-overlap-review">← Back to overlap review</button>':'')+
       (back?`<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button>`:'');
     $('#dialog').innerHTML=`<div class="dialog-header">${backButtons?`<div class="event-review-task-heading">${heading}${backButtons}</div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
@@ -1435,6 +1438,7 @@
     ui.linkedResultsReview=null;
     ui.resumeReceipt=null;
     ui.completionLinkedReturn=null;
+    ui.planReceiptReturn=null;
     ui.firstScheduleEditor=null;
     ui.eventReviewSnapshot=null;
     ui.eventScheduleEditor=null;
@@ -1607,6 +1611,30 @@
     const target=form?.dataset.id===id?$('input[name="start"]',form):
       !form&&details&&allowZoneSetup?$('[data-action="event-context"]',details):null;
     if(target){details.open=true;focusTaskDialogControl(target,dialog);}
+  }
+  function setPlanReceiptReturn(id) {
+    const mode=window.GatherMode;
+    if(!mode?.projectId||mode.demo||!isOrganizer()||window.GatherAccessLost||
+      !store.getState().tasks.some(task=>task.id===id&&!task.archivedAt))return;
+    ui.planReceiptReturn={id,actor:ui.actor,view:ui.view,project:mode.projectId};
+  }
+  function activePlanReceiptReturn(id) {
+    const link=ui.planReceiptReturn,mode=window.GatherMode;
+    return link&&link.id===id&&link.actor===ui.actor&&link.view===ui.view&&link.project===mode?.projectId&&
+      !mode.demo&&isOrganizer()&&!window.GatherAccessLost?link:null;
+  }
+  function returnToPlanReceipt(opener) {
+    const link=activePlanReceiptReturn(ui.detailId),dialog=$('#dialog');
+    if(!link||ui.pendingSave||document.hidden||ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||
+      !opener?.isConnected||opener!==$('#planReceiptBack',dialog)||opener.dataset.action!=='return-to-plan-receipt'||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm')))return false;
+    const query=new URLSearchParams({project:link.project});
+    if(guidedWorkspace)query.set('guide','1');
+    query.set('receiptTask',link.id);
+    closeDialog();
+    window.top.location.href='/plan?'+query;
+    return true;
   }
   function openTaskHandoffLink(id,kind) {
     const actor=ui.actor,project=window.GatherMode?.projectId;
@@ -3141,6 +3169,7 @@
   function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
+    if(ui.planReceiptReturn&&!activePlanReceiptReturn(id))ui.planReceiptReturn=null;
     if(ui.completionLinkedReturn&&(ui.completionLinkedReturn.targetId!==id||!completionLinkedReturnInScope(ui.completionLinkedReturn,taskState)))
       ui.completionLinkedReturn=null;
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
@@ -3259,7 +3288,8 @@
     const linkedReview=ui.linkedResultsReview;
     const fromLinkedResults=linkedReview?.id===id&&linkedReview.actor===ui.actor&&linkedReview.project===window.GatherMode?.projectId;
     const fromRequiredReview=ui.completionLinkedReturn?.targetId===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
+    const fromPlanReceipt=ui.planReceiptReturn?.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -4102,6 +4132,7 @@
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
+    if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
     if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
     if(action==='use-latest-lesson'){useLatestLesson(el);return;}
     if(action==='discard-completion-draft'){
@@ -4575,7 +4606,16 @@
         store.updateTask(form.dataset.id,data,ui.actor);
         const after=store.getState().tasks.find(task=>task.id===form.dataset.id),drafts=taskDrafts(form.id),
           keepDrafts=drafts.length>0||taskCompletionDraftContext(drafts,form.id).length>0;
-        render();if(keepDrafts||(ui.overlapComparison&&activeOverlapComparison()))taskDialog(form.dataset.id,form.id);else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
+        const receiptReturn=ui.planReceiptReturn&&activePlanReceiptReturn(form.dataset.id);
+        render();if(keepDrafts||receiptReturn||(ui.overlapComparison&&activeOverlapComparison())){
+          if(receiptReturn&&!keepDrafts)taskDialog(form.dataset.id,form.id,true,true);
+          else taskDialog(form.dataset.id,form.id);
+        }else if(!returnToRelatedBatch()&&!returnToEventTaskReview())closeDialog();
+        if(receiptReturn&&!keepDrafts){
+          const dialog=$('#dialog'),back=$('#planReceiptBack',dialog),title=$('#dialogTitle',dialog);
+          requestAnimationFrame(()=>{if(back?.isConnected&&back===$('#planReceiptBack',dialog)&&title===$('#dialogTitle',dialog)&&
+            activePlanReceiptReturn(ui.detailId)===receiptReturn&&document.activeElement===title)back.focus({preventScroll:true});});
+        }
         if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
         else toast(`Update recorded by ${member(ui.actor).name}.`);
       }
@@ -4842,7 +4882,7 @@
   ui.scheduleDate=navigation.initialScheduleDate();
   const activityHint=navigation.takeInitialActivityLink();
   const initialActivity=window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost?activityHint:'';
-  const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();
+  const {id:initialTask,review:initialTaskReview,fromPlanReceipt}=navigation.takeInitialTaskLink();
   const welcomeHint=navigation.takeJoinWelcome();
   if(initialTask){
     ui.tab='all';
@@ -4874,7 +4914,10 @@
       // first so keyboard users can see where focus will return.
       opener?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
       opener?.focus({preventScroll:true});
-      if(initialTaskReview==='owner'||initialTaskReview==='schedule')openTaskHandoffLink(initialTask,initialTaskReview);
+      if(initialTaskReview==='owner'||initialTaskReview==='schedule'){
+        if(fromPlanReceipt)setPlanReceiptReturn(initialTask);
+        openTaskHandoffLink(initialTask,initialTaskReview);
+      }
       else if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))
         taskDialog(initialTask,'',false,true);
     }

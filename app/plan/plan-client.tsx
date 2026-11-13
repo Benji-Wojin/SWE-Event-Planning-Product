@@ -90,7 +90,9 @@ async function api(query: string, body?: unknown, signal?: AbortSignal) {
     );
   return data;
 }
-export function PlanReview({ query, embedded = false, guided = false }: { query: string; embedded?: boolean; guided?: boolean }) {
+export function PlanReview({ query, embedded = false, guided = false, receiptTask = '', receiptHandoff = false }: {
+  query: string; embedded?: boolean; guided?: boolean; receiptTask?: string; receiptHandoff?: boolean;
+}) {
   const [data, setData] = useState<any>(null),
     [brief, setBrief] = useState<PlanBrief>(emptyBrief),
     [items, setItems] = useState<ReviewedItem[]>([]);
@@ -106,11 +108,13 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     checklistRequest = useRef<{key:string;requestId:string}|null>(null),
     focusNotice = useRef(false),
     focusReceipt = useRef(false),
+    handledReceiptReturn = useRef(''),
     handoffLinkFocus = useRef<{id:string; intent:string}|null>(null),
     errorBox = useRef<HTMLParagraphElement>(null),
     noticeBox = useRef<HTMLParagraphElement>(null),
     briefInput = useRef<HTMLTextAreaElement>(null),
-    receiptHeading = useRef<HTMLHeadingElement>(null);
+    receiptHeading = useRef<HTMLHeadingElement>(null),
+    receiptReturnNotice = useRef<HTMLParagraphElement>(null);
   const [checklist,setChecklist]=useState('');
   const checklistTooLong=checklist.length>pastedChecklistLimit;
   const [chatDirty,setChatDirty]=useState(false);
@@ -181,14 +185,21 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const addedCount:number=applied?data.receipt.taskIds.length:0;
   const unavailableCount=Math.max(0,addedCount-receiptTasks.length);
   const showHandoff=applied&&!assistant&&!suggestions;
+  const canReturnToReceipt = receiptHandoff && !embedded && !demo && !assistant && !suggestions && !!params.get('project');
+  const receiptReturnTask = canReturnToReceipt ? receiptTask : '';
+  const returnInReceipt = !!receiptReturnTask && applied && Array.isArray(data.receipt.taskIds) &&
+    data.receipt.taskIds.includes(receiptReturnTask) === true;
+  const returnTaskAvailable = returnInReceipt && receiptTasks.some(task => task.id === receiptReturnTask);
+  const receiptReturnMessage = !data || !receiptReturnTask || returnTaskAvailable ? '' : returnInReceipt
+    ? 'This task is no longer available in the project.' : 'This task is no longer in the current plan receipt.';
   const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
   const untimedCount = showHandoff ? receiptTasks.filter(task => task.needsStartTime).length : 0;
   function receiptTaskRow({id,title,handoff,needsStartTime,scheduleDay}: PlanReceiptTask) {
     const state=showHandoff?handoff?.state:undefined;
     const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':
       !embedded&&(state==='needs-owner'||state==='needs-reassignment')?'owner':'';
-    const href = planTaskHref(params,id,guideReturn,review);
-    const scheduleHref=showHandoff&&needsStartTime&&!embedded&&!demo?planTaskHref(params,id,guideReturn,'schedule'):'';
+    const href = planTaskHref(params,id,guideReturn,review,showHandoff&&canReturnToReceipt);
+    const scheduleHref=showHandoff&&needsStartTime&&!embedded&&!demo?planTaskHref(params,id,guideReturn,'schedule',canReturnToReceipt):'';
     const timelineHref = showHandoff && !needsStartTime && !embedded && !demo && workspaceScheduleDate(scheduleDay)
       ? planActivityHref(params, id, guideReturn) : '';
     return <li key={id} className="break-words">
@@ -208,6 +219,15 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     focusReceipt.current=false;
     receiptHeading.current?.focus();
   },[applied]);
+  useEffect(()=>{
+    if(!data||!receiptReturnTask||handledReceiptReturn.current===receiptReturnTask)return;
+    handledReceiptReturn.current=receiptReturnTask;
+    if(document.activeElement!==document.body)return;
+    const heading=receiptHeading.current;
+    const links=returnTaskAvailable ? heading?.closest('section')?.querySelectorAll<HTMLAnchorElement>('a[data-handoff-task]') : undefined;
+    const link=links?Array.from(links).find(el=>el.dataset.handoffTask===receiptReturnTask&&!el.dataset.handoffIntent):undefined;
+    (returnInReceipt ? link||heading : receiptReturnNotice.current)?.focus();
+  },[!!data,receiptReturnTask,returnInReceipt,returnTaskAvailable]);
   useEffect(()=>{
     const previous=handoffLinkFocus.current;
     handoffLinkFocus.current=null;
@@ -685,6 +705,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       )}
       {guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck}
         onUseExample={canUseGuideExample ? useGuideExample : undefined} />}
+      {receiptReturnMessage && <p id="plan-receipt-return-status" ref={receiptReturnNotice} tabIndex={-1} role="status"
+        className="mb-4 rounded-lg border p-3 text-sm">{receiptReturnMessage}</p>}
       {applied && (
         <section aria-labelledby="plan-receipt-heading" className="mb-5 space-y-3 rounded-lg border border-primary/40 p-4">
           <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="scroll-mt-6 font-medium">Plan added to the project</h2>

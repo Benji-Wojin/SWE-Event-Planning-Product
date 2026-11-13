@@ -3,7 +3,7 @@ import { AppOpen } from '@/components/app-open';
 import { workspaceScheduleDate } from '@/lib/workspace-day';
 import { workspaceTaskId, workspaceTaskReview } from '@/lib/workspace-task-link';
 export const dynamic = 'force-dynamic';
-type ProjectParams = { project?: string | string[]; message?: string | string[]; guide?: string | string[]; day?: string | string[]; task?: string | string[]; review?: string | string[]; activity?: string | string[]; welcome?: string | string[]; demo?: string | string[] };
+type ProjectParams = { project?: string | string[]; message?: string | string[]; guide?: string | string[]; day?: string | string[]; task?: string | string[]; review?: string | string[]; activity?: string | string[]; welcome?: string | string[]; demo?: string | string[]; from?: string | string[] };
 export default async function Project({ searchParams }: { searchParams: Promise<ProjectParams> }) {
   const params = await searchParams;
   const project = typeof params.project === 'string' ? params.project : null;
@@ -15,12 +15,15 @@ export default async function Project({ searchParams }: { searchParams: Promise<
   const day = workspaceScheduleDate(params.day);
   if (day) query.set('day',day);
   const task = workspaceTaskId(params.task);
+  const demoHint = params.demo === '1' || Array.isArray(params.demo) && params.demo.includes('1');
   if(task){
     query.set('task',task);
     const review=workspaceTaskReview(params.review);
     if(review)query.set('review',review);
+    if(project&&!demoHint&&(review==='owner'||review==='schedule')&&params.from==='plan-receipt'&&
+      params.activity===undefined&&params.message===undefined&&params.day===undefined&&params.welcome===undefined)
+      query.set('from','plan-receipt');
   }
-  const demoHint = params.demo === '1' || Array.isArray(params.demo) && params.demo.includes('1');
   const activity = project && !demoHint && params.task === undefined && params.review === undefined && params.message === undefined
     ? workspaceTaskId(params.activity) : '';
   if (activity) query.set('activity', activity);

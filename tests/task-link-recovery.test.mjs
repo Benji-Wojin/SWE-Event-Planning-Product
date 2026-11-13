@@ -9,7 +9,8 @@ const part=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,so
 const notice=part('  function taskLinkNotice()', '  function tasksView(s)');
 const bootstrap=part('  ui.scheduleDate=navigation.initialScheduleDate();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
 const handoffLink=part('  function openTaskHandoffLink(', '  function openScheduleReconfirmation(');
-function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false,activity='',date='',rows=[]}={}){
+const receiptReturn=part('  function setPlanReceiptReturn(', '  function openTaskHandoffLink(');
+function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false,activity='',date='',rows=[],fromPlanReceipt=false}={}){
   const events=[];
   const ui={tab:'mine',actor:'fictional-actor'},title={},frames=[],document={activeElement:title};
   let updatesPending=false;
@@ -28,18 +29,18 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
   const context=vm.createContext({
     ui,document,store:{getState:()=>({tasks,members:[{id:'active',active:true},{id:'former',active:false},{id:'example',role:'Member · example'}]})},taskLinkUnavailable:false,joinWelcome:false,
     GatherScheduleUI,
-    navigation:{initialScheduleDate:()=>date,takeInitialActivityLink:()=>activity,takeInitialTaskLink:()=>({id,review}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
+    navigation:{initialScheduleDate:()=>date,takeInitialActivityLink:()=>activity,takeInitialTaskLink:()=>({id,review,...(fromPlanReceipt?{fromPlanReceipt:true}:{})}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
     window:{GatherMode:mode,GatherAccessLost:accessLost,dispatchEvent(){events.push('ready');}},Event,isLiveTeammate:()=>true,isOrganizer:()=>organizer,
     navigate(view,options){ui.view=view;if(options?.scheduleDay)ui.scheduleDate=options.scheduleDay;events.push(view);},syncGuide(){},$:selector=>elements[selector],
     $$:selector=>selector==='.schedule-row'?rows:[],focusScheduleTarget(target){events.push(['focus',target?.label]);return !!target;},
     toast:message=>events.push(['toast',message]),
-    taskDialog(...args){if(args[7])args[7]={...args[7]};events.push(args);},
+    taskDialog(...args){if(args[7])args[7]={...args[7]};if(ui.planReceiptReturn)events.push(['capture plan receipt return',ui.planReceiptReturn.id]);events.push(args);},
     requestAnimationFrame(fn){frames.push(fn);},focusTaskOwnerEditor(id){events.push(['owner focus',id]);},
     schedule:{firstTimeTask:(state,id)=>state.tasks.find(task=>task.id===id&&task.eventActivity&&!task.schedule&&!(task.status==='done'&&(!task.requiresVerification||task.verifiedAt)))},
     workspaceUpdatesPending:()=>updatesPending,focusTaskScheduleEditor(id,setup){events.push(['schedule focus',id,setup]);},
     openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
   });
-  vm.runInContext(notice+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
+  vm.runInContext(notice+'\n'+receiptReturn+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
   return {ui,events,context,document,elements,frames,pending(){updatesPending=true;},markup:()=>vm.runInContext('taskLinkNotice()',context)};
 }
 
@@ -142,6 +143,68 @@ test('owner receipt hints focus only a still-actionable task in the same live or
     view.frames[0]();assert.deepEqual(view.events.at(-1),opened,late);
   }
   assert.deepEqual(land(id,[],options).events,['tasks','ready','notice focus','notice visible']);
+});
+
+test('the planner return is captured only for the exact available live organizer editor destination',()=>{
+  const id='fictional-task',mode={demo:false,projectId:'fictional-project'};
+  const task={id,status:'todo',eventActivity:true};
+  for(const review of ['owner','schedule']){
+    const options={review,organizer:true,mode,fromPlanReceipt:true};
+    const exact=land(id,[{id:'same-title-decoy'},task],options);
+    const dialogIndex=exact.events.findIndex(event=>Array.isArray(event)&&event[0]===id);
+    assert.ok(dialogIndex>0);
+    assert.deepEqual(exact.events[dialogIndex-1],['capture plan receipt return',id],
+      'the first task dialog render has the exact scoped Back context');
+    for(const override of [{fromPlanReceipt:false},{organizer:false},{accessLost:true},{mode:{...mode,demo:true}},{mode:undefined}]){
+      assert.equal(land(id,[task],{...options,...override}).events.some(event=>event[0]==='capture plan receipt return'),false);
+    }
+    assert.deepEqual(land(id,[{id:'decoy'}],options).events,['tasks','ready','notice focus','notice visible']);
+    assert.equal(land(id,[{...task,archivedAt:'archived'}],options).ui.planReceiptReturn,undefined);
+  }
+});
+
+test('return to the plan receipt is scoped to the live task control and respects draft and save guards',()=>{
+  const id='fictional-task';
+  function fixture(guidedWorkspace=true){
+    const ui={view:'tasks',detailId:id,actor:'fictional-actor',dialogKind:'task'},mode={projectId:'fixture &=1',demo:false};
+    const opener={isConnected:true,dataset:{action:'return-to-plan-receipt'},closest:()=>null},dialog={},backdrop={hidden:false},emailForm={};
+    const flags={organizer:true,close:true,email:true,disclosure:false},location={href:'/project'},calls=[];
+    const context=vm.createContext({ui,guidedWorkspace,URLSearchParams,document:{hidden:false},
+      window:{GatherMode:mode,top:{location}},isOrganizer:()=>flags.organizer,
+      store:{getState:()=>({tasks:[{id,status:'todo'}]})},
+      $:(selector,root)=>({ '#dialog':dialog,'#dialogBackdrop':backdrop,'#emailReviewForm':emailForm,
+        '#planReceiptBack':root===dialog?opener:undefined })[selector],
+      hiddenByClosedDisclosure:()=>flags.disclosure,
+      confirmCloseDialog(){calls.push('confirm dialog');return flags.close;},
+      confirmDiscard(form){assert.equal(form,emailForm);calls.push('confirm mail draft');return flags.email;},
+      closeDialog(){calls.push('close');ui.planReceiptReturn=null;},
+    });
+    const back=vm.runInContext(receiptReturn+`\nsetPlanReceiptReturn('${id}');returnToPlanReceipt;`,context);
+    return {ui,mode,opener,backdrop,flags,calls,location,context,back:control=>back(control??opener)};
+  }
+  for(const block of [
+    f=>{f.ui.pendingSave=true;},f=>{f.context.document.hidden=true;},f=>{f.ui.dialogKind='other';},
+    f=>{f.ui.detailId='another-task';},f=>{f.ui.view='timeline';},f=>{f.ui.actor='another-actor';},
+    f=>{f.mode.projectId='another-project';},f=>{f.mode.demo=true;},f=>{f.flags.organizer=false;},
+    f=>{f.context.window.GatherAccessLost=true;},f=>{f.backdrop.hidden=true;},f=>{f.opener.isConnected=false;},
+    f=>{f.opener.closest=()=>({});},f=>{f.flags.disclosure=true;},f=>{f.opener.dataset.action='different';},
+  ]){
+    const f=fixture();block(f);
+    assert.equal(f.back(),false);assert.deepEqual(f.calls,[]);assert.equal(f.location.href,'/project');
+  }
+  const decoy=fixture();assert.equal(decoy.back({...decoy.opener}),false);assert.deepEqual(decoy.calls,[]);
+  const cancelled=fixture();cancelled.flags.close=false;
+  assert.equal(cancelled.back(),false);assert.deepEqual(cancelled.calls,['confirm dialog']);
+  assert.equal(cancelled.location.href,'/project');assert.equal(cancelled.ui.planReceiptReturn.id,id);
+  const email=fixture();email.flags.email=false;
+  assert.equal(email.back(),false);assert.deepEqual(email.calls,['confirm dialog','confirm mail draft']);
+  assert.equal(email.location.href,'/project');assert.equal(email.ui.planReceiptReturn.id,id);
+  for(const guided of [true,false]){
+    const success=fixture(guided);assert.equal(success.back(),true);
+    assert.deepEqual(success.calls,['confirm dialog','confirm mail draft','close']);
+    assert.equal(success.location.href,`/plan?project=fixture+%26%3D1${guided?'&guide=1':''}&receiptTask=${id}`);
+    assert.equal(success.ui.planReceiptReturn,null);
+  }
 });
 
 test('current links open the matching task with heading focus, ordinary navigation never shows the notice',()=>{

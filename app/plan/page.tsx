@@ -3,21 +3,24 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { PlanReview } from './plan-client';
 import {SuggestionFeed} from './suggestion-feed';
 import { ASK_WEFT_ENABLED } from '@/lib/release-policy';
+import { workspaceTaskId } from '@/lib/workspace-task-link';
 
 export const dynamic = 'force-dynamic';
 export default async function Plan({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; demo?: string; as?: string; mode?: string; embed?: string; guide?: string }>;
+  searchParams: Promise<{ project?: string; demo?: string; as?: string; mode?: string; embed?: string; guide?: string; receiptTask?: string | string[] }>;
 }) {
   const params = await searchParams;
   const suggestions = params.mode === 'suggestions';
   const assistant = params.mode === 'assistant';
   const guided = params.guide === '1' && typeof params.project === 'string' && !!params.project && params.demo !== '1' && !params.mode && params.embed !== '1';
+  const receiptHandoff = typeof params.project === 'string' && !!params.project && params.demo === undefined && params.mode === undefined && params.embed === undefined;
+  const receiptTask = receiptHandoff ? workspaceTaskId(params.receiptTask) : '';
   const query = (params.demo === '1'
       ? 'demo=1&as=' + encodeURIComponent(params.as || 'jack')
       : 'project=' + encodeURIComponent(params.project || 'main')) + (assistant ? '&mode=assistant' : suggestions ? '&mode=suggestions' : '');
-  await requireChatGPTUser('/plan?' + query + (guided ? '&guide=1' : ''));
+  await requireChatGPTUser('/plan?' + query + (guided ? '&guide=1' : '') + (receiptTask ? '&receiptTask=' + encodeURIComponent(receiptTask) : ''));
   if (assistant && !ASK_WEFT_ENABLED) return (
     <main id={params.embed === '1' ? 'embeddedPlan' : undefined} className="mx-auto w-full max-w-4xl px-5 py-8">
       <h1 className="mb-2 text-3xl font-semibold">Ask Weft</h1>
@@ -45,7 +48,7 @@ export default async function Plan({
       <p className="mb-6 text-sm text-muted-foreground">
         {suggestions ? 'A focused AI review of what’s missing—not another generic checklist. ' : ''}Private until you add selected items to the project.
       </p>
-      <PlanReview key={query} query={query} guided={guided} />
+      <PlanReview key={query} query={query} guided={guided} receiptTask={receiptTask} receiptHandoff={receiptHandoff} />
     </main>
   );
 }

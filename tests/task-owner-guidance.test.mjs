@@ -75,7 +75,7 @@ test('Review owner opens and focuses only the current organizer task form, prese
 
 test('Review overlap schedule opens only the current organizer edit form without saving or resetting it',()=>{
   const begin=source.indexOf('  function focusTaskScheduleEditor(');
-  const handler=source.slice(begin,source.indexOf('  function openTaskHandoffLink(',begin));
+  const handler=source.slice(begin,source.indexOf('  function setPlanReceiptReturn(',begin));
   assert.match(source,/if\(action==='review-overlap-schedule'\)focusTaskScheduleEditor\(id\)/);
   for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details','closed','settings']){
     const details={open:false},start={value:'2026-11-20T14:15'},focus=[];

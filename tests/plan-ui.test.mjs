@@ -131,7 +131,7 @@ function assertExistingTaskLink(link, href) {
   assert.equal(link.props.rel, 'noopener noreferrer');
   assert.equal(link.props.onClick, undefined);
 }
-function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false) {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -181,7 +181,8 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   };
   let saved = copy(initial);
   globalThis.__planHooks = hooks;
-  globalThis.document={getElementById:()=>null};
+  const body = { matches: () => false };
+  globalThis.document={getElementById:()=>null,body,activeElement:body};
   globalThis.window = {
     setTimeout(callback) {
       const id = ++nextTimer;
@@ -222,10 +223,16 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query, embedded, guided });
+    tree = PlanReview({ query, embedded, guided, receiptTask, receiptHandoff });
     // The hook renderer has no real DOM; attach focus refs before effects.
-    for (const target of nodes(tree).filter(node => node.props?.ref && ['plan-receipt-heading', 'plan-brief'].includes(node.props.id))) {
-      target.props.ref.current = { focus: () => focused.push(target.props.id) };
+    for (const target of nodes(tree).filter(node => node.props?.ref && ['plan-receipt-heading', 'plan-receipt-return-status', 'plan-brief'].includes(node.props.id))) {
+      target.props.ref.current = {
+        focus: () => focused.push(target.props.id),
+        closest: () => ({ querySelectorAll: () => nodes(tree).filter(node => node.type === 'a' && node.props['data-handoff-task']).map(node => ({
+          dataset: { handoffTask: node.props['data-handoff-task'], handoffIntent: node.props['data-handoff-intent'] },
+          focus: () => focused.push('task:' + node.props['data-handoff-task'] + (node.props['data-handoff-intent'] ? ':' + node.props['data-handoff-intent'] : '')),
+        })) }),
+      };
     }
     const next = effects;
     effects = [];
@@ -1130,8 +1137,8 @@ test('the organizer receipt flags untimed activities in place and ignores a regr
     assert.equal(link('Open Shared tasks')?.props.href,'/project?project=p_school&guide=1#tasks');
     assert.equal(nodes(receipt()).filter(node=>node.type==='a'&&node.props['data-handoff-task']&&!node.props['data-handoff-intent']).length,3);
     assert.deepEqual(nodes(receipt()).filter(node=>node.type==='a'&&text(node)==='Set start time').map(node=>node.props.href),[
-      '/project?project=p_school&task=one&guide=1&review=schedule',
-      '/project?project=p_school&task=two&guide=1&review=schedule',
+      '/project?project=p_school&task=one&guide=1&review=schedule&from=plan-receipt',
+      '/project?project=p_school&task=two&guide=1&review=schedule&from=plan-receipt',
     ]);
     assert.deepEqual(timelineLinks(),[]);
     await app.click('Refresh task handoff');
@@ -1313,6 +1320,62 @@ test('only a guided organizer plan keeps the guide on individual receipt task li
     }finally{app.dispose();}
   }
 });
+
+test('return to a plan receipt focuses the exact current primary task row, not a matching title or secondary action', async () => {
+  const initial = { ...fixture(), status: 'applied', receipt: { taskIds: ['same-title', 'task-return'] }, receiptTasks: [
+    { id: 'same-title', title: 'Fictional reception', handoff: { state: 'needs-owner' } },
+    { id: 'task-return', title: 'Fictional reception', needsStartTime: true, handoff: { state: 'needs-owner' } },
+  ] };
+  const urls = [];
+  const app = harness(({ url }) => { urls.push(url); }, initial, 'project=p_example', false, true, 'task-return');
+  try {
+    await app.start();
+    assert.deepEqual(app.focused, ['task:task-return']);
+    assert.equal(nodes(app.tree).filter(node => node.type === 'a' && node.props['data-handoff-task'] === 'task-return').length, 2);
+    assert.equal(planLink(app.tree, 'Return to your guide')?.props.href, guidedProject);
+    assert.doesNotMatch(text(app.tree), /no longer (?:in|available)/);
+    await app.start();
+    assert.deepEqual(app.focused, ['task:task-return'], 'exact return focus is one-shot');
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+    assert.deepEqual(urls, ['/api/plan?project=p_example']);
+  } finally { app.dispose(); }
+});
+
+test('plan receipt returns distinguish a deleted member task from an unrelated or missing receipt', async () => {
+  const existing = { id: 'other', title: 'Different task', handoff: { state: 'needs-owner' } };
+  for (const [variant, receipt, receiptTasks, focus, notice] of [
+    ['deleted member', { taskIds: ['other', 'task-return'] }, [existing], ['plan-receipt-heading'], /This task is no longer available in the project/],
+    ['not a member', { taskIds: ['other'] }, [existing], ['plan-receipt-return-status'], /This task is no longer in the current plan receipt/],
+    ['inconsistent live row without membership', { taskIds: ['other'] }, [existing, { ...existing, id: 'task-return' }], ['plan-receipt-return-status'], /This task is no longer in the current plan receipt/],
+    ['no receipt', null, [], ['plan-receipt-return-status'], /This task is no longer in the current plan receipt/],
+  ]) {
+    const initial = { ...fixture(), status: receipt ? 'applied' : 'ready', receipt, receiptTasks };
+    const app = harness(undefined, initial, 'project=p_example', false, false, 'task-return');
+    try {
+      await app.start();
+      assert.deepEqual(app.focused, focus, variant);
+      assert.match(text(app.tree), notice, variant);
+      assert.deepEqual(app.requests, [{ action: 'get' }], variant);
+    } finally { app.dispose(); }
+  }
+});
+
+test('a synthesized main-project query cannot opt in to a standalone receipt handoff', async () => {
+  const initial = { ...fixture(), status: 'applied', receipt: { taskIds: ['task-return'] }, receiptTasks: [
+    { id: 'task-return', title: 'Fictional reception', needsStartTime: true, handoff: { state: 'needs-owner' } },
+  ] };
+  const app = harness(undefined, initial, 'project=main', false, false, 'task-return', false);
+  try {
+    await app.start();
+    const task = planLink(app.tree, 'Fictional reception');
+    assert.equal(task?.props.href, '/project?project=main&task=task-return&review=owner');
+    assert.equal(planLink(app.tree, 'Set start time')?.props.href, '/project?project=main&task=task-return&review=schedule');
+    assert.deepEqual(app.focused, []);
+    assert.equal(app.find('plan-receipt-return-status'), undefined);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+  } finally { app.dispose(); }
+});
+
 test('the organizer handoff separates next actions and refresh moves the same tasks with a read only',async()=>{
   const initial=fixture();
   initial.status='applied';
@@ -1365,7 +1428,7 @@ test('the organizer handoff separates next actions and refresh moves the same ta
       const start=all.indexOf(node)+1,end=i+1<headings.length?all.indexOf(headings[i+1].node):all.length;
       const links=all.slice(start,end).filter(row=>row.type==='a'&&row.props.href?.includes('&task='));
       assert.deepEqual(links.map(row=>[text(row),row.props.href]),expected[group].map(id=>[
-        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Assign an owner'?'&review=owner':group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
+        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Assign an owner'?'&review=owner&from=plan-receipt':group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
       ]),group);
     }
     assert.equal(all.filter(row=>row.type==='a'&&row.props.href?.includes('&task=')).length,initial.receiptTasks.length);
@@ -1504,7 +1567,7 @@ test('owner review links are limited to real standalone plan receipts and preser
       for (const [index, task] of initial.receiptTasks.entries()) {
         const link = planLink(app.tree, task.title);
         assert.equal(link?.props.href, projectHref + '&task=' + task.id +
-          (guided && hint ? '&guide=1' : '') + (hint && index < 2 ? '&review=owner' : ''),
+          (guided && hint ? '&guide=1' : '') + (hint && index < 2 ? '&review=owner&from=plan-receipt' : ''),
         `${query}, embedded=${embedded}, guided=${guided}: ${task.handoff.state}`);
         assert.equal(link.props.target, embedded ? '_top' : undefined);
         assert.equal(link.props.onClick, undefined);
@@ -1545,9 +1608,9 @@ test('untimed activity shortcuts are separate from task review links and limited
         ]) {
           const task = planLink(app.tree, title);
           const schedule = links.find(node => node.props['aria-label'] === `Set start time for ${title}`);
-          assert.equal(task?.props.href, base + id + suffix + '&review=' + review);
+          assert.equal(task?.props.href, base + id + suffix + '&review=' + review + (review === 'owner' ? '&from=plan-receipt' : ''));
           assert.equal(task.props['data-handoff-task'], id);
-          assert.equal(schedule?.props.href, base + id + suffix + '&review=schedule');
+          assert.equal(schedule?.props.href, base + id + suffix + '&review=schedule&from=plan-receipt');
           assert.equal(schedule.props['data-handoff-task'], id);
           assert.equal(schedule.props['data-handoff-intent'], 'schedule', 'secondary link retains its distinct focus intent');
           assert.equal(schedule.props.onClick, undefined);
@@ -1592,7 +1655,7 @@ test('scheduled receipt shortcuts target the exact activity without replacing ta
         ]) {
           const task = planLink(app.tree, title);
           const timeline = links.find(node => node.props['aria-label'] === `Show ${title} in Timeline`);
-          assert.equal(task?.props.href, '/project?project=p_school&task=' + id + suffix + '&review=' + review);
+          assert.equal(task?.props.href, '/project?project=p_school&task=' + id + suffix + '&review=' + review + (review === 'owner' ? '&from=plan-receipt' : ''));
           assert.equal(task.props['data-handoff-task'], id);
           assert.equal(timeline?.props.href, '/project?project=p_school&activity=' + id + suffix);
           assert.equal(timeline.props['data-handoff-task'], id);
