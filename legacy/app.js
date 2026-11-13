@@ -2025,11 +2025,13 @@
         :'Go back to the schedule to choose another date or clear the date filter.'
       : model.mine?'Go back to the schedule to review your activities or switch to All activities.'
         :'Go back to the schedule to check for activities that still need a start time.';
-    ui.runSheet={model,text,scope,revision:store.getSnapshotRevision?.(),stale:false};
+    ui.runSheet={model,text,scope,key:scheduleWorkspaceKey(),revision:store.getSnapshotRevision?.(),stale:false};
     openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. '+
       (hasRows?'Refresh it before printing or downloading.':'Refresh it to check the same date and activity scope again.')+'</p>'+
       (store.refresh?'<button type="button" class="btn btn-secondary" id="runSheetRefresh" data-action="refresh-run-sheet">Refresh run sheet</button>':'')+
-      '</div><p id="runSheetCheckStatus" class="muted" role="status"></p><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked" data-blocked>'+
+      '</div><p id="runSheetCheckStatus" class="muted" role="status"></p><p id="runSheetRefreshStatus" class="muted" role="status"></p>'+
+      (model.missingDetails?'<div class="notice"><button type="button" class="btn btn-secondary" id="runSheetReviewDetails" data-action="review-run-sheet-details" aria-describedby="runSheetReviewDetailsStatus">Go to first activity with missing details</button><p id="runSheetReviewDetailsStatus" class="muted" role="status"></p></div>':'')+
+      '<p id="runSheetPrintBlocked" data-blocked>'+
       (hasRows?'Run sheet isn’t ready to print. Return to Weft to check or refresh it.':'No run sheet to print: this view has no scheduled activities. Return to Weft to check the schedule.')+
       '</p>'+schedule.runSheetMarkup(model)+
       (hasRows?'':'<p id="runSheetEmpty" class="notice">There’s nothing to print or download from this view. '+emptyHelp+'</p>')+
@@ -2053,6 +2055,7 @@
       (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
+    $('#runSheetReviewDetails')?.setAttribute('aria-disabled',String(blocked));
     const noRows=!snapshot.model.days.length;
     const checkStatus=$('#runSheetCheckStatus');
     const message=outcome==='checking'?'Checking the saved plan…':
@@ -2068,6 +2071,53 @@
     for(const button of $$('#dialog [data-action="download-run-sheet"], #dialog [data-action="print-run-sheet"], #dialog [data-action="check-run-sheet"]'))
       button.setAttribute('aria-disabled',String(blocked||(noRows&&button.dataset?.action!=='check-run-sheet')));
     return blocked?null:snapshot;
+  }
+  async function reviewRunSheetMissingDetails(button) {
+    const snapshot=ui.runSheet,title=$('#dialogTitle'),status=$('#runSheetReviewDetailsStatus');
+    const sameWorkspace=()=>!!snapshot&&!window.GatherAccessLost&&snapshot.key===scheduleWorkspaceKey();
+    const sameSheet=()=>sameWorkspace()&&!!title&&!!status&&!!button?.isConnected&&
+      ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&ui.dialogKind==='run-sheet'&&ui.runSheet===snapshot&&
+      snapshot.scope.actor===ui.actor&&
+      snapshot.scope.mine===ui.scheduleMine&&snapshot.scope.date===ui.scheduleDate&&
+      !$('#dialogBackdrop').hidden&&$('#dialogTitle')===title&&$('#runSheetReviewDetails')===button;
+    if(!sameSheet()||ui.pendingSave||ui.syncing||document.hidden||!snapshot.model.missingDetails)return;
+    if(busyRunSheetRevisions.has(snapshot.revision))return;
+    if(!currentRunSheet()){
+      status.textContent='Refresh the Run sheet before jumping to an activity.';return;
+    }
+    if(store.confirmSnapshotRevision){
+      busyRunSheetRevisions.add(snapshot.revision);
+      status.textContent='Checking the saved schedule…';
+      currentRunSheet();
+      try{
+        const confirmed=await store.confirmSnapshotRevision(snapshot.revision,newer=>{
+          if(sameWorkspace())rememberNewerSchedule(snapshot,newer);
+        });
+        if(!confirmed&&sameWorkspace()){
+          snapshot.stale=true;
+          if(store.getSnapshotRevision?.()===snapshot.revision&&!scheduleRevisionIsStale(snapshot.revision))
+            runSheetCheckOutcome={revision:snapshot.revision,kind:'inconclusive'};
+        }
+        if(!sameSheet()||document.hidden||ui.pendingSave)return;
+        if(!confirmed){
+          status.textContent='The schedule could not be confirmed. Refresh the Run sheet before jumping to an activity.';
+          return;
+        }
+      }catch{
+        if(sameSheet())status.textContent='Couldn’t check the schedule. Try again, or go back to Timeline.';
+        return;
+      }finally{
+        busyRunSheetRevisions.delete(snapshot.revision);
+        if(sameWorkspace()&&ui.runSheet?.key===snapshot.key)currentRunSheet();
+      }
+    }
+    if(!sameSheet()||document.hidden||ui.pendingSave)return;
+    if(!currentRunSheet()){status.textContent='Refresh the Run sheet before jumping to an activity.';return;}
+    const target=schedule.firstMissingRunSheetDetail(store.getState(),snapshot.scope);
+    const root=$('#viewRoot');
+    const row=target&&root&&$$('.schedule-row',root).find(el=>el.isConnected&&el.dataset.id===target.id&&el.dataset.scheduleDay===target.day);
+    closeDialog(row||(root&&$('#schedulePanelHeading',root)));
+    if(!row)toast(target?'Check missing details in the schedule below.':'No activities in this view still need those details.');
   }
   function printRunSheet() {
     if(currentRunSheet()?.model.days.length)window.print();
@@ -3478,6 +3528,7 @@
         }
       }
       if(action==='run-sheet')openRunSheet();
+      if(action==='review-run-sheet-details')await reviewRunSheetMissingDetails(el);
       if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);

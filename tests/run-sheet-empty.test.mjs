@@ -31,7 +31,7 @@ function fixture(tasks, scope = { mine: true, date }) {
   const node = { setAttribute() {}, toggleAttribute() {}, focus() {} };
   let revision = 1, remote = 1, nextTasks = tasks, prints = 0, downloads = 0;
   const link = { click() { downloads++; }, remove() {} };
-  const context = vm.createContext({ ui, Date, h, Blob, schedule,
+  const context = vm.createContext({ ui, Date, h, Blob, schedule,scheduleWorkspaceKey:()=> 'fictional-project:maya',
     window: { GatherMode: { projectId: 'fictional-project' }, print() { prints++; } },
     document: { hidden: false, createElement: () => link, body: { append() {} } },
     URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL() {} }, setTimeout: callback => callback(),

@@ -278,7 +278,7 @@ function runSheetHarness(){
   const printBlocked={toggleAttribute(key,active){if(active)printAttributes.add(key);else printAttributes.delete(key);}};
   const heading={focus(){},setAttribute(){}},backdrop={hidden:false,dataset:{}};
   const link={click(){fixture.downloads++;},remove(){}};
-  const context=vm.createContext({action:'run-sheet',window:{print(){fixture.prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,
+  const context=vm.createContext({action:'run-sheet',window:{print(){fixture.prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,scheduleWorkspaceKey:()=> 'fictional-project:maya',
     URL:{createObjectURL(value){fixture.blob=value;return 'blob:fixture';},revokeObjectURL(url){assert.equal(url,'blob:fixture');fixture.revokes++;}},setTimeout:callback=>callback(),requestAnimationFrame:callback=>callback(),
     document:{hidden:false,createElement:()=>link,body:{append(){} }},toast:()=>{},render:()=>fixture.renders++,
     store:{getState:()=>({revision:fixture.revision}),getSnapshotRevision:()=>fixture.revision,

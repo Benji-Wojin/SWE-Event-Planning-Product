@@ -185,6 +185,8 @@ Unresolved activities with unfinished required links show **Required work not co
 
 Timeline and Run sheets mark **Location not set** and **No end time set** on the affected activities, without substituting the event venue or guessing a duration. The Run sheet also counts unresolved activities missing either detail in the selected date and owner scope. Overnight activities are counted once, even if they appear on more than one day. Confirm the missing details in the live Timeline before relying on a saved or printed copy.
 
+In Weft, **Go to first activity with missing details** checks for a newer plan, then takes you to the affected Timeline row without changing the selected date or owner filter. If the sheet is out of date, refresh it first. The button isn’t included in printed or downloaded copies.
+
 **Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
 
 ### Optional manual budget

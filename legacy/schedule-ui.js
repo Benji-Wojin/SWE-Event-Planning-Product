@@ -105,6 +105,7 @@
   const noActivityEnd='No end time set',noActivityLocation='Location not set';
   const activityLocation = slot => typeof slot.location==='string'?slot.location.trim():'';
   const needsActivityDetails = task => !!task.schedule&&!resolved(task)&&(!task.schedule.end||!activityLocation(task.schedule));
+  const scheduledInScope = (tasks,scope) => ordered(scoped(tasks,scope).filter(task=>onDate(task,selectedDate(scope))));
   const assignmentGroup = key => key==='unassigned'||key==='owner-unavailable';
   const canReviewAssignment = task => task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
   const assignmentIssue = (task,members) => !task.owner?'unassigned':
@@ -485,7 +486,7 @@
     }
     function runSheetModel(state,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
-      const tasks=ordered(visible.filter(task=>onDate(task,day)));
+      const tasks=scheduledInScope(state.tasks,scope);
       const matches=scheduleOverlaps(state,tasks,day),{overlaps,locations}=matches;
       const untimed=visible.filter(needsActivityTime).length;
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
@@ -526,7 +527,7 @@
           owner:name(task.owner),acceptance:reconfirmation.has(id)?scheduleAcceptanceCue:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
           statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
-      return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
+      return {title,scopeLabel,timestamp,day,mine:!!scope.mine,missingDetails,timeZone:state.event.timeZone||'Time zone not set',
         cautions:[invalidTimeNotice,untimedNotice,detailsNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
@@ -557,6 +558,10 @@
     function runSheet(state,now=Date.now(),scope={}) {
       return runSheetMarkup(runSheetModel(state,now,scope));
     }
+    function firstMissingRunSheetDetail(state,scope={}) {
+      const task=scheduledInScope(state.tasks,scope).find(needsActivityDetails);
+      return task?{id:task.id,day:selectedDate(scope)||task.schedule.start.slice(0,10)}:null;
+    }
     function newActivity(state) {
       const timing=state.event.timeZone
         ? `<p class="muted">Leave the timing fields blank to set a start time later in Timeline.</p>${zone(state.event)}${fields({},false)}`
@@ -583,7 +588,7 @@
         <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
-    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
+    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
