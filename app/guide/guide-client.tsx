@@ -14,6 +14,7 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
   const reached = progress.events.map(event => event.checkpoint);
   const next = nextTutorialMilestone(reached);
   const query = progress.projectId ? '?project=' + encodeURIComponent(progress.projectId) : '';
+  const plannerHref = query && reached.includes('task_created') ? '/plan' + query + '&guide=1' : null;
   const currentIndex = next === 'started' ? 0 : steps.findIndex(([id]) => id === next);
   const intro = next === 'started';
   async function startOrOpenSetup() {
@@ -47,9 +48,13 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
         <a className={buttonVariants({variant:'ghost'})} href="/">Back to projects</a>
       </div>
     </div>
-    {next && <aside aria-labelledby="guide-ai-preview" className="space-y-1 rounded-xl border border-dashed bg-card px-4 py-3">
+    {next && <aside aria-labelledby="guide-ai-preview" className="space-y-2 rounded-xl border border-dashed bg-card px-4 py-3">
       <h3 id="guide-ai-preview" className="text-sm font-semibold">Optional: draft a plan with AI</h3>
-      <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{reached.includes('task_created') ? 'In your project guide, look for ' : 'After you save your first task, look for '}<strong className="text-foreground">Try drafting a plan with AI</strong>. Turn a short event brief into a private draft, then choose what to add to your project.</p>
+      <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{plannerHref ? 'Turn a short event brief into a private draft of tasks and activities, then choose what to add to your project.' : 'After you save your first task, you can turn a short event brief into a private draft, then choose what to add to your project.'}</p>
+      {plannerHref && <>
+        <a className={buttonVariants({variant:'outline',className:'min-h-11 h-auto max-w-full whitespace-normal px-3 py-2 text-center'})} href={plannerHref}>Try drafting a plan with AI</a>
+        <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">Opening the planner doesn’t send anything to AI or change your project.</p>
+      </>}
     </aside>}
     <ol className="weft-guide-roadmap" aria-label="Guide steps">
       {steps.map(([id,title,copy], index) => {

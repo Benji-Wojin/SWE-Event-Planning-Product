@@ -77,15 +77,19 @@ function render(component, props, values = []) {
   finally { delete globalThis.__selfserviceEffects; }
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-test('first-project intro and resume preview optional AI drafting outside the five guide steps', () => {
-  const projectId = 'p_fictional';
+test('the guide offers the bound-project AI planner only after the first task is saved', () => {
+  const projectId = 'p_fictional&next=other /?';
+  const projectQuery = 'project=p_fictional%26next%3Dother%20%2F%3F';
+  const beforeTask = ['started', 'project_created'];
   const afterTask = ['started', 'project_created', 'task_created'];
   const progress = (bound, checkpoints) => ({ projectId: bound ? projectId : null,
     events: checkpoints.map(checkpoint => ({ checkpoint, at: '2026-11-12T18:00:00.000Z' })) });
   try {
-    for (const [initial, action, timing] of [
-      [progress(false, []), 'Start guide', /After you save your first task/],
-      [progress(true, afterTask), 'Resume in your project', /In your project guide/],
+    for (const [initial, action, plannerAvailable] of [
+      [progress(false, []), 'Start guide', false],
+      [progress(true, beforeTask), 'Resume in your project', false],
+      [progress(false, afterTask), 'Resume in your project', false],
+      [progress(true, afterTask), 'Resume in your project', true],
     ]) {
       const { tree, effects } = render(GuideClient, { initial });
       const preview = tree.find(node => node.type === 'aside' && node.props['aria-labelledby'] === 'guide-ai-preview');
@@ -94,17 +98,29 @@ test('first-project intro and resume preview optional AI drafting outside the fi
       assert.ok(preview && primary && roadmap);
       assert.ok(tree.indexOf(primary) < tree.indexOf(preview) && tree.indexOf(preview) < tree.indexOf(roadmap));
       assert.match(text(preview), /Optional: draft a plan with AI/);
-      assert.match(text(preview), timing);
-      assert.match(text(preview), /Try drafting a plan with AI.*private draft, then choose what to add/);
+      const controls = nodes(preview).filter(node => ['a', 'button', 'form'].includes(node.type));
+      if (plannerAvailable) {
+        assert.equal(controls.length, 1);
+        const [link] = controls;
+        assert.equal(link.type, 'a');
+        assert.equal(text(link), 'Try drafting a plan with AI');
+        assert.equal(link.props.href, '/plan?' + projectQuery + '&guide=1');
+        assert.equal(link.props.onClick, undefined, 'opening the planner is only navigation');
+        assert.match(text(preview), /private draft/);
+        assert.match(text(preview), /Opening the planner doesn’t send anything to AI or change your project/);
+        assert.equal(primary.props.href, '/project?' + projectQuery + '&guide=1');
+      } else {
+        assert.match(text(preview), /After you save your first task/);
+        assert.deepEqual(controls, []);
+      }
       assert.equal(nodes(roadmap).filter(node => node.type === 'li').length, 5);
       assert.doesNotMatch(text(roadmap), /draft a plan with AI/i);
-      assert.ok(!nodes(preview).some(node => ['a', 'button', 'form'].includes(node.type)));
       assert.deepEqual(effects, []);
     }
     const done = render(GuideClient, { initial: progress(true,
       [...afterTask, 'budget_viewed', 'event_details_viewed', 'invite_skipped']) });
     assert.ok(!done.tree.some(node => node.props.id === 'guide-ai-preview'));
-    assert.equal(done.tree.find(node => node.type === 'a' && text(node) === 'Open your project')?.props.href, '/project?project=p_fictional');
+    assert.equal(done.tree.find(node => node.type === 'a' && text(node) === 'Open your project')?.props.href, '/project?' + projectQuery);
   } finally { delete globalThis.__selfserviceState; }
 });
 test('optional planner walkthrough teaches the actual controls, fallback and shared destinations', () => {
