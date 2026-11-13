@@ -140,7 +140,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   };
   const state = [],
     timers = new Map(),
-    requests = [], listeners=new Map(), parentMessages=[], focused=[];
+    requests = [], listeners=new Map(), parentMessages=[], focused=[], navigations=[];
   let index = 0,
     changed = true,
     effects = [],
@@ -191,7 +191,11 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     clearTimeout(id) {
       timers.delete(id);
     },
-    location:{origin:'https://weft.example'},
+    location:{origin:'https://weft.example',assign(href){
+      let prompted = false;
+      for (const listener of listeners.get('beforeunload') || []) listener({ preventDefault() { prompted = true; } });
+      navigations.push({ href, prompted });
+    }},
     parent:{postMessage:(value,origin)=>parentMessages.push({value,origin})},
     addEventListener(type,fn) {if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(fn);},
     removeEventListener(type,fn) {listeners.get(type)?.delete(fn);},
@@ -236,6 +240,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   }
   return {
     requests,
+    navigations,
     focused,
     parentMessages,
     async message(data,extra={}){
@@ -318,6 +323,132 @@ test('guided planner return stays available before the project loads and on load
     assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
     assert.deepEqual(app.requests.map(row => row.action), ['get']);
   } finally { app.dispose(); }
+});
+
+const saveAndReturn = 'Save and return to guide';
+const saveDraftAndReturn = 'Save draft and return to guide';
+const guidedProject = '/project?project=p_example&guide=1';
+const normalizeSavedRow = row => ({ ...row, title: row.title.trim(), note: row.note.trim(), scope: (row.scope ?? '').trim(), location: row.location.trim() });
+function pausedPlanResult(input, saved) {
+  return { ...saved, revision: saved.revision + 1, brief: { ...input.brief, description: input.brief.description.trim() },
+    draft: saved.draft ? { ...saved.draft, items: input.items.map(normalizeSavedRow) } : null };
+}
+
+test('guided pause saves the first edited brief privately and returns only after an exact acknowledgment', async () => {
+  const initial = { ...fixture(), revision: 0, brief: { ...brief, description: '' }, draft: null, status: 'empty' };
+  let finish;
+  const app = harness(context => {
+    if (context.input?.action !== 'save') return;
+    return new Promise(resolve => { finish = () => {
+      context.value = pausedPlanResult(context.input, context.saved);
+      resolve(Response.json(context.value));
+    }; });
+  }, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    assertGuideReturn(app.tree);
+    assert.equal(planButton(app.tree, saveAndReturn), undefined);
+    await app.edit('plan-brief', '  Fictional first brief to pick up later.  ');
+    const saving = app.click(saveAndReturn);
+    await app.start();
+    assert.ok(finish);
+    assert.deepEqual(app.navigations, [], 'do not leave before the private save returns');
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'save', revision: 0,
+      brief: { ...initial.brief, description: '  Fictional first brief to pick up later.  ' }, items: [] }]);
+    finish();
+    await saving;
+    assert.deepEqual(app.navigations, [{ href: guidedProject, prompted: false }]);
+    assert.equal(app.saved.brief.description, 'Fictional first brief to pick up later.');
+    assert.equal(app.saved.draft, null);
+    assert.equal(app.saved.receipt, null);
+  } finally { app.dispose(); }
+});
+
+test('guided review footer saves draft edits and selection without generating or applying', async () => {
+  const initial = fixture();
+  initial.draft.items.push({ ...copy(item), id: 'two', title: 'Prepare signs' });
+  const app = harness(context => {
+    if (context.input?.action === 'save') context.value = pausedPlanResult(context.input, context.saved);
+  }, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    await app.edit('title-one', '  Confirm the fictional venue  ');
+    await app.edit('note-two', '  Keep the private edited note.  ');
+    await app.check('include-two', false);
+    assert.equal(planButton(app.tree, saveAndReturn)?.props.disabled, false);
+    assert.equal(planButton(app.tree, saveDraftAndReturn)?.props.disabled, false);
+    await app.click(saveDraftAndReturn);
+    assert.deepEqual(app.requests.map(({ action }) => action), ['get', 'save']);
+    assert.equal(app.requests[1].generation, initial.draft.generation);
+    assert.equal(app.requests[1].revision, initial.revision);
+    assert.deepEqual(app.saved.draft.items.map(({ title, note, included }) => [title, note, included]), [
+      ['Confirm the fictional venue', item.note, true], ['Prepare signs', 'Keep the private edited note.', false],
+    ]);
+    assert.equal(app.saved.receipt, null);
+    assert.deepEqual(app.navigations, [{ href: guidedProject, prompted: false }]);
+  } finally { app.dispose(); }
+});
+
+test('guided pause cannot navigate after an unconfirmed or mismatched private save and keeps local edits', async () => {
+  for (const scenario of ['network', 'conflict', 'revision', 'generation', 'brief', 'item', 'selection', 'applied', 'status']) {
+    const initial = fixture();
+    const app = harness(context => {
+      if (context.input?.action !== 'save') return;
+      if (scenario === 'network') throw new Error('Fictional connection lost');
+      if (scenario === 'conflict') return Response.json({ error: 'Fictional draft conflict' }, { status: 409 });
+      const result = pausedPlanResult(context.input, context.saved);
+      if (scenario === 'revision') result.revision++;
+      if (scenario === 'generation') result.draft.generation = 'different-generation';
+      if (scenario === 'brief') result.brief.description = 'Fictional other-tab brief';
+      if (scenario === 'item') result.draft.items[0].note = 'Fictional other-tab edit';
+      if (scenario === 'selection') result.draft.items[0].included = true;
+      if (scenario === 'applied') result.receipt = { taskIds: ['other-tab-task'] };
+      if (scenario === 'status') result.status = 'interrupted';
+      return Response.json(result);
+    }, initial, 'project=p_example', false, true);
+    try {
+      await app.start();
+      await app.edit('plan-brief', 'Keep this fictional brief.');
+      await app.edit('note-one', 'Keep this fictional unsaved note.');
+      await app.check('include-one', false);
+      await app.click(saveAndReturn);
+      assert.deepEqual(app.requests.map(({ action }) => action), ['get', 'save'], scenario);
+      assert.deepEqual(app.navigations, [], scenario);
+      assert.equal(app.find('plan-brief').props.value, 'Keep this fictional brief.', scenario);
+      assert.equal(app.find('note-one').props.value, 'Keep this fictional unsaved note.', scenario);
+      assert.equal(app.find('include-one').props.checked, false, scenario);
+      const alert = nodes(app.tree).find(node => node.props.role === 'alert');
+      assert.match(text(alert), /Fictional (?:connection lost|draft conflict)|couldn’t confirm this version was saved/i, scenario);
+    } finally { app.dispose(); }
+  }
+});
+
+test('unimported checklist text or a blank brief cannot be lost through the guided save and return shortcuts', async () => {
+  for (const [field, value, editDraft, help] of [
+    ['plan-pasted-checklist', '- Fictional item not yet imported', false, /Import or clear your pasted checklist/],
+    ['plan-pasted-checklist', '- Fictional item and separately edited draft', true, /Import or clear your pasted checklist/],
+    ['plan-brief', '   ', true, /Add a short event description/],
+  ]) {
+    const app = harness(undefined, fixture(), 'project=p_example', false, true);
+    try {
+      await app.start();
+      if (editDraft) await app.edit('note-one', 'Fictional edited proposal.');
+      await app.edit(field, value);
+      assert.equal(planButton(app.tree, saveAndReturn)?.props.disabled, true, field);
+      assert.equal(planButton(app.tree, saveDraftAndReturn)?.props.disabled, true, field);
+      assert.match(text(app.find('guide-pause-help')), help);
+      assert.equal(app.find(field).props.value, value);
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+      assert.deepEqual(app.navigations, []);
+    } finally { app.dispose(); }
+  }
+  const plain = harness();
+  try {
+    await plain.start();
+    await plain.edit('note-one', 'Fictional edited proposal.');
+    assert.equal(planButton(plain.tree, saveAndReturn), undefined);
+    assert.equal(planButton(plain.tree, saveDraftAndReturn), undefined);
+  } finally { plain.dispose(); }
 });
 
 test('guided planner points to the real brief, explicit generation, private review, and receipt', async () => {

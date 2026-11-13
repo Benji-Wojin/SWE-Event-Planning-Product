@@ -18,6 +18,8 @@ import { PlanApprovalImpact } from './approval-impact';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
   eventKinds,
+  parseBrief,
+  parsePlanItems,
   planCategories,
   type PlanBrief,
   type ReviewedItem,
@@ -41,6 +43,11 @@ const emptyBrief: PlanBrief = {
 };
 const editable = (brief: PlanBrief, items: ReviewedItem[]) =>
   JSON.stringify({ brief, items });
+function savedEditable(brief: PlanBrief, items: ReviewedItem[], eventDate: string) {
+  const normalized = parsePlanItems(items, true, true)
+    .map(item => Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)));
+  return JSON.stringify({ brief: parseBrief(brief, eventDate), items: normalized });
+}
 function existingTaskLink(task: ExistingPlanTask, params: URLSearchParams, guided: boolean) {
   const href = planTaskHref(params, task.id, guided);
   return href ? (
@@ -92,6 +99,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
   const [approvalCheck, setApprovalCheck] = useState<ApprovalCheck | null>(null);
+  const [guidePause, setGuidePause] = useState<{query: string; href: string; revision: number} | null>(null);
   const pending = useRef(false),
     request = useRef<any>(null),
     starterRequest = useRef<any>(null),
@@ -163,6 +171,9 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     brief.description.trim() ? 'generate' : 'brief';
   const canUseGuideExample = guideReturn && guideStage === 'brief' && !locked && brief.description === '';
   const guideDraftNeedsRecheck = guideStage === 'review' && !!data?.contextChanged;
+  const unsentChecklist = !!checklist.trim();
+  const offerGuidePause = guideReturn && !!data && !applied && (draftDirty || unsentChecklist);
+  const canPauseGuide = offerGuidePause && draftDirty && !locked && !!brief.description.trim() && !unsentChecklist;
   const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
     data?.draft?.source === 'starter' || !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
     ['#plan-generate', 'Generate a new draft'];
@@ -293,6 +304,14 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, unresolvedApproval]);
   useEffect(() => {
+    if (!guidePause || busy) return;
+    setGuidePause(null);
+    // Leave only after the confirmed save is rendered and the dirty-page
+    // beforeunload listener has been removed by the preceding effect.
+    if (guideReturn && guidePause.query === query && !dirty && !unresolvedApproval && data?.revision === guidePause.revision)
+      window.location.assign(guidePause.href);
+  }, [guidePause, busy, guideReturn, query, dirty, unresolvedApproval, data?.revision]);
+  useEffect(() => {
     if (error) errorBox.current?.focus();
   }, [error]);
   useEffect(()=>{
@@ -382,6 +401,27 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     request.current = null;
     starterRequest.current = null;
     return result;
+  }
+  async function saveAndReturnToGuide() {
+    if (!canPauseGuide || pending.current) return;
+    await run(async () => {
+      const revision = data.revision + 1;
+      const generation = data.draft?.generation;
+      const expected = savedEditable(brief, items, data.event.date);
+      const result = await api(query, {action:'save', revision:data.revision, brief, items, generation},
+        AbortSignal.timeout(approvalTimeout));
+      let confirmed = false;
+      if (result.revision === revision && !result.receipt && result.status === (data.draft ? 'ready' : 'empty') &&
+        (data.draft ? result.draft?.generation === generation && Array.isArray(result.draft.items) : !result.draft)) {
+        try { confirmed = savedEditable(result.brief, result.draft?.items || [], data.event.date) === expected; }
+        catch { /* An unexpected response cannot confirm this save. */ }
+      }
+      if (!confirmed) throw new Error('We couldn’t confirm this version was saved. Your edits are still here. Copy anything you want to keep before reloading the saved draft.');
+      accept(result, false);
+      request.current = null;
+      starterRequest.current = null;
+      setGuidePause({query, href:projectUrl, revision});
+    });
   }
   async function importChecklist() {
     if(locked||applied||data.contextChanged||items.length>=24||checklistTooLong||!checklist.trim())return;
@@ -620,9 +660,17 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {data.event.name}
           {demo ? ' · Demo' : ''}
         </p>
-        <a href={projectUrl} className={guideReturn ? 'inline-flex min-h-11 items-center text-primary underline' : 'text-primary underline'}>
-          {guideReturn ? 'Return to your guide' : applied ? 'Open project' : 'Skip / open project'}
-        </a>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {offerGuidePause && <Button type="button" variant="outline" className="min-h-11"
+            disabled={!canPauseGuide} aria-describedby="guide-pause-help" onClick={saveAndReturnToGuide}>Save and return to guide</Button>}
+          <a href={projectUrl} className={guideReturn ? 'inline-flex min-h-11 items-center text-primary underline' : 'text-primary underline'}>
+            {guideReturn ? 'Return to your guide' : applied ? 'Open project' : 'Skip / open project'}
+          </a>
+        </div>
+        {offerGuidePause && <p id="guide-pause-help" className="basis-full text-muted-foreground">{unsentChecklist
+          ? 'Import or clear your pasted checklist before leaving. It isn’t part of the saved draft yet.'
+          : !brief.description.trim() ? 'Add a short event description before saving.'
+          : 'Save your private edits for later. Nothing is added to the project and no AI request is made.'}</p>}
       </div>}
       {data.issue && (
         <p role="status" className="mb-4 rounded-lg border p-4 text-sm">
@@ -1444,6 +1492,11 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
               >
                 Add {selected.length} selected items to project
               </Button>
+              {offerGuidePause && <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Button type="button" variant="outline" className="h-auto min-h-11 whitespace-normal"
+                  disabled={!canPauseGuide} aria-describedby="guide-pause-help" onClick={saveAndReturnToGuide}>Save draft and return to guide</Button>
+                <p className="text-sm text-muted-foreground">Keep working on this private draft later without sharing it.</p>
+              </div>}
             </div>
           )}
         </section>
