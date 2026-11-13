@@ -475,7 +475,7 @@
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const schedule = GatherScheduleUI.create({h,options,statusBadge});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('info')});
-  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),getActor:()=>ui.actor,focusControl:focusScheduleTarget,onLoaded:()=>recordLoadedGuideView('budget')});
+  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,confirmClose:confirmCloseDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),getActor:()=>ui.actor,focusControl:focusScheduleTarget,onLoaded:()=>recordLoadedGuideView('budget')});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
     if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;

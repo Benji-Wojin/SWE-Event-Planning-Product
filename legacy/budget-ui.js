@@ -6,6 +6,7 @@
     closeDialog,
     toast,
     saveLock,
+    confirmClose = () => true,
     isDialogOpen,
     getWorkspace,
     getActor = () => '',
@@ -286,7 +287,10 @@
         document.getElementById('budgetForm') === form;
       const labels = {title:'Cost name',estimate:'Estimate',committed:'Committed amount',paid:'Payment recorded',
         owner:'Owner',taskId:'Linked task',dueDate:'Due date',status:'Status'};
+      const forecastKeys = ['status','estimate','committed','paid'];
+      let recoveryVersion = 0;
       function message(text) {
+        recoveryVersion++;
         const node = form.querySelector('.form-error');
         const hadFocus = node.contains?.(document.activeElement);
         node.textContent = text;
@@ -298,14 +302,23 @@
         button.className = 'btn btn-secondary btn-small';
         button.setAttribute(attribute, '');
         button.textContent = text;
-        button.addEventListener('click', callback);
+        const version = recoveryVersion;
+        button.addEventListener('click', () => {
+          if (version === recoveryVersion && button.isConnected !== false) return callback();
+        });
         form.querySelector('.form-error').append(button);
       }
-      function compare() {
-        return B.compareCostEdits(opening, checked.row, B.item(Object.fromEntries(new FormData(form)), cost.currency));
+      function costFields() {
+        return Object.fromEntries([...new FormData(form)].filter(([key])=>Object.hasOwn(labels,key)));
       }
-      function savedValue(key) {
-        const value = checked.row[key];
+      function readDraft() {
+        return B.item(costFields(),cost.currency);
+      }
+      function compare(draft = readDraft()) {
+        return B.compareCostEdits(opening, checked.row, draft);
+      }
+      function displayValue(row, key) {
+        const value = row[key];
         if (['estimate','committed','paid'].includes(key)) return B.format(value,cost.currency);
         if (key==='owner'||key==='taskId') {
           if (!value) return 'None';
@@ -314,6 +327,35 @@
             workspace.tasks.find(task=>task.id===value)?.title) || 'Unavailable selection';
         }
         return value||'Not recorded';
+      }
+      function choiceMarkup(draft, {conflicts,coupled}) {
+        const groups = conflicts.filter(key=>!coupled||!forecastKeys.includes(key)).map(key=>({key,keys:[key]}));
+        if (coupled) groups.unshift({key:'forecast',keys:forecastKeys});
+        const controls = [];
+        for (const {key,keys} of groups) {
+          const fieldset = document.createElement('fieldset'), legend = document.createElement('legend');
+          fieldset.className = 'budget-resolution-choice';
+          legend.textContent = key==='forecast'?'Status and amounts':labels[key];
+          fieldset.append(legend);
+          const options = [];
+          for (const [value,row,label] of [['saved',checked.row,'Use latest saved'],['draft',draft,'Keep my draft']]) {
+            const input = document.createElement('input'), option = document.createElement('label'), copy = document.createElement('span');
+            input.type = 'radio';
+            input.name = 'budget-resolution-'+key;
+            input.value = value;
+            option.className = 'check-field';
+            const facts = keys.map(field=>labels[field]+': '+displayValue(row,field)).join(' · ');
+            const forecast = key==='forecast'?B.forecastAmount(row):null;
+            copy.textContent = label+' — '+facts+(forecast?' · Expected contribution: '+
+              (forecast.missing?'at least ':'')+B.format(forecast.minimum,cost.currency)+(forecast.missing?' (incomplete)':''):'');
+            option.append(input,copy);
+            fieldset.append(option);
+            options.push(input);
+          }
+          form.querySelector('.form-error').append(fieldset);
+          controls.push({keys,options});
+        }
+        return controls;
       }
       function setBlocked(value) {
         blocked=value;
@@ -327,22 +369,31 @@
         closeDialog();
         await load();
       }
-      function drawRecovery() {
+      function drawRecovery(draft, choicesReset=false) {
         if (!live()) return;
         let text = 'The budget changed. Your draft is still here. Review the latest saved cost before saving again.';
         if (checked) {
           const {changed,conflicts,coupled} = checked.comparison;
           text = conflicts.length
-            ? 'You and the saved budget changed the same fields: '+conflicts.map(key=>labels[key]).join(', ')+'. Your draft is unchanged. Match the current values in those fields, or copy your edits and reopen the cost.'
+            ? 'You and the saved budget changed the same fields: '+conflicts.map(key=>labels[key]).join(', ')+'. Choose which values to keep. Your draft is unchanged until you apply your choices.'
             : changed.length ? 'Use the latest values for fields you did not edit, then review and save.'
             : 'The saved cost fields are unchanged. Keep your draft, review it, then save again.';
-          if (coupled) text = 'Status and amount changes affect the forecast together. Your draft is unchanged. Match the saved status and amounts where they changed, or copy your edits and reopen the cost.';
-          if (changed.length) text += ' Saved now: '+changed.map(key=>labels[key]+': '+savedValue(key)).join(' · ')+'.';
+          if (coupled) text = 'Status and amount changes affect the forecast together. Choose one set of status and amounts to keep.';
+          if (changed.length) text += ' Saved now: '+changed.map(key=>labels[key]+': '+displayValue(checked.row,key)).join(' · ')+'.';
         }
-        message(text);
+        message((choicesReset?'Your draft changed. Review the updated comparison before applying. ':'')+text);
         recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
-        if (checked && !checked.comparison.conflicts.length && !checked.comparison.coupled)
-          recoveryButton('data-budget-adopt-current','Use latest saved values',adoptCurrent);
+        if (!checked) return;
+        if (!checked.comparison.conflicts.length && !checked.comparison.coupled)
+          recoveryButton('data-budget-adopt-current','Use latest saved values',()=>adoptCurrent());
+        else if (draft) {
+          const controls=choiceMarkup(draft,checked.comparison), signature=JSON.stringify(draft);
+          const hint=document.createElement('p');
+          hint.textContent='Choose an option for each group, then apply. Nothing is saved until you choose Save.';
+          hint.setAttribute('role','status');
+          form.querySelector('.form-error').append(hint);
+          recoveryButton('data-budget-apply-choices','Apply choices to draft',()=>adoptCurrent({controls,signature,hint}));
+        }
       }
       async function checkCurrent() {
         if (!live() || !blocked || checking || form.dataset.saving) return;
@@ -363,13 +414,14 @@
             return;
           }
           checked = {next,row};
-          try { checked.comparison = compare(); } catch {
+          let draft;
+          try { draft=readDraft(); checked.comparison = compare(draft); } catch {
             checked = null;
             message('Check your entered fields before comparing. Your draft is unchanged.');
             recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
             return;
           }
-          drawRecovery();
+          drawRecovery(draft);
         } catch (error) {
           if (live()) {
             checked = null;
@@ -379,27 +431,56 @@
           }
         } finally { checking = false; }
       }
-      function adoptCurrent() {
+      function adoptCurrent(resolution) {
         if (!live() || !blocked || !checked || checking || form.dataset.saving) return;
-        let comparison;
-        try { comparison = compare(); } catch {
+        let comparison, draft;
+        try { draft=readDraft(); comparison = compare(draft); } catch {
           message('Check your entered amounts before using the latest values. Your draft is unchanged.');
           recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
           return;
         }
-        if (comparison.conflicts.length || comparison.coupled) {
+        if ((resolution && JSON.stringify(draft)!==resolution.signature) ||
+          (!resolution && (comparison.conflicts.length || comparison.coupled))) {
           checked.comparison = comparison;
-          drawRecovery();
+          drawRecovery(draft,!!resolution);
           return;
         }
-        const fields = comparison.changed.map(key=>[key,form.elements.namedItem(key)]);
+        const updates = new Set(comparison.changed);
+        if (resolution) {
+          const choices=resolution.controls.map(({keys,options})=>({keys,choice:options.filter(option=>option.checked)}));
+          if (choices.some(({choice})=>choice.length!==1)) {
+            resolution.hint.textContent='Choose one option for each group before applying.';
+            return;
+          }
+          for (const {keys,choice:[option]} of choices) {
+            const row=option.value==='draft'?draft:checked.row;
+            for (const key of keys) { comparison.merged[key]=row[key]; updates.add(key); }
+          }
+        }
+        const fields = Object.keys(labels).map(key=>[key,form.elements.namedItem(key)]);
         if (fields.some(([key,field])=>!field || (field.options &&
-          ![...field.options].some(option=>option.value===comparison.merged[key])))) {
+          ![...field.options].some(option=>!option.disabled&&option.value===comparison.merged[key])))) {
           message('A saved selection is not available in this form. Your draft is unchanged. Copy your edits before closing.');
           return;
         }
-        for (const [key,field] of fields) field.value = ['estimate','committed','paid'].includes(key)
-          ? B.inputAmount(comparison.merged[key],cost.currency) : comparison.merged[key];
+        for (const [key,field] of fields) {
+          const formatted = value => forecastKeys.includes(key)&&key!=='status'?B.inputAmount(value,cost.currency):value;
+          const value=updates.has(key)?formatted(comparison.merged[key]):field.value;
+          const baseline=formatted(checked.row[key]);
+          if (field.options) {
+            // The latest saved choice may no longer be offered, but can still
+            // be the dirty-check baseline for a valid replacement selection.
+            if (![...field.options].some(option=>option.value===baseline)) {
+              const option=document.createElement('option');
+              option.value=baseline;
+              option.textContent='Unavailable saved selection';
+              option.disabled=true;
+              field.append(option);
+            }
+            for (const option of field.options) option.defaultSelected=option.value===baseline;
+          } else field.defaultValue=baseline;
+          field.value=value;
+        }
         state = checked.next;
         revision = state.revision;
         opening = checked.row;
@@ -411,7 +492,7 @@
       }
       form
         .querySelector('[data-budget-close]')
-        .addEventListener('click', closeDialog);
+        .addEventListener('click', () => { if (confirmClose()) closeDialog(); });
       async function submit(event, build) {
         event.preventDefault();
         event.stopPropagation();
@@ -470,7 +551,7 @@
         }
       }
       form.addEventListener('submit', (event) =>
-        submit(event, () => action(Object.fromEntries(new FormData(form)))),
+        submit(event, () => action(cost ? costFields() : Object.fromEntries(new FormData(form)))),
       );
       form
         .querySelector('[data-budget-archive]')

@@ -40,7 +40,7 @@ test('normalized cost comparison retains disjoint or identical edits and never s
 });
 
 function element(attrs = {}) {
-  return { children: [], dataset: {}, listeners: {}, disabled: false, hidden: false, isConnected: true, value: '', ...attrs,
+  return { children: [], dataset: {}, listeners: {}, checked: false, disabled: false, hidden: false, isConnected: true, value: '',
     addEventListener(name, listener) { this.listeners[name] = listener; },
     append(...nodes) { this.children.push(...nodes); },
     replaceChildren(...nodes) { this.children = nodes; },
@@ -49,12 +49,26 @@ function element(attrs = {}) {
     setAttribute(name, value) { this[name] = value; },
     removeAttribute(name) { delete this[name]; },
     toggleAttribute(name, force) { if (force) this[name] = ''; else delete this[name]; },
+    querySelectorAll(selector) {
+      const match = selector.match(/^([\w-]+)?((?:\[[^\]]+\])*)(:checked)?$/);
+      if (!match) return [];
+      const [, tag, attributes, checked] = match;
+      function accepts(node) {
+        return (!tag || node.tagName === tag.toUpperCase()) && (!checked || node.checked) &&
+          Array.from(attributes.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)).every(([, name, value]) =>
+            node.getAttribute(name) !== null && (value === undefined || node.getAttribute(name) === value));
+      }
+      return this.children.flatMap(child => typeof child === 'object'
+        ? [...(accepts(child) ? [child] : []), ...child.querySelectorAll(selector)] : []);
+    },
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; },
     closest() { return null; },
     focus() {},
+    ...attrs,
   };
 }
 
-async function harness() {
+async function harness({ confirm = () => true } = {}) {
   const requests = [], notices = [];
   const host = element({ innerHTML: '', contains: () => false, querySelector: () => null, querySelectorAll: () => [] });
   const initialBudget = { ...B.initial(), enabled: true, items: [opening] };
@@ -67,12 +81,16 @@ async function harness() {
       .map(([key, value]) => [key, ['estimate','committed','paid'].includes(key) ? B.inputAmount(value, response.budget.currency) : value]));
   }
   class SuccessfulFormData extends Map {
-    constructor(form) { super(Object.entries(form.values).filter(([, control]) => !control.disabled).map(([key, control]) => [key, control.value])); }
+    constructor(form) {
+      super([...Object.entries(form.values).filter(([, control]) => !control.disabled).map(([key, control]) => [key, control.value]),
+        ...form.error.querySelectorAll('input[type="radio"]:checked').filter(control => !control.disabled).map(control => [control.name, control.value])]);
+    }
   }
   function makeForm(markup) {
-    const values = Object.fromEntries(Object.entries(payload(opening)).map(([key, value]) => [key, element({ name: key, value })]));
-    for (const key of ['taskId', 'owner']) {
-      values[key].options = [element({ value: '' })];
+    const values = Object.fromEntries(Object.entries(payload(opening)).map(([key, value]) => [key, element({ name: key, value, defaultValue: value, tagName: 'INPUT' })]));
+    for (const key of ['taskId', 'owner', 'status']) {
+      values[key].tagName = 'SELECT';
+      values[key].options = (key === 'status' ? ['active', 'cancelled'] : ['']).map(value => element({ value, defaultSelected: value === values[key].value }));
       values[key].append = function (option) { this.options.push(option); };
     }
     const controls = new Map();
@@ -88,9 +106,9 @@ async function harness() {
         if (selector.includes('type="submit"') || selector.includes('type=submit')) return submit;
         const named = selector.match(/^\[name="([^"]+)"\]$/);
         if (named) return values[named[1]] ?? null;
-        return controls.get(selector) ?? null;
+        return controls.get(selector) ?? error.querySelector(selector);
       },
-      querySelectorAll: () => Object.values(values),
+      querySelectorAll: selector => [...Object.values(values).filter(control => !selector || ['input','select','input,select,textarea'].includes(selector)), ...error.querySelectorAll(selector ?? '')],
       closest: selector => selector === '#dialog' ? form : null,
     });
   }
@@ -106,6 +124,7 @@ async function harness() {
   });
   const ui = window.GatherBudgetUI.create({ h, getActor: () => actor, isDialogOpen: () => !!form, getWorkspace: () => ({ tasks: [], members: [] }),
     toast: notice => notices.push(notice),
+    confirmClose: () => confirm(form),
     openDialog: (_title, markup) => { form = makeForm(markup); },
     closeDialog() { if (form) form.isConnected = false; form = null; closed++; },
     saveLock() {
@@ -131,6 +150,15 @@ async function harness() {
     draft(changes) { for (const [key, value] of Object.entries(changes)) form.values[key].value = value; },
     values() { return Object.fromEntries(Object.entries(form.values).map(([key, control]) => [key, control.value])); },
     control(selector) { return form.querySelector(selector) ?? form.error.children.find(child => child.getAttribute(selector.slice(1,-1)) !== null); },
+    choices(key) { return form.error.querySelectorAll(`input[name="budget-resolution-${key}"]`); },
+    choose(key, value) {
+      const controls = this.choices(key);
+      assert.ok(controls.some(choice => choice.value === value), `missing ${key}=${value} choice`);
+      for (const choice of controls) choice.checked = choice.value === value;
+      const selected = controls.find(choice => choice.checked);
+      selected.listeners.change?.({ target: selected });
+      form.listeners.change?.({ target: selected });
+    },
     submit() { return form.listeners.submit(event(form)); },
     async click(selector) {
       const node = this.control(selector);
@@ -144,6 +172,7 @@ async function harness() {
 
 const check = '[data-budget-check-current]';
 const adopt = '[data-budget-adopt-current]';
+const apply = '[data-budget-apply-choices]';
 
 test('a definitive conflict blocks repeat POST; a disjoint review and explicit adoption preserve draft until explicit Save', async () => {
   const f = await harness();
@@ -191,7 +220,7 @@ test('an edit made after checking is re-compared; unequal overlap never adopts o
   f.draft({ estimate: '160.00' });
   const before = f.values();
   await f.click(adopt);
-  assert.match(f.form.error.textContent, /same fields: Estimate.*\$150\.00/);
+  assert.match(f.form.error.textContent, /Estimate/);
   assert.equal(f.control(adopt), undefined);
   assert.deepEqual(f.values(), before);
   await f.submit();
@@ -234,10 +263,101 @@ test('status and amount changes are not automatically combined, even in separate
   assert.equal(f.form.submit.getAttribute('aria-disabled'), 'true');
   f.update(saved({ status: 'cancelled' }));
   await f.click(check);
-  assert.match(f.form.error.textContent, /Status and amount changes affect the forecast together.*Status: cancelled/);
+  assert.match(f.form.error.textContent, /Status and amount changes affect the forecast together/);
   assert.equal(f.control(adopt), undefined);
   assert.deepEqual(f.values(), before);
   await f.submit();
+  assert.equal(f.posts.length, 1);
+});
+
+test('each overlapping cost field needs an explicit choice; applying choices only updates the draft', async () => {
+  const f = await harness();
+  f.draft({ title: 'My draft tent', estimate: '160.00', paid: '20.00' });
+  const before = f.values();
+  await f.submit();
+  f.update(saved({ title: 'Saved tent <XL>', estimate: 15000, committed: 17000, paid: 0 }));
+  await f.click(check);
+  assert.equal(f.control(adopt), undefined);
+  assert.ok(f.control(apply));
+  for (const key of ['title', 'estimate', 'paid']) {
+    assert.deepEqual(f.choices(key).map(({ value }) => value).sort(), ['draft', 'saved']);
+    assert.equal(f.choices(key).some(({ checked }) => checked), false, `no automatic ${key} choice`);
+  }
+  assert.deepEqual(f.choices('committed'), [], 'a non-overlapping change needs no conflict choice');
+  await f.click(apply);
+  assert.deepEqual(f.values(), before);
+  assert.equal(f.posts.length, 1);
+  f.choose('title', 'draft');
+  f.choose('estimate', 'saved');
+  await f.click(apply);
+  assert.deepEqual(f.values(), before);
+  await f.submit();
+  assert.equal(f.posts.length, 1);
+  f.choose('paid', 'draft');
+  await f.click(apply);
+  assert.equal(f.posts.length, 1, 'applying choices is not a save');
+  const combined = { ...before, estimate: '150.00', committed: '170.00' };
+  assert.deepEqual(f.values(), combined);
+  assert.equal(f.form.submit.getAttribute('aria-disabled'), 'false');
+  f.nextPost = 200;
+  await f.submit();
+  assert.deepEqual(f.posts[1].item, combined, 'choice control fields must never enter the save body');
+  assert.equal(f.posts[1].revision, 8);
+  assert.equal(f.closed, 1);
+});
+
+test('status and amounts are chosen atomically, with other conflicts decided separately', async () => {
+  for (const side of ['draft', 'saved']) {
+    const f = await harness();
+    f.draft({ title: 'My draft tent', paid: '30.00', estimate: '170.00', dueDate: '2026-11-30' });
+    const before = f.values();
+    await f.submit();
+    f.update(saved({ title: 'Saved tent', status: 'cancelled', paid: 2000, committed: 15000 }));
+    await f.click(check);
+    assert.equal(f.control(adopt), undefined);
+    assert.deepEqual(f.choices('forecast').map(({ value }) => value).sort(), ['draft', 'saved']);
+    assert.equal(f.choices('forecast').some(({ checked }) => checked), false);
+    for (const key of ['status', 'estimate', 'committed', 'paid']) assert.deepEqual(f.choices(key), [], `${key} may not be split from forecast choice`);
+    f.choose('forecast', side);
+    await f.click(apply);
+    assert.deepEqual(f.values(), before, 'unresolved title blocks applying any part of the draft');
+    f.choose('title', 'saved');
+    await f.click(apply);
+    const expected = side === 'draft' ? { ...before, title: 'Saved tent' }
+      : { ...before, title: 'Saved tent', status: 'cancelled', estimate: '120.00', committed: '150.00', paid: '20.00' };
+    assert.deepEqual(f.values(), expected);
+    assert.equal(f.posts.length, 1);
+    f.nextPost = 200;
+    await f.submit();
+    assert.deepEqual(f.posts[1].item, expected);
+    assert.equal(f.posts[1].revision, 8);
+  }
+});
+
+test('changing a cost draft after choices were shown invalidates previous choices and cannot post', async () => {
+  const f = await harness();
+  f.draft({ estimate: '160.00' });
+  await f.submit();
+  f.update(saved({ estimate: 15000 }));
+  await f.click(check);
+  f.choose('estimate', 'draft');
+  const oldApply = f.control(apply);
+  f.draft({ estimate: '180.00' });
+  const before = f.values();
+  await f.click(apply);
+  assert.deepEqual(f.values(), before);
+  assert.match(f.form.error.textContent, /Your draft changed/);
+  assert.equal(f.choices('estimate').some(({ checked }) => checked), false);
+  await f.submit();
+  assert.equal(f.posts.length, 1);
+  assert.equal(f.closed, 0);
+  f.choose('estimate', 'saved');
+  const updatedApply = f.control(apply);
+  oldApply.listeners.click();
+  assert.equal(f.control(apply), updatedApply, 'the old control cannot clear or apply the new choices');
+  assert.deepEqual(f.values(), before);
+  await f.click(apply);
+  assert.equal(f.values().estimate, '150.00');
   assert.equal(f.posts.length, 1);
 });
 
@@ -306,5 +426,39 @@ test('a recovery GET that denies access clears the open form and replaces the ol
   f.update(saved({ estimate: 15000 }), { responseActor: 'other-fixture-actor' });
   await f.click(check);
   assert.equal(f.form, null);
+  assert.equal(f.posts.length, 1);
+});
+
+test('adoption sets the saved defaults, so reverting an adopted amount is dirty and Cancel confirms', async () => {
+  const app = readFileSync('legacy/app.js', 'utf8');
+  const from = app.indexOf('  function hasUnsavedFields('), to = app.indexOf('  function confirmDiscard(', from);
+  assert.ok(from >= 0 && to > from);
+  const context = vm.createContext({ $$: (_selector, form) => Object.values(form.values) });
+  vm.runInContext(app.slice(from, to), context);
+  const prompted = [];
+  let discard = false;
+  const f = await harness({ confirm: form => {
+    if (!context.hasUnsavedFields(form)) return true;
+    prompted.push(form.values.estimate.value);
+    return discard;
+  } });
+  f.draft({ title: 'My draft tent' });
+  await f.submit();
+  f.update(saved({ estimate: 15000, status: 'cancelled' }));
+  await f.click(check);
+  await f.click(adopt);
+  assert.equal(f.form.values.estimate.defaultValue, '150.00');
+  assert.deepEqual(f.form.values.status.options.filter(option => option.defaultSelected).map(option => option.value), ['cancelled']);
+  f.draft({ title: opening.title });
+  assert.equal(context.hasUnsavedFields(f.form), false);
+  f.draft({ estimate: '120.00' });
+  assert.equal(context.hasUnsavedFields(f.form), true);
+  await f.click('[data-budget-close]');
+  assert.deepEqual(prompted, ['120.00']);
+  assert.equal(f.closed, 0);
+  assert.equal(f.form.values.estimate.value, '120.00');
+  discard = true;
+  await f.click('[data-budget-close]');
+  assert.equal(f.closed, 1);
   assert.equal(f.posts.length, 1);
 });

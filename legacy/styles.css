@@ -758,6 +758,9 @@ form[aria-busy="true"]{cursor:progress}
 .budget-incomplete-review{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:8px}
 .budget-incomplete-review .text-button{min-height:44px;white-space:normal;text-align:left;overflow-wrap:anywhere}
 .budget-incomplete-cost{font-size:.875rem;line-height:1.5;border-inline-start:3px solid var(--ink);padding-inline-start:10px;margin:10px 0}
+.budget-resolution-choice{min-width:0;margin:12px 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px}
+.budget-resolution-choice legend{font-weight:600;padding-inline:4px}
+.budget-resolution-choice label{min-height:44px;align-items:flex-start;overflow-wrap:anywhere}
 .budget-reference details+details{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}
 #eventBudget>.panel{padding:20px}#eventBudget>.muted{margin-top:16px}#eventBudget .panel>h2{margin-top:0}#eventBudget .panel>p{margin:12px 0}#eventBudget .budget-history p{margin-top:8px}
 .budget-totals .panel{padding:20px}.budget-totals h2{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 14px}.budget-totals strong{display:block;font-size:24px;overflow-wrap:anywhere}.budget-totals small{display:block;font-size:12px;font-weight:400;margin-top:8px;line-height:1.5}

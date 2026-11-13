@@ -171,7 +171,7 @@ Amounts use exact minor units. Blank amounts remain unknown, with partial totals
 
 Budget data uses the existing encrypted, project-scoped `project_info` sidecar, revision checks, retry receipts and write-time authorization. Task links are checked against the current project without modifying tasks. Budget amounts are not added to AI context or shared workspace exports. No schema migration is needed for this optional field.
 
-If an existing cost changed while you were editing, **Review latest cost** checks the saved values without clearing your draft. You can bring in saved changes to untouched fields and then choose Save. If you and the saved budget changed the same field to different values, resolve that difference before retrying; the app does not pick a winner for you.
+If an existing cost changed while you were editing, **Review latest cost** checks the saved values without clearing your draft. Choose which values to keep for conflicting fields, or choose a complete set when status and amounts affect the forecast together. Applying choices updates only the draft. Choose **Save** separately to record it.
 
 Opening a linked task from Budget keeps the current active or archived cost view. Closing the task returns to the originating cost, even when another cost links to the same task. If the task link is no longer available, focus returns to the cost heading or the Budget section. Opening the link does not start a Helpful links search.
 
