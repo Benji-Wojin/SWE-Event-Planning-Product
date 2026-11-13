@@ -5,18 +5,21 @@ import vm from 'node:vm';
 
 const source=readFileSync('legacy/app.js','utf8');
 const renderer=source.slice(source.indexOf('  const guideSteps'),source.indexOf('  function syncGuide'));
-function fixture(checkpoints,{bound=true,focused=false,error=false}={}){
+const taskRenderer=source.slice(source.indexOf('  function guideTaskPanel'),source.indexOf('  function assignmentCandidates'));
+function fixture(checkpoints,{bound=true,focused=false,error=false,view='overview',organizer=true,guided=true,tasks=[]}={}){
   let changes=0,focuses=0,markup='';
   const host={hidden:true,dataset:{},contains:()=>focused,set innerHTML(value){changes++;markup=value;}};
+  const state={tasks},ui={view},role={organizer};
   const context=vm.createContext({
     $:selector=>selector==='#workspaceGuide'?host:{focus(){focuses++;}},
-    document:{activeElement:{}},guidedWorkspace:true,guideTaskId:'',
+    document:{activeElement:{}},guidedWorkspace:guided,guideTaskId:'',ui,isOrganizer:()=>role.organizer,store:{getState:()=>state},
     window:{GatherMode:{projectId:'p_fictional',projectUrl:path=>path+'?project=p_fictional'}},
-    h:value=>value.replaceAll('&','&amp;'),icon:()=>'<svg aria-hidden="true"></svg>',
+    h:value=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'),icon:()=>'<svg aria-hidden="true"></svg>',statusBadge:value=>value,
     guideProgress:{projectId:bound?'p_fictional':'p_other',events:checkpoints.map(checkpoint=>({checkpoint}))},guideError:error,
   });
-  vm.runInContext(renderer,context);
-  return {host,paint:()=>vm.runInContext('paintGuide()',context),html:()=>markup,changes:()=>changes,focuses:()=>focuses,context};
+  vm.runInContext(renderer+taskRenderer,context);
+  return {host,ui,state,role,paint:()=>vm.runInContext('paintGuide()',context),html:()=>markup,
+    task:(away=false)=>vm.runInContext(`guideTaskPanel(store.getState(),${away})`,context),changes:()=>changes,focuses:()=>focuses,context};
 }
 
 test('workspace guide makes saved progress visible and preserves focus on telemetry-only changes',()=>{
@@ -59,6 +62,84 @@ test('a committed task does not offer to create a duplicate while progress reloa
   assert.match(guide.html(),/Open Budget/);
 });
 
+test('the saved first task shows the optional planner inline before progress settles and does not duplicate it after',()=>{
+  const first={id:'task_saved',title:'<Confirm venue>',status:'todo'};
+  const guide=fixture(['started','project_created','add_task_clicked'],{view:'tasks',tasks:[first]});
+  guide.paint();
+  assert.doesNotMatch(guide.task(),/guideTaskPlanTitle/);
+  guide.context.guideTaskId=first.id;
+  guide.paint();
+  assert.match(guide.html(),/Your first task is saved/);
+  assert.doesNotMatch(guide.html(),/guide-add-task|workspaceGuidePlanTitle/);
+  const inline=guide.task();
+  assert.match(inline,/id="guideTaskSaved"[^>]*>&lt;Confirm venue&gt;/);
+  assert.match(inline,/guide-task-practice[\s\S]*aria-labelledby="guideTaskPlanTitle"[\s\S]*id="guideTaskPlanTitle"/);
+  assert.match(inline,/<a id="guideTaskPlanTitleLink"/);
+  assert.match(inline,/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
+  assert.match(inline,/private draft[\s\S]*Opening the planner won’t send anything to AI or change your project/);
+  assert.doesNotMatch(guide.task(true),/guideTaskPlanTitle/);
+
+  guide.context.guideProgress.events.push({checkpoint:'task_created'});
+  guide.paint();
+  assert.match(guide.html(),/Step 3 of 5[\s\S]*Open Budget/);
+  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
+  assert.match(guide.task(),/guideTaskPlanTitle/);
+  const beforeNavigation=guide.changes();
+  guide.ui.view='budget';guide.paint();
+  assert.match(guide.html(),/Step 3 of 5[\s\S]*aria-labelledby="workspaceGuidePlanTitle"/);
+  assert.equal(guide.changes(),beforeNavigation+1,'a view change can repaint the placement without a new checkpoint');
+  assert.doesNotMatch(guide.task(true),/guideTaskPlanTitle/);
+  guide.ui.view='tasks';guide.paint();
+  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
+  assert.match(guide.task(),/guideTaskPlanTitle/);
+});
+
+test('missing saved-task context falls back to the top guide; unrelated accounts and projects never get an inline planner',()=>{
+  const first={id:'task_saved',title:'Confirm venue',status:'todo'}, checkpoints=['started','project_created','task_created'];
+  const fallback=fixture(checkpoints,{view:'tasks',tasks:[first]});fallback.paint();
+  assert.match(fallback.html(),/workspaceGuidePlanTitle/);
+  assert.doesNotMatch(fallback.task(),/guideTaskPlanTitle/);
+  fallback.context.guideTaskId=first.id;
+  fallback.paint();
+  assert.doesNotMatch(fallback.html(),/workspaceGuidePlanTitle/);
+  fallback.state.tasks=[];fallback.paint();
+  assert.match(fallback.html(),/workspaceGuidePlanTitle/);
+  assert.doesNotMatch(fallback.task(),/guideTaskPlanTitle/);
+
+  for(const options of [{bound:false},{organizer:false},{guided:false}]){
+    const excluded=fixture(checkpoints,{view:'tasks',tasks:[first],...options});
+    excluded.context.guideTaskId=first.id;
+    excluded.paint();
+    assert.equal(excluded.host.hidden,true);
+    assert.doesNotMatch(excluded.task(),/guideTaskPlanTitle/);
+  }
+  const unavailable=fixture(checkpoints,{view:'overview',tasks:[first]});
+  unavailable.context.guideTaskId=first.id;
+  unavailable.paint();
+  assert.match(unavailable.html(),/workspaceGuidePlanTitle/);
+  unavailable.context.window.GatherAccessLost=true;
+  unavailable.paint();
+  assert.equal(unavailable.host.hidden,true);
+  unavailable.ui.view='tasks';
+  assert.doesNotMatch(unavailable.task(),/guideTaskPlanTitle/);
+});
+
+test('only the in-session saved task retains the optional planner after guide completion',()=>{
+  const first={id:'task_saved',title:'Confirm venue',status:'todo'};
+  const steps=['started','project_created','task_created','budget_viewed','event_details_viewed','invite_created'];
+  const guide=fixture(steps,{view:'tasks',tasks:[first]});
+  guide.paint();
+  assert.match(guide.html(),/Getting started · Complete/);
+  assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
+  assert.doesNotMatch(guide.task(),/guideTaskPlanTitle/);
+  guide.context.guideTaskId=first.id;
+  assert.match(guide.task(),/guideTaskPlanTitle/);
+  guide.role.organizer=false;
+  guide.paint();
+  assert.equal(guide.host.hidden,true);
+  assert.doesNotMatch(guide.task(),/guideTaskPlanTitle/);
+});
+
 test('the finished solo state never represents an invitation as sent, and unrelated projects show no guide',()=>{
   const steps=['started','project_created','task_created','budget_viewed','event_details_viewed'];
   const last=fixture(steps);last.paint();
@@ -89,7 +170,6 @@ test('guided task form teaches where tasks go and saves the normal optional fiel
 });
 
 test('first-task walkthrough targets the returned task and offers optional real controls',()=>{
-  const start=source.indexOf('  function guideTaskPanel'),end=source.indexOf('  function assignmentCandidates',start);
   const first={id:'first',title:'<Confirm the venue>',status:'todo'},other={id:'other',title:first.title,status:'todo'};
   const focus=[];
   const heading={focus:()=>focus.push('heading'),scrollIntoView(){}};
@@ -98,9 +178,9 @@ test('first-task walkthrough targets the returned task and offers optional real 
   const context=vm.createContext({guideTaskId:'first',guideTaskNeedsReveal:false,ui,window:{},
     store:{getState:()=>({tasks:[other,first]})},navigate:view=>{ui.view=view;return true;},render(){},
     $:()=>heading,$$:()=>[{dataset:{id:'other'}},control],h:value=>value.replaceAll('<','&lt;').replaceAll('>','&gt;'),
-    icon:()=>'',statusBadge:value=>value,
+    icon:()=>'',statusBadge:value=>value,guidedWorkspace:false,
   });
-  vm.runInContext(source.slice(start,end),context);
+  vm.runInContext(renderer+taskRenderer,context);
   const html=vm.runInContext('guideTaskPanel(store.getState())',context);
   assert.match(html,/&lt;Confirm the venue&gt;/);
   assert.match(html,/data-action="task" data-id="first"/);

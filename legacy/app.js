@@ -30,19 +30,27 @@
       return `<li data-guide-state="${state}"${state==='current'?' aria-current="step"':''}><span class="workspace-guide-marker" aria-hidden="true">${state==='done'?'✓':state==='skipped'?'–':n}</span><span>${label}</span><span class="sr-only"> — ${state==='done'?'complete':state}</span></li>`;
     }).join('')}</ol>`;
   }
-  function paintGuide() {
+  function guidePlannerAtSavedTask(s) {
+    return guidedWorkspace&&isOrganizer()&&!window.GatherAccessLost&&ui.view==='tasks'&&
+      guideProgress?.projectId===window.GatherMode.projectId&&!!guideTaskId&&s.tasks.some(task=>task.id===guideTaskId);
+  }
+  function paintGuide(s=store.getState()) {
     const host = $('#workspaceGuide');
-    if (!guidedWorkspace || !host) return;
+    if (!host || !guidedWorkspace) return;
+    if (!isOrganizer() || window.GatherAccessLost) {
+      host.hidden = true;
+      return;
+    }
     const bound = guideProgress?.projectId === window.GatherMode.projectId;
     const reached = new Set(guideProgress?.events?.map(item => item.checkpoint));
     const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
     const finished=bound&&reached.has('event_details_viewed')&&(reached.has('invite_created')||reached.has('invite_skipped'));
-    const showPlanTip=bound&&reached.has('task_created')&&!!next;
+    const showPlanTip=bound&&reached.has('task_created')&&!!next&&!guidePlannerAtSavedTask(s);
     host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
     const waitingForTask=next?.[0]==='task_created'&&!!guideTaskId;
-    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):waitingForTask?'task-saved-pending':next[0];
+    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):waitingForTask?'task-saved-pending':next[0]+(showPlanTip?':with-plan':'');
     if(host.dataset.guideState===mode)return;
     const projectHref=h(window.GatherMode.projectUrl('/project'));
     host.dataset.guideState=mode;
@@ -55,15 +63,15 @@
           : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${showPlanTip?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
-  function guidePlanTip() {
+  function guidePlanTip(titleId='workspaceGuidePlanTitle') {
     const href=h(window.GatherMode.projectUrl('/plan')+'&guide=1');
-    return `<section class="workspace-guide-plan" aria-labelledby="workspaceGuidePlanTitle">
+    return `<section class="workspace-guide-plan" aria-labelledby="${titleId}">
       <div class="workspace-guide-plan-icon" aria-hidden="true">${icon('spark')}</div>
       <div class="workspace-guide-plan-content">
         <p class="workspace-guide-plan-kicker">Optional walkthrough</p>
-        <h3 id="workspaceGuidePlanTitle">Draft the rest of your plan with AI</h3>
-        <p>Turn a short event brief into a private draft of tasks and activities. Review it and add only what you want. Opening the planner won’t send anything to AI or change your project.</p>
-        <a class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a>
+        <h3 id="${titleId}">Draft the rest of your plan with AI</h3>
+        <p>Describe your event, generate a private draft of tasks and activities, then edit the suggestions and choose what to add. Opening the planner won’t send anything to AI or change your project.</p>
+        <a id="${titleId}Link" class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a>
         <p class="workspace-guide-plan-later">You can skip this and come back from <strong>Overview → Build a plan</strong>.</p>
       </div>
     </section>`;
@@ -516,6 +524,7 @@
       <button class="btn btn-secondary" type="button" data-action="task" data-id="${h(task.id)}">Open task details</button>
       <div class="guide-task-practice"><div><h3>Finish the work</h3><p>Use the checkbox next to the task when the work is actually done. Tasks that need verification or have unfinished prerequisites open for review instead.</p><button type="button" class="text-button" data-action="guide-task-completion">${done?'Find the reopen control':'Find the completion control'}</button></div>
       <div><h3>Connect related work</h3><p>Use Related for work that can happen in parallel, or Required if the other task must finish first.</p>${done?'<p>Completed tasks must be reopened before adding links.</p>':`<button type="button" class="text-button" data-action="guide-task-links" data-id="${h(task.id)}">Show task relationships</button>`}</div></div>
+      ${guidePlannerAtSavedTask(s)?guidePlanTip('guideTaskPlanTitle'):''}
       <p class="guide-task-optional">These actions are optional. Pick up with the guide above whenever you’re ready.</p>
     </section>`;
   }
@@ -864,6 +873,7 @@
     const oldWrap=ui.view==='memory'?$('[data-wrap-review]',$('#viewRoot')):null;
     const wrapOverrides=oldWrap?wrapReviewOverrides(oldWrap):[];
     const s=store.getState();
+    paintGuide(s);
     paintNotifications(s);
     paintTeammateHandoff(s);
     $('.event-switcher strong').textContent=s.event.name;
