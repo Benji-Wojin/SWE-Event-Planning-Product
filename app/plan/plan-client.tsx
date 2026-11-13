@@ -218,6 +218,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     existingTasks,
     data?.draft?.duplicateSuggestions || [],
   );
+  const itemNumbers = new Map(items.map((item, index) => [item.id, index + 1]));
   const missingDependencies = missing.length > 0;
   const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
   function accept(result: any, restoreActivityPreference = true) {
@@ -336,6 +337,16 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
       }),
     );
   };
+  function focusDraftStart(itemId: string) {
+    if (locked || applied || pending.current || !selected.some(item => item.id === itemId && item.kind === 'activity' && !item.start)) return;
+    const field = document.getElementById('date-' + itemId) as HTMLInputElement | null;
+    if (field?.localName !== 'input' || field.type !== 'datetime-local' || field.matches(':disabled')) return;
+    const editor = field.closest<HTMLDetailsElement>('details[data-plan-owner-date]');
+    if (!editor) return;
+    editor.open = true;
+    field.focus({ preventScroll: true });
+    field.scrollIntoView({ block: 'center', inline: 'nearest' });
+  }
   function editBatch(operation: (current: ReviewedItem[]) => ReviewedItem[]) {
     if (locked || applied || pending.current) return;
     request.current = null;
@@ -1162,7 +1173,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                         </div>
                       );
                     })}
-                  <details open={!embedded}>
+                  <details data-plan-owner-date open={!embedded}>
                     <summary className={embedded ? 'cursor-pointer text-xs font-medium' : 'hidden'}>Owner & date</summary>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
@@ -1199,6 +1210,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                       </Label>
                       <Input
                         id={'date-' + item.id}
+                        aria-label={item.kind === 'activity' ? `Activity start for ${item.title.trim() || 'Untitled activity'} (item ${index + 1})` : undefined}
                         type={
                           item.kind === 'activity' ? 'datetime-local' : 'date'
                         }
@@ -1359,7 +1371,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                   keep separate work.
                 </p>
               )}
-              <PlanApprovalImpact selected={selected} />
+              <PlanApprovalImpact selected={selected} itemNumbers={itemNumbers} onSetStart={locked ? undefined : focusDraftStart} />
               <p className="text-sm text-muted-foreground">Nothing will be sent or booked.</p>
               <Button
                 className="h-auto min-h-10 whitespace-normal"

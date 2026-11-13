@@ -1,6 +1,10 @@
 import type { ReviewedItem } from '@/lib/plan-generation';
 
-export function PlanApprovalImpact({ selected }: { selected: readonly ReviewedItem[] }) {
+export function PlanApprovalImpact({ selected, itemNumbers, onSetStart }: {
+  selected: readonly ReviewedItem[];
+  itemNumbers: ReadonlyMap<string, number>;
+  onSetStart?: (itemId: string) => void;
+}) {
   let preparation = 0, timed = 0, locationInNotes = false;
   const untimed: ReviewedItem[] = [];
   for (const item of selected) {
@@ -23,7 +27,15 @@ export function PlanApprovalImpact({ selected }: { selected: readonly ReviewedIt
           <details className="mt-1">
             <summary className="min-h-11 cursor-pointer content-center text-primary">See activities that need a start time</summary>
             <ul className="list-disc space-y-1 ps-5">
-              {untimed.map(item => <li key={item.id} className="wrap-anywhere">{item.title.trim() || 'Untitled activity'}</li>)}
+              {untimed.map(item => {
+                const title = item.title.trim() || 'Untitled activity';
+                const number = itemNumbers.get(item.id);
+                return <li key={item.id} className="wrap-anywhere">
+                  <span>{title}</span>{number !== undefined && <span className="ms-2 text-xs text-muted-foreground">Item {number}</span>}
+                  {onSetStart && number !== undefined && <button type="button" className="ms-2 inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4"
+                    aria-label={`Set start time for ${title} (item ${number})`} onClick={() => onSetStart(item.id)}>Set start time</button>}
+                </li>;
+              })}
             </ul>
           </details>
         </li>}

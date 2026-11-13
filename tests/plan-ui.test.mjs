@@ -1927,7 +1927,9 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
   const preview = () => app.find('plan-approval-impact');
   const summary = () => text(preview());
   const untimedDisclosure = () => nodes(preview()).find(node => node.type === 'details');
-  const untimedTitles = () => nodes(untimedDisclosure()).filter(node => node.type === 'li').map(text);
+  const untimedTitles = () => nodes(untimedDisclosure()).filter(node => node.type === 'li').map(row =>
+    text([row.props.children].flat().find(child => child?.type === 'span')));
+  const startActions = () => nodes(untimedDisclosure()).filter(node => node.type === 'button' && text(node) === 'Set start time');
   try {
     await app.start();
     assert.equal(preview()?.type, 'section');
@@ -1941,6 +1943,7 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
     assert.doesNotMatch(summary(), /Fictional (?:arrival|cleanup) area|Prepare refreshments|Set up refreshments/);
     assert.match(text(untimedDisclosure()), /See activities that need a start time/);
     assert.deepEqual(untimedTitles(), [untimed.title]);
+    assert.deepEqual(startActions().map(action => action.props['aria-label']), ['Set start time for Close the venue (item 3)']);
 
     await app.check('include-cleanup', false);
     assert.doesNotMatch(summary(), /event-day activity without a start time|go into shared task notes/);
@@ -1949,11 +1952,13 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
     assert.match(summary(), /1 event-day activity without a start time/);
     assert.doesNotMatch(summary(), /activity with a start time entered/);
     assert.deepEqual(untimedTitles(), [timed.title]);
+    assert.deepEqual(startActions().map(action => action.props['aria-label']), ['Set start time for Welcome guests (item 2)']);
     await app.edit('location-arrival', '');
     assert.doesNotMatch(summary(), /go into shared task notes/);
     await app.click('Select none');
     assert.ok(preview(), 'the preview remains visible when nothing is selected');
     assert.doesNotMatch(summary(), /event-day activit|preparation tasks?\b/);
+    assert.deepEqual(startActions(), []);
     assert.equal(planButton(app.tree, 'Add 0 selected items to project').props.disabled, true);
 
     await app.check('include-one', true);
@@ -1971,6 +1976,72 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
     assert.ok(app.find('plan-receipt-heading'));
     assert.equal(preview(), undefined, 'the approval preview ends once the receipt exists');
   } finally { app.dispose(); }
+});
+
+test('approval preview start-time shortcuts identify exact private activities, even with duplicate titles', async () => {
+  const initial = fixture();
+  const activity = { ...copy(item), id: 'activity-one', kind: 'activity', title: 'Open doors' };
+  const other = { ...activity, id: 'activity-two' };
+  initial.draft.items = [copy(item), activity, other];
+  const app = harness(undefined, initial, 'project=p_example', false, true);
+  const actions = () => nodes(app.find('plan-approval-impact')).filter(node =>
+    node.type === 'button' && text(node) === 'Set start time');
+  try {
+    await app.start();
+    assert.deepEqual(actions().map(action => action.props['aria-label']), [
+      'Set start time for Open doors (item 2)', 'Set start time for Open doors (item 3)',
+    ]);
+    assert.ok(actions().every(action => action.props.type === 'button'));
+    const operations = [];
+    const fields = new Map([activity, other].map(proposal => {
+      const id = 'date-' + proposal.id;
+      const rendered = app.find(id);
+      const editor = nodes(app.tree).find(node => node.type === 'details' && nodes(node).includes(rendered));
+      assert.ok(editor?.props['data-plan-owner-date']);
+      const disclosure = { open: false };
+      return [id, {
+        localName: rendered.type,
+        type: rendered.props.type,
+        matches: selector => {
+          assert.equal(selector, ':disabled');
+          return false;
+        },
+        closest: selector => {
+          assert.equal(selector, 'details[data-plan-owner-date]');
+          return disclosure;
+        },
+        focus: options => {
+          assert.equal(disclosure.open, true, 'opens this activity editor before moving focus');
+          operations.push({ id, op: 'focus', options });
+        },
+        scrollIntoView: options => operations.push({ id, op: 'scroll', options }),
+      }];
+    }));
+    globalThis.document.getElementById = id => fields.get(id) ?? null;
+    const setSecond = actions()[1];
+    assert.equal(app.find('date-activity-two').props['aria-label'], 'Activity start for Open doors (item 3)');
+    setSecond.props.onClick();
+    assert.deepEqual(operations, [
+      { id: 'date-activity-two', op: 'focus', options: { preventScroll: true } },
+      { id: 'date-activity-two', op: 'scroll', options: { block: 'center', inline: 'nearest' } },
+    ]);
+    assert.deepEqual(app.requests, [{ action: 'get' }], 'moving focus is not a request');
+    await app.edit('date-activity-two', '2030-10-04T10:30');
+    assert.equal(app.find('date-activity-one').props.value, '');
+    assert.equal(app.find('date-activity-two').props.value, '2030-10-04T10:30');
+    assert.deepEqual(actions().map(action => action.props['aria-label']), ['Set start time for Open doors (item 2)']);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+    assert.deepEqual(app.saved, initial);
+  } finally { app.dispose(); }
+
+  const locked = harness(undefined, { ...initial, status: 'generating' });
+  try {
+    await locked.start();
+    const lockedPreview = locked.find('plan-approval-impact');
+    assert.match(text(lockedPreview), /2 event-day activities without a start time/);
+    assert.equal(planButton(lockedPreview, 'Set start time'), undefined);
+    assert.deepEqual(locked.requests, [{ action: 'get' }]);
+  } finally { locked.dispose(); }
 });
 
 test('mixed starter groups can be selected separately, with required links still blocking apply',async()=>{
