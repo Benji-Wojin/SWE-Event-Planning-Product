@@ -69,9 +69,14 @@
       <div class="workspace-guide-plan-icon" aria-hidden="true">${icon('spark')}</div>
       <div class="workspace-guide-plan-content">
         <p class="workspace-guide-plan-kicker">Optional walkthrough</p>
-        <h3 id="${titleId}">Draft the rest of your plan with AI</h3>
-        <p>Describe your event, generate a private draft of tasks and activities, then edit the suggestions and choose what to add. Opening the planner won’t send anything to AI or change your project.</p>
+        <h3 id="${titleId}">Draft a plan with AI</h3>
+        <ol class="workspace-guide-plan-steps" aria-label="How AI plan drafting works">
+          <li><strong>Write a short brief.</strong> Include what you’re planning, roughly how many people, and any constraints. The planner shows an example.</li>
+          <li><strong>Generate a private draft.</strong> Review what goes to Groq before you choose Generate draft. You can also use a starter checklist without AI.</li>
+          <li><strong>Choose what to add.</strong> Edit or deselect ideas first. Only items you add go to Shared tasks; scheduled activities also appear in Timeline.</li>
+        </ol>
         <a id="${titleId}Link" class="btn btn-secondary" href="${href}" target="_top">Try drafting a plan with AI</a>
+        <p class="workspace-guide-plan-later">Opening the planner won’t send anything to AI or change your project.</p>
         <p class="workspace-guide-plan-later">You can skip this and come back from <strong>Overview → Build a plan</strong>.</p>
       </div>
     </section>`;
@@ -560,9 +565,9 @@
       <div class="guide-task-result-top"><div><p class="guide-task-eyebrow">${icon('done')} Task saved · Shared tasks → All tasks</p><h2 id="guideTaskSaved" tabindex="-1">${h(task.title)}</h2></div>${statusBadge(task.status)}</div>
       <p>Your team can find this task here. Open it to see the owner, due date, and what “done” means.</p>
       <button class="btn btn-secondary" type="button" data-action="task" data-id="${h(task.id)}">Open task details</button>
+      ${guidePlannerAtSavedTask(s)?guidePlanTip('guideTaskPlanTitle'):''}
       <div class="guide-task-practice"><div><h3>Finish the work</h3><p>Use the checkbox next to the task when the work is actually done. Tasks that need verification or have unfinished prerequisites open for review instead.</p><button type="button" class="text-button" data-action="guide-task-completion">${done?'Find the reopen control':'Find the completion control'}</button></div>
       <div><h3>Connect related work</h3><p>Use Related for work that can happen in parallel, or Required if the other task must finish first.</p>${done?'<p>Completed tasks must be reopened before adding links.</p>':`<button type="button" class="text-button" data-action="guide-task-links" data-id="${h(task.id)}">Show task relationships</button>`}</div></div>
-      ${guidePlannerAtSavedTask(s)?guidePlanTip('guideTaskPlanTitle'):''}
       <p class="guide-task-optional">These actions are optional. Pick up with the guide above whenever you’re ready.</p>
     </section>`;
   }

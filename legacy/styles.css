@@ -829,6 +829,8 @@ form[aria-busy="true"]{cursor:progress}
 .workspace-guide-plan p strong,.workspace-guide-plan .workspace-guide-plan-kicker{color:var(--ink)}
 .workspace-guide-plan .workspace-guide-plan-kicker{font-size:.73rem;font-weight:700}
 .workspace-guide-plan h3{margin:0;color:var(--ink);font-size:1rem;line-height:1.3}
+.workspace-guide-plan-steps{display:grid;gap:6px;max-width:60ch;margin:3px 0;padding-inline-start:1.35em;color:var(--muted);font-size:.85rem;line-height:1.5}
+.workspace-guide-plan-steps strong,.workspace-guide-plan-steps li::marker{color:var(--ink);font-weight:700}
 .workspace-guide-plan .btn{min-height:44px;max-width:100%;white-space:normal;text-align:left}
 .workspace-guide-plan .workspace-guide-plan-later{font-size:.78rem}
 .workspace-first-task-copy{max-width:55ch;color:var(--muted);line-height:1.6}

@@ -37,7 +37,7 @@ test('workspace guide makes saved progress visible and preserves focus on teleme
   guide.context.guideProgress.events.push({checkpoint:'task_created'});guide.paint();
   assert.match(guide.html(),/Step 3 of 5/);assert.match(guide.html(),/No amounts are required/);
   assert.match(guide.html(),/Open Budget[\s\S]*<section[^>]+aria-labelledby="workspaceGuidePlanTitle"/);
-  assert.match(guide.html(),/Optional walkthrough[\s\S]*Draft the rest of your plan with AI/);
+  assert.match(guide.html(),/Optional walkthrough[\s\S]*Draft a plan with AI/);
   assert.match(guide.html(),/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
   assert.match(guide.html(),/won’t send anything to AI or change your project/);
   assert.match(guide.html(),/You can skip this and come back from <strong>Overview → Build a plan/);
@@ -73,7 +73,8 @@ test('the saved first task shows the optional planner inline before progress set
   assert.doesNotMatch(guide.html(),/guide-add-task|workspaceGuidePlanTitle/);
   const inline=guide.task();
   assert.match(inline,/id="guideTaskSaved"[^>]*>&lt;Confirm venue&gt;/);
-  assert.match(inline,/guide-task-practice[\s\S]*aria-labelledby="guideTaskPlanTitle"[\s\S]*id="guideTaskPlanTitle"/);
+  assert.match(inline,/Open task details[\s\S]*aria-labelledby="guideTaskPlanTitle"[\s\S]*id="guideTaskPlanTitle"[\s\S]*guide-task-practice/);
+  assert.match(inline,/<ol class="workspace-guide-plan-steps" aria-label="How AI plan drafting works">[\s\S]*Write a short brief[\s\S]*Generate a private draft[\s\S]*Groq[\s\S]*starter checklist without AI[\s\S]*Choose what to add[\s\S]*Shared tasks[\s\S]*Timeline[\s\S]*<\/ol>/);
   assert.match(inline,/<a id="guideTaskPlanTitleLink"/);
   assert.match(inline,/href="\/plan\?project=p_fictional&amp;guide=1" target="_top">Try drafting a plan with AI/);
   assert.match(inline,/private draft[\s\S]*Opening the planner won’t send anything to AI or change your project/);

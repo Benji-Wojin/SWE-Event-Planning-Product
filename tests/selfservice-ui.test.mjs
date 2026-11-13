@@ -117,10 +117,14 @@ test('the guide offers the bound-project AI planner only after the first task is
       assert.doesNotMatch(text(roadmap), /draft a plan with AI/i);
       assert.deepEqual(effects, []);
     }
-    const done = render(GuideClient, { initial: progress(true,
-      [...afterTask, 'budget_viewed', 'event_details_viewed', 'invite_skipped']) });
-    assert.ok(!done.tree.some(node => node.props.id === 'guide-ai-preview'));
-    assert.equal(done.tree.find(node => node.type === 'a' && text(node) === 'Open your project')?.props.href, '/project?' + projectQuery);
+    for (const last of ['invite_skipped', 'invite_created']) {
+      const finished = [...afterTask, 'budget_viewed', 'event_details_viewed', last];
+      const done = render(GuideClient, { initial: progress(true, finished) });
+      const link = done.tree.find(node => node.type === 'a' && text(node) === 'Try drafting a plan with AI');
+      assert.equal(link?.props.href, '/plan?' + projectQuery + '&guide=1');
+      assert.equal(done.tree.find(node => node.type === 'a' && text(node) === 'Open your project')?.props.href, '/project?' + projectQuery);
+      assert.ok(!render(GuideClient, { initial: progress(false, finished) }).tree.some(node => node.props.id === 'guide-ai-preview'));
+    }
   } finally { delete globalThis.__selfserviceState; }
 });
 test('optional planner walkthrough teaches the actual controls, fallback and shared destinations', () => {
