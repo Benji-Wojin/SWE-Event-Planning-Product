@@ -181,6 +181,8 @@ Open activities assigned to active teammates show **Acceptance not recorded** wh
 
 Unresolved activities with unfinished required links show **Required work not complete**, separately from their recorded status. Required tasks elsewhere in the project still count in My activities; incomplete, unverified and missing prerequisites remain unresolved, while Related links do not block work. Only the warning is included, not prerequisite names or notes. Completing required work removes the warning in a newly opened snapshot but never automatically completes the activity or certifies event readiness.
 
+Timeline and Run sheets mark **Location not set** and **No end time set** on the affected activities, without substituting the event venue or guessing a duration. The Run sheet also counts unresolved activities missing either detail in the selected date and owner scope. Overnight activities are counted once, even if they appear on more than one day. Confirm the missing details in the live Timeline before relying on a saved or printed copy.
+
 **Print / save PDF** opens the browser's print dialog; Weft does not send the sheet anywhere. Only the sheet is included in print styles, not the surrounding workspace. Notes, comments, email, guest records, files and private booking details are excluded. The snapshot is dated and not live: confirm later changes with the team, and share paper or saved copies only with people who need them. Downloaded copies cannot be recalled after access changes. Browser pagination and printer/PDF settings depend on the browser and device.
 
 ### Optional manual budget
