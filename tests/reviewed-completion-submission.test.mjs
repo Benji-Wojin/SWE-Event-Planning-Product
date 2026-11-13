@@ -23,6 +23,7 @@ function fixture({formId='responseForm',hosted=true,organizer=false}={}){
     const attributes=new Map();
     const ownStatus=status;
     return {id:formId,isConnected:true,dataset:{id,revision:'4',taskRevision:'4',
+      ...(!hosted?{completionDemoGeneration:String(demoGeneration)}:{}),
       ...(hosted?{workspaceRevision:'21'}:{})},closest:()=>dialog,contains:node=>node===submitter,
       querySelector:selector=>selector==='[data-submission-status]'?ownStatus:selector.includes('submit')?submitter:null,
       getAttribute:key=>attributes.get(key),setAttribute:(key,value)=>attributes.set(key,value),
@@ -88,7 +89,7 @@ function fixture({formId='responseForm',hosted=true,organizer=false}={}){
   }
   vm.runInContext(
     sourceBlock('  function acceptanceReviewPending(','  function paintAcceptanceRefresh(')+
-    sourceBlock('  async function saveReviewedSubmission(','  function responseDialog('),
+    sourceBlock('  function completionDraftCanSubmit(','  function responseDialog('),
     context,
   );
   return {ui,window,document,backdrop,calls,preparations,writes,
@@ -179,6 +180,14 @@ test('a stale review never begins attachment preparation or a task write',async(
   }
 });
 
+test('a missing recovered file blocks the report until the teammate decides how to proceed',async()=>{
+  const f=fixture();
+  f.form.dataset.completionAttachmentRecovery='check-file';
+  await f.save();
+  assert.match(notices(f),/explicitly continue without it/);
+  assert.equal(f.preparations.length,0);
+  assert.equal(f.writes.length,0);
+});
 test('context changes during upload prevent a task write and never redraw a superseded form',async()=>{
   for(const change of ['task revision','workspace revision','demo generation','actor','project','access','replacement','closed']){
     const f=fixture({hosted:change!=='demo generation'}),pending=f.save();

@@ -238,11 +238,11 @@
         // Shared task links are revisioned; a matching authorized GET confirms
         // those links without replacing local views with another state object.
         if(latest.revision===snapshot.revision){
-          if(requireFresh&&!canApply(latest.revision))return {changed:false};
+          if(requireFresh&&!canApply(latest.revision,latest.state))return {changed:false};
           if(suggestionsChanged)snapshot={...snapshot,suggestions:latest.suggestions};
           return {changed:false,suggestionsChanged, ...(requireFresh?{verified:true}:{})};
         }
-        if(!canApply(latest.revision))return {pending:true,newerRevision:latest.revision};
+        if(!canApply(latest.revision,latest.state))return {pending:true,newerRevision:latest.revision};
         publish(latest);return {changed:true,suggestionsChanged, ...(requireFresh?{verified:true}:{})};
       },
     };

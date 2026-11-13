@@ -2302,14 +2302,14 @@
         return input.value!==initial;
       }).map(input=>({form:form.id,name:input.name,value:input.value,checked:input.checked,...(input.type==='file'?{files:[...input.files]}:{}),...(input.multiple?{selected:[...input.selectedOptions].map(option=>({value:option.value,text:option.textContent}))}:{})})));
   }
-  const completionDraftKeys=['revision','workspaceRevision','reviewNeedsRefresh','completionUploaded','completionSaveUnconfirmed'];
+  const completionDraftKeys=['revision','workspaceRevision','reviewNeedsRefresh','completionUploaded','completionSaveUnconfirmed','completionAttachmentRecovery','completionDemoGeneration'];
   function taskCompletionDraftContext(drafts,exclude) {
     return ['responseForm','completionEvidenceForm'].filter(id=>id!==exclude).flatMap(id=>{
       const form=$('#'+id,$('#dialog'));
       if(!form)return [];
       const completionDraft=drafts.some(draft=>draft.form===id&&(id==='completionEvidenceForm'||
         form.elements.response?.value==='completed'||draft.name.startsWith('completion')));
-      if(!completionDraft&&form.dataset.completionSaveUnconfirmed!=='true')return [];
+      if(!completionDraft&&form.dataset.completionSaveUnconfirmed!=='true'&&!form.dataset.completionAttachmentRecovery)return [];
       return [{id,data:completionDraftKeys.map(key=>[key,form.dataset[key]])}];
     });
   }
@@ -2394,8 +2394,12 @@
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
       ${priorityMarkup(task,organizer)}
       ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details><div class="task-delete-action"><button type="button" class="text-button danger-button" data-action="delete-task" data-id="${h(id)}">Delete task…</button></div>`:''}`, '',false,'task',focusHeading);
+    if(window.GatherMode?.demo)for(const selector of ['#responseForm','#completionEvidenceForm']){
+      const form=$(selector,$('#dialog'));
+      if(form)form.dataset.completionDemoGeneration=String(taskState.demoGeneration??'');
+    }
     if(sameTask){
-      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.files){const transfer=new DataTransfer();for(const file of draft.files)transfer.items.add(file);input.files=transfer.files;}else if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
+      for(const draft of drafts){const input=document.getElementById(draft.form)?.elements.namedItem(draft.name);if(input){if(draft.files){const transfer=new DataTransfer();for(const file of draft.files)transfer.items.add(file);input.files=transfer.files;if(input.name==='completionUpload')window.GatherCompletionUI?.carryUploadAttempt(draft.files[0],input.files[0]);}else if(draft.selected){for(const item of draft.selected)if(![...input.options].some(option=>option.value===item.value)){const option=document.createElement('option');option.value=item.value;option.textContent=item.text;input.append(option);}for(const option of input.options)option.selected=draft.selected.some(item=>item.value===option.value);}else input.value=draft.value;if(input.type==='checkbox'||input.type==='radio')input.checked=draft.checked;}}
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       restoreTaskCompletionDraftContext(completionDraftContext);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
@@ -2403,6 +2407,12 @@
     }
     syncRecoveryForms();
     window.GatherCompletionUI?.mount($('#dialog'));
+    for(const {id:formId} of completionDraftContext){
+      const form=$('#'+formId,$('#dialog'));
+      if(form?.dataset.reviewNeedsRefresh==='true'&&form.dataset.completionSaveUnconfirmed!=='true')
+        paintCompletionDraftRecovery(form,'Check the latest task before submitting this draft.');
+      if(form?.dataset.completionAttachmentRecovery)paintCompletionAttachmentRecovery(form);
+    }
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
     const fromWrapReceipt=ui.lastFocus?.id==='wrapFollowUpOpen'&&ui.lastFocus.dataset.id===id&&
@@ -2808,6 +2818,121 @@
     openDialog(record.title||'Add a private booking',`<p class="notice">Only the authenticated local administrator can retrieve these details. They do not enter task notes, activity, email review, or workspace exports.</p><form id="bookingForm" data-id="${h(record.id||'')}"><div class="form-grid"><label class="field">Booking type<select name="type">${options(['Flight','Hotel','Transport','Venue','Other'].map(x=>[x,x]),record.type||'Flight')}</select></label><label class="field">Booking date<input type="date" name="date" value="${h(record.date||'')}"></label><label class="field full-width">Title<input name="title" required maxlength="160" placeholder="Guest speaker arrival" value="${h(record.title||'')}"></label><label class="field">Airline / hotel / provider<input name="provider" maxlength="160" value="${h(record.provider||'')}"></label><label class="field">Traveler / booked for<input name="traveler" maxlength="160" value="${h(record.traveler||'')}"></label><label class="field full-width">Confirmation reference<input id="privateReference" type="password" name="reference" required maxlength="160" autocomplete="off" value="${h(record.reference||'')}"></label><div class="inline full-width"><button type="button" class="text-button" data-action="reveal-reference">Show / hide reference</button><button type="button" class="text-button" data-action="copy-reference">Copy reference</button></div><label class="field full-width">Itinerary / private logistics notes<textarea name="details" rows="4" maxlength="2000">${h(record.details||'')}</textarea></label><label class="field full-width">Related task (optional)<select name="taskId">${options([['','Not linked'],...store.getState().tasks.map(task=>[task.id,task.title])],record.taskId||'')}</select></label></div><div class="form-actions"><button type="submit" class="btn btn-primary">Save encrypted details</button></div></form>`,'',true,'private');
     $('#bookingForm').dataset.version=record.version||'';
   }
+  function completionDraftCanSubmit(task,editing,actor,organizer,state) {
+    return !!task&&!task.archivedAt&&(editing
+      ? (organizer||task.owner===actor)&&(task.status==='done'||!!task.reportedAt)
+      : task.owner===actor&&task.status!=='done'&&!task.verifiedAt&&!task.reportedAt&&!dependencyInfo(task,state).open.length);
+  }
+  function paintCompletionDraftRecovery(form,message) {
+    if(!store.refresh||ui.dialogKind!=='task'||!form.isConnected)return;
+    let panel=$('[data-completion-draft-recovery]',form);
+    if(!panel){
+      panel=document.createElement('div');panel.className='notice';panel.dataset.completionDraftRecovery='';
+      const statusId=form.id+'DraftRecoveryStatus';
+      panel.innerHTML='<p data-completion-draft-status id="'+statusId+'" role="status"></p>'+
+        '<button type="button" class="btn btn-secondary" data-action="refresh-completion-draft" aria-describedby="'+statusId+'">Check latest task</button>';
+      form.prepend(panel);
+    }
+    $('[data-completion-draft-status]',form).textContent=message;
+  }
+  function paintCompletionAttachmentRecovery(form) {
+    if($('[data-completion-attachment-recovery]',form))return;
+    const panel=document.createElement('div');panel.className='notice';panel.dataset.completionAttachmentRecovery='';
+    const message=form.dataset.completionAttachmentRecovery==='check-file'
+      ? 'The earlier upload was not confirmed and your browser couldn’t restore the file. Check Event info before choosing it again.'
+      : 'Your browser couldn’t restore the selected file. Choose the file again, or continue without it.';
+    panel.innerHTML='<p role="status">'+message+'</p><button type="button" class="btn btn-secondary" data-action="continue-without-completion-file">Continue without that file</button>';
+    form.prepend(panel);
+  }
+  function clearCompletionAttachmentRecovery(form) {
+    delete form.dataset.completionAttachmentRecovery;
+    $('[data-completion-attachment-recovery]',form)?.remove();
+    $('.form-error',form)?.remove();
+  }
+  async function refreshCompletionDraft(button) {
+    const form=button?.closest('form'),dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    if(!form||!dialog||!title||!['responseForm','completionEvidenceForm'].includes(form.id))return;
+    const status=$('[data-completion-draft-status]',form),{actor,view,detailId:id}=ui;
+    const project=window.GatherMode?.projectId,generation=store.getState().demoGeneration,organizer=isOrganizer();
+    const editing=form.id==='completionEvidenceForm',uncertain=form.dataset.completionSaveUnconfirmed==='true';
+    const sameScope=()=>!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id&&ui.actor===actor&&ui.view===view&&
+      window.GatherMode?.projectId===project&&store.getState().demoGeneration===generation&&isOrganizer()===organizer&&!$('#dialogBackdrop').hidden;
+    const sameReview=()=>!!status&&button.isConnected&&form.isConnected&&sameScope()&&form.dataset.id===id&&
+      form.dataset.reviewNeedsRefresh==='true'&&$('#dialogTitle',dialog)===title&&$('#'+form.id,dialog)===form&&$('[data-action="refresh-completion-draft"]',form)===button;
+    const siblingDirty=()=>$$('form',dialog).some(other=>other!==form&&
+      (hasUnsavedFields(other)||other.dataset.completionSaveUnconfirmed==='true'));
+    const wantsCompletion=()=>editing||form.elements.response?.value==='completed';
+    const ready=()=>sameReview()&&!ui.pendingSave&&!document.hidden&&!siblingDirty()&&wantsCompletion();
+    const siblingMessage='Your other unsaved task edits are still here. Save or clear those edits before checking this draft.';
+    if(!store.refresh||!sameReview()||ui.pendingSave||ui.syncing||document.hidden)return;
+    if(window.GatherMode?.demo&&form.dataset.completionDemoGeneration!==String(generation??'')){
+      status.textContent='This demo was reset. Your draft is still here, but won’t be moved into the new demo.';
+      return;
+    }
+    if(!wantsCompletion()){status.textContent='Choose Report complete to check this draft.';return;}
+    if(siblingDirty()){status.textContent=siblingMessage;return;}
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Checking the latest task…';
+    let reason='';
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready()||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))return false;
+        const task=state?.tasks?.find(task=>task.id===id);
+        if(state?.demoGeneration!==generation)reason='This demo was reset. This draft won’t be moved into the new demo.';
+        else if(!task||task.archivedAt)reason='This task is no longer available.';
+        else if(uncertain)reason='A fresh check can’t confirm whether this exact save went through. Check the current Completion details before trying again.';
+        else if(!completionDraftCanSubmit(task,editing,actor,organizer,state)){
+          reason=!editing&&(task.reportedAt||task.verifiedAt||task.status==='done')
+            ? 'The latest task already has a completion. This draft won’t replace it.'
+            : 'The latest task no longer allows this submission. Check its owner, status, and required work.';
+        }else if(editing&&task.revision!==Number(form.dataset.revision))
+          reason='The submission or task changed. Review the current Completion details before making another edit.';
+        return !reason;
+      },{requireFresh:true});
+      if(!sameReview())return;
+      if(reason){
+        status.textContent=reason+' Your draft is still here. Copy anything you need before reloading the project.';
+        return;
+      }
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){status.textContent=siblingDirty()?siblingMessage:'Check paused. Your draft is still here.';return;}
+      const revision=store.getSnapshotRevision?.(),state=store.getState(),task=state.tasks.find(task=>task.id===id);
+      if(!result.verified||result.pending||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision)||
+        !completionDraftCanSubmit(task,editing,actor,organizer,state)||(editing&&task.revision!==Number(form.dataset.revision)))
+        throw new Error('The latest task could not be confirmed.');
+      const draft=window.GatherCompletionUI.captureDraft(form);
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();
+      taskDialog(id,form.id,false,true,'',undefined,'',{readOnly:true});
+      const updated=$('#'+form.id,dialog),updatedTitle=$('#dialogTitle',dialog);
+      if(!sameScope()||!updated||updated===form||updated.dataset.id!==id)return;
+      if(!editing){updated.elements.response.value='completed';recovery.syncResponse(updated);}
+      else if(updated.closest('details'))updated.closest('details').open=true;
+      const fileStatus=window.GatherCompletionUI.restoreDraft(updated,draft);
+      window.GatherCompletionUI.mount(updated);
+      const notice=document.createElement('p');
+      notice.className='notice';notice.setAttribute('role','status');
+      notice.textContent='Latest task loaded. Your draft hasn’t been submitted. Review the current task and send the draft when it’s ready.'+
+        ({saved:' The uploaded file is attached; it won’t be uploaded again.',pending:' Your selected file is still here. Submitting will check the previous upload attempt.',
+          selected:' Your selected file is still here.'}[fileStatus]||'');
+      updated.prepend(notice);
+      if(fileStatus==='check-file'||fileStatus==='select-file'){
+        updated.dataset.completionAttachmentRecovery=fileStatus;
+        paintCompletionAttachmentRecovery(updated);
+      }
+      requestAnimationFrame(()=>{
+        if(sameScope()&&$('#dialogTitle',dialog)===updatedTitle&&$('#'+form.id,dialog)===updated)
+          focusTaskDialogControl(updatedTitle,dialog);
+      });
+    }catch{
+      if(sameReview())status.textContent='Couldn’t check the latest task. Your draft is still here. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
   async function saveReviewedSubmission(form,submission,file,submitter) {
     const dialog=$('#dialog'),title=$('#dialogTitle',dialog),{actor,view,dialogKind,detailId}=ui;
     const {id}=form.dataset,editing=form.id==='completionEvidenceForm',organizer=isOrganizer();
@@ -2821,12 +2946,12 @@
     const revision=Number(form.dataset.revision),workspaceRevision=store.getSnapshotRevision?.();
     const stillCurrent=()=>{
       if(!sameReview()||acceptanceReviewPending(form)||!Number.isSafeInteger(revision)||revision<1||
+        (window.GatherMode?.demo&&dialogKind==='task'&&form.dataset.completionDemoGeneration!==String(generation??''))||
         (Number.isSafeInteger(workspaceRevision)&&
           (Number(form.dataset.workspaceRevision)!==workspaceRevision||store.getSnapshotRevision?.()!==workspaceRevision)))return false;
-      const task=store.getState().tasks.find(item=>item.id===id);
+      const state=store.getState(),task=state.tasks.find(item=>item.id===id);
       if(!task||task.archivedAt||task.revision!==revision||Number(form.dataset.revision)!==revision)return false;
-      return editing?(organizer||task.owner===actor)&&(task.status==='done'||!!task.reportedAt):
-        task.owner===actor&&task.status!=='done'&&!task.verifiedAt&&!task.reportedAt&&!dependencyInfo(task).open.length;
+      return completionDraftCanSubmit(task,editing,actor,organizer,state);
     };
     const formMessage=(message)=>{
       const status=form.querySelector('[data-submission-status]');
@@ -2837,14 +2962,22 @@
     const unconfirmed=()=>{
       form.dataset.completionSaveUnconfirmed='true';
       form.dataset.reviewNeedsRefresh='true';
+      $('[data-completion-draft-recovery]',form)?.remove();
       formMessage('The completion save could not be confirmed. Copy your note and links, reload the project, and check whether it saved before submitting again.');
     };
+    if(form.dataset.completionAttachmentRecovery){
+      formMessage('Choose a file or explicitly continue without it before submitting.');
+      return;
+    }
     const stale=(knownWorkspaceConflict=false)=>{
       if(!sameReview())return;
       form.dataset.reviewNeedsRefresh='true';
+      if(store.refresh&&ui.dialogKind==='task'){
+        formMessage('This completion wasn’t saved. Check the latest task before submitting again.');
+        paintCompletionDraftRecovery(form,'If you can still submit, Weft will keep your draft for review.');
+      }else formMessage('This completion wasn’t saved. Copy your note and links, reload the project, then review the current task before submitting.');
       if(knownWorkspaceConflict)showRecoveryWriteConflict(workspaceRevision);
       else showPendingUpdate();
-      formMessage('This completion wasn’t saved. Copy your note and links, reload the project, then review the current task before submitting.');
     };
     if(form.dataset.completionSaveUnconfirmed==='true'){unconfirmed();return;}
     if(!stillCurrent()){stale();return;}
@@ -2931,6 +3064,15 @@
     if(el.dataset.view){event.preventDefault();navigateFromViewControl(el);return;}
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
+    if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
+    if(action==='continue-without-completion-file'){
+      const form=el.closest('form'),dialog=$('#dialog'),submit=form&&$('button[type="submit"]',form);
+      if(form?.dataset.completionAttachmentRecovery&&ui.dialogKind==='task'&&!window.GatherAccessLost&&form.dataset.id===ui.detailId&&
+        dialog&&form===$('#'+form.id,dialog)&&el===$('[data-action="continue-without-completion-file"]',form)){
+        clearCompletionAttachmentRecovery(form);submit?.focus();
+      }
+      return;
+    }
     if(action==='verify-task'||action==='review-completion-evidence'){await saveReviewedCompletion(el);return;}
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId&&$('#dialogBackdrop').hidden)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
@@ -3425,7 +3567,10 @@
     const el=event.target;
     if(el.name==='mode'&&el.closest('.handoff-form'))syncHandoffForm(el.closest('form'));
     if(ui.pendingSave)return;
-    if(el.name==='completionUpload'&&el.form)delete el.form.dataset.completionUploaded;
+    if(el.name==='completionUpload'&&el.form){
+      delete el.form.dataset.completionUploaded;
+      if(el.files?.[0]&&el.form.dataset.completionAttachmentRecovery)clearCompletionAttachmentRecovery(el.form);
+    }
     if(el.closest('#guestAgendaForm'))syncGuestAgenda(el.closest('#guestAgendaForm'));
     if(el.matches('[data-reuse-choice]'))syncReuseChecklist();
     if(el.closest('#acceptTasksForm'))syncAcceptanceSelection(el.closest('form'));
