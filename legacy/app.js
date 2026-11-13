@@ -1974,25 +1974,36 @@
       : 'Newer project changes are available. This review shows the last loaded plan. Refresh before making a change.';
     return '<p role="status" id="eventReviewRefreshStatus">'+message+'</p>'+refresh;
   }
-  function beforeEventReview(group='') {
+  function beforeEventReview(group='',openerId='') {
     if(window.GatherAccessLost)return;
     const state=store.getState(),scope=eventReviewScope();
     ui.eventReviewSnapshot={scope,key:scheduleWorkspaceKey(),mode:ui.timelineMode,date:ui.scheduleDate,
       workspaceRevision:store.getSnapshotRevision?.(),zone:state.event?.timeZone};
     const pending=(workspaceUpdatesPending()||ui.eventScheduleCheckKey===ui.eventReviewSnapshot.key)
       ?'<div id="dialogStaleNotice" class="notice">'+eventReviewRefreshNotice(group)+'</div>':'';
+    const snapshot=ui.eventReviewSnapshot;
     openDialog('Before the event',pending+schedule.preparationReview(state,Date.now(),scope,isOrganizer()),'<button class="btn btn-secondary" data-action="close-dialog">Back to timeline</button>',true,'before-event-review',true);
     const title=$('#dialogTitle');
     requestAnimationFrame(()=>{
       if(!title||ui.dialogKind!=='before-event-review'||window.GatherAccessLost||$('#dialogTitle')!==title)return;
-      if(pending&&store.refresh)$('[data-action="refresh-event-review"]',$('#dialog'))?.focus();
+      if(openerId&&(document.hidden||document.activeElement!==title||!eventRequiredWorkScopeMatches(snapshot)))return;
+      const needsRefresh=pending||openerId&&eventScheduleReviewStale(snapshot);
+      if(needsRefresh){
+        if(!pending)showPendingUpdate(undefined,group);
+        if(store.refresh)$('[data-action="refresh-event-review"]',$('#dialog'))?.focus();
+        else if(openerId)$('#dialogStaleNotice [data-action="reload-workspace"]')?.focus();
+      }
       if(group){
         const detail=$$('[data-event-review-group]',$('#dialog')).find(item=>item.dataset.eventReviewGroup===group);
         const summary=detail?.querySelector('summary');
         if(summary){
           detail.open=true;
           // Keep the warning in view when a newer plan is already known.
-          if(!pending){summary.focus({preventScroll:true});summary.scrollIntoView({block:'center',inline:'nearest'});}
+          if(!needsRefresh){
+            const row=openerId&&focusable(detail).find(el=>el.dataset.action==='review-event-required-work'&&el.dataset.id===openerId);
+            if(row)focusTaskDialogControl(row,$('#dialog'));
+            else{summary.focus({preventScroll:true});summary.scrollIntoView({block:'center',inline:'nearest'});}
+          }
         }
       }
     });
@@ -2040,6 +2051,39 @@
     const revision=store.getSnapshotRevision?.();
     return context.checkRequired||ui.eventScheduleCheckKey===context.key||
       workspaceUpdatesPending()||scheduleRevisionIsStale(revision)||context.workspaceRevision!==revision;
+  }
+  function eventRequiredWorkScopeMatches(context) {
+    return !!context&&!window.GatherAccessLost&&ui.view==='timeline'&&context.key===scheduleWorkspaceKey()&&
+      context.mode===ui.timelineMode&&context.date===ui.scheduleDate&&context.scope.mine===eventReviewScope().mine;
+  }
+  function openEventRequiredWork(id,opener) {
+    const snapshot=ui.eventReviewSnapshot,dialog=$('#dialog'),detail=opener?.closest('[data-event-review-group]');
+    const group=detail?.dataset.eventReviewGroup;
+    if(!id||!['prerequisites','linked-results'].includes(group)||!eventRequiredWorkScopeMatches(snapshot)||
+      ui.dialogKind!=='before-event-review'||$('#dialogBackdrop').hidden||ui.pendingSave||ui.syncing||document.hidden||
+      !opener?.isConnected||opener.dataset.action!=='review-event-required-work'||opener.dataset.id!==id||
+      !dialog.contains(detail)||!focusable(detail).includes(opener))return false;
+    const eligible=state=>GatherScheduleUI.reviewItems(state,Date.now(),snapshot.scope)
+      .some(section=>section.key===group&&section.tasks.some(task=>task.id===id&&!task.archivedAt));
+    const state=store.getState();
+    if(eventScheduleReviewStale(snapshot)||snapshot.zone!==state.event.timeZone){
+      showPendingUpdate(undefined,group);
+      const refresh=$('[data-action="refresh-event-review"]',dialog);
+      if(refresh){refresh.dataset.id=group;refresh.focus();}
+      toast('Refresh the event review before opening this task.');return false;
+    }
+    if(!eligible(state)){beforeEventReview(group);toast('This task is no longer in that review group.');return false;}
+    const origin={actor:ui.actor,group,id,snapshot};
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true,eventRequiredWork:origin});
+    const title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||$('#dialogTitle',dialog)!==title||document.activeElement!==title||document.hidden||ui.pendingSave||
+        ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||ui.eventTaskReview!==origin||
+        !eventRequiredWorkScopeMatches(snapshot)||eventScheduleReviewStale(snapshot))return;
+      const current=store.getState();
+      if(current.event.timeZone===snapshot.zone&&eligible(current))focusTaskDialogControl($('.task-dependencies h3',dialog),dialog);
+    });
+    return true;
   }
   function markEventScheduleCheck(editor) {
     editor.checkRequired=true;
@@ -2185,7 +2229,10 @@
     const source=ui.eventTaskReview;
     if(!source||source.actor!==ui.actor||window.GatherAccessLost||ui.view!=='timeline'||
       !['task','delete-task'].includes(ui.dialogKind))return false;
-    beforeEventReview(source.group);
+    if(source.snapshot){
+      if(!eventRequiredWorkScopeMatches(source.snapshot))return false;
+      beforeEventReview(source.group,source.id);
+    }else beforeEventReview(source.group);
     return true;
   }
   function taskAcceptanceButton(dialog=$('#dialog')) {
@@ -3270,13 +3317,16 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false}={}) {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false,eventRequiredWork}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     if(ui.planReceiptReturn&&!activePlanReceiptReturn(id))ui.planReceiptReturn=null;
     if(ui.completionLinkedReturn&&(ui.completionLinkedReturn.targetId!==id||!completionLinkedReturnInScope(ui.completionLinkedReturn,taskState)))
       ui.completionLinkedReturn=null;
-    if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
+    if(ui.dialogKind==='before-event-review'&&!window.GatherAccessLost){
+      if(eventRequiredWork)ui.eventTaskReview=eventRequiredWork;
+      else if(eventGroup)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
+    }
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
     if(!sameTask){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
     if(ui.overlapComparison&&(!overlapComparisonInScope(ui.overlapComparison)||ui.overlapComparison.peerId!==id))ui.overlapComparison=null;
@@ -3386,6 +3436,7 @@
     const fromScheduleReconfirmation=(ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id)||
       (notificationReview?.id===id&&notificationReview.actor===ui.actor&&notificationReview.project===window.GatherMode?.projectId);
     const fromEventScheduleReview=ui.eventTaskReview?.group==='schedule-reconfirmation'&&ui.eventTaskReview.actor===ui.actor;
+    const fromEventRequiredWork=ui.eventTaskReview?.snapshot&&eventRequiredWorkScopeMatches(ui.eventTaskReview.snapshot);
     const fromWrapOpenWork=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='wrap-review-task'&&ui.lastFocus.dataset.id===id&&
       ['owner-gap','linked-results'].includes(ui.lastFocus.dataset.wrapReviewKind);
     const fromWrapLesson=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='open-lesson-linked-task'&&ui.lastFocus.dataset.id===id;
@@ -3395,8 +3446,8 @@
     const fromPlanReceipt=ui.planReceiptReturn?.id===id;
     const fromAcceptanceHandoff=['acceptanceHandoffOpen','acceptanceHandoffNextUp'].includes(ui.lastFocus?.id)&&ui.lastFocus.dataset.id===id&&
       currentAcceptanceHandoff(taskState)?.id===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromAcceptanceHandoff||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
-    if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromEventRequiredWork||fromAcceptanceHandoff||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
+    if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromEventRequiredWork||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -4239,6 +4290,7 @@
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
+    if(action==='review-event-required-work'){openEventRequiredWork(id,el);return;}
     if(['open-accepted-handoff','open-accepted-next-up','dismiss-accepted-handoff'].includes(action)){actOnAcceptanceHandoff(el,id);return;}
     if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
     if(action==='use-latest-lesson'){useLatestLesson(el);return;}
@@ -4267,7 +4319,7 @@
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
     const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
-    if(action==='close-dialog'||exitsAssignment){
+    if(action==='close-dialog'||exitsAssignment||action==='return-to-event-task-review'&&ui.eventTaskReview?.snapshot){
       if(!confirmCloseDialog()||!confirmDiscard(reviewForm))return;
     }else if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,reviewForm))return;
     const eventReviewGroup=(action==='task'||action==='review-organizer-item')&&ui.dialogKind==='before-event-review'
