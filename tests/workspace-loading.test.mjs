@@ -69,7 +69,8 @@ function preparedRefresh(demo=false) {
   let next=0;
   vm.runInNewContext(source+'\nbindWorkspaceRefresh();',{
     store,ui,window,document,busyRunSheetRevisions,showPendingUpdate(){calls.push('pending');},
-    render(){calls.push('render');},refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
+    render(){calls.push('render');},paintNotifications(){calls.push('notifications');},
+    refreshSuggestionSurfaces(){calls.push('suggestions');},toast(){calls.push('toast');},
     $:selector=>({'#dialogBackdrop':backdrop,'#workspaceSyncNotice':notice,'#inboxSyncNotice':inboxNotice})[selector],
     setInterval(callback,ms){const id=next++;timers.set(id,{callback,ms});return id;},
     clearInterval(id){timers.delete(id);},
@@ -141,6 +142,51 @@ test('a deferred tool render waits for edits even if the server already has the 
   assert.equal(notice.hidden,true);
   events.focus();await tick();
   assert.deepEqual(calls,['request'],'the deferred render happens only once');
+});
+
+test('open notifications allow normal refresh and drain a deferred tool update without closing the dialog',async()=>{
+  const {events,calls,ui,document,backdrop,notice,snapshotResult}=preparedRefresh();
+  backdrop.hidden=false;ui.dialogKind='notifications';
+  const focusedReminder={matches:()=>false};
+  document.activeElement=focusedReminder;
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','render','suggestions']);
+  assert.equal(ui.dialogKind,'notifications');assert.equal(backdrop.hidden,false);
+  assert.equal(notice.hidden,true);
+  assert.equal(document.activeElement,focusedReminder);
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['render','suggestions']);
+
+  ui.reviewDirty=true;
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['pending'],'notifications do not override a dirty review guard');
+  assert.equal(ui.toolUpdatePending,true);
+  ui.reviewDirty=false;snapshotResult({changed:false});
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','render','suggestions']);
+  assert.equal(ui.toolUpdatePending,false);
+  assert.equal(notice.hidden,true);
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request'],'no extra repaint on an unchanged snapshot');
+  assert.equal(ui.dialogKind,'notifications');assert.equal(backdrop.hidden,false);
+});
+
+test('shared updates repaint reminders on Private details without rebuilding the private view',async()=>{
+  const {events,calls,ui,backdrop,notice}=preparedRefresh();
+  ui.view='details';backdrop.hidden=false;ui.dialogKind='notifications';
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','notifications','suggestions']);
+  assert.equal(ui.view,'details');assert.equal(ui.dialogKind,'notifications');
+  assert.equal(backdrop.hidden,false);assert.equal(notice.hidden,true);
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['notifications','suggestions']);
+
+  ui.dialogKind='guest-agenda';
+  events.focus();await tick();
+  assert.deepEqual(calls.splice(0),['request','pending'],'a different open dialog still blocks applying the snapshot');
+  events['gather-tool-updated']();
+  assert.deepEqual(calls.splice(0),['pending']);
+  assert.equal(ui.view,'details');assert.equal(backdrop.hidden,false);
 });
 
 test('slow snapshot and app download keep shell hidden until initial render completes', async () => {

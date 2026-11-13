@@ -197,7 +197,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
           <div className="flex items-start justify-between gap-4 rounded-lg border bg-muted/35 p-4">
             <div className="space-y-2">
               <Label htmlFor="setup-taskReminders">In-app task reminders <span className="font-normal text-muted-foreground">(optional)</span></Label>
-              <p id="setup-reminders-help" className="text-sm text-muted-foreground">See reminders in Notifications when tasks assigned to you are due today or overdue. Only for you, on this browser. No email or push.</p>
+              <p id="setup-reminders-help" className="text-sm text-muted-foreground">See your returned completion reports and tasks due today or overdue in Notifications. Only for you, on this browser. No email or push.</p>
             </div>
             <Switch id="setup-taskReminders" aria-describedby="setup-reminders-help" checked={form.taskReminders} onCheckedChange={checked => update('taskReminders', checked)} />
           </div>

@@ -564,20 +564,27 @@
     const list=$('[data-notification-items]'), toggle=$('[data-action="toggle-task-reminders"]');
     if(!list||!toggle)return;
     const markup=reminders.length
-      ? `<ul class="notification-list" aria-label="Task reminders">${reminders.map(item=>`<li><button type="button" class="btn btn-secondary notification-task" data-action="task" data-id="${h(item.id)}"><strong class="notification-task-title">${h(item.title)}</strong><span class="notification-task-date">${item.overdue?'Overdue · '+h(dayLabel(item.dueDate)):'Due today'}</span></button></li>`).join('')}</ul>`
-      : `<p class="notice section-gap">${enabled?'No tasks that need your work are due today or overdue.':'Task reminders are off in this browser.'}</p>`;
+      ? `<ul class="notification-list" aria-label="Task reminders">${reminders.map(item=>{
+        const returned=item.kind==='completion-changes';
+        const label=returned?'Completion changes requested':item.overdue?'Overdue · '+h(dayLabel(item.dueDate)):'Due today';
+        return `<li><button type="button" class="btn btn-secondary notification-task" data-notification-task data-action="${returned?'review-returned-completion':'task'}" data-id="${h(item.id)}"><strong class="notification-task-title">${h(item.title)}</strong><span class="notification-task-date">${label}</span></button></li>`;
+      }).join('')}</ul>`
+      : `<p class="notice section-gap">${enabled?'No returned completion reports or tasks due today or overdue for you.':'Task reminders are off in this browser.'}</p>`;
     const template=document.createElement('template');
     template.innerHTML=markup;
     if(list.innerHTML!==template.innerHTML){
       const active=list.contains(document.activeElement)?document.activeElement:null;
       list.replaceChildren(template.content);
-      if(active&&!restoreFocus(active,list))toggle.focus({preventScroll:true});
+      if(active){
+        const replacement=focusable(list).find(item=>item.hasAttribute('data-notification-task')&&item.dataset.id===active.dataset.id);
+        (replacement||toggle).focus({preventScroll:true});
+      }
     }
     toggle.textContent=enabled?'Turn off reminders':'Turn on reminders';
   }
   function showNotifications() {
     if(!window.WeftNotifications?.preferenceKey(reminderScope()))return;
-    openDialog('Notifications','<p class="muted">See tasks that need your work and are due today or overdue, based on the project’s time zone.</p><div data-notification-items></div><div class="notification-settings"><p class="muted">This project, this browser only. No email or push.</p><button type="button" class="btn btn-secondary" data-action="toggle-task-reminders"></button></div><p class="notification-status" role="status"></p>','',false,'notifications');
+    openDialog('Notifications','<p class="muted">See your returned completion reports and tasks due today or overdue in the project’s time zone.</p><div data-notification-items></div><div class="notification-settings"><p class="muted">This project, this browser only. No email or push.</p><button type="button" class="btn btn-secondary" data-action="toggle-task-reminders"></button></div><p class="notification-status" role="status"></p>','',false,'notifications');
     paintNotifications();
   }
   function toggleTaskReminders() {
@@ -775,7 +782,7 @@
     if(ui.dialogKind==='guest-agenda'&&ui.guestAgenda){updateGuestAgendaWarning();return;}
     if(ui.dialogKind==='reuse-checklist'&&ui.reuseChecklist){ui.reuseChecklist.stale=true;updateReuseChecklistWarning();return;}
     if(ui.dialogKind==='run-sheet'&&ui.runSheet){currentRunSheet();return;}
-    if($('#dialogBackdrop').hidden||$('#dialogStaleNotice'))return;
+    if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications'||$('#dialogStaleNotice'))return;
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     note.innerHTML='<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);

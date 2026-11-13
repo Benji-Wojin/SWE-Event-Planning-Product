@@ -21,12 +21,18 @@
     } catch (_) { return false; }
   }
   function taskReminders(tasks, actor, today) {
-    if (!actor || !dayFormat.test(today)) return [];
-    return tasks.filter(task => task.owner === actor && task.status !== 'done' &&
-      !task.archivedAt && !(task.reportedAt && task.requiresVerification && !task.verifiedAt) &&
-      dayFormat.test(task.dueDate) && task.dueDate <= today)
+    if (!actor) return [];
+    const open = tasks.filter(task => task.owner === actor && task.status !== 'done' &&
+      !task.archivedAt && !(task.reportedAt && task.requiresVerification && !task.verifiedAt));
+    const byTitle = (a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+    const returned = open.filter(task => !task.reportedAt && task.completionReview);
+    const returnedIds = new Set(returned.map(task => task.id));
+    const revisions = returned.map(({ id, title }) => ({ id, title, kind: 'completion-changes' })).sort(byTitle);
+    if (!dayFormat.test(today)) return revisions;
+    const due = open.filter(task => !returnedIds.has(task.id) && dayFormat.test(task.dueDate) && task.dueDate <= today)
       .map(({ id, title, dueDate }) => ({ id, title, dueDate, overdue: dueDate < today }))
-      .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || byTitle(a, b));
+    return [...revisions, ...due];
   }
   const api = Object.freeze({ preferenceKey, readReminderPreference, writeReminderPreference, taskReminders });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

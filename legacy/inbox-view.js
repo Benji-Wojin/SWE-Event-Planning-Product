@@ -88,6 +88,7 @@
       if(result.changed||toolUpdate){
         // Private-record screens have their own viewing/locking lifecycle.
         if(ui.view!=='details')render();
+        else paintNotifications();
         if(ui.dialogKind==='thought')$('#dialogStaleNotice')?.remove();
       }
       const updated=result.changed||result.suggestionsChanged||toolUpdate;
@@ -101,7 +102,7 @@
   }
   function canApplyWorkspaceRefresh() {
     return !window.GatherAccessLost&&!document.hidden&&!ui.pendingSave&&!ui.reviewDirty&&
-      ($('#dialogBackdrop').hidden||ui.dialogKind==='thought')&&!ui.savingProposal&&
+      ($('#dialogBackdrop').hidden||ui.dialogKind==='thought'||ui.dialogKind==='notifications')&&!ui.savingProposal&&
       !document.activeElement?.matches('input,textarea,select');
   }
   function bindWorkspaceRefresh() {
@@ -115,6 +116,7 @@
       if(!canApplyWorkspaceRefresh()){ui.toolUpdatePending=true;showPendingUpdate();return;}
       if(ui.toolUpdatePending){refresh();return;}
       if(ui.view!=='details')render();
+      else paintNotifications();
       refreshSuggestionSurfaces();
     });
     window.addEventListener('focus',refresh);
