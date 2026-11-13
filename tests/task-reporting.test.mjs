@@ -222,6 +222,8 @@ function taskDialogHtml(actor,id='dietary',identity,store=create()) {
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
   context.recovery=GatherRecoveryUI.create(context);
   context.schedule=GatherScheduleUI.create(context);
+  const resumeReceipt=source.slice(source.indexOf('  function currentResumeReceipt('),source.indexOf('  function focusTaskOwnerEditor('));
+  vm.runInContext(resumeReceipt,context);
   vm.runInContext(source.match(/  const isOrganizer = .*;/)[0]+source.slice(source.indexOf('  const completionText ='),source.indexOf('  const commitment ='))+source.slice(source.indexOf('  function dependencyInfo('),source.indexOf('  function newTaskDialog(')),context);
   context.taskDialog(id);
   return html;

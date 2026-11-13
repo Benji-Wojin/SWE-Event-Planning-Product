@@ -1378,7 +1378,7 @@
     else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
-    if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;}
+    if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
     if(kind!=='first-schedule')ui.firstScheduleEditor=null;
     if(kind!=='before-event-review')ui.eventReviewSnapshot=null;
     if(kind!=='schedule-from-review')ui.eventScheduleEditor=null;
@@ -1429,6 +1429,7 @@
     ui.dialogKind='';
     ui.notificationScheduleReview=null;
     ui.linkedResultsReview=null;
+    ui.resumeReceipt=null;
     ui.firstScheduleEditor=null;
     ui.eventReviewSnapshot=null;
     ui.eventScheduleEditor=null;
@@ -1557,6 +1558,37 @@
     if(bottom<=top)return;
     if(rect.top<top||rect.height>bottom-top)dialog.scrollTop+=rect.top-top;
     else if(rect.bottom>bottom)dialog.scrollTop+=rect.bottom-bottom;
+  }
+  function currentResumeReceipt(task) {
+    const receipt=ui.resumeReceipt;
+    return !window.GatherAccessLost&&!!receipt&&receipt.actor===ui.actor&&receipt.project===window.GatherMode?.projectId&&
+      task?.id===receipt.id&&task.revision===receipt.revision&&task.status==='progress'&&!task.archivedAt;
+  }
+  function resumedNextUpAvailable(task,state) {
+    return task.owner===ui.actor&&!task.nextUpAt&&!GatherPriorities.changesRequested(task)&&
+      !GatherScheduleUI.pendingReconfirmation(task,ui.actor)&&GatherPriorities.actionable(task,state.tasks);
+  }
+  function resumeTaskReceipt(task,state) {
+    if(!currentResumeReceipt(task))return '';
+    const request=GatherPriorities.pendingRequest(task);
+    const followup=request?.kind==='help'?' The help request is still waiting for the organizer.':
+      request?.kind==='date'?' The date proposal is still waiting for the organizer.':'';
+    const scheduleChange=GatherScheduleUI.pendingReconfirmation(task,task.owner)?' The assigned owner still needs to review and accept the schedule change.':'';
+    return `<section class="notice section-gap" aria-labelledby="resumeTaskReceiptHeading">
+      <h3 id="resumeTaskReceiptHeading" tabindex="-1">Task resumed</h3><p>Status is now In progress. The previous update and linked results were kept.${followup}${scheduleChange}</p>
+      ${resumedNextUpAvailable(task,state)?`<p>This task was not added to Next up. Your existing commitments are unchanged.</p><button type="button" class="btn btn-secondary" data-action="show-resumed-next-up" data-id="${h(task.id)}">Go to Next up controls</button>`:''}</section>`;
+  }
+  function showResumedNextUp(id,opener) {
+    const dialog=$('#dialog'),state=store.getState(),task=state.tasks.find(item=>item.id===id);
+    if(!currentResumeReceipt(task)||document.hidden||ui.pendingSave||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||
+      !opener?.isConnected||opener!==$('[data-action="show-resumed-next-up"]',dialog)||opener.dataset.id!==id||
+      opener.closest('[hidden],[inert]')||!resumedNextUpAvailable(task,state))return false;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){showPendingUpdate();return false;}
+    const form=$('#nextUpForm',dialog);
+    const target=form?.dataset.id===id&&$('#nextUpTaskState',form);
+    if(!target)return false;
+    focusTaskDialogControl(target,dialog);
+    return true;
   }
   function focusTaskOwnerEditor(id) {
     if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
@@ -3020,7 +3052,7 @@
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
     const sameTask=ui.dialogKind==='task'&&ui.detailId===id;
-    if(!sameTask){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;}
+    if(!sameTask){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
     if(ui.overlapComparison&&(!overlapComparisonInScope(ui.overlapComparison)||ui.overlapComparison.peerId!==id))ui.overlapComparison=null;
     ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
@@ -3049,6 +3081,7 @@
     const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
     const teammateReconfirmation=organizer&&!own&&schedule.awaitingScheduleAcceptance?.(task,taskState.members||[]);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
+      ${resumeTaskReceipt(task,taskState)}
       ${relatedBatchChildMarkup(batch,task)}
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
@@ -4038,6 +4071,7 @@
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind,eventReviewGroup);
       if(action==='review-schedule-reconfirmation')openScheduleReconfirmation(id,el);
       if(action==='review-linked-results')openLinkedResults(id,el);
+      if(action==='show-resumed-next-up')showResumedNextUp(id,el);
       if(action==='review-returned-completion'){
         const fromNextUp=el.dataset.nextUpOrigin==='returned'&&$('#dialogBackdrop').hidden;
         openReturnedCompletion(id);
@@ -4204,7 +4238,26 @@
           }
         }
         if(!protectCompletionDraft(task,'resume'))return;
-        el.disabled=true;try{await store['resumeTask'](id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}
+        const actor=ui.actor,project=window.GatherMode?.projectId,view=ui.view,originalTitle=$('#dialogTitle',$('#dialog'));
+        const sameTaskDialog=()=>!window.GatherAccessLost&&ui.actor===actor&&window.GatherMode?.projectId===project&&
+          ui.view===view&&ui.dialogKind==='task'&&ui.detailId===id&&!$('#dialogBackdrop').hidden;
+        el.disabled=true;
+        try{
+          const saved=await store['resumeTask'](id,actor);
+          if(!sameTaskDialog()||!originalTitle||$('#dialogTitle',$('#dialog'))!==originalTitle)return;
+          const confirmed=store.getState().tasks.find(item=>item.id===id);
+          if(saved?.id!==id||saved.status!=='progress'||!Number.isSafeInteger(saved.revision)||saved.revision<=task?.revision||
+            confirmed?.revision!==saved.revision||confirmed.status!=='progress')
+            throw new Error('Could not confirm the task resumed. Check the latest task before trying again.');
+          ui.resumeReceipt={id,actor,project,revision:saved.revision};
+          render();taskDialog(id,'',false,true);toast('Task resumed.');
+          const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+          requestAnimationFrame(()=>{
+            if(!sameTaskDialog()||document.hidden||workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())||
+              !title||$('#dialogTitle',dialog)!==title||document.activeElement!==title)return;
+            if(currentResumeReceipt(store.getState().tasks.find(item=>item.id===id)))focusTaskDialogControl($('#resumeTaskReceiptHeading',dialog),dialog);
+          });
+        }finally{if(el.isConnected)el.disabled=false;}
       }
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);

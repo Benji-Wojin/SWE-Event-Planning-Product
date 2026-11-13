@@ -1386,13 +1386,22 @@
     }
     function resumeTask(taskId, actor = 'jack') {
       const task = taskById(taskId); canManageDependencies(task, actor);
+      if (task.archivedAt) throw new Error('This task is archived.');
       if(task.status!=='blocked')throw new Error('This task is not blocked.');
+      if (task.requiresVerification && task.reportedAt && !task.verifiedAt) throw new Error('This task is awaiting verification.');
       const required=task.dependencies.filter(link=>link.kind!=='related');
-      if (!required.length || required.some(link => !dependencyResolved(state.tasks.find(t => t.id === link.taskId)))) throw new Error('Some linked work is still open or awaiting verification.');
-      patchTask(task, { status: 'progress', note: 'Resumed after reviewing the results from: ' + required.map(link => taskById(link.taskId).title).join('; ') + '.' }, actor);
+      if (!required.length || required.some(link => {
+        const prerequisite = state.tasks.find(item => item.id === link.taskId);
+        return !dependencyResolved(prerequisite) || prerequisite.archivedAt;
+      })) throw new Error('Some linked work is unavailable, still open, or awaiting verification.');
+      // Resuming is a status change, not a new progress update or result.
+      task.status = 'progress';
       task.blockerFingerprint = '';
+      task.revision++;
+      task.updatedAt = timestamp();
+      task.updatedBy = actor;
       entry(actor, `reviewed the results and resumed ${task.title}`, task.id, 'dependency-resumed');
-      save(); return copy(task);
+      save(true, false); return copy(task);
     }
     function suggestionCandidates() {
       const rules = [

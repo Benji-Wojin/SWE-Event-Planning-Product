@@ -6,6 +6,13 @@ import '../legacy/store.js';
 const create = () => GatherStore.createStore({storage:null});
 const task = (store,id) => store.getState().tasks.find(t=>t.id===id);
 const results = (store,id) => task(store,id).comments.filter(c=>c.kind==='dependency-result');
+function reload(state) {
+  let raw=JSON.stringify(state);
+  return GatherStore.createStore({storage:{
+    getItem:key=>key===GatherStore.STORAGE_KEY?raw:null,
+    setItem:(_key,value)=>{raw=value;},
+  }});
+}
 
 test('new and updated blockers create or reuse follow-up tasks, including repeat reports and reloads', () => {
   const store=create();
@@ -47,6 +54,69 @@ test('completion shares a result once and requires explicit owner resume after e
   store.resumeTask('catering','maya');
   assert.equal(task(store,'catering').status,'progress');
   assert.ok(task(store,'catering').comments.some(c=>c.text.includes('24 vegetarian')));
+});
+
+test('resuming records the status change without replacing the blocker, its attribution, or commitments', () => {
+  const store=create();
+  const parent=store.addTask({title:'Approve welcome menu',owner:'dev'});
+  const unrelated=store.addTask({title:'Check venue access',owner:'dev'});
+  store.acceptTask(parent.id,'dev');
+  store.setNextUp(unrelated.id,{enabled:true},'dev');
+  const blocker='Waiting for dietary restrictions.\n  Keep the venue contact in the loop.';
+  store.updateTask(parent.id,{status:'blocked',note:blocker},'dev');
+  store.addDependency(parent.id,{taskId:unrelated.id,kind:'related',reason:'Coordinate the venue handoff.'},'dev');
+  store.reportCompletion('dietary','The dietary list is ready.','maya');
+  const before=store.getState(),previous=task(store,parent.id);
+  assert.equal(previous.note,blocker);
+  assert.equal(previous.noteUpdatedBy,'dev');
+  assert.ok(previous.noteUpdatedAt);
+  assert.ok(previous.acceptedAt);
+  assert.equal(results(store,parent.id).length,1);
+  assert.ok(task(store,unrelated.id).nextUpAt);
+
+  const resumed=store.resumeTask(parent.id,'jack'),after=store.getState();
+  assert.deepEqual(resumed,{...previous,status:'progress',updatedAt:resumed.updatedAt,updatedBy:'jack',
+    revision:previous.revision+1,blockerFingerprint:''});
+  assert.deepEqual(after.tasks.filter(item=>item.id!==parent.id),before.tasks.filter(item=>item.id!==parent.id));
+  assert.deepEqual(after.activity.slice(1),before.activity);
+  assert.equal(after.activity[0].type,'dependency-resumed');
+  assert.equal(after.activity[0].actor,'jack');
+  assert.equal(after.activity[0].taskId,parent.id);
+
+  store.updateTask(parent.id,{status:'blocked',note:blocker},'dev');
+  const repeated=task(store,parent.id);
+  assert.equal(repeated.note,blocker);
+  const required=repeated.dependencies.filter(link=>link.kind!=='related');
+  assert.equal(required.length,2);
+  assert.equal(required[0].taskId,'dietary');
+  assert.notEqual(required[1].taskId,'dietary');
+  assert.equal(task(store,required[1].taskId).status,'todo');
+  assert.throws(()=>store.resumeTask(parent.id,'dev'),/still open/);
+});
+
+test('resuming rejects archived work and a blocked task with a pending completion report without changing the snapshot', () => {
+  const source=create();
+  source.reportCompletion('dietary','The dietary list is ready.','maya');
+  const snapshot=JSON.parse(source.exportState());
+  for (const [archivedId,error] of [['catering',/archived/],['dietary',/still open/]]) {
+    const archived=structuredClone(snapshot);
+    archived.tasks.find(item=>item.id===archivedId).archivedAt='2026-01-02T00:00:00.000Z';
+    const store=reload(archived),before=store.exportState();
+    assert.throws(()=>store.resumeTask('catering','maya'),error);
+    assert.equal(store.exportState(),before);
+  }
+
+  source.updateTask('catering',{requiresVerification:true});
+  source.reportCompletion('catering','The caterer confirmed the final menu.','maya');
+  const pending=JSON.parse(source.exportState());
+  // The regular report path goes to In progress; older snapshots can contain
+  // both the Blocked status and a pending report. Resume must not withdraw it.
+  pending.tasks.find(item=>item.id==='catering').status='blocked';
+  const store=reload(pending),before=store.exportState();
+  assert.ok(task(store,'catering').reportedAt);
+  assert.ok(task(store,'catering').completionEvidence);
+  assert.throws(()=>store.resumeTask('catering','maya'),/awaiting verification/);
+  assert.equal(store.exportState(),before);
 });
 
 test('verification delays delivery; reopening invalidates readiness and sends the new result on recompletion', () => {
