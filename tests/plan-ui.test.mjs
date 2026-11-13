@@ -100,6 +100,19 @@ function nodes(node) {
       ? node.flatMap(nodes)
       : [node, ...nodes(node.props?.children)];
 }
+const existingTaskLinks = (tree, title) => nodes(tree).filter(node =>
+  node.type === 'a' && (title === undefined
+    ? node.props?.['aria-label']?.startsWith('Open existing task: ')
+    : node.props?.['aria-label'] === `Open existing task: ${title} (opens in a new tab)`));
+const existingPrerequisites = tree => nodes(tree).filter(node =>
+  node.props?.['aria-label'] === 'Existing prerequisites');
+function assertExistingTaskLink(link, href) {
+  assert.ok(link, 'read-only task link exists');
+  assert.equal(link.props.href, href);
+  assert.equal(link.props.target, '_blank');
+  assert.equal(link.props.rel, 'noopener noreferrer');
+  assert.equal(link.props.onClick, undefined);
+}
 function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false) {
   const previous = {
     fetch: globalThis.fetch,
@@ -454,6 +467,8 @@ for (const contextChanged of [false, true]) {
     }, initial);
     try {
       await active.start();
+      assertExistingTaskLink(existingTaskLinks(existingPrerequisites(active.tree)[0], prerequisite.title)[0],
+        '/project?project=p_example&task=old-prerequisite');
       await active.edit('plan-brief', 'Fictional updated brief');
       await active.edit('title-one', 'Confirm the evening activities');
       await active.check('include-signs', true);
@@ -465,6 +480,10 @@ for (const contextChanged of [false, true]) {
       assert.equal(active.find('include-venue').props.checked, false);
       assert.equal(active.find('include-signs').props.checked, true);
       assert.deepEqual(active.saved.draft.items[0].dependsOn, ['venue']);
+      const refreshed = existingTaskLinks(active.tree, prerequisite.title);
+      assert.ok(refreshed.length);
+      for (const link of refreshed)
+        assertExistingTaskLink(link, '/project?project=p_example&task=new-prerequisite');
       const add = nodes(active.tree).find(node => node.type === 'button' && text(node) === 'Add 2 selected items to project');
       assert.ok(add, 'the reviewed selection remains visible');
       assert.equal(Boolean(add.props.disabled), contextChanged);
@@ -775,6 +794,106 @@ test('unchecking an existing prerequisite keeps the remaining draft items addabl
     app.dispose();
   }
 });
+test('a selected proposal shows the exact shared prerequisite before Add and can remove only that private link', async () => {
+  const initial = fixture();
+  const existing = { id: 'shared-confirmation', title: 'Confirm activities', start: '' };
+  initial.existingTasks = [existing];
+  initial.draft.items = [
+    { ...copy(item), included: false },
+    { ...copy(item), id: 'two', title: 'Prepare arrival', dependsOn: ['one'] },
+    { ...copy(item), id: 'three', title: 'Draft follow-up', dependsOn: ['one'], included: false },
+  ];
+  const app = harness(context => {
+    if (context.input?.action === 'save') context.value = {
+      ...context.saved, revision: context.saved.revision + 1,
+      draft: { ...context.saved.draft, items: context.input.items },
+    };
+  }, initial, 'project=p_school', false, true);
+  try {
+    await app.start();
+    const groups = existingPrerequisites(app.tree);
+    assert.equal(groups.length, 1, 'only the selected proposal shows its resolved links');
+    assert.ok(!nodes(app.tree).some(node => node.type === 'details' && nodes(node).includes(groups[0])),
+      'the organizer does not need to expand Details to review the shared prerequisite');
+    assertExistingTaskLink(existingTaskLinks(groups[0], existing.title)[0],
+      '/project?project=p_school&task=shared-confirmation&guide=1');
+    assert.equal(existingTaskLinks(app.tree, existing.title).length, 2, 'the match is inspectable from the candidate and selected proposal');
+    await app.edit('note-two', 'Keep the private arrival note.');
+    const remove = nodes(groups[0]).find(node =>
+      node.type === 'button' && node.props['aria-label'] === 'Remove link to prerequisite: Confirm activities');
+    assert.ok(remove);
+    assert.equal(text(remove), 'Remove link');
+    const button = {}, focus = [];
+    globalThis.document.activeElement = button;
+    globalThis.document.getElementById = id => ({ focus: options => focus.push({ id, options }) });
+    await remove.props.onClick({ currentTarget: button });
+    assert.deepEqual(focus, [{ id: 'include-two', options: { preventScroll: true } }]);
+    await app.start();
+    assert.deepEqual(app.requests.map(({ action }) => action), ['get'], 'preview and removal do not write');
+    assert.equal(existingPrerequisites(app.tree).length, 0);
+    assert.equal(app.find('required-two:one').props.checked, false);
+    assert.equal(app.find('required-three:one').props.checked, true);
+    assert.equal(app.find('note-two').props.value, 'Keep the private arrival note.');
+    await app.click('Add 1 selected items to project');
+    const apply = app.requests.at(-1);
+    assert.equal(apply.action, 'apply');
+    assert.deepEqual(apply.items.find(row => row.id === 'two').dependsOn, []);
+    assert.deepEqual(apply.items.find(row => row.id === 'three').dependsOn, ['one']);
+  } finally {
+    app.dispose();
+  }
+});
+test('ambiguous exact matches and invalid semantic reuse never appear as resolved prerequisites', async () => {
+  for (const invalidReuse of [false, true]) {
+    const initial = fixture();
+    const exact = { id: 'existing', title: item.title, start: '' };
+    initial.existingTasks = invalidReuse ? [exact] : [exact, { ...exact, id: 'ambiguous' }];
+    initial.draft.items = [
+      { ...copy(item), included: false, ...(invalidReuse ? { duplicateChoice: 'reuse' } : {}) },
+      { ...copy(item), id: 'two', title: 'Prepare arrival', dependsOn: ['one'] },
+    ];
+    const app = harness(undefined, initial);
+    try {
+      await app.start();
+      assert.equal(existingTaskLinks(app.tree).length, 0);
+      assert.equal(existingPrerequisites(app.tree).length, 0);
+      const add = nodes(app.tree).find(node =>
+        node.type === 'button' && text(node) === 'Add 1 selected items to project');
+      assert.ok(add?.props.disabled);
+      assert.deepEqual(app.requests.map(({ action }) => action), ['get']);
+    } finally {
+      app.dispose();
+    }
+  }
+});
+test('a new exact candidate does not replace an existing explicit reuse choice in the preview', async () => {
+  const initial = fixture();
+  initial.contextChanged = true;
+  initial.existingTasks = [
+    { id: 'chosen', title: 'Finalize activities', start: '' },
+    { id: 'new-exact', title: item.title, start: '' },
+  ];
+  initial.draft.duplicateSuggestions = [{
+    itemId: 'one', taskId: 'chosen', taskIdentity: 'finalize activities|',
+    itemIdentity: JSON.stringify([item.title, item.kind, item.note, item.dueDate, item.start, item.end, item.location, item.category]),
+  }];
+  initial.draft.items = [
+    { ...copy(item), included: false, duplicateChoice: 'reuse' },
+    { ...copy(item), id: 'two', title: 'Prepare arrival', dependsOn: ['one'] },
+  ];
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    assert.match(text(app.tree), /exact match also exists.*earlier choice points to a different task/);
+    const links = existingTaskLinks(app.tree);
+    assert.equal(links.length, 2);
+    for (const link of links) assertExistingTaskLink(link, '/project?project=p_example&task=chosen');
+    assert.match(text(app.tree), /These are the current matches.*Recheck the draft/);
+    assert.equal(nodes(app.tree).find(node => text(node) === 'Add 1 selected items to project' && node.type === 'button').props.disabled, true);
+  } finally {
+    app.dispose();
+  }
+});
 test('unchecked prerequisites offer visible include or remove-link actions without losing other edits', async () => {
   for (const action of ['include', 'remove']) {
     const initial = fixture();
@@ -861,6 +980,9 @@ test('semantic duplicate choices are visible, preserve links, and are saved befo
     try {
       await app.start();
       assert.match(text(app.tree), /Possible duplicate of: Finalize activities/);
+      assertExistingTaskLink(existingTaskLinks(app.tree, 'Finalize activities')[0],
+        '/project?project=p_example&task=existing');
+      assert.equal(existingPrerequisites(app.tree).length, 0, 'possible match is not a selected dependency until reused');
       const add = () => nodes(app.tree).find(node => node.type === 'button' && /^Add \d+ selected/.test(text(node)));
       assert.equal(add().props.disabled, true);
       await app.click(choice === 'reuse' ? 'Use existing: Finalize activities' : 'Keep separate: Confirm activities');
@@ -870,6 +992,14 @@ test('semantic duplicate choices are visible, preserve links, and are saved befo
       assert.equal(app.find('include-one').props.checked, choice === 'keep');
       assert.equal(!!add().props.disabled, false);
       assert.doesNotMatch(text(app.tree), /depends on unchecked/);
+      const links = existingTaskLinks(existingPrerequisites(app.tree)[0]);
+      if (choice === 'reuse') {
+        assert.equal(links.length, 1);
+        assert.equal(links[0].props['aria-label'], 'Open existing task: Finalize activities (opens in a new tab)');
+        assertExistingTaskLink(links[0], '/project?project=p_example&task=existing');
+      } else {
+        assert.equal(links.length, 0, 'keeping separate work does not resolve to an existing task');
+      }
       await app.click(`Add ${choice === 'reuse' ? 1 : 2} selected items to project`);
       assert.equal(app.requests.at(-1).action, 'apply');
       assert.equal(app.requests.at(-1).items[0].duplicateChoice, choice);

@@ -4,7 +4,7 @@ export function workspaceTaskId(value: unknown): string {
   return typeof value==='string'&&taskIdPattern.test(value)?value:'';
 }
 
-export function planReceiptTaskHref(params: URLSearchParams, id: string, guided = false): string {
+export function planTaskHref(params: URLSearchParams, id: string, guided = false): string {
   const task=workspaceTaskId(id);
   if(!task)return '';
   const demo=params.get('demo')==='1';

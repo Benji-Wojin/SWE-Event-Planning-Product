@@ -6,10 +6,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
-import { duplicateItemIdentity, planSelection, selectNewPlanItems } from '@/lib/plan-selection';
+import { duplicateItemIdentity, planSelection, selectNewPlanItems, type ExistingPlanTask } from '@/lib/plan-selection';
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
-import { planReceiptTaskHref } from '@/lib/workspace-task-link';
+import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
@@ -37,6 +37,16 @@ const emptyBrief: PlanBrief = {
 };
 const editable = (brief: PlanBrief, items: ReviewedItem[]) =>
   JSON.stringify({ brief, items });
+function existingTaskLink(task: ExistingPlanTask, params: URLSearchParams, guided: boolean) {
+  const href = planTaskHref(params, task.id, guided);
+  return href ? (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      aria-label={`Open existing task: ${task.title} (opens in a new tab)`}
+      className="inline-flex min-h-11 max-w-full items-center gap-1 break-words text-primary underline">
+      <span className="min-w-0">{task.title}</span><span aria-hidden="true">↗</span>
+    </a>
+  ) : <strong className="break-words">{task.title}</strong>;
+}
 async function api(query: string, body?: unknown) {
   const response = await fetch('/api/plan?' + query, {
     method: body ? 'POST' : 'GET',
@@ -141,6 +151,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     focusReceipt.current=false;
     receiptHeading.current?.focus();
   },[applied]);
+  const existingTasks: ExistingPlanTask[] = data?.existingTasks || [];
+  const existingById = new Map(existingTasks.map(task => [task.id, task]));
   const {
     selected,
     reusable,
@@ -152,7 +164,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     invalidReuse,
   } = planSelection(
     items,
-    data?.existingTasks || [],
+    existingTasks,
     data?.draft?.duplicateSuggestions || [],
   );
   const missingDependencies = missing.length > 0;
@@ -474,7 +486,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           )}
           {receiptTasks.length>0 && <ol className="list-decimal space-y-1 ps-5 text-sm">
             {receiptTasks.map(({id,title,handoff})=>{
-              const href=planReceiptTaskHref(params,id,guideReturn);
+              const href=planTaskHref(params,id,guideReturn);
               return <li key={id} className="break-words">
                 {href?<a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a>:title}
                 {showHandoff&&handoff&&<span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
@@ -757,7 +769,18 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
               </div>
               <p className="text-sm text-muted-foreground">Changes only the selected private proposals, including any owners already chosen for them. Excluded and reused items, dates and prerequisites stay unchanged. Nothing is assigned in the shared project until you add the reviewed items.</p>
             </div>}
-            {items.map((item, index) => (
+            {items.map((item, index) => {
+              const exact = matches.get(item.id) || [];
+              const similar = possible.get(item.id);
+              const reusedTask = existingById.get(reusable.get(item.id) || '');
+              const keepsOtherMatch = reusedTask && !exact.some(task => task.id === reusedTask.id);
+              const existingPrerequisites = !applied && item.included
+                ? item.dependsOn.flatMap(id => {
+                    const task = invalidReuse.has(id) ? undefined : existingById.get(reusable.get(id) || '');
+                    return task ? [{ id, task }] : [];
+                  })
+                : [];
+              return (
               <Card key={item.id}>
                 <CardContent className="space-y-4 pt-6">
                   <div className="flex items-start gap-3">
@@ -796,7 +819,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                       {item.scope?.trim() && <p className="mt-2 break-words text-sm text-muted-foreground"><strong>Proposed Done when:</strong> {item.scope}</p>}
                     </div>
                   </div>
-                  {!applied && possible.has(item.id) && (
+                  {!applied && similar && !invalidReuse.has(item.id) && (
                     <div
                       className="rounded-lg border p-3 space-y-2 text-sm"
                       role="status"
@@ -805,11 +828,11 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                         {item.duplicateChoice === 'reuse'
                           ? 'Using existing task: '
                           : 'Possible duplicate of: '}
-                        <strong>{possible.get(item.id)!.title}</strong>
+                        {existingTaskLink(similar, params, guideReturn)}
                       </p>
                       <p className="text-muted-foreground">
                         {item.duplicateChoice === 'reuse'
-                          ? 'This item will not be added. Prerequisites will link to the existing task; its details stay unchanged.'
+                          ? 'This item is excluded from new tasks. Review the existing match before adding the draft; its details stay unchanged.'
                           : item.duplicateChoice === 'keep'
                             ? 'Kept as separate work.'
                             : 'AI found similar work. Choose whether it is the same task.'}
@@ -827,7 +850,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                               })
                             }
                           >
-                            Use existing: {possible.get(item.id)!.title}
+                            Use existing: {similar.title}
                           </Button>
                         )}
                         {item.duplicateChoice !== 'keep' && (
@@ -867,13 +890,20 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                       </Button>
                     </div>
                   )}
-                  {!applied && !!matches.get(item.id)?.length && (
+                  {!applied && !invalidReuse.has(item.id) && exact.length > 0 && (
                     <div className="space-y-2 text-sm" role="status">
                       <p>
-                        {matches.get(item.id)!.length === 1
+                        {keepsOtherMatch
+                          ? 'An exact match also exists, but your earlier choice points to a different task. Review that choice before adding.'
+                          : exact.length === 1
                           ? 'Already in project. Leave unchecked to use the existing task for prerequisites. Its details will not change.'
-                          : 'Multiple matching tasks exist. Leave unchecked, then review any prerequisite links below.'}
+                          : reusable.has(item.id)
+                            ? 'Multiple tasks match this title and time. Review the existing task you chose on the dependent proposal.'
+                            : 'Multiple tasks match this title and time. No existing task is chosen; remove or change any prerequisite that points here.'}
                       </p>
+                      {keepsOtherMatch
+                        ? existingTaskLink(reusedTask, params, guideReturn)
+                        : exact.length === 1 && existingTaskLink(exact[0], params, guideReturn)}
                       {item.included && (
                         <Button
                           type="button"
@@ -893,6 +923,33 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                       Another selected draft item has this title and time.
                       Uncheck or rename this item.
                     </p>
+                  )}
+                  {existingPrerequisites.length > 0 && (
+                    <div className="rounded-lg border p-3 text-sm">
+                      <p className="font-medium">Existing prerequisites</p>
+                      <p className="text-muted-foreground">
+                        {data.contextChanged
+                          ? 'These are the current matches. Recheck the draft before adding tasks.'
+                          : 'These shared tasks are matched to this proposal’s required links. Opening a task won’t change the draft.'}
+                      </p>
+                      <ul aria-label="Existing prerequisites" className="mt-1 divide-y">
+                        {existingPrerequisites.map(({ id, task }) => (
+                          <li key={id} className="flex flex-wrap items-center justify-between gap-x-3 py-1">
+                            {existingTaskLink(task, params, guideReturn)}
+                            <Button type="button" variant="outline" className="min-h-11"
+                              aria-label={`Remove link to prerequisite: ${task.title}`}
+                              onClick={event => {
+                                if (document.activeElement === event.currentTarget) {
+                                  document.getElementById('include-' + item.id)?.focus({ preventScroll: true });
+                                }
+                                updateItem(item.id, { dependsOn: item.dependsOn.filter(other => other !== id) });
+                              }}>
+                              Remove link
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {missing
                     .filter((link) => link.itemId === item.id)
@@ -1105,7 +1162,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                               />
                               <span className="break-words">
                                 {other.title}
-                                {reusable.has(other.id)
+                                {reusable.has(other.id) && !invalidReuse.has(other.id)
                                   ? ' (existing project task)'
                                   : !other.included
                                     ? ' (unchecked)'
@@ -1118,7 +1175,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                   </details>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </fieldset>
           {!applied && (
             <div className="rounded-lg border p-5 space-y-3">
