@@ -47,7 +47,9 @@ test('personal schedules retain completed/review work and only their own overlap
   tasks.push(task('mine-overlap','maya','09:30','10:30'));
   html=schedule.view({event,tasks},false,now,{mine:true,actor:'maya'});
   assert.match(html,/2 activities have owner overlaps/);
-  assert.equal((html.match(/>Owner overlap</g)||[]).length,2);
+  const datedRows=html.match(/<button class="schedule-row"[^>]*>[\s\S]*?<\/button>/g)||[];
+  assert.equal(datedRows.filter(row=>row.includes('>Owner overlap<')).length,2);
+  assert.equal((schedule.clock({event,tasks},now,{mine:true,actor:'maya'}).markup.match(/>Owner overlap</g)||[]).length,2);
 });
 
 test('focus cards expose safe owner, location and status with no extra actions',()=>{

@@ -55,7 +55,9 @@ test('overnight overlaps use explicit event-local dates independent of viewer ti
 test('timeline and details show a concise warning with escaped links, not extra edit permission',()=>{
   const tasks=[activity('a',at('09:00'),at('10:00')),activity('b"<>',at('09:30'),'','maya',{title:'<img src=x onerror=alert(1)>'})];
   const html=ui.view({tasks,event},false),details=ui.details(tasks[0],false,event,tasks);
-  assert.match(html,/2 activities have owner overlaps/);assert.equal((html.match(/>Owner overlap</g)||[]).length,2);
+  const datedRows=html.match(/<button class="schedule-row"[^>]*>[\s\S]*?<\/button>/g)||[];
+  assert.match(html,/2 activities have owner overlaps/);
+  assert.equal(datedRows.filter(row=>row.includes('>Owner overlap<')).length,2);
   assert.match(details,/Owner overlap · 1 activity/);assert.match(details,/data-action="task" data-id="b&quot;&lt;&gt;"/);
   assert.match(details,/&lt;img src=x onerror=alert\(1\)&gt;/);assert.doesNotMatch(details,/<img|<form/);
   assert.match(details,/Ask the organizer/);assert.match(details,/An end time is missing/);
