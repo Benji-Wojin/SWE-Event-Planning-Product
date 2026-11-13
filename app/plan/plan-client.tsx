@@ -11,7 +11,7 @@ import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
-import { PlanGuideHint } from './guide-hint';
+import { PlanGuideHint, type PlanGuideStage } from './guide-hint';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
   eventKinds,
@@ -137,6 +137,12 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const waiting = data?.status === 'generating',
     locked = busy || waiting || researchBusy,
     applied = !!data?.receipt && !chatStartingNew;
+  const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
+    !data?.configured ? 'starter' : brief.description.trim() ? 'generate' : 'brief';
+  const guideDraftNeedsRecheck = guideStage === 'review' && !!data?.contextChanged;
+  const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
+    data?.draft?.source === 'starter' || !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
+    ['#plan-generate', 'Generate a new draft'];
   const receiptTasks:PlanReceiptTask[]=applied?data.receiptTasks||[]:[];
   const addedCount:number=applied?data.receipt.taskIds.length:0;
   const unavailableCount=Math.max(0,addedCount-receiptTasks.length);
@@ -472,10 +478,10 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           again.
         </p>
       )}
-      {guideReturn && <PlanGuideHint hasDraft={!!data.draft && !applied} locked={locked} />}
+      {guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck} />}
       {applied && (
         <section aria-labelledby="plan-receipt-heading" className="mb-5 space-y-3 rounded-lg border border-primary/40 p-4">
-          <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="font-medium">Plan added to the project</h2>
+          <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="scroll-mt-6 font-medium">Plan added to the project</h2>
           <p role="status" className="text-sm">
             {addedCount} {addedCount===1?'task':'tasks'} added to the project.
             {unavailableCount>0&&` ${unavailableCount} ${unavailableCount===1?'is':'are'} no longer available.`}
@@ -585,7 +591,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                 for overnight activities and set the last day.
               </p>
             </details>
-            <p className="text-sm text-muted-foreground">
+            <p id={guideReturn ? 'plan-generate' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-sm text-muted-foreground">
               Generate sends this brief, event details, task names, and relevant
               saved feedback to Groq. Emails, guest lists, files, and private
               bookings are not included.
@@ -625,8 +631,11 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
                 </Button>
               )}
             </div>
+            {guideReturn && guideStage === 'review' && !locked && <p className="text-sm text-muted-foreground">
+              Your draft is private. <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to your draft</a>{guideDraftNeedsRecheck ? ' to review it against the current project.' : ' to choose what to add.'}
+            </p>}
             {!suggestions && <div className="space-y-3 border-t pt-4">
-              <p className="text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
+              <p id={guideReturn ? 'plan-starter' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" className="mt-1" checked={suggestStarterDates} disabled={!data.event.date || !data.event.timeZone} onChange={e=>{setSuggestStarterDates(e.target.checked);starterRequest.current=null;}} />
                 <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
@@ -673,7 +682,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {data.draft.source==='pasted' && <p className="rounded-lg border p-4 text-sm">Pasted checklist · No AI used. Review the titles and select only the tasks you want to share.</p>}
           {!applied && data.draft.source==='pasted' && data.contextChanged && (
             <div className="space-y-2 rounded-lg border p-4 text-sm">
-              <p>The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
+              <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
               <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckPasted()}>Recheck pasted draft</Button>
             </div>
           )}
@@ -681,6 +690,9 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
             <h2 id={guideReturn ? 'plan-proposed-items' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-xl font-semibold">Review proposed items</h2>
+            {guideReturn && guideDraftNeedsRecheck && !locked && <p className="mt-2 rounded-lg border p-3 text-sm">
+              The project has changed. <a className="inline-flex min-h-11 items-center font-medium text-primary underline" href={guideRecovery[0]}>{guideRecovery[1]}</a> before adding items.
+            </p>}
             <p className="mt-1 text-sm text-muted-foreground">
               Adds to your {data.existingTaskCount} existing tasks. Dates,
               owners, and activities below are proposals.

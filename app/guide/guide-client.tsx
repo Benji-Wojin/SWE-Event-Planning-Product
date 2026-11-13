@@ -47,6 +47,10 @@ export function GuideClient({ initial }: { initial: TutorialProgress }) {
         <a className={buttonVariants({variant:'ghost'})} href="/">Back to projects</a>
       </div>
     </div>
+    {next && <aside aria-labelledby="guide-ai-preview" className="space-y-1 rounded-xl border border-dashed bg-card px-4 py-3">
+      <h3 id="guide-ai-preview" className="text-sm font-semibold">Optional: draft a plan with AI</h3>
+      <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{reached.includes('task_created') ? 'In your project guide, look for ' : 'After you save your first task, look for '}<strong className="text-foreground">Try drafting a plan with AI</strong>. Turn a short event brief into a private draft, then choose what to add to your project.</p>
+    </aside>}
     <ol className="weft-guide-roadmap" aria-label="Guide steps">
       {steps.map(([id,title,copy], index) => {
         const status = reached.includes(id) ? 'Done' : id==='invite_created' && reached.includes('invite_skipped') ? 'Skipped' : id===next ? 'Up next' : id==='invite_created' ? 'Optional' : '';

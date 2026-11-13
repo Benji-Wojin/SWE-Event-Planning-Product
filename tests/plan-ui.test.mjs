@@ -106,6 +106,7 @@ function nodes(node) {
       : [node, ...nodes(node.props?.children)];
 }
 const planLink = (tree, label) => nodes(tree).find(node => node.type === 'a' && text(node) === label);
+const planButton = (tree, label) => nodes(tree).find(node => node.type === 'button' && text(node) === label);
 const planHint = tree => nodes(tree).find(node => node.props?.id === 'plan-guide-hint');
 function assertGuideReturn(tree) {
   const ordered = nodes(tree);
@@ -311,12 +312,14 @@ test('guided planner return stays available before the project loads and on load
   } finally { app.dispose(); }
 });
 
-test('guided planner links to the real brief, then to the review only after a draft exists', async () => {
-  const initial = { ...fixture(), draft: null, status: 'empty' };
+test('guided planner points to the real brief, explicit generation, private review, and receipt', async () => {
+  const initial = { ...fixture(), brief: { ...brief, description: '' }, draft: null, status: 'empty' };
   const app = harness(context => {
+    if (context.input?.action === 'save') context.value = { ...context.saved, brief: context.input.brief, revision: context.saved.revision + 1 };
     if (context.input?.action === 'generate') {
-      context.value = { ...context.saved, status: 'ready', draft: fixture().draft };
+      context.value = { ...context.saved, brief: context.input.brief, status: 'ready', draft: { ...fixture().draft, brief: context.input.brief } };
     }
+    if (context.input?.action === 'apply') context.value = { ...context.saved, status: 'applied', receipt: { taskIds: ['task-created'] } };
   }, initial, 'project=p_example', false, true);
   try {
     await app.start();
@@ -328,8 +331,19 @@ test('guided planner links to the real brief, then to the review only after a dr
     assert.equal(app.find('plan-kind')?.type, 'select');
     assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
     assert.equal(app.find('plan-proposed-items'), undefined);
+    assert.equal(planButton(app.tree, 'Generate draft').props.disabled, true);
     assert.deepEqual(app.requests.map(row => row.action), ['get']);
     assert.deepEqual(app.saved, initial);
+
+    await app.edit('plan-brief', 'A fictional neighborhood welcome night.');
+    const generate = planLink(app.tree, 'Go to draft controls');
+    assert.equal(generate?.props.href, '#plan-generate');
+    assert.equal(generate.props.onClick, undefined);
+    assert.equal(app.find('plan-generate').props.tabIndex, -1);
+    assert.match(text(app.find('plan-generate')), /Groq/);
+    assert.equal(planButton(app.tree, 'Generate draft').props.disabled, false);
+    assert.ok(nodes(app.tree).some(node => node.type === 'li' && node.props['aria-current'] === 'step' && text(node).includes('Generate a private draft')));
+    assert.deepEqual(app.requests.map(row => row.action), ['get']);
 
     await app.click('Generate draft');
     const review = planLink(app.tree, 'Review proposed items');
@@ -339,12 +353,20 @@ test('guided planner links to the real brief, then to the review only after a dr
     assert.equal(heading?.type, 'h2');
     assert.equal(heading.props.tabIndex, -1);
     assert.equal(text(heading), 'Review proposed items');
-    assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate']);
+    assert.equal(planLink(app.tree, 'Jump to your draft')?.props.href, '#plan-proposed-items');
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'generate']);
     assert.equal(app.saved.receipt, null);
+
+    await app.click('Add 1 selected items to project');
+    assert.equal(planLink(app.tree, 'See what was added')?.props.href, '#plan-receipt-heading');
+    assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
+    assert.equal(planLink(app.tree, 'Jump to your draft'), undefined);
+    assertGuideReturn(app.tree);
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'generate', 'apply']);
   } finally { app.dispose(); }
 });
 
-test('guided planner does not send organizers to stale or already applied proposals', async () => {
+test('guided planner hides proposal shortcuts during generation and after apply', async () => {
   for (const status of ['generating', 'applied']) {
     const initial = { ...fixture(), status,
       receipt: status === 'applied' ? { taskIds: [] } : null };
@@ -354,10 +376,45 @@ test('guided planner does not send organizers to stale or already applied propos
       assert.ok(planHint(app.tree));
       assertGuideReturn(app.tree);
       assert.equal(planLink(app.tree, 'Review proposed items'), undefined);
-      assert.equal(Boolean(planLink(app.tree, 'Start the event brief')), status === 'applied');
+      assert.equal(Boolean(planLink(app.tree, 'See what was added')), status === 'applied');
       assert.deepEqual(app.requests.map(row => row.action), ['get']);
     } finally { app.dispose(); }
   }
+});
+
+test('guided planner explains how to refresh stale proposals before adding', async () => {
+  for (const [source, configured, label, anchor] of [
+    [undefined, true, 'Generate a new draft', '#plan-generate'],
+    [undefined, false, 'Start a fresh checklist', '#plan-starter'],
+    ['starter', true, 'Start a fresh checklist', '#plan-starter'],
+    ['pasted', true, 'Recheck your pasted draft', '#plan-recheck'],
+  ]) {
+    const initial = { ...fixture(), contextChanged: true, configured };
+    initial.draft.source = source;
+    const app = harness(undefined, initial, 'project=p_example', false, true);
+    try {
+      await app.start();
+      assert.ok(nodes(app.tree).some(node => node.type === 'p' && text(node).includes('The project changed since this draft was saved')));
+      assert.equal(planLink(app.tree, label)?.props.href, anchor);
+      assert.equal(app.find(anchor.slice(1)).props.tabIndex, -1);
+      assert.equal(planButton(app.tree, 'Add 1 selected items to project').props.disabled, true);
+      assert.deepEqual(app.requests.map(row => row.action), ['get']);
+    } finally { app.dispose(); }
+  }
+});
+
+test('guided planner without AI configuration points to the real starter option without requesting generation', async () => {
+  const initial = { ...fixture(), configured: false, brief: { ...brief, description: '' }, draft: null, status: 'empty' };
+  const app = harness(undefined, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    assert.equal(planLink(app.tree, 'Go to starter checklist')?.props.href, '#plan-starter');
+    assert.match(text(app.find('plan-starter')), /No AI call or AI quota is used/);
+    assert.equal(planButton(app.tree, 'Use starter checklist').props.disabled, false);
+    assert.equal(planButton(app.tree, 'Generate draft').props.disabled, true);
+    assert.ok(nodes(app.tree).some(node => node.type === 'p' && text(node).includes('AI isn’t configured for this planner')));
+    assert.deepEqual(app.requests.map(row => row.action), ['get']);
+  } finally { app.dispose(); }
 });
 
 test('planner walkthrough stays out of regular, embedded, demo, and other planning modes', async () => {

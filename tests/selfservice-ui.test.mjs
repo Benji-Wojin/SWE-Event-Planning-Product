@@ -1,12 +1,12 @@
 import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-let TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint;
+let TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint, GuideClient;
 before(async () => {
   const result = await build({
     stdin: {
       contents:
-        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client'; export {JoinClient} from './app/join/join-client'; export {PlanGuideHint} from './app/plan/guide-hint';",
+        "export {TeamClient} from './app/team/team-client'; export {Invitations} from './components/projects/Invitations'; export {CreateAccountButton} from './app/signup/signup-client'; export {JoinClient} from './app/join/join-client'; export {PlanGuideHint} from './app/plan/guide-hint'; export {GuideClient} from './app/guide/guide-client';",
       resolveDir: process.cwd(),
       loader: 'tsx',
     },
@@ -31,13 +31,13 @@ before(async () => {
                 ? 'export const useState=v=>globalThis.__selfserviceState(v),useRef=v=>({current:v}),useEffect=fn=>globalThis.__selfserviceEffects?.push(fn);'
                 : args.path === 'react/jsx-runtime'
                   ? 'export const jsx=(type,props)=>({type,props}),jsxs=jsx,Fragment="fragment";'
-                  : 'export const Button="button",Input="input",Label="label";',
+                  : 'export const Button="button",Input="input",Label="label",buttonVariants=()=>"";',
           }));
         },
       },
     ],
   });
-  ({ TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint } = await import(
+  ({ TeamClient, Invitations, CreateAccountButton, JoinClient, PlanGuideHint, GuideClient } = await import(
     'data:text/javascript;base64,' +
       Buffer.from(result.outputFiles[0].text).toString('base64')
   ));
@@ -77,17 +77,48 @@ function render(component, props, values = []) {
   finally { delete globalThis.__selfserviceEffects; }
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+test('first-project intro and resume preview optional AI drafting outside the five guide steps', () => {
+  const projectId = 'p_fictional';
+  const afterTask = ['started', 'project_created', 'task_created'];
+  const progress = (bound, checkpoints) => ({ projectId: bound ? projectId : null,
+    events: checkpoints.map(checkpoint => ({ checkpoint, at: '2026-11-12T18:00:00.000Z' })) });
+  try {
+    for (const [initial, action, timing] of [
+      [progress(false, []), 'Start guide', /After you save your first task/],
+      [progress(true, afterTask), 'Resume in your project', /In your project guide/],
+    ]) {
+      const { tree, effects } = render(GuideClient, { initial });
+      const preview = tree.find(node => node.type === 'aside' && node.props['aria-labelledby'] === 'guide-ai-preview');
+      const roadmap = tree.find(node => node.type === 'ol' && node.props['aria-label'] === 'Guide steps');
+      const primary = tree.find(node => ['button', 'a'].includes(node.type) && text(node) === action);
+      assert.ok(preview && primary && roadmap);
+      assert.ok(tree.indexOf(primary) < tree.indexOf(preview) && tree.indexOf(preview) < tree.indexOf(roadmap));
+      assert.match(text(preview), /Optional: draft a plan with AI/);
+      assert.match(text(preview), timing);
+      assert.match(text(preview), /Try drafting a plan with AI.*private draft, then choose what to add/);
+      assert.equal(nodes(roadmap).filter(node => node.type === 'li').length, 5);
+      assert.doesNotMatch(text(roadmap), /draft a plan with AI/i);
+      assert.ok(!nodes(preview).some(node => ['a', 'button', 'form'].includes(node.type)));
+      assert.deepEqual(effects, []);
+    }
+    const done = render(GuideClient, { initial: progress(true,
+      [...afterTask, 'budget_viewed', 'event_details_viewed', 'invite_skipped']) });
+    assert.ok(!done.tree.some(node => node.props.id === 'guide-ai-preview'));
+    assert.equal(done.tree.find(node => node.type === 'a' && text(node) === 'Open your project')?.props.href, '/project?project=p_fictional');
+  } finally { delete globalThis.__selfserviceState; }
+});
 test('optional planner walkthrough teaches the actual controls, fallback and shared destinations', () => {
-  const guide = PlanGuideHint({ hasDraft: false, locked: false });
+  const guide = PlanGuideHint({ stage: 'brief', locked: false });
   const tree = nodes(guide);
   const steps = tree.filter((node) => node.type === 'li');
   assert.equal(steps.length, 3);
-  assert.match(text(steps[0]), /Event type.*What are you planning\?.*Example:.*40 people/);
-  assert.match(text(steps[1]), /Groq.*Generate draft.*Generate another draft.*Opening this page alone.*Use starter checklist/);
-  assert.match(text(steps[1]), /Example suggestions:.*check-in table.*choose a greeter.*schedule cleanup.*Your draft will depend on your brief/);
-  assert.match(text(steps[2]), /deselect.*Add selected items to project.*Shared tasks.*Timeline/);
-  assert.match(text(guide), /Return to your guide.*without generating or adding anything/);
-  assert.equal(tree.find((node) => node.type === 'details')?.props.open, undefined);
+  assert.match(text(steps[0]), /event type.*What are you planning\?/);
+  assert.match(text(steps[1]), /Groq.*Generate draft.*starter checklist without AI/);
+  assert.match(text(steps[2]), /deselect.*Shared tasks.*Timeline/);
+  assert.match(text(guide), /Sample brief:.*40 people/);
+  assert.match(text(guide), /doesn’t send anything to AI or change your project/);
+  assert.equal(steps[0].props['aria-current'], 'step');
+  assert.equal(tree.some((node) => node.type === 'details'), false);
   assert.equal(tree.find((node) => node.props.href === '#plan-kind' && text(node) === 'Start the event brief')?.type, 'a');
   assert.ok(!tree.some((node) => node.props.href === '#plan-proposed-items'));
   assert.equal(tree.some((node) => ['button', 'input', 'form'].includes(node.type)), false);
