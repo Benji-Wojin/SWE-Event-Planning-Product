@@ -171,6 +171,8 @@ Amounts use exact minor units. Blank amounts remain unknown, with partial totals
 
 Budget data uses the existing encrypted, project-scoped `project_info` sidecar, revision checks, retry receipts and write-time authorization. Task links are checked against the current project without modifying tasks. Budget amounts are not added to AI context or shared workspace exports. No schema migration is needed for this optional field.
 
+Opening a linked task from Budget keeps the current active or archived cost view. Closing the task returns to the originating cost, even when another cost links to the same task. If the task link is no longer available, focus returns to the cost heading or the Budget section. Opening the link does not start a Helpful links search.
+
 ### Private starting plans
 
 An empty project’s Overview gives a role-aware starting point instead of an attention all-clear. Organizers can open the plan builder or add a task manually; opening the planner does not call AI. Teammates with task-creation permission can add a self-owned or unassigned task. Other teammates see that the organizer still needs to add work and can view People. Once tasks exist, the ordinary attention and completion panels return. No tasks, invitations or messages are created by displaying this guidance.

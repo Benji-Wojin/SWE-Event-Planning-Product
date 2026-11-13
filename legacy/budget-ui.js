@@ -8,6 +8,8 @@
     saveLock,
     isDialogOpen,
     getWorkspace,
+    getActor = () => '',
+    focusControl = (target) => { if (!target) return false; target.focus({preventScroll:true}); return true; },
     onLoaded,
   }) {
     const B = root.GatherBudget;
@@ -15,7 +17,55 @@
       state = null,
       archived = false,
       ticket = 0,
-      timer;
+      timer,
+      pendingFocus = null,
+      disclosureScope = '',
+      expanded = new Set();
+    const scopeKey = () => JSON.stringify([!!root.GatherMode?.demo, root.GatherMode?.projectId || 'main', getActor()]);
+    const mode = () => archived ? 'archived' : 'active';
+    function linkedTaskOrigin(opener) {
+      const data = opener?.dataset;
+      const costId = data?.budgetTask || data?.budgetCostHeading;
+      if (!costId || data.budgetMode !== mode() || data.budgetScope !== scopeKey()) return null;
+      return {costId,taskId:data.budgetTask ? data.id : '',mode:data.budgetMode,scope:data.budgetScope};
+    }
+    function resolveLinkedTask(opener) {
+      const origin = linkedTaskOrigin(opener);
+      if (!origin?.taskId || root.GatherAccessLost || !host?.isConnected || !opener.isConnected || !host.contains(opener) ||
+        opener.closest('[hidden],[inert]') || !state?.budget.enabled) return '';
+      const cost = state.budget.items.find(row => row.id === origin.costId && Boolean(row.archivedAt) === archived);
+      return cost?.taskId === origin.taskId && getWorkspace().tasks.some(task => task.id === origin.taskId) ? origin.taskId : '';
+    }
+    function focusLinkedCost(origin) {
+      if (!host?.isConnected || root.GatherAccessLost || isDialogOpen() || origin.mode !== mode() || origin.scope !== scopeKey()) return false;
+      const linked = [...host.querySelectorAll('[data-budget-task]')].find(el =>
+        el.dataset.budgetTask === origin.costId && el.dataset.id === origin.taskId);
+      const cost = [...host.querySelectorAll('[data-budget-cost-heading]')].find(el => el.dataset.budgetCostHeading === origin.costId);
+      return [linked,cost,host.querySelector('#budgetCostsHeading'),host.querySelector('#budgetHeading')]
+        .some(el => el && !el.closest('[hidden],[inert]') && focusControl(el));
+    }
+    function restoreLinkedTaskFocus(opener) {
+      const origin = linkedTaskOrigin(opener);
+      if (!origin || !host?.isConnected || root.GatherAccessLost || isDialogOpen()) return false;
+      if (state) return focusLinkedCost(origin);
+      const placeholder = host.querySelector('#budgetHeading');
+      if (placeholder) focusControl(placeholder);
+      pendingFocus = {origin,from:document.activeElement};
+      return true;
+    }
+    function mayFinishLinkedTaskFocus() {
+      return pendingFocus && (document.activeElement === pendingFocus.from || document.activeElement === document.body);
+    }
+    function finishLinkedTaskFocus(allowed) {
+      const pending = pendingFocus;
+      pendingFocus = null;
+      if (pending && allowed) focusLinkedCost(pending.origin);
+    }
+    function rememberDisclosures() {
+      if (state && host?.isConnected) expanded = new Set(
+        [...(host.querySelectorAll?.('details[open]') || [])].map(details => details.dataset.budgetDetails),
+      );
+    }
     const endpoint = () => {
       const params = new URLSearchParams(
         root.GatherMode?.demo
@@ -92,11 +142,9 @@
               attribute.name === 'data-id',
           )
         : null;
-      const expanded = new Set(
-        [...(host.querySelectorAll?.('details[open]') || [])].map(
-          (details) => details.dataset.budgetDetails,
-        ),
-      );
+      const linkedFocus = host.contains?.(active) ? linkedTaskOrigin(active) : null;
+      const headingFocus = host.contains?.(active) && ['budgetHeading','budgetCostsHeading'].includes(active.id) ? active.id : '';
+      if (host.querySelector?.('details')) rememberDisclosures();
       const focusedDetails =
         active?.tagName === 'SUMMARY'
           ? active.parentElement.dataset.budgetDetails
@@ -109,10 +157,10 @@
         ),
         workspace = getWorkspace();
       const targetNote = targetComparison(budget.target, totals);
-      host.innerHTML = `<div class="page-heading"><h1>Budget</h1><div class="header-actions">${admin ? '<button class="btn ' + (budget.enabled ? 'btn-secondary' : 'btn-primary') + '" data-budget-settings>' + (budget.enabled ? 'Settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">Shared with your project. Weft tracks amounts you enter and never moves money.</p>${
+      host.innerHTML = `<div class="page-heading"><h1 id="budgetHeading" tabindex="-1">Budget</h1><div class="header-actions">${admin ? '<button class="btn ' + (budget.enabled ? 'btn-secondary' : 'btn-primary') + '" data-budget-settings>' + (budget.enabled ? 'Settings' : 'Set up budget') + '</button>' : ''}${admin && budget.enabled && !archived ? '<button class="btn btn-primary" data-budget-add>Add cost</button>' : ''}</div></div><p class="muted">Shared with your project. Weft tracks amounts you enter and never moves money.</p>${
         !budget.enabled
           ? `<section class="panel"><h2>${budget.items.length ? 'Budget tracking is off' : 'Keep costs in view, when you need to'}</h2><p>${budget.items.length ? 'Saved costs are preserved. The organizer can enable tracking again in Budget settings.' : 'Track estimates, commitments and payments you record yourself. Skip this page if your event does not need a budget.'}</p>${!admin ? '<p class="muted">Only the organizer can enable or edit this tracker.</p>' : ''}</section>`
-          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${forecastSummary(totals.forecast)}</strong></section><section class="panel"><h2>Payments recorded</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2>${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
+          : `<div class="budget-totals"><section class="panel budget-forecast"><h2>Expected total</h2><strong>${forecastSummary(totals.forecast)}</strong></section><section class="panel"><h2>Payments recorded</h2><strong>${subtotal(totals.paid)}</strong></section><section class="panel"><h2>Budget target</h2><strong>${money(budget.target)}<small>${targetNote}</small></strong></section></div><section class="panel section-gap"><div class="toolbar"><h2 id="budgetCostsHeading" tabindex="-1">${archived ? 'Archived costs' : 'Costs'}</h2><label class="check-field"><input type="checkbox" data-budget-archived ${archived ? 'checked' : ''}> Show archived</label></div>${!admin ? '<p class="muted">View only. Ask the organizer to update costs.</p>' : ''}${
               rows.length
                 ? `<ul class="budget-items">${rows
                     .map((row) => {
@@ -126,7 +174,7 @@
                         ? owner.name + (activeBudgetMember(owner) ? '' : ' (former teammate)')
                         : row.owner ? 'Unavailable owner' : '';
                       const metadata=[ownerLabel,row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
-                      return `<li><div class="budget-item-heading"><h3>${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
+                      return `<li><div class="budget-item-heading"><h3 tabindex="-1" data-budget-cost-heading="${h(row.id)}" data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}">${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
                         ['estimate', 'Estimate'],
                         ['committed', 'Committed'],
                         ['paid', 'Paid'],
@@ -135,7 +183,7 @@
                           ([key, label]) =>
                             `<div><dt>${label}</dt><dd>${money(row[key])}</dd></div>`,
                         )
-                        .join('')}</dl>${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button class="text-button" data-action="task" data-id="${h(task.id)}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
+                        .join('')}</dl>${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button type="button" class="text-button" data-action="budget-linked-task" data-id="${h(task.id)}" data-budget-task="${h(row.id)}" aria-label="${h('Task: '+task.title+' · Cost: '+row.title)}" data-budget-mode="${mode()}" data-budget-scope="${h(scopeKey())}">Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
                     })
                     .join('')}</ul>`
                 : `<p class="notice">${archived ? 'No archived costs.' : 'No costs yet. Add a quote, deposit or other expected expense.'}</p>`
@@ -155,29 +203,36 @@
         if (focusedDetails === details.dataset.budgetDetails)
           details.querySelector('summary')?.focus({ preventScroll: true });
       });
-      if (focus)
+      if (linkedFocus) focusLinkedCost(linkedFocus);
+      else if (headingFocus && !isDialogOpen()) focusControl(host.querySelector('#'+headingFocus)||host.querySelector('#budgetHeading'));
+      else if (focus)
         [...host.querySelectorAll('button,input')]
           .find((control) => control.getAttribute(focus.name) === focus.value)
           ?.focus({ preventScroll: true });
     }
     async function load(quiet = false) {
       const mine = ++ticket,
-        target = host;
+        target = host,
+        scope = scopeKey();
       try {
         const next = await request();
-        if (mine !== ticket || target !== host || !target?.isConnected) return;
+        if (mine !== ticket || target !== host || !target?.isConnected || scope !== scopeKey() || root.GatherAccessLost) return;
         const unchanged =
           state &&
           JSON.stringify(state.budget) === JSON.stringify(next.budget) &&
           state.identity.admin === next.identity.admin;
         state = next;
+        const allowFocus = mayFinishLinkedTaskFocus();
         if (!quiet || !unchanged) render();
+        finishLinkedTaskFocus(allowFocus);
         if (!quiet || !unchanged) onLoaded?.();
       } catch (error) {
-        if (mine !== ticket || target !== host || !target?.isConnected) return;
+        if (mine !== ticket || target !== host || !target?.isConnected || scope !== scopeKey() || root.GatherAccessLost) return;
         // Never leave a stale budget visible after revoked access or a failed refresh.
+        const allowFocus = mayFinishLinkedTaskFocus();
         state = null;
-        target.innerHTML = `<h1>Budget</h1><p class="notice" role="alert">${h(error.message)}</p><button class="btn btn-secondary" data-budget-refresh>Retry</button>`;
+        target.innerHTML = `<h1 id="budgetHeading" tabindex="-1">Budget</h1><p class="notice" role="alert">${h(error.message)}</p><button class="btn btn-secondary" data-budget-refresh>Retry</button>`;
+        finishLinkedTaskFocus(allowFocus);
       }
     }
     function dialog(title, markup, action, fields) {
@@ -336,16 +391,24 @@
       );
       form.dataset.itemId = row?.id || '';
     }
-    function unmount() {
+    function unmount(keepPendingFocus = false) {
+      rememberDisclosures();
+      if (!keepPendingFocus || !mayFinishLinkedTaskFocus() || pendingFocus.origin.scope !== scopeKey()) pendingFocus = null;
       ++ticket;
       clearInterval(timer);
       host = null;
       state = null;
     }
     function mount(element) {
-      unmount();
+      unmount(true);
+      if (disclosureScope !== scopeKey()) { disclosureScope = scopeKey(); archived = false; expanded.clear(); }
       host = element;
       if (!host) return;
+      if (pendingFocus && !isDialogOpen()) {
+        const heading = host.querySelector('#budgetHeading');
+        if (heading) focusControl(heading);
+        pendingFocus.from = document.activeElement;
+      }
       host.addEventListener('click', (event) => {
         const button = event.target.closest('button');
         if (!button) return;
@@ -368,9 +431,11 @@
     }
     return {
       markup: () =>
-        '<div id="eventBudget"><h1>Budget</h1><p role="status">Loading budget…</p></div>',
+        '<div id="eventBudget"><h1 id="budgetHeading" tabindex="-1">Budget</h1><p role="status">Loading budget…</p></div>',
       mount,
       unmount,
+      resolveLinkedTask,
+      restoreLinkedTaskFocus,
     };
   }
   root.GatherBudgetUI = { create };

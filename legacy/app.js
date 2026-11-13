@@ -298,6 +298,8 @@
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
     if(isScheduleControl(previous))
       return restoreScheduleFocus(previous,root);
+    if((previous.dataset.action==='budget-linked-task'||previous.dataset.budgetCostHeading)&&ui.view==='budget')
+      return !!projectBudget?.restoreLinkedTaskFocus(previous);
     if(previous.dataset.action==='wrap-review-task')
       return restoreWrapReviewFocus(previous,root);
     if(previous.dataset.action==='draft-lesson-follow-up')
@@ -473,7 +475,7 @@
   const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
   const schedule = GatherScheduleUI.create({h,options,statusBadge});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('info')});
-  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('budget')});
+  const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),getActor:()=>ui.actor,focusControl:focusScheduleTarget,onLoaded:()=>recordLoadedGuideView('budget')});
   function confirmFixedDate(taskId,data) {
     const task=store.getState().tasks.find(t=>t.id===taskId);
     if(!task?.hardDeadline||data.dueDate===undefined||data.dueDate===task.dueDate)return true;
@@ -850,7 +852,7 @@
     if(input?.defaultValue===draft.base)input.value=draft.value;
   }
   function render() {
-    projectBudget?.unmount();
+    projectBudget?.unmount(ui.view==='budget');
     const taskListScroll=ui.view==='tasks'&&ui.taskView==='list'?$('.task-table-wrap')?.scrollLeft:undefined;
     const scheduleDateDraft=captureScheduleDateDraft();
     const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
@@ -998,8 +1000,10 @@
     const scheduleOpener=isScheduleControl(ui.lastFocus),wrapOpener=ui.lastFocus?.dataset?.action==='wrap-review-task';
     const lessonOpener=ui.lastFocus?.dataset?.action==='draft-lesson-follow-up';
     const receiptOpener=ui.lastFocus?.id==='wrapFollowUpOpen';
+    const budgetOpener=ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.view==='budget';
     if(!(scheduleOpener?restoreScheduleFocus(ui.lastFocus,view):wrapOpener?restoreWrapReviewFocus(ui.lastFocus,view):
       lessonOpener?restoreLessonFollowUpFocus(ui.lastFocus,view):receiptOpener?focusWrapFollowUpReceipt(ui.lastFocus.dataset.id,view,ui.lastFocus.dataset.action):
+      budgetOpener?projectBudget?.restoreLinkedTaskFocus(ui.lastFocus):
       restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
       view.querySelector('button')?.focus();
     ui.lastFocus=null;
@@ -1048,6 +1052,13 @@
         focusTaskRecovery(id,'[aria-label="Completion changes requested"] h4',true);
       return true;
     }
+    return false;
+  }
+  function openBudgetLinkedTask(id,opener) {
+    if(ui.view!=='budget'||window.GatherAccessLost||!$('#dialogBackdrop').hidden||
+      !id||opener?.dataset.action!=='budget-linked-task'||projectBudget?.resolveLinkedTask(opener)!==id)return false;
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(ui.dialogKind==='task'&&ui.detailId===id){ui.lastFocus=opener;return true;}
     return false;
   }
   function focusTaskRecovery(id,selector='#recoveryRequestHeading',exactDialog=false) {
@@ -1836,7 +1847,8 @@
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
     const fromWrapReceipt=ui.lastFocus?.id==='wrapFollowUpOpen'&&ui.lastFocus.dataset.id===id&&
       currentWrapFollowUp(taskState)?.id===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt});
+    const fromBudget=ui.view==='budget'&&ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.lastFocus.dataset.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget});
     if((batch||ui.overlapComparison||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
@@ -2301,6 +2313,7 @@
       if(action==='inspect-overlap-peer')inspectOverlapPeer(id,el);
       if(action==='return-to-overlap-review')returnToOverlapReview();
       if(action==='wrap-review-task')openWrapReviewTask(id,el);
+      if(action==='budget-linked-task')openBudgetLinkedTask(id,el);
       if(action==='draft-lesson-follow-up')openLessonFollowUp(id,el);
       if(action==='open-wrap-follow-up')openWrapFollowUpReceipt(id,el);
       if(action==='dismiss-wrap-follow-up')dismissWrapFollowUpReceipt(id,el);
