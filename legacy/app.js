@@ -1705,12 +1705,14 @@
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
       if(action==='task'){
-        const fromNextUp=el.dataset.nextUpOrigin==='task'&&$('#dialogBackdrop').hidden;
-        taskDialog(id,'',false,fromNextUp,eventReviewGroup);
-        if(fromNextUp&&ui.dialogKind==='task'&&ui.detailId===id){
-          ui.lastFocus=el;
-          if(el.hasAttribute('data-open-recovery'))focusTaskRecovery(id);
-        }
+        const requestLink=el.hasAttribute('data-open-recovery');
+        const captureOrigin=(el.dataset.nextUpOrigin==='task'||requestLink)&&$('#dialogBackdrop').hidden;
+        const current=requestLink&&store.getState().tasks.find(task=>task.id===id);
+        const toRecovery=current&&current.status!=='done'&&!(current.requiresVerification&&current.reportedAt&&!current.verifiedAt)&&
+          ['date','help'].includes(GatherPriorities.pendingRequest(current)?.kind);
+        taskDialog(id,'',false,captureOrigin||requestLink,eventReviewGroup);
+        if(captureOrigin&&ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=el;
+        if(toRecovery)focusTaskRecovery(id);
       }
       if(action==='inspect-acceptance-task')inspectAcceptanceTask(id,el);
       if(action==='delete-task'&&isOrganizer()&&!window.GatherAccessLost&&ui.dialogKind==='task'&&ui.detailId===id){

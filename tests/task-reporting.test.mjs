@@ -518,6 +518,28 @@ test('task recovery focuses the current request or reply, never a different or c
   }
 });
 
+test('an event-day request link rechecks the task before focusing recovery and keeps its origin',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const start=source.indexOf("      if(action==='task'){\n        const requestLink");
+  const end=source.indexOf("      if(action==='inspect-acceptance-task')",start);
+  assert.ok(start>=0&&end>start);
+  const task={id:'fictional',status:'todo',recoveryRequests:[{status:'pending',kind:'help'}]};
+  const ui={dialogKind:'',detailId:''},backdrop={hidden:true},calls=[];
+  const el={dataset:{},hasAttribute:name=>name==='data-open-recovery'};
+  const ctx=vm.createContext({el,ui,$:()=>backdrop,id:task.id,action:'task',eventReviewGroup:'plan-requests',
+    store:{getState:()=>({tasks:[task]})},GatherPriorities,focusTaskRecovery:id=>calls.push(['focus request',id]),
+    taskDialog(...args){calls.push(args);ui.dialogKind='task';ui.detailId=task.id;}});
+  const open=()=>vm.runInContext(source.slice(start,end),ctx);
+  open();
+  assert.deepEqual(calls.splice(0),[[task.id,'',false,true,'plan-requests'],['focus request',task.id]]);
+  assert.equal(ui.lastFocus,el);
+  const original={};ui.lastFocus=original;backdrop.hidden=false;
+  task.recoveryRequests[0].status='resolved';
+  open();
+  assert.deepEqual(calls.splice(0),[[task.id,'',false,true,'plan-requests']]);
+  assert.equal(ui.lastFocus,original,'drilling in from Before the event preserves its original return focus');
+});
+
 test('ready-to-resume task dialogs distinguish required results and unavailable ownership', () => {
   const store=create();
   store.addDependency('catering',{taskId:'volunteers',kind:'related',reason:'Coordinate food for volunteers.'});
