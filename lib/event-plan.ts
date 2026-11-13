@@ -192,9 +192,9 @@ async function snapshot(c: Context) {
         const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
           :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
           :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt?'needs-review'
-          :task.status!=='done'&&!task.reportedAt&&task.completionReview?'changes-requested'
           :!task.owner?'needs-owner'
           :!owners.has(task.owner)?'needs-reassignment'
+          :task.status!=='done'&&!task.reportedAt&&task.completionReview?'changes-requested'
           :task.acceptedAt&&task.acceptedBy===task.owner?'accepted':'awaiting-acceptance';
         row.handoff={state,...(ownerName?{ownerName}:{})};
       }

@@ -579,36 +579,87 @@ test('only a guided organizer plan keeps the guide on individual receipt task li
     }finally{app.dispose();}
   }
 });
-test('the organizer handoff refreshes assignment and acceptance with a read only',async()=>{
+test('the organizer handoff separates next actions and refresh moves the same tasks with a read only',async()=>{
   const initial=fixture();
   initial.status='applied';
-  initial.receipt={taskIds:['task-1','task-2','task-3']};
   initial.receiptTasks=[
-    {id:'task-1',title:'Set up AV',handoff:{state:'awaiting-acceptance',ownerName:'Fictional Planner'}},
-    {id:'task-2',title:'Print signs',handoff:{state:'needs-review'}},
-    {id:'task-3',title:'Confirm handback',handoff:{state:'needs-amendment-review'}},
+    {id:'task-accepted',title:'Confirm the room',handoff:{state:'accepted',ownerName:'Fictional Planner'}},
+    {id:'task-amended',title:'Confirm handback',handoff:{state:'needs-amendment-review'}},
+    {id:'task-returned',title:'Check supplier confirmation',handoff:{state:'changes-requested',ownerName:'Fictional Planner'}},
+    {id:'task-unassigned',title:'Set up AV',handoff:{state:'needs-owner'}},
+    {id:'task-acceptance',title:'Place the welcome table',handoff:{state:'awaiting-acceptance',ownerName:'Fictional Planner'}},
+    {id:'task-unavailable',title:'Prepare the foyer',handoff:{state:'needs-reassignment'}},
+    {id:'task-verification',title:'Print signs',handoff:{state:'needs-review'}},
+    {id:'task-done',title:'Agree the schedule',handoff:{state:'complete'}},
+    {id:'task-unknown',title:'Draft event notes'},
   ];
+  initial.receipt={taskIds:[...initial.receiptTasks.map(task=>task.id),'task-deleted']};
   let reads=0;
   const app=harness(context=>{
     if(!context.input&&++reads===2){
       const next=copy(context.saved);
       next.workspaceRevision++;
       next.contextChanged=true;
-      next.receiptTasks[0].handoff.state='accepted';
-      next.receiptTasks[1].handoff.state='needs-owner';
-      next.receiptTasks[2].handoff.state='complete';
+      const updates={
+        'task-unassigned':{state:'awaiting-acceptance',ownerName:'Fictional Planner'},
+        'task-acceptance':{state:'accepted',ownerName:'Fictional Planner'},
+        'task-amended':{state:'complete'},
+        'task-verification':{state:'changes-requested',ownerName:'Fictional Planner'},
+        'task-returned':{state:'needs-review',ownerName:'Fictional Planner'},
+      };
+      for (const task of next.receiptTasks) if (updates[task.id]) task.handoff=updates[task.id];
       context.value=next;
     }
-  },initial);
+  },initial,'project=p_school',false,true);
+  const groups=[
+    'Assign an owner','Review completion','Waiting for acceptance',
+    'Waiting for a revised submission','Accepted or complete','Status unavailable',
+  ];
+  function checkReceipt(expected){
+    const receipt=nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='plan-receipt-heading');
+    assert.ok(receipt);
+    assert.match(text(receipt),/10 tasks added to the project\. 1 is no longer available/);
+    const all=nodes(receipt);
+    const headings=all.filter(node=>/^h[2-6]$/.test(node.type)).flatMap(node=>{
+      const group=groups.find(group=>text(node).startsWith(group));
+      return group?[{node,group}]:[];
+    });
+    assert.deepEqual(headings.map(({group})=>group),groups);
+    const namesById=new Map(initial.receiptTasks.map(task=>[task.id,task.title]));
+    for (let i=0;i<headings.length;i++){
+      const {node,group}=headings[i];
+      const start=all.indexOf(node)+1,end=i+1<headings.length?all.indexOf(headings[i+1].node):all.length;
+      const links=all.slice(start,end).filter(row=>row.type==='a'&&row.props.href?.includes('&task='));
+      assert.deepEqual(links.map(row=>[text(row),row.props.href]),expected[group].map(id=>[
+        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1',
+      ]),group);
+    }
+    assert.equal(all.filter(row=>row.type==='a'&&row.props.href?.includes('&task=')).length,initial.receiptTasks.length);
+    assert.doesNotMatch(text(receipt),/task-deleted/);
+  }
   try{
     await app.start();
-    assert.match(text(app.tree),/Need an active owner: 0 · Awaiting acceptance: 1 · Need completion review: 2/);
+    checkReceipt({
+      'Assign an owner':['task-unassigned','task-unavailable'],
+      'Review completion':['task-amended','task-verification'],
+      'Waiting for acceptance':['task-acceptance'],
+      'Waiting for a revised submission':['task-returned'],
+      'Accepted or complete':['task-accepted','task-done'],
+      'Status unavailable':['task-unknown'],
+    });
     assert.match(text(app.tree),/Assigned to Fictional Planner · awaiting acceptance/);
     assert.match(text(app.tree),/Completion needs verification/);
     assert.match(text(app.tree),/Complete · updated evidence needs review/);
     await app.click('Refresh task handoff');
     assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
-    assert.match(text(app.tree),/Need an active owner: 1 · Awaiting acceptance: 0 · Need completion review: 0/);
+    checkReceipt({
+      'Assign an owner':['task-unavailable'],
+      'Review completion':['task-returned'],
+      'Waiting for acceptance':['task-unassigned'],
+      'Waiting for a revised submission':['task-verification'],
+      'Accepted or complete':['task-accepted','task-amended','task-acceptance','task-done'],
+      'Status unavailable':['task-unknown'],
+    });
     assert.match(text(app.tree),/Accepted by Fictional Planner/);
     assert.match(text(app.tree),/Task handoff refreshed from the project/);
     assert.doesNotMatch(text(app.tree),/Choose a fresh starter|Generate a new draft before adding it/);

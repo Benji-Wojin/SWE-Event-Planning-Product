@@ -135,7 +135,7 @@ Use **Copy day link** to share the live project date with a teammate. It does no
 
 In the private plan, **Paste a checklist** imports one title per line without calling AI. Imported tasks start unchecked and unassigned. If the shared plan changes, recheck a pasted draft without losing edits before adding anything.
 
-After adding a reviewed plan, open a task directly from the receipt. The organizer can refresh the handoff to see which new tasks still need an active owner, acceptance, or completion review.
+After adding a reviewed plan, open a task directly from the receipt. The organizer can refresh **Team handoff** to see which new tasks need assignment or completion review, which are waiting for acceptance or a revised submission, and which have been accepted or completed. Returned work with no active owner appears under assignment so it doesn't stall unnoticed.
 
 Use **Wrap up → Reuse tasks for another event** to choose and edit titles for that importer. Only reviewed titles carry forward; the source event and its task history are unchanged.
 

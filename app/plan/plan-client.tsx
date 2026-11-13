@@ -8,7 +8,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
 import { duplicateItemIdentity, planSelection, selectNewPlanItems, type ExistingPlanTask } from '@/lib/plan-selection';
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
-import { handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
+import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
@@ -140,11 +140,13 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const addedCount:number=applied?data.receipt.taskIds.length:0;
   const unavailableCount=Math.max(0,addedCount-receiptTasks.length);
   const showHandoff=applied&&!assistant&&!suggestions;
-  const handoffCounts={owner:0,acceptance:0,review:0};
-  for(const {handoff} of receiptTasks){
-    if(handoff?.state==='needs-owner'||handoff?.state==='needs-reassignment')handoffCounts.owner++;
-    else if(handoff?.state==='awaiting-acceptance')handoffCounts.acceptance++;
-    else if(handoff&&['needs-review','needs-amendment-review','changes-requested'].includes(handoff.state))handoffCounts.review++;
+  const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
+  function receiptTaskRow({id,title,handoff}: PlanReceiptTask) {
+    const href = planTaskHref(params,id,guideReturn);
+    return <li key={id} className="break-words">
+      {href ? <a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
+      {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
+    </li>;
   }
   useEffect(()=>{
     if(!applied||!focusReceipt.current)return;
@@ -474,25 +476,22 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
             {addedCount} {addedCount===1?'task':'tasks'} added to the project.
             {unavailableCount>0&&` ${unavailableCount} ${unavailableCount===1?'is':'are'} no longer available.`}
           </p>
-          {showHandoff && (
-            <div className="space-y-1 text-sm">
+          {showHandoff ? (
+            <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-medium">Team handoff</h3>
                 <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={refreshContext}>Refresh task handoff</Button>
               </div>
               <p>For tasks added from this draft. Assignment does not record acceptance.</p>
-              <p>Need an active owner: {handoffCounts.owner} · Awaiting acceptance: {handoffCounts.acceptance} · Need completion review: {handoffCounts.review}</p>
+              {handoffGroups.map(group => (
+                <section key={group.id} aria-labelledby={'handoff-' + group.id} className="rounded-lg border p-3">
+                  <h4 id={'handoff-' + group.id} className="font-medium">{group.title} <span className="text-muted-foreground">· {group.tasks.length}</span></h4>
+                  {group.help && <p className="text-muted-foreground">{group.help}</p>}
+                  <ul className="mt-1 space-y-1">{group.tasks.map(receiptTaskRow)}</ul>
+                </section>
+              ))}
             </div>
-          )}
-          {receiptTasks.length>0 && <ol className="list-decimal space-y-1 ps-5 text-sm">
-            {receiptTasks.map(({id,title,handoff})=>{
-              const href=planTaskHref(params,id,guideReturn);
-              return <li key={id} className="break-words">
-                {href?<a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a>:title}
-                {showHandoff&&handoff&&<span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
-              </li>;
-            })}
-          </ol>}
+          ) : receiptTasks.length > 0 && <ol className="list-decimal space-y-1 ps-5 text-sm">{receiptTasks.map(receiptTaskRow)}</ol>}
           {!embedded && <a
             href={projectUrl}
             className="mt-2 inline-block text-sm text-primary underline"
