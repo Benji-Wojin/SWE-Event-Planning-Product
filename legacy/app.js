@@ -1369,31 +1369,50 @@
   function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
     const model=schedule.runSheetModel(store.getState(),Date.now(),scope);
-    const text=model.days.length?schedule.runSheetText(model):'';
+    const hasRows=model.days.length>0;
+    const text=hasRows?schedule.runSheetText(model):'';
+    const emptyHelp=model.day
+      ? model.mine?'Go back to the schedule to choose another date, clear the date filter, or switch to All activities.'
+        :'Go back to the schedule to choose another date or clear the date filter.'
+      : model.mine?'Go back to the schedule to review your activities or switch to All activities.'
+        :'Go back to the schedule to check for activities that still need a start time.';
     ui.runSheet={model,text,scope,revision:store.getSnapshotRevision?.(),stale:false};
-    openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. Refresh it before printing or downloading.</p>'+
+    openDialog('Event run sheet','<div id="runSheetStale" class="notice" hidden><p role="status">This run sheet may be out of date. '+
+      (hasRows?'Refresh it before printing or downloading.':'Refresh it to check the same date and activity scope again.')+'</p>'+
       (store.refresh?'<button type="button" class="btn btn-secondary" id="runSheetRefresh" data-action="refresh-run-sheet">Refresh run sheet</button>':'')+
-      '</div><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked">Run sheet isn’t ready to print. Return to Weft to check or refresh it.</p>'+schedule.runSheetMarkup(model)+
+      '</div><p id="runSheetRefreshStatus" class="muted" role="status"></p><p id="runSheetPrintBlocked" data-blocked>'+
+      (hasRows?'Run sheet isn’t ready to print. Return to Weft to check or refresh it.':'No run sheet to print: this view has no scheduled activities. Return to Weft to check the schedule.')+
+      '</p>'+schedule.runSheetMarkup(model)+
+      (hasRows?'':'<p id="runSheetEmpty" class="notice">There’s nothing to print or download from this view. '+emptyHelp+'</p>')+
       (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
       (store.confirmSnapshotRevision?'<button class="btn btn-secondary" data-action="check-run-sheet">Check for updates</button>':'')+
       (text?'<button class="btn btn-secondary" data-action="download-run-sheet">Download text (.txt)</button>':'')+
-      '<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>',true,'run-sheet',focusHeading);
+      (hasRows?'<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>':''),true,'run-sheet',focusHeading||!hasRows);
     currentRunSheet();
   }
   function currentRunSheet() {
     const snapshot=ui.runSheet;
-    if(!snapshot||ui.dialogKind!=='run-sheet'||!$('#eventRunSheet')||window.GatherAccessLost)return null;
+    if(!$('#eventRunSheet'))return null;
+    const printNotice=$('#runSheetPrintBlocked');
+    if(!snapshot||ui.dialogKind!=='run-sheet'||window.GatherAccessLost){
+      printNotice?.toggleAttribute('data-blocked',true);
+      return null;
+    }
     const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||scheduleRevisionIsStale(snapshot.revision)||
       (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
     $('#runSheetStale').hidden=!stale;
-    $('#runSheetPrintBlocked')?.toggleAttribute('data-blocked',blocked);
+    const noRows=!snapshot.model.days.length;
+    printNotice?.toggleAttribute('data-blocked',blocked||noRows);
     $('#runSheetRefresh')?.setAttribute('aria-disabled',String(!!busy));
     const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=blocked;
     for(const button of $$('#dialog [data-action="download-run-sheet"], #dialog [data-action="print-run-sheet"], #dialog [data-action="check-run-sheet"]'))
-      button.setAttribute('aria-disabled',String(blocked));
+      button.setAttribute('aria-disabled',String(blocked||(noRows&&button.dataset?.action!=='check-run-sheet')));
     return blocked?null:snapshot;
+  }
+  function printRunSheet() {
+    if(currentRunSheet()?.model.days.length)window.print();
   }
   async function checkRunSheet() {
     const snapshot=currentRunSheet();
@@ -1403,9 +1422,12 @@
       const current=await store.confirmSnapshotRevision(snapshot.revision,newer=>rememberNewerSchedule(snapshot,newer));
       if(window.GatherAccessLost)return;
       if(!current){snapshot.stale=true;currentRunSheet();}
-      else if(ui.runSheet===snapshot&&!snapshot.stale)toast('No newer plan found. This copy is still a snapshot.');
+      else if(ui.runSheet===snapshot&&!snapshot.stale)toast(snapshot.model.days.length
+        ?'No newer plan found. This copy is still a snapshot.':'No newer plan found. This view still has no scheduled activities.');
     } catch {
-      if(ui.runSheet===snapshot&&!window.GatherAccessLost)toast('Could not check for updates. Confirm changes with your team before using this copy.');
+      if(ui.runSheet===snapshot&&!window.GatherAccessLost)toast(snapshot.model.days.length
+        ?'Could not check for updates. Confirm changes with your team before using this copy.'
+        :'Could not check for updates. Try again to check this schedule.');
     } finally {
       busyRunSheetRevisions.delete(snapshot.revision);
       currentRunSheet();
@@ -1429,7 +1451,7 @@
         !scheduleRevisionIsStale(revision),{requireFresh:true});
       if(result.pending&&sameWorkspace())rememberNewerSchedule(snapshot,result.newerRevision);
       if(!stillOpen()){
-        if(sameReview()&&status)status.textContent='Refresh paused. Try again before exporting.';
+        if(sameReview()&&status)status.textContent='Refresh paused. Try again to check this schedule.';
         return;
       }
       const revision=store.getSnapshotRevision?.();
@@ -1439,9 +1461,9 @@
       ui.toolUpdatePending=false;
       render();
       openRunSheet(snapshot.scope,true);
-      toast('Run sheet refreshed. This copy is still a snapshot.');
+      toast('Run sheet refreshed.');
     } catch {
-      if(sameReview()&&status)status.textContent=stillOpen()?'Could not refresh the run sheet. Try again before exporting.':'Refresh paused. Try again before exporting.';
+      if(sameReview()&&status)status.textContent=stillOpen()?'Could not refresh the run sheet. Try again to check this schedule.':'Refresh paused. Try again to check this schedule.';
     } finally {
       busyRunSheetRevisions.delete(snapshot.revision);
       currentRunSheet();
@@ -1449,7 +1471,7 @@
   }
   function downloadRunSheet() {
     const snapshot=currentRunSheet();
-    if(!snapshot?.text)return;
+    if(!snapshot?.model.days.length||!snapshot.text)return;
     // Download the exact projected preview. No request, mutation or share.
     const url=URL.createObjectURL(new Blob([snapshot.text],{type:'text/plain;charset=utf-8'}));
     const link=document.createElement('a');
@@ -2401,7 +2423,7 @@
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
-      if(action==='print-run-sheet'&&currentRunSheet())window.print();
+      if(action==='print-run-sheet')printRunSheet();
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
