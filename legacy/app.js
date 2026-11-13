@@ -1276,10 +1276,11 @@
     fillIcons(document);
     restoreViewFocus(previousFocus,$('#viewRoot'));
   }
-  function navigate(view,{scheduleDay=''}={}) {
+  function navigate(view,{scheduleDay='',beforeRender}={}) {
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
+    if(beforeRender&&beforeRender()!==true)return false;
     if(view==='timeline'&&scheduleDay){
       ui.timelineMode='schedule';ui.scheduleDate=scheduleDay;
       navigation.replaceScheduleDate(scheduleDay);
@@ -1584,6 +1585,41 @@
       if(heading)focusTaskDialogControl(heading,dialog);
     });
     return true;
+  }
+  function reconfirmationTimelineAction(task,state) {
+    if(window.GatherAccessLost||ui.eventTaskReview||ui.acceptanceReturn||ui.overlapComparison||ui.relatedBatch||
+      !GatherScheduleUI.pendingReconfirmation(task,ui.actor))return '';
+    const day=GatherScheduleUI.personalTimelineDay(task,ui.actor);
+    return day?`<button id="reconfirmationTimelineDay" type="button" class="btn btn-secondary" data-action="show-reconfirmed-activity-day"
+      data-id="${h(task.id)}" data-day="${h(day)}" data-revision="${h(task.revision)}" data-zone="${h(state.event.timeZone)}">Show current day in Timeline</button>`:'';
+  }
+  function showReconfirmedActivityDay(id,opener) {
+    const dialog=$('#dialog'),actor=ui.actor,project=window.GatherMode?.projectId,view=ui.view;
+    const currentDialog=()=>!window.GatherAccessLost&&!document.hidden&&!ui.pendingSave&&ui.view===view&&ui.actor===actor&&
+      window.GatherMode?.projectId===project&&ui.dialogKind==='task'&&ui.detailId===id&&
+      !ui.eventTaskReview&&!ui.acceptanceReturn&&!ui.overlapComparison&&!ui.relatedBatch&&
+      !$('#dialogBackdrop').hidden&&dialog===$('#dialog')&&!!opener?.isConnected&&
+      opener===$('#reconfirmationTimelineDay',dialog)&&opener.dataset.action==='show-reconfirmed-activity-day'&&
+      opener.dataset.id===id&&!opener.matches(':disabled')&&!opener.closest('[hidden],[inert]');
+    const day=opener?.dataset.day;
+    const currentSchedule=()=>{
+      const state=store.getState(),task=state.tasks.find(item=>item.id===id);
+      return !!day&&!workspaceUpdatesPending()&&!scheduleRevisionIsStale(store.getSnapshotRevision?.())&&
+        GatherScheduleUI.pendingReconfirmation(task,actor)&&GatherScheduleUI.personalTimelineDay(task,actor)===day&&
+        Number.isSafeInteger(task.revision)&&String(task.revision)===opener.dataset.revision&&state.event.timeZone===opener.dataset.zone;
+    };
+    const stale=()=>toast('This comparison may be out of date. Check for schedule updates in Timeline before opening its day.');
+    if(!currentDialog())return false;
+    if(!currentSchedule()){stale();return false;}
+    if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm')))return false;
+    if(view==='timeline'&&(hasPartialScheduleDate()||day!==ui.scheduleDate&&captureScheduleDateDraft())&&
+      !window.confirm('Show the activity’s current day and replace the date you haven’t applied?'))return false;
+    if(!navigate('timeline',{scheduleDay:day,beforeRender:()=>{
+      if(!currentDialog())return false;
+      if(!currentSchedule()){stale();return false;}
+      closeDialog();return true;
+    }}))return false;
+    return focusTimelineRow(id,day);
   }
   function timelineOverlapIntent(el,id) {
     const requested=el.dataset.openScheduleOverlap;
@@ -2935,7 +2971,7 @@
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
-      ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}</section>`:''}
+      ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}${reconfirmationTimelineAction(task,taskState)}</section>`:''}
       ${teammateReconfirmation?'<p class="notice">The schedule changed after this teammate accepted. Ask the assigned owner to review the current plan and accept again.</p>':''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
@@ -3849,6 +3885,7 @@
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
+    if(action==='show-reconfirmed-activity-day'){showReconfirmedActivityDay(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
