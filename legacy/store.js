@@ -486,6 +486,12 @@
       save();
       return { id: task.id };
     }
+    function requirePendingReportReassignmentConfirmation(task, owner, confirmed) {
+      if (owner !== undefined && clean(owner,80) !== task.owner &&
+          task.status !== 'done' && task.requiresVerification && task.reportedAt && !task.verifiedAt && confirmed !== true) {
+        throw new Error('Changing the owner takes the pending completion report out of review. Review the report first or confirm the owner change.');
+      }
+    }
     function updateTask(taskId, patch, actor = "jack") {
       actorId(actor);
       const task = taskById(taskId);
@@ -497,6 +503,7 @@
         if (!['progress', 'blocked'].includes(patch.status) || !clean(patch.note)) throw new Error('Report progress or a blocker with a short note.');
       }
       if (task.requiresVerification && !task.verifiedAt && task.status !== 'done' && patch.status === 'done') throw new Error('This task requires a completion report and organizer verification. Open the task and use Verify completion.');
+      requirePendingReportReassignmentConfirmation(task, patch.owner, patch.confirmPendingReportReassignment);
       if (task.status === 'done' && !task.verifiedAt && !task.requiresVerification && taskFields(patch,task).requiresVerification) throw new Error('Reopen this task before requiring organizer verification.');
       if (patch.requiresVerification !== undefined && taskFields(patch,task).requiresVerification !== task.requiresVerification && actor !== 'jack') throw new Error('Only the organizer can change verification requirements.');
       const previousStatus = task.status;
@@ -628,6 +635,7 @@
         if (expected !== task.revision) throw new Error('The task changed after this proposal. Refresh the comparison and review it again.');
         const newer = state.messages.some(item => item.appliedTaskId === task.id && item.receivedAt > message.receivedAt);
         if (newer && approved.confirmConflict !== true && approved.confirmConflict !== 'on') throw new Error('A newer email is already in the plan. Confirm that you intend to apply this older message.');
+        requirePendingReportReassignmentConfirmation(task, proposed.owner, approved.confirmPendingReportReassignment);
         if (proposed.status === 'done' && task.status !== 'done') requireResolvedDependencies(task);
         if (task.requiresVerification && proposed.status === 'done' && task.status !== 'done') proposed.status = 'progress';
         before = copy({title:task.title,owner:task.owner,status:task.status,dueDate:task.dueDate,note:task.note,category:task.category,revision:task.revision});

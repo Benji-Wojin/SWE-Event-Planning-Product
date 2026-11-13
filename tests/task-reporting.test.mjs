@@ -13,6 +13,22 @@ const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
 const metadata = task => Object.fromEntries(['title','owner','dueDate','category','requiresVerification'].map(key => [key,task[key]]));
 
+test('a reviewed email cannot silently reassign a task with a pending completion report',()=>{
+  const store=create(),task=store.addTask({title:'Confirm accessibility signs',owner:'maya',requiresVerification:true});
+  store.reportCompletion(task.id,'Fictional signs are printed.','maya');
+  const pending=store.getState().tasks.find(item=>item.id===task.id);
+  const message=store.addMessage({sender:'Fictional coordinator',subject:'Change sign placement',taskId:task.id,body:'Move the signs to the lobby.'});
+  const approval={mode:'update',taskId:task.id,owner:'jules',expectedRevision:pending.revision};
+  const before=store.exportState();
+  assert.throws(()=>store.applyMessage(message.id,approval),/pending completion report/);
+  assert.equal(store.exportState(),before);
+  const saved=store.applyMessage(message.id,{...approval,confirmPendingReportReassignment:true});
+  assert.equal(saved.owner,'jules');
+  assert.equal(saved.status,'progress');
+  assert.equal(saved.reportedAt,'');
+  assert.deepEqual(saved.completionEvidenceHistory,[pending.completionEvidence]);
+});
+
 test('reassignment clears old email acceptance and follow-up timing without erasing history',()=>{
   const store=create(),parent=store.addTask({title:'Check the coach schedule',owner:'jules',status:'progress'});
   const email=store.addMessage({sender:'Jules Miller',subject:'Coach schedule',taskId:parent.id,body:'I accept this task.'});
@@ -27,6 +43,54 @@ test('reassignment clears old email acceptance and follow-up timing without eras
   const data=JSON.parse(store.exportState()),stale=data.tasks.find(t=>t.id===parent.id);stale.acceptedAt='';stale.acceptedSourceId=email.id;stale.acceptedRecordedBy='jack';
   let raw=JSON.stringify(data);const recovered=GatherStore.createStore({storage:{getItem:()=>raw,setItem:(_key,value)=>raw=value}});
   recovered.acceptTask(parent.id,'maya');assert.equal(recovered.getState().tasks.find(t=>t.id===parent.id).acceptedSourceId,'');
+});
+
+test('changing or clearing the owner asks before withdrawing a pending completion report',()=>{
+  const source=readFileSync('legacy/app.js','utf8');
+  const prompts=[];
+  let accepted=false;
+  const context=vm.createContext({window:{confirm:message=>{prompts.push(message);return accepted;}}});
+  vm.runInContext(source.match(/^  function confirmTaskOwnerChange\([\s\S]*?^  }$/m)[0],context);
+  const pending={owner:'maya',status:'progress',requiresVerification:true,reportedAt:'2026-10-01T12:00:00Z',verifiedAt:''};
+  for(const [task,data] of [[pending,{}],[pending,{owner:'maya'}],[{...pending,reportedAt:''},{owner:'dev'}],[{...pending,requiresVerification:false},{owner:'dev'}],[{...pending,verifiedAt:'2026-10-02T12:00:00Z'},{owner:'dev'}],[{...pending,status:'done'},{owner:'dev'}]]) {
+    assert.equal(context.confirmTaskOwnerChange(task,data),true);
+    assert.equal(Object.hasOwn(data,'confirmPendingReportReassignment'),false);
+  }
+  assert.equal(prompts.length,0);
+  const reassignment={owner:'dev'};
+  assert.equal(context.confirmTaskOwnerChange(pending,reassignment),false);
+  assert.deepEqual(reassignment,{owner:'dev'});
+  assert.match(prompts[0],/pending completion report/i);
+  assert.match(prompts[0],/history/i);
+  accepted=true;
+  assert.equal(context.confirmTaskOwnerChange(pending,reassignment),true);
+  assert.deepEqual(reassignment,{owner:'dev',confirmPendingReportReassignment:true});
+  const unassignment={owner:''};
+  assert.equal(context.confirmTaskOwnerChange(pending,unassignment),true);
+  assert.deepEqual(unassignment,{owner:'',confirmPendingReportReassignment:true});
+  assert.equal(prompts.length,3);
+});
+
+test('reassignment requires explicit confirmation and preserves pending completion evidence in history',()=>{
+  for(const owner of ['dev','']) {
+    const store=create();
+    store.updateTask('dietary',{requiresVerification:true},'jack');
+    store.reportCompletion('dietary',{note:'All meals confirmed.',links:[],fileIds:[]},'maya');
+    const pending=getTask(store),before=store.exportState();
+    assert.ok(pending.reportedAt);
+    assert.ok(pending.completionEvidence);
+    for(const confirmation of [{},{confirmPendingReportReassignment:false},{confirmPendingReportReassignment:'true'},{confirmPendingReportReassignment:1}]) {
+      assert.throws(()=>store.updateTask('dietary',{owner,...confirmation},'jack'),/completion report/i);
+      assert.equal(store.exportState(),before);
+    }
+    const after=store.updateTask('dietary',{owner,confirmPendingReportReassignment:true},'jack');
+    assert.equal(after.owner,owner);
+    assert.equal(after.status,pending.status);
+    assert.equal(after.reportedAt,'');
+    assert.equal(after.reportedBy,'');
+    assert.equal(after.completionEvidence,null);
+    assert.deepEqual(after.completionEvidenceHistory,[pending.completionEvidence,...(pending.completionEvidenceHistory||[])]);
+  }
 });
 
 test('reached follow-up dates appear in attention while future dates remain quiet',()=>{

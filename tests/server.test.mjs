@@ -1839,6 +1839,68 @@ test('organizer explicitly restores responsibility for an inactive owner without
     assert.equal(snap.state.tasks[0].status,'progress');assert.deepEqual(snap.state.tasks[0].schedule,activity.schedule);
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();}
 });
+test('organizer must explicitly confirm an owner change that withdraws a pending task report',async()=>{
+  const id=await newTeamProject('Fictional pending completion handoff');
+  const email='pending-report-owner@example.com',userId='pending-report-owner';
+  const query='?project='+id;
+  const read=async()=>{
+    const response=await realRead(id);assert.equal(response.status,200);return response.json();
+  };
+  const send=async(method,args)=>workspace.POST(request('/api/workspace'+query,{method,args,revision:(await read()).revision}));
+  const write=async(method,args)=>{
+    const response=await send(method,args),body=await response.json();
+    assert.equal(response.status,200,body.error);return body;
+  };
+  const persisted=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+  try{
+    await joinPerson(id,email,userId);const actor=(await read()).identity.actorId;owner();
+    const tasks=[];
+    for(const title of ['Fictional reassignment','Fictional unassignment']){
+      const {result}=await write('addTask',[{title,owner:actor,requiresVerification:true}]);
+      tasks.push(result);
+    }
+    asTeammate(email,userId);
+    for(const task of tasks){
+      await write('acceptTask',[task.id]);
+      await write('reportCompletion',[task.id,{note:'Fictional work submitted for organizer review.',links:[],fileIds:[]}]);
+    }
+    owner();
+    const member=(await (await teamRead(id)).json()).members.find(member=>member.actorId===actor);
+    assert.ok(member);
+    assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
+    const afterRemoval=await read();
+    assert.equal(afterRemoval.state.members.find(member=>member.id===actor).active,false);
+    for(const [index,task] of tasks.entries()){
+      const destination=index===0?'jack':'';
+      const pending=afterRemoval.state.tasks.find(item=>item.id===task.id);
+      assert.equal(pending.owner,actor);assert.equal(pending.status,'progress');
+      assert.ok(pending.acceptedAt);assert.ok(pending.reportedAt);assert.ok(pending.completionEvidence);
+      const change={title:task.title+' reviewed',...(index===0?{owner:actor}:{})};
+      const renamed=(await write('updateTask',[task.id,change])).result;
+      assert.equal(renamed.title,change.title);
+      for(const key of ['owner','status','acceptedAt','acceptedBy','reportedAt','reportedBy','completionEvidence','completionEvidenceHistory'])
+        assert.deepEqual(renamed[key],pending[key],key+' remains unchanged on a title-only edit');
+      for(const fields of [{},{confirmPendingReportReassignment:'true'}]){
+        const before=persisted();
+        const response=await send('updateTask',[task.id,{owner:destination,...fields}]);
+        assert.equal(response.status,400);
+        assert.deepEqual(persisted(),before,'a rejected owner change does not write or advance the revision');
+      }
+      const {result}=await write('updateTask',[task.id,{owner:destination,confirmPendingReportReassignment:true}]);
+      const reloaded=(await read()).state.tasks.find(item=>item.id===task.id);
+      for(const saved of [result,reloaded]){
+        assert.equal(saved.owner,destination);assert.equal(saved.status,'progress');
+        assert.equal(saved.reportedAt,'');assert.equal(saved.reportedBy,'');assert.equal(saved.verifiedAt,'');
+        assert.equal(saved.acceptedAt,'');assert.equal(saved.completedAt,'');
+        assert.equal(saved.completionEvidence,null);
+        assert.deepEqual(saved.completionEvidenceHistory,[pending.completionEvidence]);
+      }
+    }
+  }finally{
+    sqlite.prepare('DELETE FROM project_invites WHERE project_id=? AND email=?').run(id,email);
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);owner();
+  }
+});
 test('budget edits preserve historical links only on their original cost',async()=>{
   const id=await newTeamProject('Fictional budget history');
   const query='?project='+id,email='budget-history@example.com',userId='budget-history-teammate';

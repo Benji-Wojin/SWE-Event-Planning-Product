@@ -660,6 +660,15 @@
     window.scrollTo({top:0,behavior:'instant'});
     return true;
   }
+  function confirmTaskOwnerChange(task,data) {
+    if(!task||data.owner===undefined||data.owner===task.owner||task.status==='done'||
+      !task.requiresVerification||!task.reportedAt||task.verifiedAt)return true;
+    const change=data.owner?'Change the owner':'Remove the owner';
+    const history=task.completionEvidence?'Its evidence stays in the task’s history.':'Existing task history stays available.';
+    if(!window.confirm(change+' and take the pending completion report out of review? '+history+' The task will remain incomplete.'))return false;
+    data.confirmPendingReportReassignment=true;
+    return true;
+  }
   function setDrawer(open) {
     const mobile=matchMedia('(max-width:800px)').matches;
     if(open&&mobile)tour.close({restoreFocus:false});
@@ -1694,7 +1703,15 @@
         store.setTaskSchedule(task.id,{start:data.start,end:data.end,location:data.location},ui.actor);
         render();beforeEventReview();toast('Schedule saved. Event review updated.');
       }
-      if(form.id==='taskDetailForm'){if(!confirmFixedDate(form.dataset.id,data))return;const before=store.getState().tasks.find(task=>task.id===form.dataset.id);store.updateTask(form.dataset.id,data,ui.actor);const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());else toast(`Update recorded by ${member(ui.actor).name}.`);}
+      if(form.id==='taskDetailForm'){
+        const before=store.getState().tasks.find(task=>task.id===form.dataset.id);
+        if(!confirmFixedDate(form.dataset.id,data)||!confirmTaskOwnerChange(before,data))return;
+        store.updateTask(form.dataset.id,data,ui.actor);
+        const after=store.getState().tasks.find(task=>task.id===form.dataset.id),keepDrafts=taskDrafts(form.id).length>0;
+        render();if(keepDrafts)taskDialog(form.dataset.id,form.id);else closeDialog();
+        if(before.status!=='done'&&after.status==='done')window.GatherCompletionUI?.celebrate(after,store.getState());
+        else toast(`Update recorded by ${member(ui.actor).name}.`);
+      }
       if(form.id==='completionEvidenceForm'){const details=await window.GatherCompletionUI.prepare(form,submission,submissionFile);store.setCompletionEvidence(form.dataset.id,details,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Submission saved. Task status and verification are unchanged.');}
       if(form.id==='returnCompletionForm'){store.returnCompletion(form.dataset.id,data.note,ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Changes requested. The task is still incomplete.');}
       if(form.id==='priorityForm'){store.setTaskPriority(form.dataset.id,{priority:data.priority,essential:data.essential==='on',hardDeadline:data.hardDeadline==='on'},ui.actor);render();taskDialog(form.dataset.id,form.id);toast('Priority saved.');}
@@ -1705,7 +1722,10 @@
       if(form.id.startsWith('handoffForm-')){const action=event.submitter?.value==='dismiss'?'dismiss':data.mode;const request=action==='dismiss'?{action}:action==='link'?{action,taskId:data.taskId}:{action,title:data.title,owner:data.owner};store.resolveHandoff(form.dataset.id,form.dataset.suggestion,request,ui.actor);render();taskDialog(form.dataset.id,form.id);toast(action==='dismiss'?'Suggestion dismissed.':action==='link'?'Task linked.':'Follow-up created and linked.');}
       if(form.id==='emailReviewForm'){
         if(ui.savingProposal)return;
-        if(data.mode==='update'&&!confirmFixedDate(data.taskId,data))return;
+        if(data.mode==='update'){
+          const task=store.getState().tasks.find(item=>item.id===data.taskId);
+          if(!confirmFixedDate(data.taskId,data)||!confirmTaskOwnerChange(task,data))return;
+        }
         ui.savingProposal=true;const button=$('button[type="submit"]',form);button.disabled=true;button.textContent='Saving…';
         try{const task=store.applyMessage(form.dataset.id,data,ui.actor);render();toast(`Applied to “${task.title}”. Original email preserved.`);}
         finally{ui.savingProposal=false;}
