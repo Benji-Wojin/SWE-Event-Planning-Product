@@ -491,8 +491,11 @@
       const prerequisiteNotice=prerequisites.size?prerequisites.size+' '+(prerequisites.size===1?'activity has':'activities have')+' unfinished required work. Required linked tasks are incomplete, awaiting verification or unavailable. Confirm the current plan with the organizer; this snapshot does not certify event readiness.':'';
       const linkedResults=new Set(tasks.filter(task=>linkedResultsReady(task,byId)).map(task=>task.id));
       const linkedResultsNotice=linkedResults.size?`${linkedResults.size} ${linkedResults.size===1?'activity remains':'activities remain'} marked Blocked after required linked work finished. Open the live project to review the linked results and check for other blockers before resuming.`:'';
-      const acceptance=new Set(tasks.filter(task=>pendingAcceptance(task,state.members)).map(task=>task.id));
+      // Count unique scheduled activities before creating any carryover rows.
+      const reconfirmation=new Set(tasks.filter(task=>awaitingScheduleAcceptance(task,state.members)).map(task=>task.id));
+      const acceptance=new Set(tasks.filter(task=>!reconfirmation.has(task.id)&&pendingAcceptance(task,state.members)).map(task=>task.id));
       const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
+      const reconfirmationNotice=reconfirmation.size?`${reconfirmation.size} ${reconfirmation.size===1?'activity needs':'activities need'} renewed owner acceptance after a schedule change. Confirm responsibility against the current plan with the assigned owner.`:'';
       const changes=new Set(tasks.filter(changesRequested).map(task=>task.id));
       const changesNotice=changes.size?changes.size+' '+(changes.size===1?'activity has':'activities have')+' completion changes requested. Review the task with the owner before resubmitting. Review notes are not included in this copy; the work is not verified.':'';
       const amendments=new Set(tasks.filter(evidenceAmended).map(task=>task.id));
@@ -508,11 +511,11 @@
         return {title:task.title,range:range(task.schedule),openEnded:!task.schedule.end,location:task.schedule.location,
           continues:start<date?'Continues from '+dateLabel(start):'',
           activityWarnings:[wallTimeWarning(task,state.event.timeZone),...overlapLabels(matches,task,date)].filter(Boolean),
-          owner:name(task.owner),acceptance:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
+          owner:name(task.owner),acceptance:reconfirmation.has(id)?scheduleAcceptanceCue:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
           statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
-        cautions:[invalidTimeNotice,untimedNotice,unassignedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
+        cautions:[invalidTimeNotice,untimedNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',

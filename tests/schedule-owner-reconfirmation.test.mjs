@@ -69,7 +69,7 @@ test('Before the event distinguishes renewed acceptance, keeps unscheduled chang
   assert.equal(f.store.exportState(), before);
 });
 
-test('Timeline clock and dated rows replace only the renewed-acceptance cue and never export the old slot', () => {
+test('Timeline clock, dated rows and Run sheet distinguish renewed acceptance without exposing the old slot', () => {
   const f = fixture();
   const initial = f.add('First-time activity', 'maya', first);
   const changed = f.change('Current changed activity', 'dev', latest);
@@ -90,9 +90,51 @@ test('Timeline clock and dated rows replace only the renewed-acceptance cue and 
   const next = ui.view(s, true, now, { actor: 'jack', date: tomorrow });
   assert.ok(rowMarkup(next, later).some(row => row.includes(cue)));
   const model = ui.runSheetModel(s, now, scope);
-  assert.ok(model.days[0].rows.every(row => row.acceptance === 'Acceptance not recorded'));
-  for (const output of [ui.runSheetMarkup(model), ui.runSheetText(model)])
-    assert.doesNotMatch(output, /Schedule changed · owner needs to accept again|PRIVATE-OLD-LOCATION|PRIVATE-TASK-NOTE|6:00 AM/);
+  assert.deepEqual(Object.fromEntries(model.days[0].rows.map(row => [row.title, row.acceptance])), {
+    'First-time activity': 'Acceptance not recorded',
+    'Current changed activity': cue,
+  });
+  assert.ok(model.cautions.some(text => /1 activity needs renewed owner acceptance after a schedule change/.test(text)));
+  assert.ok(model.cautions.some(text => /1 activity has owner acceptance not recorded/.test(text)));
+  for (const output of [ui.runSheetMarkup(model), ui.runSheetText(model)]) {
+    assert.match(output, new RegExp(cue));
+    assert.match(output, /1 activity needs renewed owner acceptance after a schedule change/);
+    assert.match(output, /1 activity has owner acceptance not recorded/);
+    assert.doesNotMatch(output, /Later changed activity|PRIVATE-OLD-LOCATION|PRIVATE-TASK-NOTE|6:00 AM/);
+  }
+});
+
+test('Run sheets count renewed acceptance once for overnight carryovers and omit removed or unrelated activities', () => {
+  const f = fixture();
+  const overnight = { start: day + 'T23:30', end: tomorrow + 'T02:00', location: 'Fictional night room' };
+  const id = f.change('My overnight activity', 'maya', overnight);
+  f.change('My removed activity', 'maya', null);
+  f.change('Another owner’s activity', 'dev', latest);
+  const before = f.store.exportState();
+  const scope = { mine: true, actor: 'maya' };
+  const model = ui.runSheetModel(f.snapshot(), now, scope);
+  assert.equal(model.days.length, 2);
+  for (const group of model.days) {
+    assert.deepEqual(group.rows.map(row => [row.title, row.acceptance]), [['My overnight activity', cue]]);
+  }
+  assert.equal(model.cautions.filter(text => /renewed owner acceptance/.test(text)).length, 1);
+  assert.ok(model.cautions.some(text => /1 activity needs renewed owner acceptance/.test(text)));
+  assert.ok(model.cautions.every(text => !/owner acceptance not recorded/.test(text)));
+  for (const output of [ui.runSheetMarkup(model), ui.runSheetText(model)]) {
+    assert.equal(output.split(cue).length - 1, 2, 'each occupied day keeps the warning');
+    assert.match(output, /Continues from/);
+    assert.doesNotMatch(output, /My removed activity|Another owner’s activity|PRIVATE-OLD-LOCATION|PRIVATE-TASK-NOTE/);
+  }
+  const nextDay = ui.runSheetModel(f.snapshot(), now, { ...scope, date: tomorrow });
+  assert.equal(nextDay.days.length, 1);
+  assert.deepEqual(nextDay.days[0].rows.map(row => row.acceptance), [cue]);
+  assert.equal(f.store.exportState(), before);
+
+  f.store.acceptTask(id, 'maya');
+  const accepted = ui.runSheetModel(f.snapshot(), now, scope);
+  assert.ok(accepted.days.flatMap(group => group.rows).every(row => !row.acceptance));
+  for (const output of [ui.runSheetMarkup(accepted), ui.runSheetText(accepted)])
+    assert.doesNotMatch(output, /owner needs to accept again|renewed owner acceptance|owner acceptance not recorded/);
 });
 
 test('acceptance, reassignment and unavailable owners resolve or replace schedule reconfirmation without stale labels', () => {
