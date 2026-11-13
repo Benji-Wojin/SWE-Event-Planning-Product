@@ -99,3 +99,138 @@ test('restoration refuses a connected field hidden by collapse but can restore i
   assert.equal(f.ctx.restore(f.summary,f.root),true);assert.equal(f.summary.focused,true);
   f.details.open=true;assert.equal(f.ctx.restore(f.input,f.root),true);assert.equal(f.input.focused,true);
 });
+
+function taskListFixture(){
+  const body=element('BODY'),root=element('DIV',{id:'viewRoot'}),rows=element('TBODY',{id:'taskRows'});
+  const document={
+    body,activeElement:body,contains:el=>body.contains(el),
+    getElementById:id=>walk(body).find(el=>el.id===id)||null,
+  };
+  function walk(parent){return parent.children.flatMap(child=>[child,...walk(child)]);}
+  function matches(el,selector){
+    if(selector.includes(','))return selector.split(',').some(part=>matches(el,part.trim()));
+    if(selector.includes(' ')){
+      const [ancestor,child]=selector.split(/\s+/);
+      return matches(el,child)&&Boolean(el.closest(ancestor));
+    }
+    const base=/^[^\[]*/.exec(selector)[0];
+    if(base.startsWith('#')&&el.id!==base.slice(1))return false;
+    if(base.startsWith('.')&&!el.classes?.includes(base.slice(1)))return false;
+    if(base&&!base.startsWith('#')&&!base.startsWith('.')&&base.toUpperCase()!==el.tagName)return false;
+    return [...selector.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)].every(([,key,value])=>{
+      const actual=key==='tabindex'?el.tabIndex:key.startsWith('data-')?el.dataset[key.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]:el.attributes?.[key];
+      return value===undefined?actual!==undefined:String(actual)===value;
+    });
+  }
+  function make(tag,props={}){
+    return element(tag,{...props,closest(selector){
+      if(selector==='[hidden],[inert]'){
+        for(let node=this;node;node=node.parentElement)if(node.hidden||node.inert)return node;
+        return null;
+      }
+      for(let node=this;node;node=node.parentElement)if(matches(node,selector))return node;
+      return null;
+    },focus(options){document.activeElement=this;this.focusOptions=options;}});
+  }
+  function button(taskFocus,id='same',action='task',textContent='Open task'){
+    return make('BUTTON',{dataset:{taskFocus,id,action},textContent});
+  }
+  const $=(selector,scope=body)=>walk(scope===document?body:scope).find(el=>matches(el,selector))||null;
+  const $$=(selector,scope=body)=>walk(scope===document?body:scope).filter(el=>matches(el,selector));
+  const inspect=button('inspect'),name=button('name'),owner=button('owner'),other=button('inspect','other');
+  const outside=button('inspect'),search=make('INPUT',{id:'taskSearch'}),heading=make('H1',{textContent:'Tasks'});
+  const filter=(id,active)=>make('BUTTON',{classes:['filter-tab'],dataset:{action:'task-filter',filter:id},attributes:{'aria-pressed':String(active)}});
+  const inactive=filter('all',false),active=filter('mine',true);
+  append(body,root);
+  append(root,outside,append(make('DIV',{hidden:true,inert:true}),make('H1',{textContent:'Overview'})),heading,search,inactive,active,rows);
+  append(rows,inspect,name,owner,other);
+  const ui={view:'tasks',taskView:'list'};
+  const ctx=vm.createContext({$, $$,document,ui,window:{}});
+  vm.runInContext(filterSource+restoreSource+
+    'globalThis.restore=restoreFocus;globalThis.restoreView=restoreViewFocus;',ctx);
+  return {button,inspect,name,owner,other,outside,search,heading,inactive,active,document,root,rows,body,ui,ctx};
+}
+
+test('a rebuilt task row keeps its exact focused affordance despite changed text',()=>{
+  const f=taskListFixture();
+  const previous=f.button('inspect','same','task','View old title');
+  previous.isConnected=false;
+  f.inspect.textContent='View new title';
+  assert.equal(f.ctx.restore(previous,f.root),true);
+  assert.equal(f.document.activeElement,f.inspect);
+  assert.equal(f.inspect.focusOptions.preventScroll,true);
+  assert.notEqual(f.document.activeElement,f.outside);
+  f.document.activeElement=f.body;
+  const previousOwner=f.button('owner','same','task','Assigned to Jacquie');
+  previousOwner.isConnected=false;
+  f.owner.textContent='Assigned to Maya';
+  f.ctx.restoreView(previousOwner,f.root);
+  assert.equal(f.document.activeElement,f.owner);
+});
+
+test('a passive update does not move focus onto a newly available mutation',()=>{
+  const f=taskListFixture();
+  const previous=f.button('owner','same','task','Assigned to Maya');
+  previous.isConnected=false;
+  f.owner.dataset.action='claim';
+  f.owner.textContent='Claim task';
+  assert.equal(f.ctx.restore(previous,f.root),false);
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.name);
+});
+
+test('completion and reopening are distinct task-row focus targets even with the same action',()=>{
+  const f=taskListFixture();
+  const previous=f.button('complete','same','toggle-task','Complete the task');
+  previous.isConnected=false;
+  f.inspect.dataset.action='toggle-task';
+  f.inspect.dataset.taskFocus='reopen';
+  f.inspect.textContent='Reopen the task';
+  assert.equal(f.ctx.restore(previous,f.root),false);
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.name,'a background completion never focuses Reopen');
+  f.document.activeElement=f.body;
+  f.inspect.dataset.taskFocus='complete';
+  f.inspect.textContent='Complete the renamed task';
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.inspect,'a title-only edit can keep focus on Complete');
+});
+
+test('task row focus falls back to its name, then the active view filter, then heading',()=>{
+  const f=taskListFixture();
+  const previous=f.button('links');
+  previous.isConnected=false;
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.name,'removed link button falls back to the same task');
+  f.name.disabled=true;
+  f.document.activeElement=f.body;
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.active,'skip a disabled name and inactive view filter');
+  f.rows.children=[f.other];
+  f.document.activeElement=f.body;
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.active,'a filtered-out task does not jump to another row');
+  f.active.hidden=true;
+  f.document.activeElement=f.body;
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.heading,'skip both the hidden filter and the retained hidden Overview heading');
+  assert.equal(f.heading.tabIndex,-1);
+});
+
+test('row fallback does not steal focus or run outside the Tasks view',()=>{
+  const f=taskListFixture();
+  const previous=f.button('links');
+  previous.isConnected=false;
+  f.document.activeElement=f.search;
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.search);
+  f.document.activeElement=f.body;
+  f.ctx.restoreView(f.inspect,f.root);
+  assert.equal(f.document.activeElement,f.body,'a connected element was not replaced');
+  f.ui.view='overview';
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.body);
+  f.ui.view='tasks';f.ui.taskView='map';
+  f.ctx.restoreView(previous,f.root);
+  assert.equal(f.document.activeElement,f.body);
+});

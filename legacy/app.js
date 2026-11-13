@@ -153,11 +153,34 @@
   }
   function restoreFocus(previous,root=document) {
     if(!previous)return false;
+    // Row controls can share an action and task ID. Match the exact control
+    // and intent, never another button for the same task.
+    if(!previous.isConnected&&previous.dataset.taskFocus){
+      const rows=$('#taskRows',root);
+      const target=rows&&focusable(rows).find(el=>el.dataset.id===previous.dataset.id&&
+        el.dataset.taskFocus===previous.dataset.taskFocus&&el.dataset.action===previous.dataset.action);
+      if(!target)return false;
+      target.focus({preventScroll:true});return true;
+    }
     const target=previous.isConnected?previous:previous.id?document.getElementById(previous.id):focusable(root).find(el=>
       el.tagName===previous.tagName&&['action','id','view','filter'].every(key=>el.dataset[key]===previous.dataset[key])&&
       (previous.dataset.id||el.textContent===previous.textContent));
     if(!target||!root.contains(target)||target.closest('[hidden],[inert]')||hiddenByClosedDisclosure(target))return false;
     target.focus({preventScroll:true});return true;
+  }
+  function restoreViewFocus(previous,root) {
+    if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
+    if(!previous.dataset.taskFocus)return restoreFocus(previous,root);
+    if(ui.view!=='tasks'||ui.taskView!=='list'||root.closest('[hidden],[inert]'))return false;
+    if(restoreFocus(previous,root))return true;
+    const rows=$('#taskRows',root);
+    const title=rows&&focusable(rows).find(el=>el.dataset.id===previous.dataset.id&&el.dataset.taskFocus==='name');
+    const filter=$('[data-action="task-filter"][aria-pressed="true"]',root);
+    const target=title||(filter&&focusable(root).includes(filter)?filter:null);
+    if(target){target.focus();return true;}
+    const heading=$$('h1',root).find(el=>!el.closest('[hidden],[inert]')&&el.getClientRects().length);
+    if(!heading)return false;
+    heading.tabIndex=-1;heading.focus();return true;
   }
   function saveLock(root,submitter) {
     const previousFocus=document.activeElement;
@@ -246,13 +269,13 @@
     let decision=null;
     if(ui.tab==='attention'&&organizer) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
     return `<tr role="row"${task.id===guideTaskId?' class="guide-first-task-row"':''}>
-      <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
-      <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
-      <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${!task.owner&&!done?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
-      <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
+      <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" data-task-focus="${inspect?'inspect':done?'reopen':'complete'}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
+      <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}" data-task-focus="name">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
+      <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${!task.owner&&!done?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}" data-task-focus="owner">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" data-task-focus="owner" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
+      <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}" data-task-focus="links">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
       <td role="cell" class="task-cell-due" headers="tasks-due">${mobileLabel('Due')}${due(task)}</td>
       <td role="cell" class="task-cell-update" headers="tasks-update">${mobileLabel('Latest update')}<div class="task-meta">${h(updateAttribution(update))}</div><div class="task-note-preview" title="${h(update.text)}">${h(update.text || 'No progress note yet')}</div></td>
-      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" aria-label="${decision?'Review plan for':'Open task:'} ${title}">${decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
+      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details" aria-label="${decision?'Review plan for':'Open task:'} ${title}">${decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,taskIds,compact=false) {
@@ -580,6 +603,7 @@
   }
   function render() {
     projectBudget?.unmount();
+    const taskListScroll=ui.view==='tasks'&&ui.taskView==='list'?$('.task-table-wrap')?.scrollLeft:undefined;
     const scheduleDateDraft=captureScheduleDateDraft();
     const pendingReview=ui.reviewDirty&&ui.view==='inbox'?$('#emailReviewForm'):null;
     const reviewDraft=pendingReview?{id:pendingReview.dataset.id,expanded:$('.proposal-edit',pendingReview)?.open,fields:$$('input[name],textarea[name],select[name]',pendingReview).map(input=>({name:input.name,value:input.value,checked:input.checked}))}:null;
@@ -605,6 +629,7 @@
     $('#askWeftButton').hidden=!(window.GatherMode&&canCreateTasks());
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
+    if(taskListScroll){const table=$('.task-table-wrap');if(table)table.scrollLeft=taskListScroll;}
     restoreScheduleDateDraft(scheduleDateDraft);
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
@@ -618,7 +643,7 @@
     }
     const emailTask=$('#emailTask');if(emailTask)emailTask.dataset.previousValue=emailTask.value;
     fillIcons(document);
-    if(previousFocus&&!previousFocus.isConnected)restoreFocus(previousFocus,$('#viewRoot'));
+    restoreViewFocus(previousFocus,$('#viewRoot'));
   }
   function navigate(view) {
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
@@ -687,7 +712,8 @@
     ui.guestAgenda=null;
     ui.reuseChecklist=null;
     ui.runSheet=null;
-    if(!restoreFocus(ui.lastFocus))$('#viewRoot').querySelector('button')?.focus();
+    const view=$('#viewRoot');
+    if(!restoreFocus(ui.lastFocus)&&!restoreViewFocus(ui.lastFocus,view))view.querySelector('button')?.focus();
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }

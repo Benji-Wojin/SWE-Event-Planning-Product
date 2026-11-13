@@ -48,6 +48,8 @@ test('task cards keep one semantic row with the same owner, due date, status, no
   assert.match(html,/class="task-card-label" aria-hidden="true">Due/);
   assert.match(html,/A long &amp; useful update for the team/);
   assert.match(html,/aria-label="Open task: Prepare &lt;welcome&gt;"[^>]*>[\s\S]*?class="task-card-open" aria-hidden="true">Open task/);
+  assert.deepEqual([...html.matchAll(/data-id="task-123" data-task-focus="([^"]+)"/g)].map(match=>match[1]),
+    ['complete','name','owner','details']);
   assert.equal((html.match(/data-action="toggle-task"/g)||[]).length,1);
   assert.doesNotMatch(html,/<welcome>/);
 });
@@ -56,6 +58,7 @@ test('read-only and review-required rows show inspection, not a misleading empty
   for(const [options,verb] of [[{organizer:false},'View'],[{blocked:true},'Review'],[{task:{requiresVerification:true}},'Review']]){
     const row=fixture(options);
     assert.match(row.html,/class="icon-button task-inspect-button" data-action="task"/);
+    assert.match(row.html,/data-task-focus="inspect"/);
     assert.doesNotMatch(row.html,/data-action="toggle-task"/);
     assert.match(row.html,new RegExp('aria-label="'+verb+' Prepare &lt;welcome&gt;"'));
     assert.deepEqual(row.click(),['open:task-123']);
@@ -65,5 +68,6 @@ test('read-only and review-required rows show inspection, not a misleading empty
   assert.deepEqual(ordinary.click(),['done','render']);
   const finished=fixture({blocked:true,task:{status:'done',requiresVerification:true}});
   assert.match(finished.html,/class="check-button checked"/);
+  assert.match(finished.html,/data-task-focus="reopen"/);
   assert.deepEqual(finished.click(),['todo','render']);
 });

@@ -73,6 +73,8 @@ The settings page distinguishes configured background scheduling, a completed ch
 
 ## Task focus and helpful links
 
+When Shared tasks refreshes, keyboard focus stays on the same control for the same task. If that control now does something different, focus returns to the task name. If the task leaves the current list, focus returns to the selected task view rather than another task.
+
 Tasks can record an optional **Done when** outcome at creation, separately from the latest progress note. It stays visible through progress, completion reporting and verification. Enabled teammate task creation may include an outcome for new self-owned or unassigned work; changing an existing outcome remains organizer-only. Outcomes are shared planning text, not evidence that work is complete—keep private booking codes and credentials in Private details.
 
 Manual **Create a linked task** also accepts its own optional **Done when** result. The child and relationship save together; the parent’s instructions and outcome are never copied or changed. Leaving the result blank stays supported. A recorded outcome does not accept or complete the task, and Related still does not gate the parent’s completion.
