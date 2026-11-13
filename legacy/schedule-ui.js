@@ -18,6 +18,11 @@
   function activityVisibility(task,scope) {
     return {outsideDate:!onDate(task,selectedDate(scope)),outsideMine:!!scope.mine&&task.owner!==scope.actor};
   }
+  function pendingReconfirmation(task,actor) {
+    const change=task?.scheduleReconfirmation;
+    return !!(change&&actor&&change.owner===actor&&task.owner===actor&&!task.acceptedAt&&
+      !task.reportedAt&&!task.verifiedAt&&!task.archivedAt&&task.status!=='done');
+  }
   function guestAgendaSnapshot(state,scope={}) {
     const date=selectedDate(scope);
     const candidates=ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)));
@@ -324,9 +329,8 @@
       return '<p class="muted">Set the event time zone before scheduling activities.</p><button class="btn btn-secondary" data-action="event-context">Project settings</button>';
     }
     function reconfirmation(task,event,actor) {
+      if(!pendingReconfirmation(task,actor))return '';
       const change=task.scheduleReconfirmation;
-      if(!change||!actor||change.owner!==actor||task.owner!==actor||task.acceptedAt||
-        task.reportedAt||task.verifiedAt||task.status==='done')return '';
       const facts=(slot,timeZone)=>{
         if(!slot)return 'Not on the schedule';
         const summary=activitySummary({schedule:slot},timeZone);
@@ -551,5 +555,5 @@
     }
     return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,preparationReview,activityReviewForm,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

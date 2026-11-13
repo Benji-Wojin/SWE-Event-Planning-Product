@@ -244,7 +244,7 @@
       el.dataset.nextUpOrigin===previous.dataset.nextUpOrigin&&el.dataset.id===previous.dataset.id&&
       el.dataset.action===previous.dataset.action&&!el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
     if(exact&&suggestions?.contains(exact))suggestions.open=true;
-    const target=[exact,suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
+    const target=[exact,previous.dataset.nextUpOrigin!=='schedule-change'&&suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
       .find(el=>el&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
     if(!target)return false;
     target.focus({preventScroll:true});
@@ -1166,6 +1166,34 @@
     if(rect.top<top||rect.height>bottom-top)dialog.scrollTop+=rect.top-top;
     else if(rect.bottom>bottom)dialog.scrollTop+=rect.bottom-bottom;
   }
+  function openScheduleReconfirmation(id,opener) {
+    const panelKind=ui.view==='overview'?'overview':ui.view==='tasks'&&ui.tab==='mine'?'mine':'';
+    if(!panelKind||window.GatherAccessLost||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.dataset.nextUpOrigin!=='schedule-change'||opener.dataset.action!=='review-schedule-reconfirmation'||
+      opener.dataset.id!==id||opener.closest('[hidden],[inert]'))return false;
+    const panel=currentNextUpPanel($('#viewRoot'));
+    if(panel?.dataset.nextUpPanel!==panelKind||panel.dataset.nextUpActor!==ui.actor||!panel.contains(opener))return false;
+    if(workspaceUpdatesPending()){
+      toast('New project updates are available. Refresh the project before reviewing this schedule change.');return false;
+    }
+    const task=store.getState().tasks.find(item=>item.id===id);
+    if(!GatherScheduleUI.pendingReconfirmation(task,ui.actor)){
+      render();toast('This schedule change no longer needs your review.');return false;
+    }
+    const actor=ui.actor,project=window.GatherMode?.projectId;
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(ui.dialogKind!=='task'||ui.detailId!==id)return false;
+    ui.lastFocus=opener;
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||window.GatherAccessLost||ui.actor!==actor||window.GatherMode?.projectId!==project||
+        ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||$('#dialogTitle',dialog)!==title)return;
+      if(workspaceUpdatesPending()){showPendingUpdate();return;}
+      const heading=$('#taskScheduleReconfirmation',dialog);
+      if(heading)focusTaskDialogControl(heading,dialog);
+    });
+    return true;
+  }
   function timelineOverlapIntent(el,id) {
     const requested=el.dataset.openScheduleOverlap;
     if(!['owner','location','both'].includes(requested)||!isScheduleControl(el)||!el.isConnected||
@@ -1920,13 +1948,14 @@
     if(!relatedBatchInScope(batch)||(id!==batch.parentId&&id!==batch.childId)){ui.relatedBatch=null;batch=null;}
     if(batch?.parentId===id)batch.childId='';
     const awaiting=task.requiresVerification&&task.reportedAt&&!task.verifiedAt, completionBlocked=dependencyInfo(task).open.length>0;
+    const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
       ${relatedBatchChildMarkup(batch,task)}
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
-      ${schedule.reconfirmation?.(task,taskState.event,ui.actor)||''}
+      ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}</section>`:''}
       ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
@@ -1957,8 +1986,9 @@
       currentWrapFollowUp(taskState)?.id===id;
     const fromBudget=ui.view==='budget'&&ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.lastFocus.dataset.id===id;
     const fromScheduleReceipt=ui.view==='timeline'&&ui.lastFocus?.id==='scheduleFirstReceiptOpen'&&ui.lastFocus.dataset.id===id;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt});
-    if((batch||ui.overlapComparison||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
+    const fromScheduleReconfirmation=ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id;
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation});
+    if((batch||ui.overlapComparison||fromScheduleReconfirmation||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -2439,6 +2469,7 @@
         joinWelcome=false;paintTeammateHandoff();
       }
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind,eventReviewGroup);
+      if(action==='review-schedule-reconfirmation')openScheduleReconfirmation(id,el);
       if(action==='review-returned-completion'){
         const fromNextUp=el.dataset.nextUpOrigin==='returned'&&$('#dialogBackdrop').hidden;
         openReturnedCompletion(id);

@@ -93,7 +93,7 @@
     return tasks.map(task=>rankRow(task,tasks,now,zone)).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task)))).sort(compareAttention).map(item=>item.task);
   }
   const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
-  function personalNextUp(tasks,actor,now=new Date(),zone='UTC') {
+  function personalNextUp(tasks,actor,now=new Date(),zone='UTC',separateReviews) {
     const owned=tasks.filter(task=>task.owner===actor&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).sort(compareAttention);
     const active=[],returned=[],candidates=[];
     for(const row of owned){
@@ -102,7 +102,7 @@
       if(needsRevision)returned.push(task);
       if(!actionable(task,tasks))continue;
       if(task.nextUpAt)active.push(task);
-      else if(!needsRevision&&pendingRequest(task)?.createdBy!==actor){
+      else if(!needsRevision&&!separateReviews?.has(task.id)&&pendingRequest(task)?.createdBy!==actor){
         // Rank the work itself, not organizer-only prompts to follow up.
         const urgency=row.info?.factors.reduce((weight,factor)=>personalFactors.has(factor.key)?weight+factor.weight:weight,0)||0;
         candidates.push({...row,score:priorityWeight(task.priority)+urgency});
