@@ -156,6 +156,7 @@ test('hosted confirmation awaits the existing task write, sending only the actua
     store: { addTask: (...args) => { events.push(['write', ...args]); return write; } },
     $: selector => selector === '#newTaskForm' ? currentForm : {},
     finishWrapUpLesson: id => events.push(['finish', id]), toast: value => events.push(['toast', value]), syncGuide: () => {},
+    focusWrapFollowUpReceipt: id => events.push(['receipt focus',id]),
   });
   assert.match(prepare, /'addTask'/);
   assert.match(prepare, /'await store\.\$1\('/);
@@ -167,7 +168,8 @@ test('hosted confirmation awaits the existing task write, sending only the actua
   assert.doesNotMatch(JSON.stringify(events), hidden);
   complete({ id: 'new-task' });
   await save;
-  assert.deepEqual(events.slice(1), [['finish', original.id], ['toast', 'Follow-up task added. Find it in Shared tasks.']]);
+  assert.deepEqual(events.slice(1), [['finish', original.id],['receipt focus','new-task'], ['toast', 'Follow-up task added. Find it in Shared tasks.']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(ui.wrapFollowUpReceipt)),{actor:'maya',project:'fictional-project',taskId:'new-task',lessonId:original.id});
   assert.equal(ui.wrapMine, true);
 
   events.length = 0;
@@ -200,4 +202,23 @@ test('hosted confirmation awaits the existing task write, sending only the actua
     assert.deepEqual(events.splice(0), [['write', data, 'maya']], 'never closes or relabels a replacement context');
     reset();
   }
+});
+
+test('generic Wrap up confirmation records a receipt while an ordinary task form does not',async()=>{
+  const ui={actor:'maya',view:'memory',wrapMine:true,dialogKind:'wrap-follow-up'},window={GatherMode:{projectId:'fictional'}};
+  const events=[],form={id:'newTaskForm',isConnected:true,dataset:{wrapFollowUp:'true'}};
+  const ctx=vm.createContext({ui,window,guidedWorkspace:false,canCreateTasks:()=>true,$:()=>form,
+    store:{addTask:async()=>({id:'confirmed-task'})},closeDialog:()=>events.push('close'),render:()=>events.push('render'),
+    focusWrapFollowUpReceipt:id=>events.push(id),toast:()=>{},syncGuide:()=>{}});
+  const submit=fragment("      if(form.id==='newTaskForm')","      if(form.id==='scheduleForm'").replace('store.addTask(','await store.addTask(');
+  vm.runInContext(`async function submit(form,data){${submit}}`,ctx);
+  await ctx.submit(form,{title:'Manually written'});
+  assert.deepEqual(events.splice(0),['close','render','confirmed-task']);
+  assert.equal(ui.wrapFollowUpReceipt.taskId,'confirmed-task');
+  assert.equal(ui.wrapFollowUpReceipt.lessonId,'');
+  assert.equal(ui.wrapMine,true);
+  ui.wrapFollowUpReceipt=null;ui.dialogKind='';ui.view='tasks';
+  await ctx.submit({...form,dataset:{}},{title:'Ordinary task'});
+  assert.deepEqual(events,['close','render']);
+  assert.equal(ui.wrapFollowUpReceipt,null);
 });
