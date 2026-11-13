@@ -92,6 +92,7 @@
     function nextUpControl(task) {
       const s=state();
       if(task.owner!==ui.actor||!P.actionable(task,s.tasks))return '';
+      if(!task.acceptedAt&&!task.nextUpAt&&(task.reportedAt||task.verifiedAt||task.archivedAt))return '';
       const active=P.nextUp(s.tasks,ui.actor,new Date(),s.event.timeZone);
       const current=task.nextUpAt?'Committed to Next up · '+active.length+'/3':'Not committed to Next up';
       const acceptNotice=!task.acceptedAt&&!task.nextUpAt?'<p class="next-up-accept-note muted">Committing also accepts responsibility for this task.</p>':'';
@@ -120,12 +121,16 @@
       }
       return html+'</section>';
     }
-    function responseMarkup(task,awaiting,completionBlocked=false) {
+    function responseMarkup(task,awaiting,completionBlocked=false,workspaceRevision) {
       const overdue=task.dueDate&&task.dueDate<dateKey();
       const revising=P.changesRequested(task);
       const requestHint=awaiting?'':'<p class="muted" data-recovery-request-hint hidden>The organizer will review this. The agreed plan stays in place.'+
         (P.pendingRequest(task)?' A changed request replaces the current one.':'')+'</p>';
-      return '<section class="task-report section-gap"><h3>'+(revising?'Revised completion report':overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"'+(revising?' data-revising-completion="true"':'')+'>'+(!awaiting&&!completionBlocked&&!revising?'<button type="button" class="btn btn-secondary" data-action="prepare-completion">Report complete</button><p class="muted">Add a completion note and, optionally, a file or link. Nothing is submitted until you confirm.</p>':'')+'<label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed',revising?'Report revised completion':'Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Ask for help']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label>'+requestHint+'<label class="field"><span data-response-note-label>What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. You can optionally add a file or link below. Submitting does not replace organizer verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+(!task.acceptedAt&&!awaiting?'<button class="text-button" data-action="accept-task" data-id="'+h(task.id)+'">Accept responsibility</button>':'')+'</section>';
+      const accept=!task.acceptedAt&&!awaiting&&!task.reportedAt&&!task.verifiedAt&&!task.archivedAt&&task.status!=='done'
+        ? '<button type="button" class="text-button" data-action="accept-task" data-id="'+h(task.id)+'" data-revision="'+h(task.revision)+'"'+
+          (Number.isSafeInteger(workspaceRevision)?' data-workspace-revision="'+workspaceRevision+'"':'')+'>'+
+          (root.GatherScheduleUI?.pendingReconfirmation(task,task.owner)?'Accept responsibility again':'Accept responsibility')+'</button>' : '';
+      return '<section class="task-report section-gap"><h3>'+(revising?'Revised completion report':overdue?'What’s next?':'Your update')+'</h3>'+nextUpControl(task)+'<form id="responseForm" data-id="'+h(task.id)+'"'+(revising?' data-revising-completion="true"':'')+'>'+(!awaiting&&!completionBlocked&&!revising?'<button type="button" class="btn btn-secondary" data-action="prepare-completion">Report complete</button><p class="muted">Add a completion note and, optionally, a file or link. Nothing is submitted until you confirm.</p>':'')+'<label class="field">Update<select name="response">'+options([['progress','Share progress'],...(!awaiting&&!completionBlocked?[['completed',revising?'Report revised completion':'Report complete']]:[]),['blocked','Report blocked'],...(!awaiting?[['date','Propose a new date'],['help','Ask for help']]:[])],'progress')+'</select></label><label class="field" data-proposed-date hidden>Proposed date<input type="date" name="proposedDate"></label>'+requestHint+'<label class="field"><span data-response-note-label>What happened or what do you need?</span><textarea name="note" required rows="3" maxlength="3000" placeholder="Add a short update…"></textarea></label><div data-completion-only hidden><p class="muted">Explain how the result meets Done when, if an outcome is recorded. You can optionally add a file or link below. Submitting does not replace organizer verification.</p>'+(root.GatherCompletionUI?.fields()||'')+'</div><button class="btn btn-primary" type="submit">Save update</button></form>'+(awaiting?'<p class="muted">New progress or a blocker replaces the pending completion report.</p>':'')+accept+'</section>';
     }
     function priorityMarkup(task,organizer) {
       const info=P.analyze(task,state().tasks,new Date(),state().event.timeZone),value=task.priority||'auto';

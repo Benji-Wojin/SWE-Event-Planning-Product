@@ -70,16 +70,18 @@ test('hosted Next up confirms and focuses the new state only after the save reso
   const events=[],frames=[];
   let resolve,reject;
   const ui={actor:'maya',dialogKind:'task',detailId:'task-a'};
-  const backdrop={hidden:false};
+  const backdrop={hidden:false},title={},acceptance={},form={id:'nextUpForm',dataset:{id:'task-a'}};
+  let currentForm=form;
   const ctx=vm.createContext({
-    form:{id:'nextUpForm',dataset:{id:'task-a'}},data:{enabled:'true',replaceTaskId:'task-b'},ui,window:{},
+    form,taskAcceptance:acceptance,taskAcceptanceButton:()=>acceptance,data:{enabled:'true',replaceTaskId:'task-b'},ui,window:{},
     store:{getState:()=>({tasks:[{id:'task-a',acceptedAt:''}]}),setNextUp:(id,data,actor)=>{
       events.push(['save',id,data.enabled,data.replaceTaskId,actor]);
       return new Promise((yes,no)=>{resolve=yes;reject=no;});
     }},
     render:()=>events.push('render'),taskDialog:(...args)=>events.push(['dialog',...args]),toast:value=>events.push(value),
     requestAnimationFrame:callback=>frames.push(callback),
-    $:selector=>selector==='#dialogBackdrop'?backdrop:selector==='#nextUpTaskState'?{focus:()=>events.push('focus-state')}:{},
+    $:selector=>selector==='#dialogBackdrop'?backdrop:selector==='#dialogTitle'?title:
+      selector==='#nextUpForm'?currentForm:selector==='#nextUpTaskState'?{focus:()=>events.push('focus-state')}:null,
   });
   const run=()=>vm.runInContext('(async()=>{'+app.slice(start,end)+'})()',ctx);
   let pending=run();
@@ -87,7 +89,10 @@ test('hosted Next up confirms and focuses the new state only after the save reso
   assert.equal(frames.length,0);
   resolve();
   await pending;
-  assert.deepEqual(events.slice(1),['render',['dialog','task-a','nextUpForm'],'Task swapped into Next up. Responsibility accepted.']);
+  assert.equal(events[1],'render');
+  assert.deepEqual(events[2].slice(0,3),['dialog','task-a','nextUpForm']);
+  assert.equal(events[2].at(-1).readOnly,true);
+  assert.equal(events[3],'Task swapped into Next up. Responsibility accepted.');
   frames.shift()();
   assert.equal(events.at(-1),'focus-state');
 
@@ -95,6 +100,14 @@ test('hosted Next up confirms and focuses the new state only after the save reso
   pending=run();
   reject(new Error('Fictional failed save'));
   await assert.rejects(pending,/Fictional failed save/);
+  assert.deepEqual(events,[['save','task-a',true,'task-b','maya']]);
+  assert.equal(frames.length,0);
+
+  events.length=0;
+  pending=run();
+  currentForm={...form};
+  resolve();
+  await pending;
   assert.deepEqual(events,[['save','task-a',true,'task-b','maya']]);
   assert.equal(frames.length,0);
 });

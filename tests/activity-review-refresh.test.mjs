@@ -50,6 +50,7 @@ function fixture() {
     $$: () => [],
     hasUnsavedFields: () => !!draft,
     workspaceUpdatesPending: () => !sync.hidden,
+    acceptanceReviewPending: button => button?.dataset?.reviewNeedsRefresh==='true'||!sync.hidden,
     recoveryConflictPending: () => false,
     scheduleRevisionIsStale: value => value < newest,
     rememberNewerSchedule(_snapshot, value) { if (Number.isSafeInteger(value)) newest = Math.max(newest, value); },
@@ -76,7 +77,7 @@ function fixture() {
 }
 
 function load(f = fixture()) {
-  const from = source.indexOf('  function canRefreshActivityReview(');
+  const from = source.indexOf('  function taskAcceptanceButton(');
   const to = source.indexOf('  function showPendingUpdate(', from);
   assert.ok(from >= 0 && to > from, 'activity refresh handler is present');
   vm.runInContext(source.slice(from, to), f.context);
@@ -229,4 +230,21 @@ test('only an eligible activity review with its current stale-warning button can
   assert.equal(f.context.canRefreshActivityReview({ schedule: {} }), false);
   await f.refresh();
   assert.equal(f.requests.length, 0);
+});
+
+test('a stale assignment opened in Shared tasks refreshes to the schedule change without accepting', async () => {
+  const f=load();
+  f.ui.view='tasks';
+  f.ui.overlapComparison=null;
+  f.sync.hidden=true;
+  f.controls.set('[data-action="accept-task"]',{dataset:{reviewNeedsRefresh:'true'}});
+  f.controls.set('#taskScheduleReconfirmation',{name:'schedule change'});
+  const pending=f.refresh();
+  assert.equal(f.requests.length,1);
+  assert.match(f.status.textContent,/Refreshing task review/);
+  f.requests[0].finish();
+  await pending;
+  f.flush();
+  assert.deepEqual(f.calls.filter(([kind])=>kind==='focus'),[['focus','schedule change']]);
+  assert.match(f.calls.find(([kind])=>kind==='toast')[1],/before accepting/);
 });
