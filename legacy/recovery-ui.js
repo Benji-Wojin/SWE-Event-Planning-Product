@@ -69,9 +69,11 @@
           changeIds.has(task.id)?'<div class="next-up-activity"><span><strong>Activity:</strong> Not on the schedule</span></div>':'';
         const status=(showDeadline&&!activity?dayLabel(task.dueDate):detail);
         const label=status?h(status)+requestBadge(task):request?waitingLabel(request):'';
+        const timeline=root.GatherScheduleUI?.personalTimelineDay(task,ui.actor)?
+          '<button type="button" class="text-button" data-action="next-up-timeline" data-next-up-origin="timeline" data-id="'+h(task.id)+'" aria-label="Show in Timeline: '+h(task.title)+'">Show in Timeline</button>':'';
+        const actions=(!schedulePrimary&&changeIds.has(task.id)?scheduleLink(task):'')+timeline;
         return '<article>'+(schedulePrimary?scheduleLink(task,true):link||taskLink(task,{nextUp:true,request:!!request}))+
-          (label?'<span class="muted">'+label+'</span>':'')+facts+
-          (!schedulePrimary&&changeIds.has(task.id)?'<div class="next-up-schedule-action">'+scheduleLink(task)+'</div>':'')+'</article>';
+          (label?'<span class="muted">'+label+'</span>':'')+facts+(actions?'<div class="next-up-schedule-action">'+actions+'</div>':'')+'</article>';
       };
       const waitingMarkup=waiting.length?'<section class="section-gap" aria-label="Requests awaiting organizer review"><h3>Waiting for the organizer</h3>'+
         waiting.map(({task})=>personalRow(task)).join('')+'</section>':'';

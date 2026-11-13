@@ -244,7 +244,7 @@
       el.dataset.nextUpOrigin===previous.dataset.nextUpOrigin&&el.dataset.id===previous.dataset.id&&
       el.dataset.action===previous.dataset.action&&!el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
     if(exact&&suggestions?.contains(exact))suggestions.open=true;
-    const target=[exact,previous.dataset.nextUpOrigin!=='schedule-change'&&suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
+    const target=[exact,!['schedule-change','timeline'].includes(previous.dataset.nextUpOrigin)&&suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
       .find(el=>el&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
     if(!target)return false;
     target.focus({preventScroll:true});
@@ -1236,10 +1236,14 @@
     fillIcons(document);
     restoreViewFocus(previousFocus,$('#viewRoot'));
   }
-  function navigate(view) {
+  function navigate(view,{scheduleDay=''}={}) {
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
+    if(view==='timeline'&&scheduleDay){
+      ui.timelineMode='schedule';ui.scheduleDate=scheduleDay;
+      navigation.replaceScheduleDate(scheduleDay);
+    }
     if (ui.view!==view){guideViewReady='';ui.relatedBatch=null;ui.firstScheduleReceipt=null;}
     if(view!=='tasks')taskLinkUnavailable=false;
     ui.view=view;
@@ -1475,6 +1479,26 @@
       if(kind==='schedule')focusTaskScheduleEditor(id,true);
       else focusTaskOwnerEditor(id);
     });
+  }
+  function jumpFromNextUpToTimeline(id,opener) {
+    const kind=ui.view==='overview'?'overview':ui.view==='tasks'&&ui.tab==='mine'?'mine':'';
+    if(!kind||!id||window.GatherAccessLost||ui.pendingSave||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.dataset.action!=='next-up-timeline'||opener.dataset.nextUpOrigin!=='timeline'||opener.dataset.id!==id||
+      opener.matches(':disabled')||opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    const panel=currentNextUpPanel($('#viewRoot'));
+    if(panel?.dataset.nextUpPanel!==kind||panel.dataset.nextUpActor!==ui.actor||!panel.contains(opener))return false;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+      toast('Open Timeline and check for schedule updates before using this activity’s saved day.');return false;
+    }
+    const task=store.getState().tasks.find(item=>item.id===id),day=GatherScheduleUI.personalTimelineDay(task,ui.actor);
+    if(!day){render();toast('This activity is no longer on your schedule.');return false;}
+    if(!navigate('timeline',{scheduleDay:day}))return false;
+    const root=$('#viewRoot');
+    const row=$$('.schedule-row',root).find(item=>item.dataset.id===id&&item.dataset.scheduleDay===day&&
+      !item.closest('[hidden],[inert]')&&item.getClientRects().length);
+    if(row&&focusScheduleTarget(row))return true;
+    focusScheduleTarget($('#schedulePanelHeading',root));
+    toast('This activity is no longer visible on this date.');return false;
   }
   function openScheduleReconfirmation(id,opener) {
     const notifications=ui.dialogKind==='notifications'&&!$('#dialogBackdrop').hidden;
@@ -3786,6 +3810,7 @@
     if(el.dataset.view){event.preventDefault();navigateFromViewControl(el);return;}
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
+    if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}

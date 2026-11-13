@@ -634,7 +634,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .next-up-list .text-button{font-size:16px;text-align:left;overflow-wrap:anywhere}
 .next-up-activity{flex:1 0 100%;min-width:0;display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--muted);font-size:.85rem;line-height:1.5;overflow-wrap:anywhere}
 .next-up-activity strong{color:var(--ink)}.next-up-activity-warning{flex-basis:100%}
-.next-up-schedule-action{flex-basis:100%}.next-up-list [data-next-up-origin="schedule-change"]{min-height:44px}
+.next-up-schedule-action{flex-basis:100%;display:flex;flex-wrap:wrap;gap:0 16px}.next-up-list [data-next-up-origin="schedule-change"],.next-up-list [data-next-up-origin="timeline"]{min-height:44px}
 .schedule-first-receipt{margin:0 0 16px;overflow-wrap:anywhere}.schedule-first-receipt h2{font-size:1rem;margin:0 0 6px}.schedule-first-receipt p{margin:0 0 8px}.schedule-first-receipt .btn{min-height:44px}
 .schedule-reconfirmation{display:grid;gap:5px;padding:12px;margin-block:8px;border:1px solid var(--line);border-radius:9px;background:var(--warm);font-size:.875rem;line-height:1.5;overflow-wrap:anywhere}
 .organizer-review{padding-bottom:16px}

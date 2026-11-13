@@ -18,6 +18,14 @@
   function activityVisibility(task,scope) {
     return {outsideDate:!onDate(task,selectedDate(scope)),outsideMine:!!scope.mine&&task.owner!==scope.actor};
   }
+  function personalTimelineDay(task,actor) {
+    const start=task?.schedule?.start;
+    if(!actor||task?.owner!==actor||task.archivedAt||typeof start!=='string'||
+      !/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/.test(start))return '';
+    // Retain navigation to legacy ambiguous wall times so the existing
+    // schedule warning can be read. No browser time-zone conversion.
+    return selectedDate({date:start.slice(0,10)});
+  }
   function pendingReconfirmation(task,actor) {
     const change=task?.scheduleReconfirmation;
     return !!(change&&actor&&change.owner===actor&&task.owner===actor&&!task.acceptedAt&&
@@ -591,5 +599,5 @@
     }
     return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,personalTimelineDay,pendingReconfirmation,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);
