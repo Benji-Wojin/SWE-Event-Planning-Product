@@ -43,6 +43,39 @@ test('Before the event offers the required-work route only in the matching group
   assert.deepEqual(state,before);
 });
 
+test('required work shows only direct, unresolved status counts, including cross-owner work in My tasks',()=>{
+  const state=plan(),[mixed,missing]=state.tasks;
+  mixed.schedule={start:'2026-10-03T16:00',end:'2026-10-03T17:00',location:'Fictional hall'};
+  mixed.dependencies.push(...['open-target','reported-target','returned-target','archived-target','gone','finished','completed-without-review'].map(id=>required(id)),
+    required('related-target','related'),required('gone-related','related'),{taskId:'legacy-open',reason:'PRIVATE_LEGACY_REASON'});
+  const target=(id,fields={})=>task(id,{title:'CROSS_SCOPE_PREREQUISITE',owner:'dev',note:'PRIVATE_TARGET_NOTE',...fields});
+  state.tasks.push(target('open-target',{status:'progress',dependencies:[required('indirect-target')]}),
+    target('reported-target',{status:'progress',requiresVerification:true,reportedAt:now}),
+    target('returned-target',{status:'progress',requiresVerification:true,completionReview:{reason:'PRIVATE_REVIEW_REASON'}}),
+    target('archived-target',{status:'done',requiresVerification:true,verifiedAt:now,archivedAt:now}),
+    target('completed-without-review',{status:'done'}),
+    target('related-target',{requiresVerification:true,reportedAt:now}),
+    target('legacy-open'),task('finished-parent',{status:'done',dependencies:[required('gone')]}));
+  const finished=state.tasks.find(row=>row.id==='finished');
+  finished.completionEvidence={body:'PRIVATE_AMENDMENT'};
+  const scope={mine:true,actor:'maya'},before=structuredClone(state);
+  for(const organizer of [true,false]){
+    const html=schedule.preparationReview(state,now,scope,organizer),section=group(html,'prerequisites');
+    assert.deepEqual(ids(section),[mixed.id,missing.id]);
+    assert.match(section,/directly linked required tasks, not Related links/);
+    assert.match(section,/If a link is unavailable, check it with the organizer/);
+    assert.match(section,/data-id="maya-blocked"[^>]+aria-describedby="eventRequiredWorkSummary-0"[\s\S]*?<span id="eventRequiredWorkSummary-0"[^>]*>Required work: 3 still open · 2 awaiting verification · 2 unavailable<\/span>/);
+    assert.match(section,/data-id="maya-missing"[^>]+aria-describedby="eventRequiredWorkSummary-1"[\s\S]*?<span id="eventRequiredWorkSummary-1"[^>]*>Required work: 1 unavailable<\/span>/);
+    assert.equal((html.match(/id="eventRequiredWorkSummary-/g)||[]).length,2);
+    assert.doesNotMatch(group(html,'linked-results'),/Required work:|aria-describedby/);
+    assert.doesNotMatch(section,/CROSS_SCOPE_PREREQUISITE|PRIVATE_|open-target|reported-target|archived-target|indirect-target/);
+  }
+  const printable=schedule.runSheetText(schedule.runSheetModel(state,Date.parse(now),scope));
+  assert.match(printable,/Required work not complete/);
+  assert.doesNotMatch(printable,/Required work:|CROSS_SCOPE_PREREQUISITE|PRIVATE_/);
+  assert.deepEqual(state,before);
+});
+
 function fixture(){
   const state=plan(),backdrop={hidden:false},sync={hidden:true},dialog={},frames=[],calls=[];
   const ui={view:'timeline',actor:'maya',timelineMode:'schedule',scheduleMine:true,scheduleDate:'2026-10-03'};

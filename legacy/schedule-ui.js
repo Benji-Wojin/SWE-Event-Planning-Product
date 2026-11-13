@@ -155,7 +155,23 @@
   const awaitingScheduleAcceptance = (task,members) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members);
   const scheduleAcceptanceCue = 'Schedule changed · owner needs to accept again';
   const requiredResultReady = task => !!task&&!task.archivedAt&&resolved(task);
-  const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&!requiredResultReady(byId.get(link.taskId)));
+  function requiredWorkState(link,byId) {
+    if(link.kind==='related')return '';
+    const target=byId.get(link.taskId);
+    if(!target||target.archivedAt)return 'unavailable';
+    if(requiredResultReady(target))return '';
+    return waitingVerification(target)?'verification':'open';
+  }
+  const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>requiredWorkState(link,byId));
+  function requiredWorkSummary(task,byId) {
+    const counts={open:0,verification:0,unavailable:0};
+    for(const link of task.dependencies||[]){
+      const state=requiredWorkState(link,byId);
+      if(state)counts[state]++;
+    }
+    return [counts.open&&counts.open+' still open',counts.verification&&counts.verification+' awaiting verification',
+      counts.unavailable&&counts.unavailable+' unavailable'].filter(Boolean).join(' · ');
+  }
   function linkedResultsReady(task,byId) {
     if(!task||task.archivedAt||task.status!=='blocked'||waitingVerification(task))return false;
     const required=(task.dependencies||[]).filter(link=>link.kind!=='related');
@@ -266,6 +282,14 @@
   function reviewItems(state,now=Date.now(),scope={}) {
     const tasks=scoped(state.tasks,scope),open=tasks.filter(task=>!resolved(task));
     const byId=new Map(state.tasks.map(task=>[task.id,task]));
+    const requiredSummaries=new Map(),needsRequiredWork=[];
+    for(const task of open){
+      if(task.archivedAt)continue;
+      const summary=requiredWorkSummary(task,byId);
+      if(!summary)continue;
+      requiredSummaries.set(task.id,summary);
+      needsRequiredWork.push(task);
+    }
     const day=momentKey(now,state.event.timeZone)?.slice(0,10);
     const overlapIds=ownerOverlaps(usableWallTimes(tasks,state.event.timeZone)),locationIds=locationOverlaps(usableWallTimes(state.tasks,state.event.timeZone));
     return [
@@ -283,7 +307,7 @@
       {key:'schedule-reconfirmation',title:'Schedule changes awaiting owner acceptance',help:'An earlier acceptance was cleared when the schedule changed. Ask the assigned owner to review the current plan and accept again. This does not change progress.',tasks:open.filter(task=>awaitingScheduleAcceptance(task,state.members))},
       {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members)&&!awaitingScheduleAcceptance(task,state.members))},
       {key:'overdue',title:'Preparation deadline passed',help:'The entered due date is before today in the event time zone. Check the real progress.',tasks:day?open.filter(task=>task.dueDate&&task.dueDate<day&&!waitingVerification(task)):[]},
-      {key:'prerequisites',title:'Required work not complete',help:'One or more required linked tasks are incomplete, awaiting verification, or unavailable. Related links do not block completion.',tasks:open.filter(task=>!task.archivedAt&&unfinishedRequiredWork(task,byId))},
+      {key:'prerequisites',title:'Required work not complete',help:'These counts cover directly linked required tasks, not Related links. Open a task to review its links. If a link is unavailable, check it with the organizer.',tasks:needsRequiredWork,requiredSummaries},
       {key:'overlaps',title:'Activities with owner overlaps',help:'The same owner has overlapping entered activity times. Missing end times limit which overlaps can be detected.',tasks:open.filter(task=>overlapIds.has(task.id))},
       {key:'locations',title:'Potential location overlaps',help:'Matching location labels have overlapping entered times, including activities outside My tasks. A space may be shared or divisible; confirm with the organizer. Aliases, capacity, travel and external bookings are not checked. Missing ends limit detection.',tasks:open.filter(task=>locationIds.has(task.id))},
       {key:'activity-details',title:'Activity details not entered',help:'An activity has no end time or no activity location. These may be intentional; confirm what the team needs.',tasks:open.filter(needsActivityDetails)},
@@ -496,9 +520,13 @@
       const groupMarkup=group=>{
         const expanded=group.tasks.length&&(group.tasks.length<=3||['activity-time','plan-requests','schedule-reconfirmation'].includes(group.key));
         const requiredReview=group.key==='prerequisites'||group.key==='linked-results';
-        const rows=group.tasks.map(task=>`<li><button type="button" class="text-button" ${requiredReview
-          ?`data-action="review-event-required-work" data-id="${h(task.id)}" aria-label="${group.key==='prerequisites'?'Review required work for':'Review linked results for'} ${h(task.title)}"`
-          :reviewRoute(task,groupReviewKind(group,task),organizer)}>${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${currentSchedule(group,task)}${scheduleAction(group,task)}</li>`).join('');
+        const rows=group.tasks.map((task,index)=>{
+          const requiredSummary=group.requiredSummaries?.get(task.id);
+          const summaryId='eventRequiredWorkSummary-'+index;
+          return `<li><button type="button" class="text-button" ${requiredReview
+            ?`data-action="review-event-required-work" data-id="${h(task.id)}" aria-label="${group.key==='prerequisites'?'Review required work for':'Review linked results for'} ${h(task.title)}"`
+            :reviewRoute(task,groupReviewKind(group,task),organizer)}${requiredSummary?` aria-describedby="${summaryId}"`:''}>${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${requiredSummary?`<span id="${summaryId}" class="event-required-work-summary">Required work: ${h(requiredSummary)}</span>`:''}${currentSchedule(group,task)}${scheduleAction(group,task)}</li>`;
+        }).join('');
         return `<details class="before-event-group" data-event-review-group="${h(group.key)}"${expanded?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${rows?`<ul>${rows}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`;
       };
       return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(groupMarkup).join('')}</article>`;

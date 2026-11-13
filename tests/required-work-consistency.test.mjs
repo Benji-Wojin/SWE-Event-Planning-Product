@@ -181,4 +181,10 @@ test('task relationships call unavailable Required work out without showing a re
     assert.doesNotMatch(markup,/data-action="resume-task"|status-done">Complete|ARCHIVED_FIXTURE_RESULT/);
   }
   assert.match(context.dependencyMarkup(ready),/data-action="resume-task"/);
+  const legacy=task('legacy-done',{status:'done',requiresVerification:true,owner:'dev'});
+  const waiting=task('waiting-parent',{status:'blocked',dependencies:[link(legacy.id)]});
+  state.tasks.push(legacy,waiting);
+  const markup=context.dependencyMarkup(waiting);
+  assert.match(markup,/status-blocked">Awaiting verification<\/span>/);
+  assert.doesNotMatch(markup,/>Done<\/span>|data-action="resume-task"/);
 });
