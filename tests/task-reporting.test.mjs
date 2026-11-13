@@ -463,7 +463,7 @@ test('organizer review opens the section for the current task state without muta
   assert.deepEqual(calls.splice(0),[id,'verification','.completion-evidence h3']);
   store.updateTask('dietary',{status:'progress'});
   const blocked=store.exportState();
-  open();frame();
+  assert.equal(context.openOrganizerReview(id,'completion','',true),true);frame();
   assert.deepEqual(calls.splice(0),[id,'.task-dependencies h3']);
   assert.equal(store.exportState(),blocked);
   open();ui.detailId='other';frame();
@@ -473,6 +473,8 @@ test('organizer review opens the section for the current task state without muta
   assert.deepEqual(calls,[]);
   window.GatherAccessLost=false;open('amendment');
   assert.deepEqual(calls.splice(0),['render','This review is no longer pending.']);
+  assert.equal(context.openOrganizerReview(id,'amendment','',true),false);
+  assert.deepEqual(calls,[],'a stale receipt link can fall back without interrupting the task');
   ui.dialogKind='before-event-review';open('amendment');
   assert.deepEqual(calls,['refresh event review','This review is no longer pending.']);
   assert.equal(frames.length,0);

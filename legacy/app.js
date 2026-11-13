@@ -741,20 +741,24 @@
     ui.lastFocus=null;
     if(store.refresh)queueMicrotask(()=>refreshInbox());
   }
-  function openOrganizerReview(id,kind,eventGroup='') {
-    if(!isOrganizer()||window.GatherAccessLost)return;
+  function openOrganizerReview(id,kind,eventGroup='',quietFallback=false) {
+    if(!isOrganizer()||window.GatherAccessLost)return false;
     const review=GatherRecoveryUI.organizerReviews(store.getState().tasks).find(row=>row.task.id===id&&row.kind===kind);
     if(!review){
-      if(ui.dialogKind==='before-event-review')beforeEventReview(eventGroup);
-      else render();
-      toast('This review is no longer pending.');return;
+      if(!quietFallback){
+        if(ui.dialogKind==='before-event-review')beforeEventReview(eventGroup);
+        else render();
+        toast('This review is no longer pending.');
+      }
+      return false;
     }
-    taskDialog(id,'',false,false,eventGroup);
+    taskDialog(id,'',false,quietFallback,eventGroup);
     requestAnimationFrame(()=>{
-      if(ui.dialogKind!=='task'||ui.detailId!==id)return;
+      if(window.GatherAccessLost||ui.dialogKind!=='task'||ui.detailId!==id)return;
       const section=review.waitingOnRequiredWork?'.task-dependencies':kind==='help'||kind==='date'?'.task-recovery':'.completion-evidence';
       $(section+' h3',$('#dialog'))?.focus();
     });
+    return true;
   }
   function openReturnedCompletion(id) {
     if(window.GatherAccessLost)return;
@@ -1964,7 +1968,7 @@
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   setDrawer(false);
   ui.scheduleDate=navigation.initialScheduleDate();
-  const initialTask=navigation.takeInitialTask();
+  const {id:initialTask,review:initialTaskReview}=navigation.takeInitialTaskLink();
   const welcomeHint=navigation.takeJoinWelcome();
   if(initialTask){
     ui.tab='all';
@@ -1983,7 +1987,8 @@
       title?.scrollIntoView({block:'center',behavior:'instant'});
     }else{
       $('#viewRoot').querySelector(`.task-name-button[data-id="${initialTask}"]`)?.focus({preventScroll:true});
-      taskDialog(initialTask,'',false,true);
+      if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))
+        taskDialog(initialTask,'',false,true);
     }
   }
   if((!window.GatherMode||window.GatherMode.demo)&&ui.view==='overview'&&$('#dialogBackdrop').hidden)tour.offer();

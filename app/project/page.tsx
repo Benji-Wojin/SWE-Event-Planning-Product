@@ -1,9 +1,9 @@
 import { requireChatGPTUser } from '@/app/chatgpt-auth';
 import { AppOpen } from '@/components/app-open';
 import { workspaceScheduleDate } from '@/lib/workspace-day';
-import { workspaceTaskId } from '@/lib/workspace-task-link';
+import { workspaceTaskId, workspaceTaskReview } from '@/lib/workspace-task-link';
 export const dynamic = 'force-dynamic';
-type ProjectParams = { project?: string | string[]; message?: string | string[]; guide?: string | string[]; day?: string | string[]; task?: string | string[]; welcome?: string | string[] };
+type ProjectParams = { project?: string | string[]; message?: string | string[]; guide?: string | string[]; day?: string | string[]; task?: string | string[]; review?: string | string[]; welcome?: string | string[] };
 export default async function Project({ searchParams }: { searchParams: Promise<ProjectParams> }) {
   const params = await searchParams;
   const project = typeof params.project === 'string' ? params.project : null;
@@ -15,7 +15,11 @@ export default async function Project({ searchParams }: { searchParams: Promise<
   const day = workspaceScheduleDate(params.day);
   if (day) query.set('day',day);
   const task = workspaceTaskId(params.task);
-  if(task)query.set('task',task);
+  if(task){
+    query.set('task',task);
+    const review=workspaceTaskReview(params.review);
+    if(review)query.set('review',review);
+  }
   if (project && params.welcome === '1' && !guide && !task && !message && !day) query.set('welcome','1');
   return <SignedInProject query={query.toString()} defaultSection={task ? '#tasks' : message ? '#inbox' : day ? '#timeline' : ''}/>;
 }

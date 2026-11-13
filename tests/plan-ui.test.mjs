@@ -736,7 +736,7 @@ test('the organizer handoff separates next actions and refresh moves the same ta
       const start=all.indexOf(node)+1,end=i+1<headings.length?all.indexOf(headings[i+1].node):all.length;
       const links=all.slice(start,end).filter(row=>row.type==='a'&&row.props.href?.includes('&task='));
       assert.deepEqual(links.map(row=>[text(row),row.props.href]),expected[group].map(id=>[
-        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1',
+        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
       ]),group);
     }
     assert.equal(all.filter(row=>row.type==='a'&&row.props.href?.includes('&task=')).length,initial.receiptTasks.length);
@@ -787,7 +787,7 @@ test('the handoff shows verification blockers separately and the same link moves
     }
   },initial,'project=p_school',false,true);
   const group=id=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='handoff-'+id);
-  const taskLink=section=>nodes(section).find(node=>node.props?.href==='/project?project=p_school&task=task-blocked&guide=1');
+  const taskLink=section=>nodes(section).find(node=>node.props?.href==='/project?project=p_school&task=task-blocked&guide=1&review=completion');
   try{
     await app.start();
     const blocked=group('required-work'),review=group('review');
@@ -801,6 +801,23 @@ test('the handoff shows verification blockers separately and the same link moves
     assert.match(text(group('review')),/Completion needs verification/);
     assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
   }finally{app.dispose();}
+});
+test('receipt review hints are limited to real project plan handoffs',async()=>{
+  for(const [query,expected] of [
+    ['project=p_school','/project?project=p_school&task=task-a&review=amendment'],
+    ['project=p_school&mode=suggestions','/project?project=p_school&task=task-a'],
+    ['project=p_school&mode=assistant','/project?project=p_school&task=task-a'],
+    ['demo=1','/demo?as=jack&task=task-a'],
+  ]){
+    const initial=fixture();
+    initial.receipt={taskIds:['task-a']};
+    initial.receiptTasks=[{id:'task-a',title:'Fictional task',handoff:{state:'needs-amendment-review'}}];
+    const app=harness(null,initial,query);
+    try{
+      await app.start();
+      assert.equal(nodes(app.tree).find(node=>node.type==='a'&&text(node)==='Fictional task')?.props.href,expected);
+    }finally{app.dispose();}
+  }
 });
 
 test('context refresh discards a rejected stale generation payload and uses the current revision', async () => {

@@ -39,6 +39,22 @@ function start(response, { oldDocument = false, demo = false, search } = {}) {
 const success = value => ({ ok: true, status: 200, json: async () => value });
 const text = node => [node.textContent || '', ...node.children.map(text)].join(' ');
 
+test('iframe reauthentication keeps only a valid real-project task review hint',async()=>{
+  for(const [search,expected] of [
+    ['?project=school&task=task-123&review=completion&guide=1&day=2032-02-29','/project?day=2032-02-29&guide=1&task=task-123&review=completion&project=school'],
+    ['?project=school&task=task-123&review=amendment&review=completion','/project?task=task-123&project=school'],
+    ['?project=school&review=completion','/project?project=school'],
+    ['?demo=1&as=jack&task=task-123&review=amendment','/demo?as=jack&task=task-123'],
+  ]){
+    const {run,window,requests}=start({ok:false,status:401,json:async()=>({error:'Sign in again'})},{search});
+    await run;
+    const returnTo=new URL(window.top.location.href,'https://weft.example').searchParams.get('return_to');
+    assert.equal(returnTo,expected);
+    assert.equal(requests.length,1);
+    assert.doesNotMatch(requests[0],/review=|task=/);
+  }
+});
+
 test('prepared hosted HTML shows loading instead of demo identity or interactive shell', () => {
   execFileSync(process.execPath, ['scripts/prepare.mjs']);
   const html = readFileSync('public/workspace.html', 'utf8');

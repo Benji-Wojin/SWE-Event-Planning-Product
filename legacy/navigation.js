@@ -7,6 +7,11 @@
     const hints=params.getAll('task');
     return hints.length===1&&taskIdPattern.test(hints[0])?hints[0]:'';
   }
+  function taskLinkFrom(params) {
+    const id=taskIdFrom(params),hints=params.getAll('review');
+    const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment'].includes(hints[0])?hints[0]:'';
+    return {id,review};
+  }
   function scheduleDate(value) {
     if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value.startsWith('0000-'))return '';
     const date=new Date(value+'T00:00:00Z');
@@ -49,16 +54,18 @@
         }
         return hints.length===1&&hints[0]==='1';
       },
-      takeInitialTask() {
+      takeInitialTaskLink() {
         const search=new URLSearchParams(frame.location.search);
-        if(!search.has('task'))return '';
-        for(const target of new Set([frame,host])){
-          const url=new URL(target.location.href);
-          if(!url.searchParams.has('task'))continue;
-          url.searchParams.delete('task');
-          target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+        if(search.has('task')||search.has('review')){
+          for(const target of new Set([frame,host])){
+            const url=new URL(target.location.href);
+            if(!url.searchParams.has('task')&&!url.searchParams.has('review'))continue;
+            url.searchParams.delete('task');
+            url.searchParams.delete('review');
+            target.history.replaceState(target.history.state,'',url.pathname+url.search+url.hash);
+          }
         }
-        return taskIdFrom(search);
+        return taskLinkFrom(search);
       },
       replaceScheduleDate(value) {
         if(new URLSearchParams(frame.location.search).get('demo')==='1')return;
@@ -88,5 +95,5 @@
       },
     };
   }
-  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink, taskIdFrom };
+  root.GatherNavigation = { create, scheduleDateFrom, scheduleLink, taskLinkFrom };
 })(typeof window !== 'undefined' ? window : globalThis);

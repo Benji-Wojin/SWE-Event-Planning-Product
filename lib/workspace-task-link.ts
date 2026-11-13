@@ -4,11 +4,17 @@ export function workspaceTaskId(value: unknown): string {
   return typeof value==='string'&&taskIdPattern.test(value)?value:'';
 }
 
-export function planTaskHref(params: URLSearchParams, id: string, guided = false): string {
+export function workspaceTaskReview(value: unknown) {
+  return value==='completion'||value==='amendment'?value:'';
+}
+
+export function planTaskHref(params: URLSearchParams, id: string, guided = false, review = ''): string {
   const task=workspaceTaskId(id);
   if(!task)return '';
   const demo=params.get('demo')==='1';
   const query=new URLSearchParams(demo?{as:'jack',task}:{project:params.get('project')||'main',task});
   if(!demo&&guided)query.set('guide','1');
+  const focus=workspaceTaskReview(review);
+  if(!demo&&focus)query.set('review',focus);
   return (demo?'/demo?':'/project?')+query;
 }

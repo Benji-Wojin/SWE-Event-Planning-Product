@@ -60,19 +60,39 @@ test('day links only carry project and a valid date; the frame keeps the selecte
   assert.equal(demo.writes.length,0);
 });
 test('a receipt hint is consumed once without erasing project, guide or schedule date',()=>{
-  const host=surface('https://weft.example/project?project=school&guide=1&day=2028-02-29&task=task-current#timeline');
-  const frame=surface('https://weft.example/workspace.html?project=school&guide=1&day=2028-02-29&task=task-current#tasks');
+  const host=surface('https://weft.example/project?project=school&guide=1&day=2028-02-29&task=task-current&review=completion#timeline');
+  const frame=surface('https://weft.example/workspace.html?project=school&guide=1&day=2028-02-29&task=task-current&review=completion#tasks');
   frame.parent=host;
   const nav=GatherNavigation.create(frame);
-  assert.equal(nav.takeInitialTask(),'task-current');
-  assert.equal(nav.takeInitialTask(),'');
+  assert.deepEqual(nav.takeInitialTaskLink(),{id:'task-current',review:'completion'});
+  assert.deepEqual(nav.takeInitialTaskLink(),{id:'',review:''});
   assert.equal(host.location.href,'https://weft.example/project?project=school&guide=1&day=2028-02-29#timeline');
   assert.equal(frame.location.href,'https://weft.example/workspace.html?project=school&guide=1&day=2028-02-29#tasks');
+  assert.equal(host.writes.length,1);assert.equal(frame.writes.length,1);
+  assert.equal(host.writes[0].state,host.history.state);assert.equal(frame.writes[0].state,frame.history.state);
   assert.equal(nav.initialScheduleDate(),'2028-02-29');
-  for(const invalid of ['task=first&task=second','task=%22%3E','task=']){
-    frame.location.search='?project=school&'+invalid;
-    assert.equal(nav.takeInitialTask(),'');
-    assert.equal(frame.location.search,'?project=school');
+});
+test('review hints need a single valid task, a supported kind and a non-demo workspace',()=>{
+  for(const [query,id,review] of [
+    ['task=current','current',''],['task=current&review=amendment','current','amendment'],
+    ['task=current&review=completion&review=completion','current',''],['task=current&review=','current',''],
+    ['task=current&review=help','current',''],['task=current&review=%22%3E','current',''],
+    ['task=first&task=second&review=completion','',''],['task=%22%3E&review=completion','',''],
+    ['task=&review=completion','',''],['review=completion','',''],
+    ['demo=1&as=jack&task=current&review=amendment','current',''],
+  ]){
+    const host=surface('https://weft.example/project?project=school&'+query+'#timeline');
+    const frame=surface('https://weft.example/workspace.html?project=school&'+query+'#tasks');
+    frame.parent=host;
+    const nav=GatherNavigation.create(frame);
+    assert.deepEqual(nav.takeInitialTaskLink(),{id,review},query);
+    assert.deepEqual(nav.takeInitialTaskLink(),{id:'',review:''},query);
+    for(const win of [host,frame]){
+      assert.equal(win.location.searchParams.has('task'),false,query);
+      assert.equal(win.location.searchParams.has('review'),false,query);
+      assert.equal(win.location.searchParams.get('project'),'school',query);
+      assert.equal(win.writes.length,1,query);
+    }
   }
 });
 test('hash changes in either surface reach existing guards, rejection restores both and disposal removes listeners',()=>{

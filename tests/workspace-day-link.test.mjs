@@ -23,12 +23,12 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
     assert.equal(iframe.props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
     const guided=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29'})});
     assert.equal((await guided.type(guided.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29#timeline');
-    const receipt=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29',task:'task-123'})});
+    const receipt=await Project({searchParams:Promise.resolve({project:'school',guide:'1',day:'2032-02-29',task:'task-123',review:'completion'})});
     globalThis.__signedOut=true;
     await assert.rejects(receipt.type(receipt.props),/sign-in/);
-    assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&day=2032-02-29&task=task-123');
+    assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&day=2032-02-29&task=task-123&review=completion');
     globalThis.__signedOut=false;
-    assert.equal((await receipt.type(receipt.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29&task=task-123#tasks');
+    assert.equal((await receipt.type(receipt.props)).props.children[1].props.src,'/workspace.html?project=school&guide=1&day=2032-02-29&task=task-123&review=completion#tasks');
     const invalidTask=await Project({searchParams:Promise.resolve({project:'school',day:'2032-02-29',task:['a','b']})});
     assert.equal((await invalidTask.type(invalidTask.props)).props.children[1].props.src,'/workspace.html?project=school&day=2032-02-29#timeline');
     for(const day of ['2030-02-29',['2032-02-29','2032-03-01'],'0000-01-01']){
@@ -41,6 +41,12 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
       const page = await Project({searchParams:Promise.resolve(params)});
       return (await page.type(page.props)).props.children[1].props.src;
     };
+    assert.equal(await landing({project:'school',task:'task-123',review:'amendment'}),'/workspace.html?project=school&task=task-123&review=amendment#tasks');
+    for(const review of ['help','review-blocked',['completion','amendment'],'']){
+      assert.equal(await landing({project:'school',task:'task-123',review}),'/workspace.html?project=school&task=task-123#tasks');
+    }
+    assert.equal(await landing({project:'school',task:['task-123','task-456'],review:'completion'}),'/workspace.html?project=school');
+    assert.equal(await landing({project:'school',review:'completion'}),'/workspace.html?project=school');
     assert.equal(await landing({project:'school',welcome:'1',invite:'not-forwarded'}),'/workspace.html?project=school&welcome=1');
     assert.equal(globalThis.__returnPath,'/project?project=school&welcome=1');
     for (const welcome of [['1'],['1','1'],'0','true','']) {

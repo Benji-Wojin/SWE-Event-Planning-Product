@@ -143,7 +143,9 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const showHandoff=applied&&!assistant&&!suggestions;
   const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
   function receiptTaskRow({id,title,handoff}: PlanReceiptTask) {
-    const href = planTaskHref(params,id,guideReturn);
+    const state=showHandoff?handoff?.state:undefined;
+    const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':'';
+    const href = planTaskHref(params,id,guideReturn,review);
     return <li key={id} className="break-words">
       {href ? <a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
       {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
