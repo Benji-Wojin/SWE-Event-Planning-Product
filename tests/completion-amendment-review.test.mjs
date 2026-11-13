@@ -51,24 +51,15 @@ test('only the organizer gets an explicit revision-bound review control, separat
   for(const args of [[true,false],[false,false],[true]])assert.doesNotMatch(GatherCompletionUI.section(task,...args),/I reviewed this amendment/);
   const app=readFileSync('legacy/app.js','utf8'),prepare=readFileSync('scripts/prepare.mjs','utf8');
   assert.match(app,/section\(task,own\|\|organizer,organizer[,)]/);
-  assert.match(app,/store\.reviewCompletionEvidence\(id,Number\(el.dataset.revision\),ui.actor\)/);
+  assert.match(app,/await acknowledge\(id,revision,actor\)/);
   assert.match(prepare,/'reviewCompletionEvidence'/);
   assert.match(readFileSync('legacy/hosted-store.js','utf8'),/reviewCompletionEvidence: 2/);
 });
-test('successful acknowledgment discards confirmed drafts, but a rejected save never rebuilds or clears them',async()=>{
+test('completion review rebuild preserves sibling drafts instead of discarding them',()=>{
   const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function taskDialog('),end=source.indexOf('    const expanded=',start);
   let captures=0;const context=vm.createContext({store:{getState:()=>({tasks:[{id:'fictional'}]})},ui:{dialogKind:'task',detailId:'fictional'},taskDrafts(){captures++;return ['unsaved-evidence','unsaved-comment'];},toast(){}});
   vm.runInContext(source.slice(start,end)+'return drafts;}',context);
   assert.deepEqual([...context.taskDialog('fictional','',true)],[]);assert.equal(captures,0);
   assert.deepEqual([...context.taskDialog('fictional')],['unsaved-evidence','unsaved-comment']);assert.equal(captures,1);
-  const line=source.split('\n').find(line=>line.includes("if(action==='review-completion-evidence')"));
-  const handler=line.replace('store.reviewCompletionEvidence(','await store.reviewCompletionEvidence(');
-  let rebuilt=0,rendered=0,notified=0,fail=false;
-  const run=()=>vm.runInNewContext('(async()=>{'+handler+'})()',{
-    action:'review-completion-evidence',id:'fictional',el:{dataset:{revision:'6'}},ui:{actor:'jack'},window:{},isOrganizer:()=>true,
-    store:{async reviewCompletionEvidence(id,revision,actor){assert.equal(id,'fictional');assert.equal(revision,6);assert.equal(actor,'jack');if(fail)throw Error('Stale task');}},
-    render(){rendered++;},taskDialog(id,excluded,discard){assert.equal(discard,true);rebuilt++;},toast(){notified++;}
-  });
-  await run();assert.equal(rebuilt,1);assert.equal(rendered,1);assert.equal(notified,1);
-  fail=true;await assert.rejects(run(),/Stale task/);assert.equal(rebuilt,1);assert.equal(rendered,1);assert.equal(notified,1);
+  assert.match(source,/taskDialog\(id,returning\?control.id:'',false,true/);
 });

@@ -287,6 +287,22 @@ test('a snapshot confirmation is a read-only check and never replaces the displa
   assert.deepEqual(fixture.requests,Array(4).fill('/api/workspace?project=new-project'));
 });
 
+test('reviewed completion writes carry the reviewed task revision but never the local actor argument',async()=>{
+  const writes=[];
+  const fixture=start(options=>{
+    if(options.method==='POST')writes.push(JSON.parse(options.body));
+    return success({...state,revision:1+writes.length,result:'saved'});
+  });
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore();
+  assert.equal(await store.verifyTask('fictional-task','jack',7),'saved');
+  assert.equal(await store.returnCompletion('fictional-task','Confirm the setup.','jack',8),'saved');
+  assert.deepEqual(writes,[
+    {method:'verifyTask',args:['fictional-task',7],revision:1},
+    {method:'returnCompletion',args:['fictional-task','Confirm the setup.',8],revision:2},
+  ]);
+});
+
 function controlledDeadlines() {
   const deadlines=[];
   return { deadlines, abortSignal: { timeout(ms) {

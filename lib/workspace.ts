@@ -143,7 +143,8 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
     typeof method !== 'string' ||
     !Object.hasOwn(arity, method) ||
     !Array.isArray(input.args) ||
-    input.args.length !== arity[method]
+    (input.args.length !== arity[method] &&
+      !(['verifyTask','returnCompletion'].includes(method) && input.args.length === arity[method] + 1))
   )
     throw new HttpError(400, 'Unsupported workspace action.');
   const memberTaskCreation = ['addTask','addLinkedTask'].includes(method) && store.getState().event.membersCanCreateTasks === true;
@@ -153,6 +154,12 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
       'Only the organizer can make this change.',
     );
   const [a, b, c] = input.args;
+  if (['verifyTask','returnCompletion'].includes(method) && input.args.length === arity[method] + 1) {
+    const expected = method === 'verifyTask' ? b : c;
+    if (!Number.isSafeInteger(expected) || expected < 1) throw new HttpError(400, 'Review the completion report before deciding.');
+    if (!store.getState().tasks.some((task: any) => task.id === a && task.revision === expected))
+      throw new HttpError(400, 'The completion report changed. Review the current report before deciding.');
+  }
   if (method === 'acceptTasks') {
     if (!Array.isArray(a) || !a.length || a.length > 100 || a.some(item => !item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !['id', 'revision'].includes(key)) || typeof item.id !== 'string' || !item.id || !Number.isSafeInteger(item.revision) || item.revision < 1) || new Set(a.map(item => item.id)).size !== a.length)
       throw new HttpError(400, 'Choose between 1 and 100 different tasks with their reviewed revisions.');
@@ -260,13 +267,13 @@ export function applyWorkspaceAction(store: any, user: { actorId: string; role: 
         result = store.reportCompletion(a, b, user.actorId);
         break;
       case 'returnCompletion':
-        result = store.returnCompletion(a, b, user.actorId);
+        result = store.returnCompletion(a, b, user.actorId, c);
         break;
       case 'setCompletionEvidence':
         result = store.setCompletionEvidence(a, b, user.actorId);
         break;
       case 'verifyTask':
-        result = store.verifyTask(a, user.actorId);
+        result = store.verifyTask(a, user.actorId, b);
         break;
       case 'reviewCompletionEvidence':
         result = store.reviewCompletionEvidence(a, b, user.actorId);
@@ -334,7 +341,7 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskSchedule', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskSchedule', 'setTaskOutcome', 'verifyTask', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

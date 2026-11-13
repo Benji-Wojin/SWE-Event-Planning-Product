@@ -672,6 +672,7 @@
       if(ownerMail&&received>Date.parse(task.ownerRespondedAt||'1970-01-01'))task.ownerRespondedAt=new Date(received).toISOString();
       if (before) message.before = before;
       if (completionReport && !task.verifiedAt) {
+        if(before&&task.revision===before.revision)task.revision++;
         delete task.scheduleReconfirmation;
         closeRecovery(task,'superseded',actor);
         task.reportedAt = task.updatedAt; task.reportedBy = message.sender;
@@ -786,7 +787,9 @@
       if (!clean(note)) throw new Error('Add a completion note so the organizer knows what happened.');
       if (task.verifiedAt) return copy(task);
       requireResolvedDependencies(task);
+      const priorRevision=task.revision;
       patchTask(task, { status: task.requiresVerification ? 'progress' : 'done', note }, actor);
+      if(task.revision===priorRevision)task.revision++;
       delete task.scheduleReconfirmation;
       closeRecovery(task,'superseded',actor);task.ownerRespondedAt=timestamp();
       task.reportedAt = timestamp(); task.reportedBy = state.members.find(item => item.id === actor).name;
@@ -798,9 +801,11 @@
       if (task.status === 'done') captureCompletion(task, actor, task.reportedBy);
       entry(actor, `reported ${task.title} complete${task.requiresVerification ? '; awaiting organizer verification' : ''}`, task.id, 'reported'); save(); return copy(task);
     }
-    function returnCompletion(taskId, note, actor = 'jack') {
+    function returnCompletion(taskId, note, actor = 'jack', expectedRevision) {
       actorId(actor);if(actor!=='jack')throw new Error('Only the organizer can return a completion report for changes.');
       const task=taskById(taskId),reason=completionEvidence({note}).note;
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||expectedRevision<1||task.revision!==expectedRevision))
+        throw new Error('The completion report changed. Review the current report before deciding.');
       if(!reason)throw new Error('Explain what needs changing before returning this completion report.');
       if(task.status==='done'||!task.requiresVerification||!task.reportedAt||task.verifiedAt||Number.isNaN(Date.parse(task.reportedAt)))throw new Error('There is no pending completion report to return.');
       const at=timestamp(),reportedAt=task.reportedAt,reportedBy=task.reportedBy;
@@ -819,9 +824,12 @@
       // A review decision is not an owner progress update or a completion.
       save(true,false);return copy(task);
     }
-    function verifyTask(taskId, actor = 'jack') {
+    function verifyTask(taskId, actor = 'jack', expectedRevision) {
       actorId(actor); if (actor !== 'jack') throw new Error('Only the organizer can verify completion in this demo.');
-      const task = taskById(taskId); if (!task.reportedAt) throw new Error('There is no completion report to verify.');
+      const task = taskById(taskId);
+      if(expectedRevision!==undefined&&(!Number.isSafeInteger(expectedRevision)||expectedRevision<1||task.revision!==expectedRevision))
+        throw new Error('The completion report changed. Review the current report before deciding.');
+      if (!task.reportedAt) throw new Error('There is no completion report to verify.');
       if (task.verifiedAt) return copy(task);
       requireResolvedDependencies(task);
       const report = { reportedAt: task.reportedAt, reportedBy: task.reportedBy };

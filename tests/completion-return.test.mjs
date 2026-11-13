@@ -150,7 +150,7 @@ test('legacy reports without evidence retain a bounded excerpt plus full report 
 });
 test('changes-request UI is escaped and source exposes one explicit reasoned organizer action',()=>{
   const html=GatherCompletionUI.section({status:'progress',completionReview:{note:'<script>untrusted</script>',at:new Date().toISOString()},completionEvidenceHistory:[]},false);assert.doesNotMatch(html,/<script>/);assert.match(html,/&lt;script&gt;/);assert.match(html,/Nothing was verified/);
-  const source=readFileSync('legacy/app.js','utf8');assert.match(source,/What needs changing\?/);assert.match(source,/Return completion for changes/);assert.match(source,/store\.returnCompletion\(form.dataset.id,data.note,ui.actor\)/);assert.match(source,/No email is sent/);
+  const source=readFileSync('legacy/app.js','utf8');assert.match(source,/What needs changing\?/);assert.match(source,/Return completion for changes/);assert.match(source,/await sendBack\(id,note,actor,revision\)/);assert.match(source,/No email is sent/);
   for(const path of ['legacy/hosted-store.js','scripts/prepare.mjs'])assert.match(readFileSync(path,'utf8'),/'returnCompletion'/);
 });
 test('malformed persisted review decisions fail closed without replacing saved workspace bytes',()=>{

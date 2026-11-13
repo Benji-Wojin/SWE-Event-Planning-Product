@@ -289,8 +289,11 @@
       (method) =>
         (store[method] = (...args) => {
           mutationGeneration++;
+          // The optional reviewed revision follows the local-only actor argument.
+          const reviewedRevision=method==='verifyTask'?args[2]:method==='returnCompletion'?args[3]:undefined;
           args = args.slice(0, count[method]);
           while (args.length < count[method]) args.push(null);
+          if(reviewedRevision!==undefined)args.push(reviewedRevision);
           const revision = snapshot.revision;
           const next = queue.then(async () => {
             const response = await request({ method, args, revision },method==='addRelatedTasks'?AbortSignal.timeout(15000):undefined);

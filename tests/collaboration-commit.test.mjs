@@ -563,13 +563,30 @@ test('completion return is organizer-only, preserves evidence/outcome and permit
     const verified=(await save(project,organizer,'verifyTask',[task.id])).result;assert.equal(verified.status,'done');assert.equal(verified.verifiedBy,'jack');assert.ok(verified.reportedBy);assert.equal(verified.completionEvidenceHistory.length,1);assert.ok(verified.comments.some(comment=>comment.kind==='completion-returned'));
   }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
-test('completion return loses organizer authority at commit even if old organizer retains member access',async()=>{
+test('verify and return reject a replaced report even with the current workspace revision',async()=>{
+  const {project,actor}=await setup();
+  try{
+    const task=(await save(project,organizer,'addTask',[{title:'Fictional check-in report',owner:actor,requiresVerification:true}])).result;
+    const report=(await save(project,teammate,'reportCompletion',[task.id,{note:'The desk is ready.',links:['https://example.com/first']}])).result;
+    const current=(await save(project,teammate,'reportCompletion',[task.id,{note:'The desk is ready.',links:['https://example.com/updated']}])).result;
+    assert.ok(current.revision>report.revision);
+    const baseline=stored(project);
+    assert.equal((await mutate(project,organizer,'verifyTask',[task.id,report.revision],baseline.revision)).status,400);
+    assert.equal((await mutate(project,organizer,'returnCompletion',[task.id,'Review this draft.',report.revision],baseline.revision)).status,400);
+    assert.deepEqual(stored(project),baseline);
+    const verified=(await save(project,organizer,'verifyTask',[task.id,current.revision])).result;
+    assert.ok(verified.verifiedAt);
+    assert.deepEqual(verified.completionEvidence.links,['https://example.com/updated']);
+  }finally{sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+});
+for(const method of ['verifyTask','returnCompletion'])test(method+' loses organizer authority at commit even if old organizer retains member access',async()=>{
   const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Corporate report review',owner:actor,requiresVerification:true}])).result;
   await save(project,teammate,'reportCompletion',[task.id,'Fictional work reported.']);
   sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)').run('return-old-owner-'+project,project,organizer.userId,'jack','fictional',new Date().toISOString());
   const baseline=stored(project);let intercepted=false;
   beforeRun=(sql,args)=>{if(isCommit(project,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,project);}};
-  try{assert.equal((await mutate(project,organizer,'returnCompletion',[task.id,'Needs another check.'],baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
+  const args=method==='verifyTask'?[task.id]:[task.id,'Needs another check.'];
+  try{assert.equal((await mutate(project,organizer,method,args,baseline.revision)).status,409);assert.ok(intercepted);assert.deepEqual(stored(project),baseline);}finally{beforeRun=undefined;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);}
 });
 for(const winnerMethod of ['verifyTask','returnCompletion'])test('overlapping verify/return retains only the '+winnerMethod+' decision',async()=>{
   const {project,actor}=await setup(),task=(await save(project,organizer,'addTask',[{title:'Fictional event review race',owner:actor,requiresVerification:true}])).result;

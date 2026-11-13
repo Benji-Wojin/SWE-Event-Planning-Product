@@ -122,7 +122,7 @@
         : '')
     );
   }
-  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false}={}) {
+  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false,workspaceRevision}={}) {
     const review=task.status!=='done'&&!task.reportedAt?task.completionReview:null;
     if (
       task.status !== 'done' &&
@@ -150,7 +150,8 @@
           '</p></div>'
         : review?'<p class="muted">No current completion report. Earlier submissions are retained below.</p>':'<p class="muted">No file or link attached.</p>') +
       (organizer && task.status==='done' && value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
-        ? '<div class="completion-amendment-review"><p class="muted">Record review of this submission only. This does not reverify the task or check whether linked files are available.</p><button type="button" class="btn btn-secondary" data-action="review-completion-evidence" data-id="'+h(task.id)+'" data-revision="'+h(task.revision)+'">I reviewed this amendment</button></div>'
+        ? '<div class="completion-amendment-review"><p class="muted">Record review of this submission only. This does not reverify the task or check whether linked files are available.</p><button type="button" class="btn btn-secondary" data-action="review-completion-evidence" data-id="'+h(task.id)+'" data-revision="'+h(task.revision)+'"'+
+          (Number.isSafeInteger(workspaceRevision)?' data-workspace-revision="'+workspaceRevision+'"':'')+'>I reviewed this amendment</button></div>'
         : '') +
       (canEdit && (task.status === 'done' || task.reportedAt)
         ? '<details class="completion-edit"><summary>Edit submission</summary><form id="completionEvidenceForm" data-id="' +

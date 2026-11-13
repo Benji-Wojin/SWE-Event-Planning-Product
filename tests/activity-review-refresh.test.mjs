@@ -47,7 +47,7 @@ function fixture() {
       '#activityReviewRefreshStatus': status, '[data-action="refresh-activity-review"]': button,
       '#activityReviewRefresh': button, '#dialogStaleNotice': {},
     })[selector] ?? root?.controls?.get(selector) ?? controls.get(selector) ?? null,
-    $$: () => [],
+    $$: selector => controls.get(selector) || [],
     hasUnsavedFields: () => !!draft,
     workspaceUpdatesPending: () => !sync.hidden,
     acceptanceReviewPending: button => button?.dataset?.reviewNeedsRefresh==='true'||!sync.hidden,
@@ -247,4 +247,28 @@ test('a stale assignment opened in Shared tasks refreshes to the schedule change
   f.flush();
   assert.deepEqual(f.calls.filter(([kind])=>kind==='focus'),[['focus','schedule change']]);
   assert.match(f.calls.find(([kind])=>kind==='toast')[1],/before accepting/);
+});
+
+test('Wrap up completion refresh keeps a return note and focuses the current evidence after a clean read', async()=>{
+  const f=load();
+  f.ui.view='memory';
+  f.ui.overlapComparison=null;
+  f.sync.hidden=true;
+  f.controls.set('[data-action="verify-task"],[data-action="review-completion-evidence"],#returnCompletionForm',
+    [{dataset:{reviewNeedsRefresh:'true'}}]);
+  f.controls.set('.completion-evidence h3',{name:'current evidence'});
+  f.draft='Fictional unsent return reason';
+  await f.refresh();
+  assert.equal(f.requests.length,0);
+  assert.match(f.status.textContent,/unsaved edits are still here/);
+  assert.equal(f.draft,'Fictional unsent return reason');
+  f.draft='';
+  const pending=f.refresh();
+  assert.equal(f.requests.length,1);
+  assert.match(f.status.textContent,/Refreshing completion review/);
+  f.requests[0].finish();
+  await pending;
+  f.flush();
+  assert.deepEqual(f.calls.filter(([kind])=>kind==='focus'),[['focus','current evidence']]);
+  assert.match(f.calls.find(([kind])=>kind==='toast')[1],/Review the current report before deciding/);
 });
