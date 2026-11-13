@@ -62,7 +62,7 @@ function fixture() {
   const events = [], frames = [];
   const document = { activeElement: null }, window = { GatherMode: { projectId: 'fictional' } }, backdrop = { hidden: true };
   const ui = { actor: 'maya', wrapMine: false, view: 'memory', detailId: '', dialogKind: '' };
-  const root = node('view'), dialog = node('dialog'), changes = node('changes heading');
+  const root = node('view'), dialog = node('dialog'), changes = node('changes heading'), relationships=node('relationships heading');
   function node(name, dataset = {}, props = {}) {
     return { name, dataset, children: [], isConnected: true, open: false, ...props,
       append(...nodes) { for (const child of nodes) { child.parentElement = this; this.children.push(child); } return this; },
@@ -90,18 +90,19 @@ function fixture() {
   const $$ = (selector, parent = root) => parent.children.flatMap(function walk(child) { return [child, ...child.children.flatMap(walk)]; }).filter(el => el.matches(selector));
   const context = vm.createContext({ ui, window, document, GatherWrapUp, GatherPriorities, $$,
     $: (selector, parent = root) => ({ '#viewRoot': root, '#dialogBackdrop': backdrop, '#dialog': dialog, '#dialogTitle': title })[selector] ??
-      (selector.includes('Completion changes requested') ? changes : $$(selector, parent)[0] ?? null),
+      (selector.includes('Completion changes requested') ? changes : selector==='.task-dependencies h3'?relationships:$$(selector, parent)[0] ?? null),
     hiddenByClosedDisclosure: () => false, workspaceUpdatesPending: () => false,
     focusScheduleTarget: target => { target.focus(); return true; },
     focusTaskDialogControl: target => target?.focus(),
     requestAnimationFrame: callback => frames.push(callback), isOrganizer: () => organizer, store: { getState: () => snapshot },
-    taskDialog(...args) { events.push(['task', ...args]); ui.detailId = args[0]; ui.dialogKind = 'task'; backdrop.hidden = false; },
+    taskDialog(...args) { events.push(['task', ...args]); ui.detailId = args[0]; ui.dialogKind = 'task'; backdrop.hidden = false; document.activeElement=title; },
+    focusTaskOwnerEditor:id=>events.push(['owner focus',id]),
     openOrganizerReview(...args) { events.push(['organizer review', ...args]); return false; },
     render() { events.push(['render']); }, toast: message => events.push(['toast', message]),
   });
   vm.runInContext(fragment('  function sameWrapReview(', '  function restoreViewFocus('), context);
   vm.runInContext(fragment('  function openWrapReviewTask(', '  function focusTaskDialogControl('), context);
-  return { context, root, ui, window, events, panel, group, button,
+  return { context, root, ui, window, document, events, panel, group, button,
     set snapshot(value) { snapshot = value; }, set organizer(value) { organizer = value; },
     replaceHeading() { title = {}; },
     mount(next) { root.children = []; root.append(next); },
@@ -110,7 +111,7 @@ function fixture() {
 }
 
 test('returning prefers the exact attention source and falls back to the same task’s ordinary group', () => {
-  for (const sourceKind of ['returned', 'amendment', '']) {
+  for (const sourceKind of ['returned', 'amendment', 'owner-gap', 'linked-results', '']) {
     for (const survives of [true, false]) {
       const f = fixture();
       const old = f.button('old', 'task', sourceKind, sourceKind);
@@ -127,6 +128,30 @@ test('returning prefers the exact attention source and falls back to the same ta
       assert.deepEqual(f.events, [['focus', exact ? 'exact attention source' : 'ordinary same task']]);
       assert.equal(currentGroup.open, !exact);
     }
+  }
+});
+
+test('open-work shortcuts enter read-only and recheck the exact current focus intent',()=>{
+  const id='open-task',required=task('prerequisite',{status:'done'});
+  for(const [kind,row,organizer,late,expected] of [
+    ['owner-gap',task(id,{owner:''}),true,'',['owner focus',id]],
+    ['owner-gap',task(id,{owner:''}),false,'',null],
+    ['owner-gap',task(id,{owner:''}),true,'assigned',null],
+    ['linked-results',task(id,{status:'blocked',dependencies:[{taskId:required.id}]}),false,'',['focus','relationships heading']],
+    ['linked-results',task(id,{status:'blocked',dependencies:[{taskId:required.id}]}),true,'reopened',null],
+    ['linked-results',task(id,{status:'blocked',dependencies:[{taskId:required.id}]}),true,'focus',null],
+  ]){
+    const f=fixture(),opener=f.button('open work',id,kind,kind);
+    f.snapshot=workspace(row,required);f.organizer=organizer;
+    f.mount(f.panel().append(opener));
+    assert.equal(f.context.openWrapReviewTask(id,opener),true);
+    assert.equal(f.events[0][8].readOnly,true);
+    assert.equal(f.ui.lastFocus,opener);
+    if(late==='assigned')f.snapshot=workspace({...row,owner:'maya'},required);
+    if(late==='reopened')f.snapshot=workspace(row,{...required,status:'todo'});
+    if(late==='focus')f.document.activeElement={};
+    f.flush();
+    assert.deepEqual(f.events.slice(1),expected?[expected]:[]);
   }
 });
 

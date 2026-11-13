@@ -295,7 +295,8 @@
       if(group)group.open=true;
       if(!hiddenByClosedDisclosure(row)&&focusScheduleTarget(row))return true;
     }
-    const key=previous.closest('[data-wrap-group]')?.dataset.wrapGroup||(attention==='returned'?'open':attention==='amendment'?'completed':'');
+    const key=previous.closest('[data-wrap-group]')?.dataset.wrapGroup||
+      (['returned','owner-gap','linked-results'].includes(attention)?'open':attention==='amendment'?'completed':'');
     const group=$$('[data-wrap-group]',panel).find(item=>item.dataset.wrapGroup===key);
     const scope=$('[data-action="wrap-up-scope"][aria-pressed="true"]',panel);
     for(const target of [group&&$('summary',group),scope,$('#wrapUpReviewHeading',panel)])
@@ -1015,7 +1016,7 @@
     const mayDraft=canCreateTasks()&&!window.GatherAccessLost;
     const reuse=isOrganizer()&&s.tasks.some(task=>!ui.wrapMine||task.owner===ui.actor)
       ?'<button class="btn btn-secondary" data-action="reuse-checklist">Reuse tasks for another event</button>':'';
-    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-wrap-follow-up">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+(receipt&&!lessonHasReceipt?receiptMarkup:'')+GatherWrapUp.markup(s,{h,organizer:isOrganizer(),scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons" tabindex="-1">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card" data-wrap-lesson-card data-id="${h(m.id)}"><span class="memory-category">${h(m.category||'Team learning')}</span><h3 class="wrap-up-lesson-title" id="${h(wrapLessonHeadingId(m.id))}" data-wrap-lesson="${h(m.id)}" tabindex="-1">${h(m.change)}</h3>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button>${mayDraft&&isActionableLesson(m)?`<button type="button" class="text-button" data-action="draft-lesson-follow-up" data-id="${h(m.id)}" aria-describedby="${h(wrapLessonHeadingId(m.id))}">Draft follow-up task</button>`:''}${lessonHasReceipt&&receipt.lessonId===m.id?receiptMarkup:''}</article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
+    return pageHeading('','Wrap up','Review the task results and decide what comes next.',`${canCreateTasks()?'<button class="btn btn-secondary" data-action="add-wrap-follow-up">Add follow-up task</button>':''}${reuse}<button class="btn btn-primary" data-action="feedback">${icon('plus')} Add lesson</button>`)+(receipt&&!lessonHasReceipt?receiptMarkup:'')+GatherWrapUp.markup(s,{h,organizer:isOrganizer(),demo:!window.GatherMode||window.GatherMode.demo,scope:{mine:ui.wrapMine,actor:ui.actor}})+`<section class="wrap-up-lessons section-gap" aria-labelledby="wrapUpLessons"><h2 class="section-title" id="wrapUpLessons" tabindex="-1">Team lessons for next time</h2><p class="muted">Shared with this project team, regardless of the task filter above. Record what to repeat or improve and when it applies. Retired or unsuccessful lessons are not suggested again. Saving a lesson does not add tasks or send messages.</p><div class="memory-grid section-gap">${s.memories.map(m=>`<article class="memory-card" data-wrap-lesson-card data-id="${h(m.id)}"><span class="memory-category">${h(m.category||'Team learning')}</span><h3 class="wrap-up-lesson-title" id="${h(wrapLessonHeadingId(m.id))}" data-wrap-lesson="${h(m.id)}" tabindex="-1">${h(m.change)}</h3>${m.wentWell?`<p><strong>Keep doing:</strong> ${h(m.wentWell)}</p>`:''}<p><strong>Applies:</strong> ${h(({always:'All events',outdoor:'Outdoor events only',transport:'When transport is needed','same-venue':'At the original venue'})[m.scope])}</p>${m.context?`<p>${h(m.context)}</p>`:''}<p class="chip">${!m.active?'Retired':m.outcome==='helped'?'Previously helped':m.outcome==='did-not-help'?'Did not help · not suggested':'Outcome not evaluated'}</p>${m.outcomeNote?`<p>${h(m.outcomeNote)}</p>`:''}<div class="task-meta">${m.rating?`${m.rating}/5 event rating · `:''}${timeLabel(m.at)}</div><button class="text-button" data-action="edit-memory" data-id="${h(m.id)}">Edit context & outcome ${icon('arrow')}</button>${mayDraft&&isActionableLesson(m)?`<button type="button" class="text-button" data-action="draft-lesson-follow-up" data-id="${h(m.id)}" aria-describedby="${h(wrapLessonHeadingId(m.id))}">Draft follow-up task</button>`:''}${lessonHasReceipt&&receipt.lessonId===m.id?receiptMarkup:''}</article>`).join('')||empty('No lessons saved yet.','')}</div></section>`;
   }
   function currentWrapFollowUp(state=store.getState()) {
     const receipt=ui.wrapFollowUpReceipt;
@@ -1338,15 +1339,32 @@
     if(!task){render();toast('This task is no longer in this review.');return false;}
     const kind=opener.dataset.wrapReviewKind;
     const organizer=isOrganizer();
+    const openWork=kind==='owner-gap'||kind==='linked-results';
     const reviewed=organizer&&['completion','amendment'].includes(kind)&&openOrganizerReview(id,kind,'',true);
-    if(!reviewed)taskDialog(id,'',false,true);
+    if(openWork)taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    else if(!reviewed)taskDialog(id,'',false,true);
     if(ui.dialogKind==='task'&&ui.detailId===id){
       ui.lastFocus=opener;
+      if(openWork)focusWrapOpenWork(id,kind);
       if(!reviewed&&kind==='returned'&&(organizer||task.owner===ui.actor)&&GatherPriorities.changesRequested(task))
         focusTaskRecovery(id,'[aria-label="Completion changes requested"] h4',true);
       return true;
     }
     return false;
+  }
+  function focusWrapOpenWork(id,kind) {
+    const actor=ui.actor,project=window.GatherMode?.projectId,mine=ui.wrapMine;
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||window.GatherAccessLost||ui.view!=='memory'||ui.dialogKind!=='task'||ui.detailId!==id||
+        ui.actor!==actor||window.GatherMode?.projectId!==project||ui.wrapMine!==mine||$('#dialogBackdrop').hidden||
+        $('#dialogTitle',dialog)!==title||document.activeElement!==title||workspaceUpdatesPending())return;
+      const state=store.getState(),task=state.tasks.find(item=>item.id===id);
+      if(!task||(mine&&task.owner!==actor)||GatherWrapUp.openWorkKinds(state,{demo:!window.GatherMode||window.GatherMode.demo}).get(id)!==kind)return;
+      if(kind==='owner-gap'){
+        if(isOrganizer())focusTaskOwnerEditor(id);
+      }else focusTaskDialogControl($('.task-dependencies h3',dialog),dialog);
+    });
   }
   function openBudgetLinkedTask(id,opener) {
     if(ui.view!=='budget'||window.GatherAccessLost||!$('#dialogBackdrop').hidden||
@@ -2874,7 +2892,9 @@
     const fromScheduleReconfirmation=(ui.lastFocus?.dataset?.nextUpOrigin==='schedule-change'&&ui.lastFocus.dataset.id===id)||
       (notificationReview?.id===id&&notificationReview.actor===ui.actor&&notificationReview.project===window.GatherMode?.projectId);
     const fromEventScheduleReview=ui.eventTaskReview?.group==='schedule-reconfirmation'&&ui.eventTaskReview.actor===ui.actor;
-    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview});
+    const fromWrapOpenWork=ui.view==='memory'&&ui.lastFocus?.dataset?.action==='wrap-review-task'&&ui.lastFocus.dataset.id===id&&
+      ['owner-gap','linked-results'].includes(ui.lastFocus.dataset.wrapReviewKind);
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromWrapReceipt||fromWrapOpenWork||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {

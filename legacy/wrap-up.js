@@ -18,10 +18,28 @@
   }
   const returned=task=>task.status!=='done'&&!task.reportedAt&&!!task.completionReview;
   const amended=task=>task.status==='done'&&!!task.verifiedAt&&!!task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt;
-  function markup(state,{h=escape,scope={},organizer=false}={}) {
+  function openWorkKinds(state,{demo=false}={}) {
+    const active=new Set(state.members.filter(member=>member.active!==false&&(demo||!member.role?.includes('· example'))).map(member=>member.id));
+    const byId=new Map(state.tasks.map(task=>[task.id,task]));
+    const result=new Map();
+    for(const task of state.tasks){
+      if(task.archivedAt||task.reportedAt||task.verifiedAt||task.status==='done'||returned(task))continue;
+      if(!task.owner||!active.has(task.owner)){result.set(task.id,'owner-gap');continue;}
+      if(task.status!=='blocked')continue;
+      const required=(task.dependencies||[]).filter(link=>link.kind!=='related');
+      if(required.length&&required.every(link=>{
+        const target=byId.get(link.taskId);
+        return target&&!target.archivedAt&&target.status==='done'&&(!target.requiresVerification||target.verifiedAt);
+      }))result.set(task.id,'linked-results');
+    }
+    return result;
+  }
+  function markup(state,{h=escape,scope={},organizer=false,demo=false}={}) {
     const model=groups(state,scope),count=model.reduce((n,group)=>n+group.tasks.length,0);
     const name=id=>!id?'Unassigned':state.members.find(member=>member.id===id)?.name||'Unavailable owner';
     const owner=task=>name(task.owner)+(state.members.some(member=>member.id===task.owner&&member.active===false)?' · inactive':'');
+    const attentionOwner=(task,kind)=>kind==='owner-gap'&&!demo&&state.members.some(member=>member.id===task.owner&&member.role?.includes('· example'))
+      ?'Unavailable owner':owner(task);
     const attribution=(id,known,unknown)=>!id?unknown:state.members.some(member=>member.id===id)?known+' '+name(id):unknown+' by an unavailable member';
     const completedBy=task=>task.requiresVerification&&task.verifiedAt?attribution(task.verifiedBy,'Verified by','Verification recorded'):attribution(task.completedBy,'Completion recorded by','Completion recorded');
     const facts=(task,key)=>[owner(task),key==='verification'?'Awaiting organizer verification':key==='completed'?completedBy(task):({todo:'To do',progress:'In progress',blocked:'Blocked'})[task.status]||'Status not recognized',amended(task)?'Evidence amended after verification — open to review':returned(task)?'Completion changes requested':'',task.dueDate?'Preparation due '+task.dueDate:''].filter(Boolean).join(' · ');
@@ -36,7 +54,15 @@
       {kind:'amendment',title:'Amended evidence awaiting review',tasks:model[2].tasks.filter(amended),
         copy:()=>organizer?'Review amended evidence. Original verification still stands.':'Awaiting organizer review. Original verification still stands.'},
     ].filter(item=>item.tasks.length);
-    const attention=decisions.length?`<section class="wrap-up-attention" aria-labelledby="wrapUpAttentionHeading"><h3 id="wrapUpAttentionHeading">Completion needs attention</h3><p>These are shortcuts to tasks already counted below.</p>${decisions.map(({kind,title,tasks,copy})=>`<section aria-labelledby="wrap-attention-${kind}"><h4 id="wrap-attention-${kind}">${title} · ${tasks.length}</h4><ul>${tasks.map((task,index)=>{const description=`wrap-attention-${kind}-${index}`;return `<li>${taskButton(task,kind,kind,`wrap-attention-${kind} ${description}`)}<span id="${description}">${h(owner(task))} · ${h(copy(task))}</span></li>`;}).join('')}</ul></section>`).join('')}</section>`:'';
+    const shortcuts=(sections,heading,title)=>sections.length?`<section class="wrap-up-attention" aria-labelledby="${heading}"><h3 id="${heading}">${title}</h3><p>These are shortcuts to tasks already counted below.</p>${sections.map(({kind,title,tasks,copy})=>`<section aria-labelledby="wrap-attention-${kind}"><h4 id="wrap-attention-${kind}">${title} · ${tasks.length}</h4><ul>${tasks.map((task,index)=>{const description=`wrap-attention-${kind}-${index}`;return `<li>${taskButton(task,kind,kind,`wrap-attention-${kind} ${description}`)}<span id="${description}">${h(attentionOwner(task,kind))} · ${h(copy(task))}</span></li>`;}).join('')}</ul></section>`).join('')}</section>`:'';
+    const openKinds=openWorkKinds(state,{demo});
+    const openWork=[
+      {kind:'owner-gap',title:'Needs an active owner',copy:()=>organizer?'Open the task to choose an owner. Assignment does not record acceptance.':'Ask the organizer to assign an active owner.'},
+      {kind:'linked-results',title:'Review linked results',copy:task=>'Required linked work is complete. Review the results and check for other blockers. '+
+        (organizer||task.owner===scope.actor?'This task stays blocked until you resume it or update its status.':'The owner or organizer can decide when to resume.')},
+    ].map(item=>({...item,tasks:model[0].tasks.filter(task=>openKinds.get(task.id)===item.kind)})).filter(item=>item.tasks.length);
+    const attention=shortcuts(decisions,'wrapUpAttentionHeading','Completion needs attention')+
+      shortcuts(openWork,'wrapUpOpenWorkHeading','Open work needs attention');
     return `<section class="panel wrap-up-review" aria-labelledby="wrapUpReviewHeading" data-wrap-review data-wrap-actor="${h(scope.actor||'')}" data-wrap-scope="${scope.mine?'mine':'all'}"><h2 id="wrapUpReviewHeading" tabindex="-1">Review the task results</h2><p>Finish the work that still matters and review completion reports before recording lessons. Passing the event date does not complete a task or close the event.</p><div class="schedule-switch" role="group" aria-label="Task review scope"><button class="filter-tab ${scope.mine?'':'active'}" aria-pressed="${!scope.mine}" data-action="wrap-up-scope" data-id="all">All tasks</button><button class="filter-tab ${scope.mine?'active':''}" aria-pressed="${!!scope.mine}" data-action="wrap-up-scope" data-id="mine">My tasks</button></div><p class="eyebrow">${h(scope.mine?'My task review · '+name(scope.actor):'All task records')}</p><dl class="wrap-up-counts">${model.map(group=>`<div><dt>${h(group.title)}</dt><dd>${group.tasks.length}</dd></div>`).join('')}</dl><p class="muted">${count} ${count===1?'task':'tasks'} in this review. Task counts are not an event-success score.</p>${!count?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is finished.':'No tasks in this plan. A blank task list does not certify that the event is finished.'}</p>`:''}${attention}${model.map(group=>{const open=group.key!=='completed'&&group.tasks.length>0&&group.tasks.length<=10;return `<details class="wrap-up-group" data-wrap-group="${group.key}" data-wrap-default="${open?'open':'closed'}"${open?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${group.tasks.length?`<ul>${group.tasks.map(task=>`<li>${taskButton(task,reviewKind(task,group.key))}<span>${h(facts(task,group.key))}</span></li>`).join('')}</ul>`:'<p class="muted">None recorded in this scope.</p>'}</details>`;}).join('')}<p class="muted">This review covers task records only. Check <button class="text-button" data-view="budget">Budget</button>, <button class="text-button" data-view="info">Event info</button> and <button class="text-button" data-view="details">Private details</button> separately where relevant. Opening a review changes no records and sends no messages.</p></section>`;
   }
   const reuseLimit=24; // Match the private starting plan import.
@@ -87,5 +113,5 @@
       <p id="reuseChecklistCount" role="status" class="muted">0 of ${reuseLimit} selected.</p>
       <label class="field section-gap">Checklist to paste<textarea id="reuseChecklistPreview" rows="7" readonly></textarea></label>`;
   }
-  root.GatherWrapUp={groups,markup,reuseLimit,reusableTitles,reconcileReusableChoices,reusableChecklist,reusableRows,reusablePicker};
+  root.GatherWrapUp={groups,markup,openWorkKinds,reuseLimit,reusableTitles,reconcileReusableChoices,reusableChecklist,reusableRows,reusablePicker};
 })(typeof window!=='undefined'?window:globalThis);

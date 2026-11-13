@@ -73,17 +73,17 @@ test('close-out attention follows a real returned, resubmitted, amended and revi
   const markup=()=>GatherWrapUp.markup(store.getState(),{h,organizer:true,scope:{mine:false,actor:'jack'}});
   const group=()=>GatherWrapUp.groups(store.getState()).find(item=>item.tasks.some(task=>task.id===id)).key;
   store.reportCompletion(id,'PRIVATE initial result.','maya');
-  assert.equal(group(),'verification');assert.doesNotMatch(markup(),/data-wrap-attention=/);
+  assert.equal(group(),'verification');assert.doesNotMatch(markup(),/data-wrap-attention="(?:returned|amendment)"/);
   store.returnCompletion(id,'PRIVATE reason for returning.','jack');
   assert.equal(group(),'open');assert.match(markup(),/data-wrap-attention="returned"/);assert.doesNotMatch(markup(),/PRIVATE/);
   store.reportCompletion(id,'PRIVATE revised result.','maya');
-  assert.equal(group(),'verification');assert.doesNotMatch(markup(),/data-wrap-attention=/);
+  assert.equal(group(),'verification');assert.doesNotMatch(markup(),/data-wrap-attention="(?:returned|amendment)"/);
   const verified=store.verifyTask(id,'jack');
   const amended=store.setCompletionEvidence(id,{note:'PRIVATE amended evidence.'},'maya');
   assert.equal(group(),'completed');assert.match(markup(),/data-wrap-attention="amendment"/);assert.doesNotMatch(markup(),/PRIVATE/);
   const reviewed=store.reviewCompletionEvidence(id,amended.revision,'jack');
   assert.equal(reviewed.verifiedAt,verified.verifiedAt);
-  assert.equal(group(),'completed');assert.doesNotMatch(markup(),/data-wrap-attention=/);
+  assert.equal(group(),'completed');assert.doesNotMatch(markup(),/data-wrap-attention="(?:returned|amendment)"/);
 });
 test('empty plans stay explicit, and no event rating is selected on the lesson form',()=>{
   const html=GatherWrapUp.markup(state([]),{h});assert.match(html,/No tasks in this plan/);assert.match(html,/does not certify/);
