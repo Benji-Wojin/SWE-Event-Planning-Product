@@ -351,7 +351,9 @@
     message.textContent=error.message||'Please check the form and try again.';
   }
   function hasUnsavedFields(root,exclude=[]) {
-    return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||$$('input,textarea,select',root).some(input=>{
+    return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||
+      root.dataset?.budgetUnconfirmed==='true'||root.dataset?.budgetRecoveryDraft==='true'||
+      !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"]')||$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'&&input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')return input.checked;
       if(input.type==='checkbox'||input.type==='radio')return input.checked!==input.defaultChecked;
@@ -367,6 +369,8 @@
     return !!(ui.acceptanceReturn?.selected.length&&ui.acceptanceReturn.actor===ui.actor);
   }
   function confirmCloseDialog() {
+    if($('#budgetForm')?.dataset?.budgetUnconfirmed==='true')
+      return window.confirm('Close without confirming this Budget change? Your original change may have saved. Check Recent budget changes before entering it again.');
     if(hasAcceptanceReturnDraft())
       return window.confirm('Close the assignment review and discard your selections and any unsaved task edits?');
     return confirmDiscard($('#dialog'));

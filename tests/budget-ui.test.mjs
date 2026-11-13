@@ -7,11 +7,11 @@ import '../legacy/budget.js';
 async function harness(admin = true) {
   const budget = GatherBudget.initial(),
     requests = [];
-  let snapshot = { revision: 1, identity: { admin }, budget },
+  let snapshot = { revision: 1, identity: { admin, actor: 'organizer' }, budget },
     form,
     formMarkup,
     workspace = { tasks: [], members: [] },
-    fail = 0, failRead = false, loads = 0,
+    fail = null, failRead = false, loads = 0,
     closed = 0,
     poll,
     renders = 0,
@@ -48,7 +48,10 @@ async function harness(admin = true) {
     document: {
       hidden: false,
       getElementById: () => form,
-      createElement: () => ({ addEventListener() {} }),
+      createElement: () => ({
+        addEventListener(name, fn) { this[name] = fn; },
+        setAttribute(name, value) { this[name] = value; },
+      }),
     },
     URLSearchParams,
     AbortController,
@@ -68,13 +71,15 @@ async function harness(admin = true) {
       const data = JSON.parse(options.body);
       requests.push(data);
       if (fail) {
-        fail--;
+        const failure=fail;
+        fail=null;
         return {
-          ok: false,
-          status: 503,
-          json: async () => ({ error: 'Retry this save.' }),
+          ok: failure === 'bad-success',
+          status: failure === 'bad-success' ? 200 : failure,
+          json: async () => failure === 'bad-success' ? {revision: snapshot.revision + 1} : {error:'Request failed.'},
         };
       }
+      snapshot = { ...snapshot, revision: snapshot.revision + 1 };
       return { ok: true, json: async () => structuredClone(snapshot) };
     },
   });
@@ -89,8 +94,17 @@ async function harness(admin = true) {
     },
     openDialog(_title, markup) {
       formMarkup = markup;
-      const error = { textContent: '', append() {} },
-        close = { addEventListener() {} };
+      const error = {
+        children: [],
+        set textContent(value) { this.message=value; this.children=[]; },
+        get textContent() { return this.message; },
+        append(child) { this.children.push(child); },
+        focus() {},
+      }, close = { addEventListener() {} };
+      const archive = {
+        addEventListener(name, fn) { this[name]=fn; },
+        setAttribute(name, value) { this[name]=value; },
+      };
       form = {
         dataset: {},
         values: {},
@@ -100,7 +114,8 @@ async function harness(admin = true) {
             ? error
             : selector === '[data-budget-close]'
               ? close
-              : null,
+              : selector === '[data-budget-archive]' && markup.includes('data-budget-archive') ? archive : null,
+        error,
         closest: () => form,
         addEventListener(event, fn) {
           this.listeners[event] = fn;
@@ -149,8 +164,8 @@ async function harness(admin = true) {
     setWorkspace(value) {
       workspace = value;
     },
-    failOnce() {
-      fail = 1;
+    failOnce(failure=503) {
+      fail = failure;
     },
     get form() {
       return form;
@@ -160,6 +175,13 @@ async function harness(admin = true) {
     },
     get closed() {
       return closed;
+    },
+    async retryOriginal() {
+      await form.error.children.find(button=>button['data-budget-retry-original'] === '').click();
+    },
+    async archive() {
+      const control=form.querySelector('[data-budget-archive]');
+      await control.click({preventDefault(){},stopPropagation(){},currentTarget:control});
     },
     async submit(values) {
       form.values = Object.fromEntries(
@@ -203,6 +225,55 @@ test('settings serialize checked values before disabling controls; retry retains
   });
   assert.equal(h.requests[0].requestId, h.requests[1].requestId);
   assert.equal(h.closed, 1);
+});
+test('a malformed success pins the original settings and never submits changed values', async () => {
+  const h = await harness();
+  h.click('data-budget-settings');
+  h.failOnce('bad-success');
+  const original={enabled:'on',currency:'USD',target:'500'};
+  await h.submit(original);
+  assert.equal(h.form.dataset.budgetUnconfirmed, 'true');
+  await h.submit({...original,target:'750'});
+  assert.equal(h.requests.length,1);
+  await h.retryOriginal();
+  assert.deepEqual(h.requests,[h.requests[0],h.requests[0]]);
+  assert.equal(h.form.values.target.value,'750');
+  assert.match(h.form.error.textContent,/original change saved.*newer edits were not saved/i);
+  assert.equal(h.closed,0);
+  await h.submit({...original,target:'750'});
+  assert.equal(h.requests.length,2);
+});
+test('an unconfirmed new cost cannot be duplicated by saving newer fields', async () => {
+  const h = await harness();
+  h.enable();
+  await setImmediate();
+  h.click('data-budget-add');
+  const original={title:'Fictional deposit',estimate:'40.00'};
+  h.failOnce();
+  await h.submit(original);
+  await h.submit({...original,estimate:'80.00'});
+  assert.equal(h.requests.length,1);
+  await h.retryOriginal();
+  assert.deepEqual(h.requests,[h.requests[0],h.requests[0]]);
+  await h.submit({...original,estimate:'80.00'});
+  assert.equal(h.requests.length,2);
+  assert.equal(h.form.values.estimate.value,'80.00');
+  assert.equal(h.closed,0);
+});
+test('an uncertain archive keeps the original archive body instead of submitting edited amounts', async () => {
+  const h=await harness();
+  h.setBudget({items:[{title:'Fictional venue',estimate:4000,committed:null,paid:null,id:'venue',owner:'',taskId:'',dueDate:'',status:'active'}]});
+  await h.poll();
+  h.click('data-budget-edit','venue');
+  h.failOnce();
+  await h.archive();
+  assert.deepEqual(h.requests.map(row=>[row.action,row.id,row.archived]),[['budgetArchive','venue',true]]);
+  await h.submit({title:'New venue label'});
+  assert.equal(h.requests.length,1);
+  await h.retryOriginal();
+  assert.deepEqual(h.requests,[h.requests[0],h.requests[0]]);
+  assert.equal(h.form.values.title.value,'New venue label');
+  assert.equal(h.closed,0);
 });
 test('Add cost sends form amounts and task fields, not an empty disabled-control form', async () => {
   const h = await harness();

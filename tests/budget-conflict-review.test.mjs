@@ -68,13 +68,13 @@ function element(attrs = {}) {
   };
 }
 
-async function harness({ confirm = () => true } = {}) {
+async function harness({ confirm = () => true, demo=false } = {}) {
   const requests = [], notices = [];
   const host = element({ innerHTML: '', contains: () => false, querySelector: () => null, querySelectorAll: () => [] });
   const initialBudget = { ...B.initial(), enabled: true, items: [opening] };
   let response = { revision: 7, identity: { admin: true, actor }, budget: initialBudget };
   let form, poll, nextPost = 409, nextRead = 200, closed = 0, releaseRead;
-  const window = { GatherBudget: B, GatherMode: { projectId: 'fictional-event' } };
+  const window = { GatherBudget: B, GatherMode: { projectId: 'fictional-event', demo, actor } };
   const document = { hidden: false, activeElement: null, getElementById: () => form, createElement: tag => element({ tagName: tag.toUpperCase() }) };
   function payload(row) {
     return Object.fromEntries(Object.entries(row).filter(([key]) => ['title','estimate','committed','paid','owner','taskId','dueDate','status'].includes(key))
@@ -119,6 +119,7 @@ async function harness({ confirm = () => true } = {}) {
       requests.push({ method, payload: options.body ? JSON.parse(options.body) : undefined });
       if (method === 'GET' && releaseRead) await releaseRead;
       const status = method === 'POST' ? nextPost : nextRead;
+      if (status === 'network') throw new TypeError('Fixture connection closed before response');
       return { ok: status === 200, status, json: async () => status === 200 ? structuredClone(response) : { error: status === 409 ? 'Budget changed. Reload it.' : 'Fixture cannot read Budget.' } };
     },
   });
@@ -141,8 +142,8 @@ async function harness({ confirm = () => true } = {}) {
   return { requests, notices, window, get form() { return form; }, get closed() { return closed; },
     get posts() { return requests.filter(({ method }) => method === 'POST').map(({ payload }) => payload); },
     get reads() { return requests.filter(({ method }) => method === 'GET').length; },
-    update(row, { revision = 8, currency = 'USD', admin = true, enabled = true, responseActor = actor } = {}) {
-      response = { revision, identity: { admin, actor: responseActor }, budget: { ...initialBudget, currency, enabled, items: row ? [row] : [] } };
+    update(row, { revision = 8, currency = 'USD', admin = true, enabled = true, responseActor = actor, history = [] } = {}) {
+      response = { revision, identity: { admin, actor: responseActor }, budget: { ...initialBudget, currency, enabled, items: row ? [row] : [], history } };
     },
     set nextPost(value) { nextPost = value; },
     set nextRead(value) { nextRead = value; },
@@ -173,6 +174,10 @@ async function harness({ confirm = () => true } = {}) {
 const check = '[data-budget-check-current]';
 const adopt = '[data-budget-adopt-current]';
 const apply = '[data-budget-apply-choices]';
+const retryOriginal = '[data-budget-retry-original]';
+const checkOriginal = '[data-budget-check-original]';
+const receiptFor = (attempt, after, changes = {}) => ({ id: attempt.requestId, action: attempt.action, actor, name: 'Fictional organizer',
+  at: '2026-11-22T16:00:00Z', before: opening, after, ...changes });
 
 test('a definitive conflict blocks repeat POST; a disjoint review and explicit adoption preserve draft until explicit Save', async () => {
   const f = await harness();
@@ -200,6 +205,7 @@ test('a definitive conflict blocks repeat POST; a disjoint review and explicit a
   assert.deepEqual(f.values(), { ...before, estimate: '150.00', paid: '0.00' });
   assert.match(f.form.error.textContent, /choose Save/);
   assert.equal(f.closed, 0);
+  f.update(saved({ title: 'My tent rental', estimate: 15000, committed: 14000, paid: 0 }), { revision: 9 });
   f.nextPost = 200;
   await f.submit();
   assert.equal(f.posts.length, 2);
@@ -299,6 +305,7 @@ test('each overlapping cost field needs an explicit choice; applying choices onl
   const combined = { ...before, estimate: '150.00', committed: '170.00' };
   assert.deepEqual(f.values(), combined);
   assert.equal(f.form.submit.getAttribute('aria-disabled'), 'false');
+  f.update(saved({ title: combined.title, estimate: 15000, committed: 17000, paid: 2000 }), { revision: 9 });
   f.nextPost = 200;
   await f.submit();
   assert.deepEqual(f.posts[1].item, combined, 'choice control fields must never enter the save body');
@@ -327,10 +334,13 @@ test('status and amounts are chosen atomically, with other conflicts decided sep
       : { ...before, title: 'Saved tent', status: 'cancelled', estimate: '120.00', committed: '150.00', paid: '20.00' };
     assert.deepEqual(f.values(), expected);
     assert.equal(f.posts.length, 1);
+    f.update(saved({ title: expected.title, status: expected.status, estimate: B.amount(expected.estimate, 'USD'),
+      committed: B.amount(expected.committed, 'USD'), paid: B.amount(expected.paid, 'USD'), dueDate: expected.dueDate }), { revision: 9 });
     f.nextPost = 200;
     await f.submit();
     assert.deepEqual(f.posts[1].item, expected);
     assert.equal(f.posts[1].revision, 8);
+    assert.equal(f.closed, 1);
   }
 });
 
@@ -361,24 +371,223 @@ test('changing a cost draft after choices were shown invalidates previous choice
   assert.equal(f.posts.length, 1);
 });
 
-test('a definitive same-revision conflict uses a fresh key after verification, but an uncertain retry keeps its key', async () => {
+test('an initial definitive same-revision conflict uses a fresh key after verification', async () => {
   const f = await harness();
   f.draft({ paid: '12.00' });
-  f.nextPost = 503;
   await f.submit();
-  assert.equal(f.control(check), undefined);
-  f.nextPost = 409;
-  await f.submit();
-  assert.equal(f.posts[1].requestId, f.posts[0].requestId);
+  assert.equal(f.posts.length, 1);
+  assert.ok(f.control(check));
   f.update(opening, { revision: 7 });
   await f.click(check);
   await f.click(adopt);
   assert.equal(f.form.submit.getAttribute('aria-disabled'), 'false');
   f.nextPost = 200;
   await f.submit();
-  assert.equal(f.posts[2].revision, 7);
-  assert.notEqual(f.posts[2].requestId, f.posts[1].requestId);
-  assert.deepEqual(f.posts[2].item, f.posts[1].item);
+  assert.equal(f.posts[1].revision, 7);
+  assert.notEqual(f.posts[1].requestId, f.posts[0].requestId);
+  assert.deepEqual(f.posts[1].item, f.posts[0].item);
+});
+
+test('uncertain Budget saves pin an exact request across network, 408, 429 and server failures', async () => {
+  for (const status of ['network', 408, 429, 500, 503]) {
+    const f = await harness();
+    f.draft({ title: 'Original tent request', paid: '12.00' });
+    f.nextPost = status;
+    await f.submit();
+    const [original] = f.posts;
+    assert.ok(original.requestId, String(status));
+    assert.ok(f.control(retryOriginal), String(status));
+    assert.equal(f.closed, 0);
+    f.draft({ paid: '25.00' });
+    await f.submit();
+    await f.click('[data-budget-archive]');
+    assert.deepEqual(f.posts, [original], `${status}: no other save or archive while original is uncertain`);
+    assert.equal(f.values().paid, '25.00');
+
+    f.draft({ paid: '12.00' });
+    f.update(saved({ title: 'Original tent request', paid: 1200 }));
+    f.nextPost = 200;
+    await f.submit();
+    assert.deepEqual(f.posts, [original, original], `${status}: exact same retry body, revision and key`);
+    assert.equal(f.closed, 1);
+    assert.equal(f.notices.length, 1);
+  }
+});
+
+test('explicit confirmation retries the original save and never writes newer draft fields', async () => {
+  const f = await harness();
+  f.nextPost = 503;
+  f.draft({ title: 'Original tent request', paid: '12.00' });
+  await f.submit();
+  const [original] = f.posts;
+  f.draft({ title: 'A newer draft title', paid: '25.00' });
+  const newer = f.values();
+  await f.submit();
+  assert.equal(f.posts.length, 1);
+  f.nextPost = 200;
+  f.update(saved({ title: 'Original tent request', paid: 1200 }));
+  await f.click(retryOriginal);
+  assert.deepEqual(f.posts, [original, original]);
+  assert.equal(f.closed, 0);
+  assert.deepEqual(f.values(), newer);
+  assert.doesNotMatch(f.notices.join(' '), /^Budget saved\./, 'the newer input was not saved');
+});
+
+test('checking for the original is GET-only and only a matching history record unlocks the newer cost draft', async () => {
+  const f = await harness();
+  f.nextPost = 503;
+  f.draft({ paid: '12.00' });
+  await f.submit();
+  const [original] = f.posts;
+  const originallySaved = saved({ paid: 1200 });
+  f.draft({ paid: '25.00' });
+  const newer = f.values();
+  for (const history of [[],
+    [receiptFor(original, originallySaved, { id: 'different-request' })],
+    [receiptFor(original, originallySaved, { actor: 'different-actor' })],
+    [receiptFor(original, originallySaved, { action: 'budgetArchive' })],
+    [receiptFor(original, { ...originallySaved, id: 'different-cost' })],
+  ]) {
+    f.update(originallySaved, { history });
+    await f.click(checkOriginal);
+    assert.ok(f.control(retryOriginal), 'no exact receipt: original remains unconfirmed');
+    assert.equal(f.closed, 0);
+    assert.deepEqual(f.values(), newer);
+    await f.submit();
+    assert.deepEqual(f.posts, [original]);
+  }
+  const beforeCheck = f.reads;
+  f.update(originallySaved, { history: [receiptFor(original, originallySaved)] });
+  await f.click(checkOriginal);
+  assert.equal(f.reads, beforeCheck + 1);
+  assert.deepEqual(f.posts, [original]);
+  assert.equal(f.closed, 0);
+  assert.deepEqual(f.values(), newer);
+  assert.equal(f.control(retryOriginal), undefined);
+  assert.ok(f.control(check));
+  await f.submit();
+  assert.deepEqual(f.posts, [original], 'newer input still needs normal review');
+});
+
+test('confirmation compares newer edits against the original saved values, not a later snapshot', async () => {
+  for (const confirmBy of [checkOriginal, retryOriginal]) {
+    const f = await harness();
+    f.nextPost = 503;
+    f.draft({ paid: '12.00' });
+    await f.submit();
+    const [attempt] = f.posts;
+    const originallySaved = saved({ paid: 1200 });
+    const later = saved({ paid: 1800 });
+    f.draft({ paid: '25.00' });
+    f.update(later, { revision: 9, history: [receiptFor(attempt, originallySaved)] });
+    f.nextPost = 200;
+    await f.click(confirmBy);
+    const confirmedCount = confirmBy === retryOriginal ? 2 : 1;
+    assert.equal(f.posts.length, confirmedCount);
+    assert.equal(f.closed, 0);
+    assert.equal(f.values().paid, '25.00');
+    await f.click(check);
+    assert.equal(f.control(adopt), undefined, 'overlap with an intervening payment requires a choice');
+    assert.match(f.form.error.textContent, /same fields: Payment recorded.*\$18\.00/);
+    assert.equal(f.choices('paid').length, 2);
+    assert.equal(f.choices('paid').some(choice => choice.checked), false);
+    await f.submit();
+    assert.equal(f.posts.length, confirmedCount);
+  }
+});
+
+test('an exact GET confirmation closes an unchanged form without another POST', async () => {
+  const f = await harness();
+  f.nextPost = 'network';
+  f.draft({ paid: '12.00' });
+  await f.submit();
+  const [attempt] = f.posts;
+  const after = saved({ paid: 1200 });
+  f.update(after, { history: [receiptFor(attempt, after)] });
+  await f.click(checkOriginal);
+  assert.equal(f.reads, 2);
+  assert.deepEqual(f.posts, [attempt]);
+  assert.equal(f.closed, 1);
+  assert.equal(f.notices.length, 1);
+});
+
+test('a late original confirmation is ignored after Cancel or a project scope change', async () => {
+  for (const interrupt of ['close', 'scope']) {
+    const f = await harness();
+    f.nextPost = 503;
+    f.draft({ paid: '12.00' });
+    await f.submit();
+    const [attempt] = f.posts, form = f.form;
+    const after = saved({ paid: 1200 });
+    f.update(after, { history: [receiptFor(attempt, after)] });
+    let finishRead;
+    f.pendingRead = new Promise(resolve => { finishRead = resolve; });
+    const outstanding = f.click(checkOriginal);
+    const waiting = form.error.textContent;
+    if (interrupt === 'close') await f.click('[data-budget-close]');
+    else f.window.GatherMode.projectId = 'other-fictional-event';
+    finishRead();
+    await outstanding;
+    assert.equal(f.closed, Number(interrupt === 'close'));
+    assert.equal(form.error.textContent, waiting);
+    assert.equal(form.dataset.budgetUnconfirmed, 'true');
+    assert.equal(f.notices.length, 0);
+    assert.deepEqual(f.posts, [attempt]);
+  }
+});
+
+test('a retry conflict after uncertainty does not prove that the original did not save', async () => {
+  const f = await harness();
+  f.nextPost = 503;
+  await f.submit();
+  const [original] = f.posts;
+  f.nextPost = 409;
+  await f.click(retryOriginal);
+  assert.deepEqual(f.posts, [original, original]);
+  assert.ok(f.control(checkOriginal));
+  assert.equal(f.control(check), undefined, 'ordinary rebase does not unlock an unconfirmed write');
+  f.draft({ paid: '25.00' });
+  await f.submit();
+  assert.equal(f.posts.length, 2);
+});
+
+test('the demo can check an unconfirmed write but cannot replay it after a reset', async () => {
+  const f = await harness({demo:true});
+  f.nextPost = 503;
+  await f.submit();
+  assert.equal(f.control(retryOriginal), undefined);
+  assert.ok(f.control(checkOriginal));
+  f.nextPost = 200;
+  await f.submit();
+  await f.click('[data-budget-archive]');
+  await f.click(checkOriginal);
+  assert.equal(f.posts.length, 1);
+  assert.equal(f.reads, 2);
+  assert.match(f.form.error.textContent,/demo may have been reset/);
+});
+
+test('a newer draft equal to the original form defaults still prompts before discarding', async () => {
+  const app = readFileSync('legacy/app.js', 'utf8');
+  const from = app.indexOf('  function hasUnsavedFields('), to = app.indexOf('  function confirmDiscard(', from);
+  const context = vm.createContext({ $$: (_selector, form) => Object.values(form.values) });
+  vm.runInContext(app.slice(from,to),context);
+  const f = await harness({confirm:form=>!context.hasUnsavedFields(form)});
+  f.nextPost = 503;
+  f.draft({paid:'12.00'});
+  await f.submit();
+  f.draft({paid:B.inputAmount(opening.paid,'USD')});
+  const after = saved({paid:1200});
+  f.update(after,{history:[receiptFor(f.posts[0],after)]});
+  await f.click(checkOriginal);
+  assert.equal(f.form.dataset.budgetUnconfirmed,undefined);
+  assert.equal(f.form.dataset.budgetRecoveryDraft,'true');
+  assert.ok(context.hasUnsavedFields(f.form));
+  await f.click('[data-budget-close]');
+  assert.equal(f.closed,0);
+  await f.click(check);
+  await f.click(adopt);
+  assert.equal(f.form.dataset.budgetRecoveryDraft,undefined);
+  assert.ok(context.hasUnsavedFields(f.form),'adoption updates the form defaults');
 });
 
 test('a failed read does not unlock or reset the draft; an outstanding read cannot update a closed form', async () => {

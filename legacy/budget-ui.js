@@ -78,23 +78,26 @@
       );
       return '/api/info?' + params;
     };
-    async function request(data) {
+    async function request(body) {
       const controller = new AbortController(),
         timeout = setTimeout(() => controller.abort(), 15000);
       try {
         const response = await fetch(endpoint(), {
-          method: data ? 'POST' : 'GET',
+          method: body ? 'POST' : 'GET',
           credentials: 'same-origin',
           cache: 'no-store',
           signal: controller.signal,
-          headers: data
+          headers: body
             ? { 'X-Gather-Request': '1', 'Content-Type': 'application/json' }
             : {},
-          body: data ? JSON.stringify(data) : undefined,
+          body,
         });
-        const next = await response.json();
+        const next = await response.json().catch(error => {
+          if (response.ok) throw error;
+          return null;
+        });
         if (!response.ok) {
-          const error = new Error(next.error || 'Budget could not be saved.');
+          const error = new Error(next?.error || 'Budget request failed.');
           error.status = response.status;
           throw error;
         }
@@ -102,7 +105,7 @@
       } catch (error) {
         if (error.name === 'AbortError')
           throw new Error(
-            'The request timed out. Your edits are still here. Retry the same save safely, or close and reload to check whether it saved.',
+            'The Budget request timed out.',
           );
         throw error;
       } finally {
@@ -273,8 +276,8 @@
       }
     }
     function dialog(title, markup, action, fields, cost = null) {
-      let revision = state.revision, opening = cost?.row, blocked = false, checked = null, checking = false;
-      const ids = new Map(), scope = scopeKey(), identity = state.identity.actor;
+      let revision = state.revision, opening = cost?.row, blocked = false, checked = null, checking = false, pending = null;
+      const scope = scopeKey(), identity = state.identity.actor, allowReplay = !root.GatherMode?.demo;
       openDialog(
         title,
         `<form id="budgetForm">${markup}<p class="muted">Shared with project members. Saving only records information; it never moves money.</p><div class="form-error" role="alert" tabindex="-1"></div><div class="form-actions">${fields ? '<button class="btn btn-primary" type="submit">Save</button>' : ''}<button class="btn btn-secondary" type="button" data-budget-close>Cancel</button></div></form>`,
@@ -304,7 +307,7 @@
         button.textContent = text;
         const version = recoveryVersion;
         button.addEventListener('click', () => {
-          if (version === recoveryVersion && button.isConnected !== false) return callback();
+          if (version === recoveryVersion && button.isConnected !== false) return callback(button);
         });
         form.querySelector('.form-error').append(button);
       }
@@ -359,8 +362,8 @@
       }
       function setBlocked(value) {
         blocked=value;
-        const save=form.querySelector('button[type="submit"]');
-        if (save) save.setAttribute('aria-disabled',String(value));
+        for (const selector of ['button[type="submit"]','[data-budget-archive]'])
+          form.querySelector(selector)?.setAttribute('aria-disabled',String(value));
       }
       async function hideUnavailableBudget() {
         state = null;
@@ -486,6 +489,7 @@
         opening = checked.row;
         checked = null;
         setBlocked(false);
+        delete form.dataset.budgetRecoveryDraft;
         render();
         message('Latest saved values loaded. Review this draft, then choose Save to apply it.');
         form.elements.namedItem('title')?.focus();
@@ -493,36 +497,128 @@
       form
         .querySelector('[data-budget-close]')
         .addEventListener('click', () => { if (confirmClose()) closeDialog(); });
+      function draftSignature() {
+        return JSON.stringify([...new FormData(form)].filter(([key])=>!key.startsWith('budget-resolution-')));
+      }
+      function accessChanged(next) {
+        return next?.identity?.admin === false ||
+          (typeof next?.identity?.actor === 'string' && !!next.identity.actor && next.identity.actor !== identity);
+      }
+      function validConfirmation(next, attempt) {
+        return typeof identity==='string' && !!identity && next?.identity?.actor === identity &&
+          next.identity.admin === true && Number.isSafeInteger(next.revision) &&
+          next.revision > attempt.data.revision && Array.isArray(next.budget?.items) && Array.isArray(next.budget.history);
+      }
+      function drawUnconfirmed(prefix='We couldn’t confirm whether your original change saved.') {
+        message(prefix+(allowReplay
+          ? ' Check Budget history first, or retry the exact original change. Retrying may apply the earlier values, not the ones currently in the form.'
+          : ' Check Budget history. Retrying is unavailable here because the demo may have been reset.'));
+        recoveryButton('data-budget-check-original','Check if original saved',checkOriginal);
+        if (allowReplay) recoveryButton('data-budget-retry-original','Retry original change',button=>{
+          if (!live() || !pending || checking || form.dataset.saving) return;
+          return send(pending,button,draftSignature());
+        });
+      }
+      function confirmOriginal(next, attempt, currentDraft, receipt, focusNotice = true) {
+        pending = null;
+        delete form.dataset.budgetUnconfirmed;
+        state = next;
+        render();
+        if (currentDraft === attempt.draft) {
+          closeDialog();
+          toast('Budget saved. No payment was made.');
+          return;
+        }
+        form.dataset.budgetRecoveryDraft = 'true';
+        setBlocked(true);
+        if (cost && attempt.data.action === 'budgetItem' && attempt.data.id === cost.row.id) {
+          // Compare with the confirmed original, not any later write to this cost.
+          opening = receipt?.after || B.item(attempt.data.item,cost.currency);
+          revision = next.revision;
+          checked = null;
+          message('The original change saved. Your newer edits have not been saved. Review the latest cost before saving them.');
+          recoveryButton('data-budget-check-current','Review latest cost',checkCurrent);
+        } else {
+          message('The original change saved. Your newer edits were not saved. Copy anything you want to keep, then close and open the saved Budget entry before making another change.');
+        }
+        if (focusNotice) form.querySelector('.form-error').focus();
+      }
+      async function checkOriginal() {
+        if (!live() || !pending || checking || form.dataset.saving) return;
+        const attempt = pending;
+        checking = true;
+        message('Checking whether the original change saved. This does not save anything.');
+        try {
+          ++ticket;
+          const next = await request();
+          if (!live()) return;
+          if (accessChanged(next)) { await hideUnavailableBudget(); return; }
+          const {action,id} = attempt.data;
+          const receipt = validConfirmation(next,attempt) &&
+            next.budget.history.find(row=>row?.id===attempt.id && row.actor===identity && row.action===action &&
+              (action==='budgetSettings' ? !!row.after :
+                typeof row.after?.id==='string' && !!row.after.id && (!id || row.after.id===id)));
+          if (!receipt) {
+            drawUnconfirmed('No matching save was found in recent Budget history. The original could still have saved.');
+            return;
+          }
+          const notice = form.querySelector('.form-error');
+          confirmOriginal(next,attempt,draftSignature(),receipt,notice === document.activeElement);
+        } catch (error) {
+          if (!live()) return;
+          if ([401,403,404].includes(error.status)) { await hideUnavailableBudget(); return; }
+          drawUnconfirmed('Couldn’t check Budget history. The original save is still unconfirmed.');
+        } finally { checking = false; }
+      }
       async function submit(event, build) {
         event.preventDefault();
         event.stopPropagation();
         if (!live() || form.dataset.saving || checking || blocked) return;
         // Capture successful controls before saveLock disables them.
-        const data = { ...build(), revision },
-          key = JSON.stringify(data);
+        const data = { ...build(), revision }, key = JSON.stringify(data), draft = draftSignature();
+        if (pending) {
+          if (!allowReplay) {
+            drawUnconfirmed();
+            form.querySelector('.form-error').focus();
+            return;
+          }
+          if (pending.key !== key || pending.draft !== draft) {
+            drawUnconfirmed('Your newer edits have not been sent because the original change is still unconfirmed.');
+            form.querySelector('.form-error').focus();
+            return;
+          }
+          return send(pending,event.submitter || event.currentTarget,draft);
+        }
+        const id = crypto.randomUUID();
+        return send({data,key,draft,id,body:JSON.stringify({...data,requestId:id})},event.submitter || event.currentTarget,draft);
+      }
+      async function send(attempt, submitter, currentDraft) {
         form.dataset.saving = 'true';
         const release = saveLock(
           form.closest('#dialog') || form,
-          event.submitter || event.currentTarget,
+          submitter,
         );
-        const errorNode = form.querySelector('.form-error');
-        errorNode.textContent = '';
+        message('');
         try {
-          if (!ids.has(key)) ids.set(key, crypto.randomUUID());
           ++ticket;
-          const next = await request({ ...data, requestId: ids.get(key) });
+          const next = await request(attempt.body);
           if (!live()) return;
-          if (next.identity?.actor !== identity) { await hideUnavailableBudget(); return; }
-          state = next;
-          render();
-          closeDialog();
-          toast('Budget saved. No payment was made.');
+          if (accessChanged(next)) { await hideUnavailableBudget(); return; }
+          if (!validConfirmation(next,attempt)) throw new Error('Incomplete Budget confirmation.');
+          confirmOriginal(next,attempt,currentDraft);
         } catch (error) {
           if (!live()) return;
-          errorNode.textContent = error.message;
+          if ([401,403,404].includes(error.status)) { await hideUnavailableBudget(); return; }
+          if (pending || !error.status || [408,429].includes(error.status) || error.status>=500) {
+            pending = attempt;
+            form.dataset.budgetUnconfirmed = 'true';
+            drawUnconfirmed(error.status===409?'The retry conflicted. The original change is still unconfirmed.':undefined);
+            form.querySelector('.form-error').focus();
+            return;
+          }
+          message(error.message);
           if (error.status === 409) {
-            if (cost && data.action === 'budgetItem') {
-              ids.delete(key); // The server definitively rejected this exact body.
+            if (cost && attempt.data.action === 'budgetItem') {
               setBlocked(true);
               checked = null;
               drawRecovery();
@@ -536,14 +632,7 @@
               closeDialog();
               load();
             });
-            errorNode.append(reload);
-          }
-          if (
-            error.status === 401 ||
-            error.status === 403 ||
-            error.status === 404
-          ) {
-            await hideUnavailableBudget();
+            form.querySelector('.form-error').append(reload);
           }
         } finally {
           delete form.dataset.saving;

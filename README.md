@@ -173,6 +173,8 @@ Budget data uses the existing encrypted, project-scoped `project_info` sidecar, 
 
 If an existing cost changed while you were editing, **Review latest cost** checks the saved values without clearing your draft. Choose which values to keep for conflicting fields, or choose a complete set when status and amounts affect the forecast together. Applying choices updates only the draft. Choose **Save** separately to record it.
 
+If a save can’t be confirmed, **Check if original saved** reads Recent budget changes without writing. In a real project, **Retry original change** resends only the original values with the same request ID. The demo allows a history check only because a reset can replace its Budget. A missing history entry does not prove that a save failed. Newer edits stay in the open editor and aren’t sent with the retry; review the latest cost before saving them. If you close an unconfirmed editor, check Recent budget changes before entering the same cost again.
+
 Opening a linked task from Budget keeps the current active or archived cost view. Closing the task returns to the originating cost, even when another cost links to the same task. If the task link is no longer available, focus returns to the cost heading or the Budget section. Opening the link does not start a Helpful links search.
 
 When the expected total is incomplete, Budget shows how many costs still need an amount in the current and archived lists. Use the review buttons to jump to the first flagged cost in either list. Each flagged cost explains which amount is missing; archived costs still count toward the same total.
