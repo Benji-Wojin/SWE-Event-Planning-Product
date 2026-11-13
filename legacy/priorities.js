@@ -1,6 +1,8 @@
 (function (root) {
   'use strict';
   const labels = { auto: 'Automatic', high: 'High', low: 'Low' };
+  const priorityWeight = priority => priority === 'high' ? 120 : priority === 'low' ? -100 : 0;
+  const personalFactors = new Set(['deadline','essential','dependency','overdue','due','handoff']);
   const resolved = task => Boolean(task && task.status === 'done' && (!task.requiresVerification || task.verifiedAt));
   const awaiting = task => Boolean(task.reportedAt && task.requiresVerification && !task.verifiedAt);
   const changesRequested = task => task.status!=='done'&&!task.reportedAt&&Boolean(task.completionReview);
@@ -81,14 +83,35 @@
     if(!factors.length&&priority!=='high')return null;
     const primary=factors[0]||{key:'priority',label:'High priority',action:'Prioritized by the organizer'};
     return {...primary,priority,factors,overdue:days<0,waiting:waiting.length>0,decision:review,
-      score:factors.reduce((sum,f)=>sum+f.weight,0)+(priority==='high'?120:priority==='low'?-100:0),
+      score:factors.reduce((sum,f)=>sum+f.weight,0)+priorityWeight(priority),
       summary:[priority!=='auto'?labels[priority]+' priority':'',...factors.slice(0,3).map(f=>f.label)].filter(Boolean).join(' · ')};
   }
+  const rankRow=(task,tasks,now,zone)=>({task,info:analyze(task,tasks,now,zone)});
+  const compareDatesAndIds=(a,b)=>(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id));
+  const compareAttention=(a,b)=>(b.info?.score||0)-(a.info?.score||0)||compareDatesAndIds(a,b);
   function rank(tasks,now=new Date(),all=false,zone='UTC') {
-    return tasks.map(task=>({task,info:analyze(task,tasks,now,zone)})).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task)))).sort((a,b)=>
-      (b.info?.score||0)-(a.info?.score||0)||(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id))).map(item=>item.task);
+    return tasks.map(task=>rankRow(task,tasks,now,zone)).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task)))).sort(compareAttention).map(item=>item.task);
   }
   const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
+  function personalNextUp(tasks,actor,now=new Date(),zone='UTC') {
+    const owned=tasks.filter(task=>task.owner===actor&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).sort(compareAttention);
+    const active=[],returned=[],candidates=[];
+    for(const row of owned){
+      const {task}=row;
+      const needsRevision=changesRequested(task);
+      if(needsRevision)returned.push(task);
+      if(!actionable(task,tasks))continue;
+      if(task.nextUpAt)active.push(task);
+      else if(!needsRevision){
+        // Rank the work itself, not organizer-only prompts to follow up.
+        const urgency=row.info?.factors.reduce((weight,factor)=>personalFactors.has(factor.key)?weight+factor.weight:weight,0)||0;
+        candidates.push({...row,score:priorityWeight(task.priority)+urgency});
+      }
+    }
+    const suggested=candidates.sort((a,b)=>b.score-a.score||Number(!!b.task.acceptedAt)-Number(!!a.task.acceptedAt)||compareDatesAndIds(a,b))
+      .slice(0,Math.max(0,3-active.length)).map(row=>row.task);
+    return {active,returned,suggested,hasOwned:owned.length>0};
+  }
   function suggestion(task,state) {
     const waits=unresolved(task,state.tasks).map(link=>state.tasks.find(t=>t.id===link.taskId)).filter(Boolean);
     if(waits.length)return {text:'Follow up on the linked work before asking this owner to finish.',targets:waits};
@@ -101,5 +124,5 @@
     }
     return {text:task.scope?'Check whether the agreed outcome is still achievable.':'Agree on the smallest useful outcome, then a realistic next check-in.',targets:[]};
   }
-  root.GatherPriorities={analyze,rank,labels,decision,pendingRequest,actionable,unresolved,nextUp,suggestion,downstream,changesRequested};
+  root.GatherPriorities={analyze,rank,labels,decision,pendingRequest,actionable,unresolved,nextUp,personalNextUp,suggestion,downstream,changesRequested};
 })(typeof window!=='undefined'?window:globalThis);

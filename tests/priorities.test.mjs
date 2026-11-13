@@ -28,6 +28,17 @@ test('automatic ranking promotes prerequisites and deadlines; related and comple
   assert.equal(info({...prerequisite,status:'done',priority:'high'}),null);
 });
 
+test('personal suggestions protect deadline prerequisites before equally ranked accepted work',()=>{
+  const critical=task('prerequisite',{acceptedAt:'',dueDate:''});
+  const accepted=task('accepted',{dueDate:'2026-09-24'});
+  const urgentDependent=task('deadline',{owner:'dev',hardDeadline:true,dueDate:'2026-09-25',dependencies:[{taskId:critical.id,kind:'dependency'}]});
+  const tasks=[accepted,critical,urgentDependent];
+  const suggested=()=>GatherPriorities.personalNextUp(tasks,'maya',now).suggested.map(t=>t.id);
+  assert.deepEqual(suggested(),['prerequisite','accepted']);
+  urgentDependent.dependencies[0].kind='related';
+  assert.deepEqual(suggested(),['accepted','prerequisite']);
+});
+
 test('completed work disappears; pending verification and ready dependencies remain actionable',()=>{
   const done=task('dietary',{status:'done',requiresVerification:true,reportedAt:now.toISOString()});
   const parent=task('menu',{status:'blocked',dependencies:[{taskId:done.id}]});
