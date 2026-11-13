@@ -1,6 +1,7 @@
 export type PlanReceiptTask = {
   id: string;
   title: string;
+  needsStartTime?: true;
   handoff?: {
     state: 'needs-owner'|'needs-reassignment'|'awaiting-acceptance'|'accepted'|'needs-review'|'review-blocked'|'needs-amendment-review'|'changes-requested'|'complete';
     ownerName?: string;

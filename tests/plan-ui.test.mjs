@@ -805,14 +805,58 @@ test('the plan receipt links only current created tasks in order and reports una
       assert.ok(receipt);
       assert.match(text(receipt),/3 tasks added to the project\. 1 is no longer available/);
       const links=nodes(receipt).filter(node=>node.type==='a');
-      assert.deepEqual(links.slice(0,2).map(node=>[text(node),node.props.href]),[
+      assert.deepEqual(links.filter(node=>node.props.href.startsWith(expected)).map(node=>[text(node),node.props.href]),[
         ['Run volunteer briefing',expected+'task-b'],['Check signage',expected+'task-a'],
       ]);
       assert.ok(links.every(node=>node.props.target===(embedded?'_top':undefined)));
-      if(!embedded)assert.equal(text(links[2]),'View tasks and schedule');
+      if(!embedded)assert.deepEqual(links.filter(node=>node.props.href.includes('#')).map(node=>[text(node),node.props.href]),[
+        ['Open Shared tasks','/project?project=p_school#tasks'],['Open Timeline','/project?project=p_school#timeline'],
+      ]);
       assert.doesNotMatch(text(receipt),/Approve venue|task-missing/);
     }finally{app.dispose();}
   }
+});
+test('the organizer receipt flags untimed activities in place and ignores a regressed refresh',async()=>{
+  const initial=fixture();
+  initial.status='applied';
+  initial.workspaceRevision=15;
+  initial.receipt={taskIds:['one','two','prep']};
+  initial.receiptTasks=[
+    {id:'one',title:'Fictional welcome',needsStartTime:true,handoff:{state:'needs-owner'}},
+    {id:'two',title:'Fictional cleanup',needsStartTime:true,handoff:{state:'accepted'}},
+    {id:'prep',title:'Fictional approvals',handoff:{state:'needs-owner'}},
+  ];
+  let reads=0;
+  const app=harness(context=>{
+    if(context.input||++reads===1)return;
+    const next=copy(context.saved);
+    next.workspaceRevision=reads===2?14:reads===3?16:17;
+    delete next.receiptTasks[0].needsStartTime;
+    if(reads===3)next.receiptTasks[1].needsStartTime=true;
+    else delete next.receiptTasks[1].needsStartTime;
+    context.value=next;
+  },initial,'project=p_school',false,true);
+  const receipt=()=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='plan-receipt-heading');
+  const link=label=>nodes(receipt()).find(node=>node.type==='a'&&text(node)===label);
+  const tagged=()=>nodes(receipt()).filter(node=>node.type==='li'&&text(node).includes('Needs a start time')).map(text);
+  try{
+    await app.start();
+    assert.match(text(receipt()),/2 activities need start times.*before they can appear on the run sheet/);
+    assert.deepEqual(tagged(),['Fictional welcomeUnassigned · choose an ownerNeeds a start time','Fictional cleanupOwner acceptedNeeds a start time']);
+    assert.equal(link('Open Timeline')?.props.href,'/project?project=p_school&guide=1#timeline');
+    assert.equal(link('Open Shared tasks')?.props.href,'/project?project=p_school&guide=1#tasks');
+    assert.equal(nodes(receipt()).filter(node=>node.type==='a'&&node.props.href.includes('&task=')).length,3);
+    await app.click('Refresh task handoff');
+    assert.match(text(app.tree),/Could not confirm the latest handoff/);
+    assert.equal(tagged().length,2);
+    await app.click('Refresh task handoff');
+    assert.match(text(receipt()),/1 activity needs a start time.*before it can appear on the run sheet/);
+    assert.equal(tagged().length,1);
+    await app.click('Refresh task handoff');
+    assert.equal(tagged().length,0);
+    assert.doesNotMatch(text(receipt()),/run sheet/);
+    assert.deepEqual(app.requests,Array.from({length:4},()=>({action:'get'})));
+  }finally{app.dispose();}
 });
 test('only a guided organizer plan keeps the guide on individual receipt task links',async()=>{
   for(const [query,embedded,guided,expected] of [

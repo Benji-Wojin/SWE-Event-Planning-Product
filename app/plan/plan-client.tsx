@@ -162,13 +162,15 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
   const unavailableCount=Math.max(0,addedCount-receiptTasks.length);
   const showHandoff=applied&&!assistant&&!suggestions;
   const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
-  function receiptTaskRow({id,title,handoff}: PlanReceiptTask) {
+  const untimedCount = showHandoff ? receiptTasks.filter(task => task.needsStartTime).length : 0;
+  function receiptTaskRow({id,title,handoff,needsStartTime}: PlanReceiptTask) {
     const state=showHandoff?handoff?.state:undefined;
     const review=state==='needs-amendment-review'?'amendment':state==='needs-review'||state==='review-blocked'?'completion':'';
     const href = planTaskHref(params,id,guideReturn,review);
     return <li key={id} className="break-words">
       {href ? <a href={href} target={embedded?'_top':undefined} className="inline-flex min-h-11 items-center text-primary underline">{title}</a> : title}
       {showHandoff && handoff && <span className="block text-muted-foreground">{handoffLabel(handoff)}</span>}
+      {showHandoff && needsStartTime && <span className="block font-medium">Needs a start time</span>}
     </li>;
   }
   useEffect(()=>{
@@ -422,6 +424,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
         throw new Error(
           'The saved draft changed. Use Reload saved draft to review it; your local edits have not been replaced.',
         );
+      if (applied && (!Number.isSafeInteger(result.workspaceRevision) || result.workspaceRevision < data.workspaceRevision))
+        throw new Error('Could not confirm the latest handoff. Your last loaded task details are still shown. Try again.');
       setData(result);
       request.current = null;
       starterRequest.current = null;
@@ -546,6 +550,14 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
             {addedCount} {addedCount===1?'task':'tasks'} added to the project.
             {unavailableCount>0&&` ${unavailableCount} ${unavailableCount===1?'is':'are'} no longer available.`}
           </p>
+          {untimedCount > 0 && <p className="rounded-lg border p-3 text-sm">
+            <strong>{untimedCount === 1 ? '1 activity needs a start time.' : `${untimedCount} activities need start times.`}</strong>{' '}
+            Set {untimedCount === 1 ? 'its start time' : 'their start times'} in Timeline before {untimedCount === 1 ? 'it can appear' : 'they can appear'} on the run sheet.
+          </p>}
+          {!embedded && <nav aria-label="Plan handoff destinations" className="flex flex-wrap gap-x-4 text-sm">
+            <a href={projectUrl+'#tasks'} className="inline-flex min-h-11 items-center text-primary underline">Open Shared tasks</a>
+            <a href={projectUrl+'#timeline'} className="inline-flex min-h-11 items-center text-primary underline">Open Timeline</a>
+          </nav>}
           {showHandoff ? (
             <div className="space-y-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -562,12 +574,6 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
               ))}
             </div>
           ) : receiptTasks.length > 0 && <ol className="list-decimal space-y-1 ps-5 text-sm">{receiptTasks.map(receiptTaskRow)}</ol>}
-          {!embedded && <a
-            href={projectUrl}
-            className="mt-2 inline-block text-sm text-primary underline"
-          >
-            View tasks and schedule
-          </a>}
         </section>
       )}
       {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} proposalTitles={data.draft?.items?.map((item:ReviewedItem)=>item.title)||[]} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{

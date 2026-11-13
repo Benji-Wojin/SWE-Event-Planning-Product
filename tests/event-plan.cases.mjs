@@ -967,10 +967,34 @@ export async function eventPlanTests({
       assert.equal((await post(project, save(snap))).status, 200);
       snap = await read(project);
       assert.equal(snap.draft.scheduleWarnings.length, 1);
-      assert.equal((await post(project, approval(snap))).status, 200);
+      const approved = await post(project, approval(snap));
+      assert.equal(approved.status, 200, await approved.clone().text());
+      const applied = await approved.json();
       const state = (await (await realRead(project)).json()).state;
       assert.equal(state.tasks.length, 3);
       assert.equal(state.tasks.some(task => !!task.schedule?.start), false);
+      const activity = state.tasks.find(task => task.title === 'Welcome attendees');
+      assert.equal(activity?.eventActivity, true);
+      assert.deepEqual(applied.receiptTasks.filter(task => task.needsStartTime === true).map(task => task.id), [activity.id]);
+      assert.equal(applied.receiptTasks.filter(task => task.id !== activity.id).length, 2);
+      assert.ok(applied.receiptTasks.filter(task => task.id !== activity.id).every(task => !Object.hasOwn(task, 'needsStartTime')));
+
+      async function refreshWithoutWrites() {
+        const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+        const before = workspaceRow(), draftBefore = row(project);
+        const refreshed = await read(project);
+        assert.deepEqual(refreshed.receipt, applied.receipt);
+        assert.deepEqual(workspaceRow(), before, 'receipt refresh must not write the workspace');
+        assert.deepEqual(row(project), draftBefore, 'receipt refresh must not rewrite the private draft');
+        assert.equal(calls.length, 1, 'receipt refresh must not call the provider');
+        return refreshed;
+      }
+      assert.deepEqual((await refreshWithoutWrites()).receiptTasks, applied.receiptTasks);
+      const saved = await change(project, 'setTaskSchedule', [activity.id,
+        { start: '2030-10-04T09:00', end: '2030-10-04T09:30', location: 'Fictional welcome hall' }]);
+      assert.equal(saved.result.schedule.start, '2030-10-04T09:00');
+      const refreshed = await refreshWithoutWrites();
+      assert.deepEqual(refreshed.receiptTasks, applied.receiptTasks.map(({needsStartTime, ...task}) => task));
     });
     await t.test('AI leaves nonexistent and repeated event-local endpoints unscheduled, but keeps valid times across a clock change', async () => {
       const zone = 'America/Los_Angeles';
@@ -1035,7 +1059,9 @@ export async function eventPlanTests({
           assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project), before);
           assert.deepEqual(row(project), draftBefore);
         }
-        assert.equal((await post(project, approval(snap))).status, 200, 'the saved valid draft is still available to approve');
+        const approved = await post(project, approval(snap));
+        assert.equal(approved.status, 200, 'the saved valid draft is still available to approve');
+        assert.ok((await approved.json()).receiptTasks.every(task => !Object.hasOwn(task, 'needsStartTime')));
         const after = (await (await realRead(project)).json()).state.tasks;
         assert.deepEqual(after.find(task => task.title === valid.title).schedule, { start: valid.start, end: valid.end, location: valid.location });
         assert.equal(after.find(task => task.title === 'Existing fictional work').note, 'Keep this unchanged.');

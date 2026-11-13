@@ -191,6 +191,9 @@ async function snapshot(c: Context) {
       const row:PlanReceiptTask={id,title:task.title};
       if(owners){
         const ownerName=owners.get(task.owner);
+        // Match Timeline's unscheduled activity list. Preparation tasks and
+        // completed activities don't need a start time to finish the handoff.
+        if(task.eventActivity===true&&!task.schedule&&!completionStates?.get(id))row.needsStartTime=true;
         const state=task.status==='done'&&task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?'needs-amendment-review'
           :task.status==='done'&&(!task.requiresVerification||task.verifiedAt)?'complete'
           :task.requiresVerification&&(task.reportedAt||task.status==='done')&&!task.verifiedAt
