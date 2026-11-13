@@ -1251,20 +1251,28 @@
       if(help.textContent!==hint)help.textContent=hint;
     }
     $('[data-action="copy-guest-agenda"]')?.setAttribute('aria-disabled',String(!!message||!draft.text||draft.copying));
+    $('[data-action="all-guest-agenda-activities"]')?.setAttribute('aria-disabled',String(!!message||draft.copying));
     return !!message;
   }
-  function guestAgendaDialog() {
+  function guestAgendaDialog(allActivitiesFrom=null) {
     if(!isOrganizer()||window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
-    const state=store.getState(), scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate};
+    const state=store.getState(), scope={mine:allActivitiesFrom?false:ui.scheduleMine,actor:ui.actor,date:allActivitiesFrom?allActivitiesFrom.date:ui.scheduleDate};
     const snapshot=GatherScheduleUI.guestAgendaSnapshot(state,scope);
     const {activities,timeZone}=snapshot;
     if(!activities.length){toast('No scheduled activities in this view. Choose a different day or activity filter.');return;}
-    if(activities.length>80){toast('Choose a day or My activities to review at most 80 activities at a time.');return;}
+    if(activities.length>80){toast(allActivitiesFrom?'All activities has more than 80 entries in this date range. Your draft is unchanged. Choose a narrower date on Timeline to include the whole team.':'Choose a day or My activities to review at most 80 activities at a time.');return;}
     if(!GatherScheduleUI.momentKey(Date.now(),timeZone)){toast('Set the event time zone in Project settings before drafting an agenda.');return;}
+    if(allActivitiesFrom&&!confirmDiscard(allActivitiesFrom.form))return;
     ui.guestAgenda={snapshot,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false,manualCopy:null,copyEpoch:0};
     openDialog('Draft guest agenda',schedule.guestAgendaForm(snapshot,state.event.name),
-      '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="copy-guest-agenda" aria-disabled="true">Copy guest agenda</button>',true,'guest-agenda');
+      '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="copy-guest-agenda" aria-disabled="true">Copy guest agenda</button>',true,'guest-agenda',!!allActivitiesFrom);
     updateGuestAgendaWarning();
+  }
+  function useAllGuestActivities() {
+    const draft=ui.guestAgenda,form=$('#guestAgendaForm');
+    if(ui.dialogKind!=='guest-agenda'||!draft?.snapshot.mine||!form||draft.copying||
+      !isOrganizer()||window.GatherAccessLost||updateGuestAgendaWarning())return;
+    guestAgendaDialog({date:draft.snapshot.date,form});
   }
   function syncGuestAgenda(form) {
     const draft=ui.guestAgenda;
@@ -1556,6 +1564,7 @@
       }
       if(action==='clear-schedule-date'&&!window.GatherAccessLost){ui.scheduleDate='';navigation.replaceScheduleDate('');render();($('#scheduleDate')||$('[data-action="timeline-mode"][data-id="schedule"]'))?.focus();}
       if(action==='draft-guest-agenda')guestAgendaDialog();
+      if(action==='all-guest-agenda-activities')useAllGuestActivities();
       if(action==='copy-guest-agenda')await copyGuestAgenda();
       if(action==='copy-schedule-day'&&!window.GatherAccessLost&&window.GatherMode&&!window.GatherMode.demo){
         const link=GatherNavigation.scheduleLink(location.origin,window.GatherMode.projectId,ui.scheduleDate);

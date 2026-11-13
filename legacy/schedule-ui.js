@@ -17,7 +17,7 @@
     task.schedule.start<day+'T00:00'&&task.schedule.end>day+'T00:00'));
   function guestAgendaSnapshot(state,scope={}) {
     const date=selectedDate(scope);
-    return {date,timeZone:state.event.timeZone,
+    return {date,mine:!!scope.mine,timeZone:state.event.timeZone,
       activities:ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)))
         .map(task=>({title:task.title,start:task.schedule.start,end:task.schedule.end}))};
   }
@@ -402,7 +402,8 @@
     }
     function guestAgendaForm(snapshot,title) {
       return `<p>Choose only the activities guests should see, then review their titles and the preview. Check each title for internal details. Notes, owners, statuses, saved locations, bookings and guest records are not copied. Nothing is saved or sent.</p>
-        <p class="muted">From ${snapshot.date?h(dateLabel(snapshot.date)):'all dates'} in the current activity filter · ${h(snapshot.timeZone)}.</p>
+        <p><strong>${snapshot.mine?'My activities only':'All activities'}</strong> · ${snapshot.date?h(dateLabel(snapshot.date)):'All dates'} · ${h(snapshot.timeZone)}</p>
+        ${snapshot.mine?'<div class="notice"><p>Activities assigned to someone else or with no owner are not listed. If you need them, start a new draft with all activities. This replaces your current draft.</p><button type="button" class="btn btn-secondary" data-action="all-guest-agenda-activities">Start over with all activities</button></div>':''}
         <p id="guestAgendaWarning" class="notice" role="status" hidden></p>
         <form id="guestAgendaForm" class="section-gap">
           <label class="field">Agenda title<input name="agendaTitle" maxlength="180" value="${h(agendaText(title))}"></label>

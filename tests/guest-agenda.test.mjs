@@ -44,6 +44,22 @@ test('agenda form starts with nothing selected and does not prefill any internal
   assert.match(html,/aria-describedby="guestAgendaCopyHelp"/);
 });
 
+test('agenda form identifies the actual source, not just the date',()=>{
+  const button=/<button[^>]+data-action="all-guest-agenda-activities"[^>]*>Start over with all activities<\/button>/;
+  const date=GatherScheduleUI.dateLabel(scope.date);
+  for(const mine of [true,false]){
+    const source=GatherScheduleUI.guestAgendaSnapshot(state,{...scope,mine});
+    const html=schedule.guestAgendaForm(source,state.event.name);
+    assert.equal(source.mine,mine);
+    assert.match(html,mine?/My activities only/:/All activities/);
+    assert.ok(html.includes(date));
+    assert.match(html,/America\/Los_Angeles/);
+    assert.equal(button.test(html),mine);
+    assert.equal(html.includes('OTHER-OWNER'),!mine);
+    assert.doesNotMatch(html,/PRIVATE-|Next day/);
+  }
+});
+
 function agendaHarness(){
   const source=readFileSync('legacy/app.js','utf8');
   const code=source.slice(source.indexOf('  function updateGuestAgendaWarning('),source.indexOf('  function digestDialog('));
@@ -55,10 +71,11 @@ function agendaHarness(){
   const fields=[{},{}],form={elements:{namedItem:key=>field[key]},querySelector:selector=>fields[Number(selector.match(/\d+/)[0])]};
   const preview={value:'',selectionStart:0,selectionEnd:0,isConnected:true,focus(){actions.push('focused');},select(){this.selectionStart=0;this.selectionEnd=this.value.length;actions.push('selected');}};
   const warning={},status={},help={},button={setAttribute(key,value){this[key]=value;}},actions=[],timers=[];
-  const fixture={revision:1,organizer:true,clipboard:true,markup:undefined,duringCopy:undefined,failedRead:false,newer:false,inconclusive:false,reads:0};
+  const fixture={revision:1,organizer:true,clipboard:true,markup:undefined,duringCopy:undefined,failedRead:false,newer:false,inconclusive:false,reads:0,
+    state,confirm:true,prompts:0,opens:0};
   const context=vm.createContext({
     window:{navigator:{onLine:true}},ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:scope.date,actor:'jack'},
-    store:{getState:()=>state,getSnapshotRevision:()=>fixture.revision,async confirmSnapshotRevision(expected,onNewer){
+    store:{getState:()=>fixture.state,getSnapshotRevision:()=>fixture.revision,async confirmSnapshotRevision(expected,onNewer){
       fixture.reads++;
       if(fixture.failedRead)throw Error('Offline');
       if(fixture.newer){onNewer?.(expected+1);return false;}
@@ -66,7 +83,8 @@ function agendaHarness(){
     }},GatherScheduleUI,schedule,isOrganizer:()=>fixture.organizer,
     $:selector=>({'#guestAgendaForm':form,'#guestAgendaText':preview,'#guestAgendaWarning':warning,'#guestAgendaSelectionStatus':status,'#guestAgendaCopyHelp':help,'[data-action="copy-guest-agenda"]':button})[selector],
     setTimeout(callback,delay){timers.push({callback,delay});},
-    openDialog(_title,body,_footer,_wide,kind){fixture.markup=body;context.ui.dialogKind=kind;},
+    openDialog(_title,body,_footer,_wide,kind){fixture.opens++;fixture.markup=body;context.ui.dialogKind=kind;},
+    confirmDiscard(root){assert.equal(root,form);fixture.prompts++;return fixture.confirm;},
     copyText:async value=>{actions.push(value);fixture.duringCopy?.();return fixture.clipboard;},toast:message=>actions.push(message),
   });
   assert.ok(freshness.includes('function rememberNewerSchedule'));
@@ -79,6 +97,69 @@ function agendaHarness(){
   const selectFirst=()=>{field['include-0'].checked=true;context.syncGuestAgenda(form);};
   return {source,context,fixture,field,fields,form,preview,warning,help,button,actions,timers,directCopy,selectFirst};
 }
+
+test('starting over with all guest activities preserves date and leaves Timeline scope and clipboard untouched',()=>{
+  const {source,context,fixture,field,preview,button,actions,selectFirst}=agendaHarness();
+  fixture.state={...state,tasks:[...state.tasks,{id:'unassigned',owner:'',title:'Fictional unassigned activity',
+    schedule:{start:'2030-03-16T10:30',end:'',location:'PRIVATE-UNASSIGNED-LOCATION'}}]};
+  const before=structuredClone(fixture.state);
+  context.guestAgendaDialog();selectFirst();
+  const original=context.ui.guestAgenda,markup=fixture.markup,text=preview.value;
+  assert.ok(text);
+  assert.doesNotMatch(markup,/OTHER-OWNER|Fictional unassigned activity/);
+  fixture.confirm=false;context.useAllGuestActivities();
+  assert.equal(fixture.prompts,1);
+  assert.equal(fixture.opens,1);
+  assert.equal(context.ui.guestAgenda,original);
+  assert.equal(preview.value,text);
+  assert.equal(field['include-0'].checked,true);
+
+  fixture.confirm=true;context.useAllGuestActivities();
+  assert.equal(fixture.prompts,2);
+  assert.equal(fixture.opens,2);
+  assert.notEqual(context.ui.guestAgenda,original);
+  assert.equal(context.ui.guestAgenda.snapshot.mine,false);
+  assert.equal(context.ui.guestAgenda.snapshot.date,scope.date);
+  assert.equal(context.ui.scheduleMine,true);
+  assert.equal(context.ui.scheduleDate,scope.date);
+  assert.equal(context.ui.guestAgenda.text,'');
+  assert.equal(preview.value,'');
+  assert.equal(button['aria-disabled'],'true');
+  assert.match(fixture.markup,/All activities/);
+  assert.match(fixture.markup,/Internal overnight roster/);
+  assert.match(fixture.markup,/OTHER-OWNER/);
+  assert.match(fixture.markup,/Fictional unassigned activity/);
+  assert.doesNotMatch(fixture.markup,/\bchecked\b|Evening arrivals|Next day|PRIVATE-|all-guest-agenda-activities/);
+  assert.equal(fixture.reads,0);
+  assert.deepEqual(actions,[]);
+  assert.deepEqual(fixture.state,before);
+  assert.match(source,/action==='all-guest-agenda-activities'[^\n]*useAllGuestActivities\(/);
+});
+
+test('widening a guest draft refuses invalid or stale candidates before asking to discard',()=>{
+  const {context,fixture,actions,selectFirst}=agendaHarness();
+  context.guestAgendaDialog();selectFirst();
+  const original=context.ui.guestAgenda,markup=fixture.markup;
+  const unchanged=()=>{
+    assert.equal(fixture.prompts,0);assert.equal(fixture.opens,1);
+    assert.equal(context.ui.guestAgenda,original);assert.equal(fixture.markup,markup);
+    assert.equal(fixture.reads,0);
+  };
+  const blockers=[
+    [()=>fixture.organizer=false,()=>fixture.organizer=true],
+    [()=>context.window.GatherAccessLost=true,()=>context.window.GatherAccessLost=false],
+    [()=>original.copying=true,()=>original.copying=false],
+    [()=>original.stale=true,()=>original.stale=false],
+    [()=>fixture.revision++,()=>fixture.revision--],
+  ];
+  for(const [apply,reset] of blockers){apply();context.useAllGuestActivities();unchanged();reset();}
+  fixture.state={...state,tasks:[...state.tasks,...Array.from({length:81},(_,index)=>({id:'extra-'+index,owner:'other',title:'Fictional extra activity',
+    schedule:{start:'2030-03-16T11:00',end:'',location:''}}))]};
+  actions.length=0;
+  context.useAllGuestActivities();unchanged();
+  assert.match(actions.at(-1),/80 (?:activities|entries)/);
+  assert.match(actions.at(-1),/draft is unchanged/i);
+});
 
 test('organizer agenda only copies the current preview, with selection fallback and stale/access fencing',async()=>{
   const {context,fixture,field,fields,form,preview,warning,button,actions,selectFirst}=agendaHarness();
