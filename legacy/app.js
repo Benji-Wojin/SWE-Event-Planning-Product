@@ -865,7 +865,7 @@
     const resolved=t=>Boolean(t&&t.status==='done'&&(!t.requiresVerification||t.verifiedAt));
     const required=links.filter(link=>link.kind!=='related');
     const open=required.filter(link=>!resolved(link.task));
-    return {links,open,ready:task.status==='blocked'&&required.length>0&&!open.length,resolved};
+    return {links,open,ready:task.status==='blocked'&&!(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)&&required.length>0&&!open.length,resolved};
   }
   function linkedTaskForm(task,state,organizer) {
     if(task.status==='done'||window.GatherAccessLost||!organizer&&(task.owner!==ui.actor||state.event.membersCanCreateTasks!==true))return '';
@@ -940,9 +940,10 @@
   function dependencyMarkup(task) {
     const state=store.getState(), info=dependencyInfo(task,state), manage=isOrganizer()||task.owner===ui.actor;
     const dependents=state.tasks.filter(t=>(t.dependencies||[]).some(link=>link.taskId===task.id));
+    const owner=info.ready&&state.members.find(person=>person.id===task.owner&&person.active!==false);
     return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3>Task relationships</h3><button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button></div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
       ${info.open.length&&task.status!=='done'?'<p class="notice">Finish required work before completing this task. Unlink anything no longer needed.</p>':''}
-      ${info.ready?`<div class="dependency-prompt"><div><strong>Ready to resume</strong><p>Linked work is complete. Review the results below.</p></div>${manage?`<button class="btn btn-primary" data-action="resume-task" data-id="${h(task.id)}">Resume task</button>`:`<span>${h(member(task.owner).name)} can resume this task.</span>`}</div>`:''}
+      ${info.ready?`<div class="dependency-prompt"><div><strong>Ready to resume</strong><p>Required linked work is complete. Review the results below and check for other blockers before resuming.</p></div>${manage?`<button class="btn btn-primary" data-action="resume-task" data-id="${h(task.id)}">Resume task</button>`:owner?`<span>${h(owner.name)} can resume this task.</span>`:'<span>Ask the organizer to assign an active owner.</span>'}</div>`:''}
       ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
       ${manage&&task.status!=='done'?`<details class="dependency-add"><summary>Link an existing task</summary><form id="relationshipAddForm" data-id="${h(task.id)}"><label class="field">Task<select name="taskId" required>${options([['','Choose a task'],...state.tasks.filter(t=>t.id!==task.id&&!info.links.some(l=>l.taskId===t.id)).map(t=>[t.id,t.title])],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link these tasks?<textarea name="reason" rows="2" maxlength="2000" required placeholder="Describe the shared context, or the exact output needed first."></textarea></label><button type="submit" class="btn btn-secondary btn-small">Save link</button></form></details>`:''}
       ${linkedTaskForm(task,state,isOrganizer())}

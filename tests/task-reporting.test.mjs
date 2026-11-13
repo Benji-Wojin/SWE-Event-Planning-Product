@@ -367,6 +367,39 @@ test('task dialogs explain prerequisites and offer completion only when required
   assert.doesNotMatch(taskDialogHtml('dev','catering',undefined,missing),/Remove unavailable link/);
 });
 
+test('ready-to-resume task dialogs distinguish required results and unavailable ownership', () => {
+  const store=create();
+  store.addDependency('catering',{taskId:'volunteers',kind:'related',reason:'Coordinate food for volunteers.'});
+  store.reportCompletion('dietary','All responses collected.','maya');
+  const id='catering',resume=/data-action="resume-task"[^>]*>Resume task/;
+  const requiredResults=/Required linked work is complete\. Review the results below and check for other blockers before resuming\./;
+  const assignOwner=/Ask the organizer to assign an active owner\./;
+  for(const actor of ['jack','maya']) {
+    const html=taskDialogHtml(actor,id,undefined,store);
+    assert.match(html,requiredResults);
+    assert.match(html,resume);
+    assert.doesNotMatch(html,assignOwner);
+  }
+  const otherMember=taskDialogHtml('dev',id,undefined,store);
+  assert.match(otherMember,/Maya Singh can resume this task\./);
+  assert.doesNotMatch(otherMember,resume);
+
+  const project=store.getState();
+  // Exercise the real dialog with a stale roster projection without making the
+  // local store load a missing-owner snapshot that its validation rejects.
+  const missing={getState:()=>({...project,members:project.members.filter(member=>member.id!=='maya')})};
+  const inactive={getState:()=>({...project,members:project.members.map(member=>member.id==='maya'?{...member,active:false}:member)})};
+  store.updateTask(id,{owner:''});
+  for(const [label,workspace] of [['unassigned',store],['inactive owner',inactive],['missing owner',missing]]) {
+    const html=taskDialogHtml('dev',id,undefined,workspace);
+    assert.match(html,requiredResults,label);
+    assert.match(html,assignOwner,label);
+    assert.doesNotMatch(html,resume,label);
+    assert.doesNotMatch(html,/can resume this task\./,label);
+    assert.match(taskDialogHtml('jack',id,undefined,workspace),resume,label);
+  }
+});
+
 test('claiming assigns and accepts once without altering task details or stealing assigned work', () => {
   const store=create(), before=store.getState().tasks.find(t=>t.id==='wayfinding');
   const claimed=store.claimTask('wayfinding','maya');

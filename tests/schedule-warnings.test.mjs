@@ -88,3 +88,70 @@ test('live warnings follow explicit saved acceptance, reporting, verification an
   const record=store.getState().tasks.find(item=>item.id===task.id);
   assert.equal(record.status,'todo');assert.deepEqual(record.schedule,task.schedule);
 });
+
+test('verified prerequisite results give a blocked activity a read-only review cue across event views',()=>{
+  const store=GatherStore.createStore({storage:null,now:Date.parse(now)});
+  store.completeSetup({timeZone:'America/Los_Angeles'});
+  const prerequisite=store.addTask({title:'PRIVATE-REQUIRED-TITLE',owner:'jack',requiresVerification:true});
+  const related=store.addTask({title:'PRIVATE-RELATED-TITLE',owner:'jack'});
+  const task=store.addTask({title:'Fictional welcome',owner:'maya',status:'blocked',
+    note:'PRIVATE-PARENT-NOTE',schedule:activity('').schedule});
+  store.addDependency(task.id,{taskId:prerequisite.id,kind:'dependency',reason:'PRIVATE-LINK-REASON'});
+  store.addDependency(task.id,{taskId:related.id,kind:'related'});
+  const scope={mine:true,actor:'maya',date:'2026-11-20'};
+  const cue=/Review linked results/;
+  function surfaces(expected) {
+    const before=store.exportState(),snapshot=store.getState();
+    const model=ui.runSheetModel(snapshot,now,scope),row=model.days[0].rows[0];
+    const html=ui.runSheetMarkup(model),plain=ui.runSheetText(model);
+    for(const output of [...render(snapshot,scope),html,plain]) {
+      assert.equal(cue.test(output),expected);
+      assert.doesNotMatch(output,/PRIVATE-(?:REQUIRED-TITLE|RELATED-TITLE|PARENT-NOTE|LINK-REASON|RESULT-TEXT)/);
+      assert.doesNotMatch(output,/data-action="(?:resume-task|toggle-task|verify-task)"/);
+    }
+    assert.equal(row.status,'Blocked');
+    assert.equal(row.statusWarnings.includes('Review linked results'),expected);
+    const group=GatherScheduleUI.reviewItems(snapshot,now,scope).find(item=>item.title==='Review linked results');
+    assert.deepEqual(group?.tasks.map(item=>item.id)??[],expected?[task.id]:[]);
+    if(expected)assert.match(ui.preparationReview(snapshot,now,scope,true),/Review linked results · 1/);
+    assert.equal(snapshot.tasks.find(item=>item.id===task.id).status,'blocked');
+    assert.equal(store.exportState(),before);
+  }
+  surfaces(false);
+  store.reportCompletion(prerequisite.id,'PRIVATE-RESULT-TEXT','jack');
+  surfaces(false);
+  store.verifyTask(prerequisite.id,'jack');
+  surfaces(true);
+  store.updateTask(prerequisite.id,{status:'todo'},'jack');
+  surfaces(false);
+});
+
+test('linked-result review respects scope, scheduled dates and actual required links',()=>{
+  const date='2026-11-21';
+  const future={start:date+'T09:00',end:date+'T09:30',location:''};
+  const dependency=taskId=>({taskId,kind:'dependency'});
+  const tasks=[
+    activity('ready-on-future-date',{status:'blocked',schedule:future,dependencies:[dependency('resolved')]}),
+    activity('related-only',{status:'blocked',schedule:future,dependencies:[{taskId:'resolved',kind:'related'}]}),
+    activity('missing-prerequisite',{status:'blocked',schedule:future,dependencies:[dependency('missing')]}),
+    activity('parent-awaiting-review',{status:'blocked',schedule:future,requiresVerification:true,reportedAt:now,
+      dependencies:[dependency('resolved')]}),
+    activity('not-blocked',{status:'progress',schedule:future,dependencies:[dependency('resolved')]}),
+    activity('another-owner',{status:'blocked',owner:'jack',schedule:future,dependencies:[dependency('resolved')]}),
+    {id:'resolved',title:'PRIVATE-RESULT-TITLE',owner:'jack',status:'done',requiresVerification:true,verifiedAt:now,
+      completionResult:{text:'PRIVATE-RESULT-TEXT'}},
+  ];
+  const snapshot=state(tasks),scope={mine:true,actor:'maya',date},cue=/Review linked results/;
+  assert.equal(ui.clock(snapshot,now,scope).markup,'','a future selected date has no live focus strip');
+  const html=ui.view(snapshot,false,now,scope);
+  assert.equal((html.match(/Review linked results/g)||[]).length,1);
+  assert.match(html.match(/<button class="schedule-row"[^>]*data-id="ready-on-future-date"[\s\S]*?<\/button>/)?.[0]||'',cue);
+  const rows=ui.runSheetModel(snapshot,now,scope).days.flatMap(day=>day.rows);
+  assert.deepEqual(rows.filter(row=>row.statusWarnings.includes('Review linked results')).map(row=>row.title),['ready-on-future-date']);
+  assert.doesNotMatch(html,/PRIVATE-RESULT|another-owner/);
+  const otherDate={...scope,date:'2026-11-20'};
+  assert.doesNotMatch(ui.view(snapshot,false,now,otherDate),cue);
+  assert.doesNotMatch(ui.runSheet(snapshot,now,otherDate),cue);
+  const group=GatherScheduleUI.reviewItems(snapshot,now,otherDate).find(item=>item.title==='Review linked results');
+  assert.deepEqual(group?.tasks.map(item=>item.id),['ready-on-future-date'],'Before the event intentionally reviews all dates in My tasks');
+});

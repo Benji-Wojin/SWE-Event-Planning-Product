@@ -92,6 +92,8 @@
   const changesRequested = task => task.status!=='done'&&!task.reportedAt&&Boolean(task.completionReview);
   const pendingAcceptance = (task,members) => !resolved(task)&&task.owner&&members.some(member=>member.id===task.owner&&member.active!==false)&&!task.acceptedAt&&!task.reportedAt&&!waitingVerification(task);
   const unfinishedRequiredWork = (task,byId) => !resolved(task)&&(task.dependencies||[]).some(link=>link.kind!=='related'&&(!byId.has(link.taskId)||!resolved(byId.get(link.taskId))));
+  const linkedResultsReady = (task,byId) => task.status==='blocked'&&!waitingVerification(task)&&
+    (task.dependencies||[]).some(link=>link.kind!=='related')&&!unfinishedRequiredWork(task,byId);
   const clockFormatters = new Map();
   function momentKey(now,timeZone) {
     if(!timeZone)return null;
@@ -160,7 +162,8 @@
       {key:'verification',title:'Completion needs verification',help:'A completion report or completed record still needs the required organizer verification.',tasks:open.filter(waitingVerification)},
       {key:'evidence-amendments',title:'Evidence amended after verification',help:'The current completion submission was edited after verification and has not been reviewed. Task verification is unchanged. Open the task to review the amendment with the organizer.',tasks:tasks.filter(evidenceAmended)},
       {key:'changes',title:'Completion changes requested',help:'The organizer returned a completion report. Review the requested changes with the owner, then submit a new report; the work is not verified.',tasks:open.filter(changesRequested)},
-      {key:'blocked',title:'Marked blocked',help:'Review the latest update with the owner; this review does not change task status.',tasks:open.filter(task=>task.status==='blocked'&&!waitingVerification(task))},
+      {key:'linked-results',title:'Review linked results',help:'Required linked work is complete. Open the task to review its results and check for other blockers. Its status stays Blocked until someone resumes it or updates it explicitly.',tasks:open.filter(task=>linkedResultsReady(task,byId))},
+      {key:'blocked',title:'Marked blocked',help:'Review the latest update with the owner; this review does not change task status.',tasks:open.filter(task=>task.status==='blocked'&&!waitingVerification(task)&&!linkedResultsReady(task,byId))},
       {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='unassigned')},
       {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner is missing or inactive in this project. Review who will take responsibility.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='owner-unavailable')},
       {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members))},
@@ -190,6 +193,7 @@
       if(state.members?.some(member=>member.id===task.owner&&member.active===false))labels.push('Assigned owner unavailable');
       if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
       if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
+      if(linkedResultsReady(task,byId))labels.push('Review linked results');
       return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${label}</span>`).join('')}</span>`:'';
     }
     function locationWarning(tasks,locations) {
@@ -297,6 +301,8 @@
       const byId=new Map(state.tasks.map(task=>[task.id,task]));
       const prerequisites=new Set(tasks.filter(task=>unfinishedRequiredWork(task,byId)).map(task=>task.id));
       const prerequisiteNotice=prerequisites.size?prerequisites.size+' '+(prerequisites.size===1?'activity has':'activities have')+' unfinished required work. Required linked tasks are incomplete, awaiting verification or unavailable. Confirm the current plan with the organizer; this snapshot does not certify event readiness.':'';
+      const linkedResults=new Set(tasks.filter(task=>linkedResultsReady(task,byId)).map(task=>task.id));
+      const linkedResultsNotice=linkedResults.size?`${linkedResults.size} ${linkedResults.size===1?'activity remains':'activities remain'} marked Blocked after required linked work finished. Open the live project to review the linked results and check for other blockers before resuming.`:'';
       const acceptance=new Set(tasks.filter(task=>pendingAcceptance(task,state.members)).map(task=>task.id));
       const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
       const changes=new Set(tasks.filter(changesRequested).map(task=>task.id));
@@ -316,10 +322,10 @@
           continues:day&&start<day?'Continues from '+dateLabel(start):'',
           activityWarnings:[overlaps.has(id)?'Owner overlap':'',locations.has(id)?'Potential location overlap':''].filter(Boolean),
           owner:name(task.owner),acceptance:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
-          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':''].filter(Boolean)});
+          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)});
       }
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,timeZone:state.event.timeZone||'Time zone not set',
-        cautions:[untimedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,changesNotice,amendmentNotice,
+        cautions:[untimedNotice,ownerNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',
