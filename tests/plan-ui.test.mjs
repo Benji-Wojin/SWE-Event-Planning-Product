@@ -219,9 +219,10 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     changed = false;
     index = 0;
     tree = PlanReview({ query, embedded, guided });
-    // The hook renderer has no real DOM; attach the receipt heading ref before effects.
-    const heading = nodes(tree).find(node => node.props?.id === 'plan-receipt-heading');
-    if (heading?.props.ref) heading.props.ref.current = { focus: () => focused.push(heading.props.id) };
+    // The hook renderer has no real DOM; attach focus refs before effects.
+    for (const target of nodes(tree).filter(node => node.props?.ref && ['plan-receipt-heading', 'plan-brief'].includes(node.props.id))) {
+      target.props.ref.current = { focus: () => focused.push(target.props.id) };
+    }
     const next = effects;
     effects = [];
     next.forEach((callback) => callback());
@@ -372,6 +373,62 @@ test('guided planner points to the real brief, explicit generation, private revi
     assertGuideReturn(app.tree);
     assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'generate', 'apply']);
   } finally { app.dispose(); }
+});
+
+test('the guided sample fills the editable brief without saving, generating, or adding work', async () => {
+  const initial = { ...fixture(), brief: { ...brief, description: '' }, draft: null, status: 'empty' };
+  const app = harness(undefined, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    const action = planButton(app.tree, 'Use this example');
+    assert.ok(action);
+    assert.equal(action.props.type, 'button');
+    const sample = 'A two-hour welcome night for 40 people. We need a check-in table, a short intro, and time to clean up.';
+    assert.ok(nodes(app.tree).some(node => node.type === 'p' && text(node).includes(`Example brief: “${sample}”`)));
+    assert.match(text(app.find(action.props['aria-describedby'])), /fills in the brief for you to edit.*Nothing is sent to AI until you choose Generate draft/);
+    assert.equal(app.find('plan-brief').props.value, '');
+    assert.equal(planButton(app.tree, 'Generate draft').props.disabled, true);
+
+    await app.click('Use this example');
+    assert.equal(app.find('plan-brief').props.value, sample);
+    assert.equal(app.find('plan-brief').props.readOnly, undefined);
+    assert.equal(planButton(app.tree, 'Generate draft').props.disabled, false);
+    assert.equal(planButton(app.tree, 'Use this example'), undefined);
+    assert.deepEqual(app.focused, ['plan-brief']);
+    assert.equal(app.find('plan-kind').props.value, brief.kind);
+    assert.equal(app.saved.receipt, null);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+    assert.deepEqual(app.saved, initial);
+
+    await app.edit('plan-brief', 'My edited fictional welcome night.');
+    assert.equal(app.find('plan-brief').props.value, 'My edited fictional welcome night.');
+    assert.equal(planButton(app.tree, 'Use this example'), undefined);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+  } finally { app.dispose(); }
+});
+
+test('the sample action never replaces an existing brief, saved draft or unsupported planner', async () => {
+  for (const [name, patch, query, embedded, guided] of [
+    ['existing brief', { brief: { ...brief, description: 'Earlier private planning text.' } }, 'project=p_example', false, true],
+    ['whitespace-only brief', { brief: { ...brief, description: ' ' } }, 'project=p_example', false, true],
+    ['saved draft with empty brief', { draft: fixture().draft }, 'project=p_example', false, true],
+    ['AI not configured', { configured: false }, 'project=p_example', false, true],
+    ['locked while generating', { status: 'generating' }, 'project=p_example', false, true],
+    ['unguided', {}, 'project=p_example', false, false],
+    ['embedded', {}, 'project=p_example', true, true],
+    ['demo', {}, 'demo=1', false, true],
+    ['suggestions', {}, 'project=p_example&mode=suggestions', false, true],
+    ['assistant', {}, 'project=p_example&mode=assistant', false, true],
+  ]) {
+    const initial = { ...fixture(), brief: { ...brief, description: '' }, draft: null, status: 'empty', ...patch };
+    const app = harness(undefined, initial, query, embedded, guided);
+    try {
+      await app.start();
+      assert.equal(planButton(app.tree, 'Use this example'), undefined, name);
+      assert.deepEqual(app.requests, [{ action: 'get' }], name);
+      assert.deepEqual(app.saved, initial, name);
+    } finally { app.dispose(); }
+  }
 });
 
 test('guided planner hides proposal shortcuts during generation and after apply', async () => {

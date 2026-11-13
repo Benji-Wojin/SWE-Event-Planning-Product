@@ -1,4 +1,6 @@
-const sample = 'A two-hour welcome night for 40 people. We need a check-in table, a short intro, and time to clean up.';
+import { Button } from '@/components/ui/button';
+
+export const examplePlanBrief = 'A two-hour welcome night for 40 people. We need a check-in table, a short intro, and time to clean up.';
 
 const steps = [
   ['Describe your event', 'Choose an event type. In “What are you planning?”, add the goal, approximate size, and any constraints. Leave out sensitive details.'],
@@ -16,7 +18,12 @@ const nextAction: Record<PlanGuideStage, {href: string; label: string}> = {
   added: {href: '#plan-receipt-heading', label: 'See what was added'},
 };
 
-export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false }: { stage: PlanGuideStage; locked: boolean; draftNeedsRecheck?: boolean }) {
+export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false, onUseExample }: {
+  stage: PlanGuideStage;
+  locked: boolean;
+  draftNeedsRecheck?: boolean;
+  onUseExample?: () => void;
+}) {
   const current = stage === 'brief' ? 0 : stage === 'generate' || stage === 'starter' ? 1 : stage === 'review' ? 2 : -1;
   const action = nextAction[stage];
   return <section aria-labelledby="plan-guide-hint" className="mb-6 space-y-4 rounded-2xl border border-primary/25 bg-card p-4 text-sm sm:p-6">
@@ -33,9 +40,13 @@ export function PlanGuideHint({ stage, locked, draftNeedsRecheck = false }: { st
         <p className="leading-relaxed text-muted-foreground">{stage === 'starter' && index === 1 ? 'Choose Use starter checklist to get an editable set of tasks without AI.' : instruction}</p>
       </li>)}
     </ol>
-    {(stage === 'brief' || stage === 'starter') && <p className="rounded-lg bg-muted/50 px-3 py-2 text-muted-foreground">
-      <strong className="text-foreground">Sample brief:</strong> “{sample}”
-    </p>}
+    {(stage === 'brief' || stage === 'starter') && <div className="space-y-2 rounded-lg border bg-muted/50 p-3">
+      <p className="text-muted-foreground"><strong className="text-foreground">Example brief:</strong> “{examplePlanBrief}”</p>
+      {onUseExample && <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Button type="button" variant="outline" className="min-h-11" aria-describedby="plan-example-help" onClick={onUseExample}>Use this example</Button>
+        <p id="plan-example-help" className="text-muted-foreground">It fills in the brief for you to edit. Nothing is sent to AI until you choose Generate draft.</p>
+      </div>}
+    </div>}
     {stage === 'starter' && <p className="text-muted-foreground">AI isn’t configured for this planner. You can still practice reviewing a private draft with a starter checklist.</p>}
     {draftNeedsRecheck && <p className="text-muted-foreground">The project changed since this draft was saved. Review and update the draft before adding anything.</p>}
     {!locked && <a href={action.href} className="inline-flex min-h-11 items-center rounded-lg border px-3 font-medium text-primary underline underline-offset-4">{action.label}</a>}

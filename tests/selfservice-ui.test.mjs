@@ -131,7 +131,7 @@ test('optional planner walkthrough teaches the actual controls, fallback and sha
   assert.match(text(steps[0]), /event type.*What are you planning\?/);
   assert.match(text(steps[1]), /Groq.*Generate draft.*starter checklist without AI/);
   assert.match(text(steps[2]), /deselect.*Shared tasks.*Timeline/);
-  assert.match(text(guide), /Sample brief:.*40 people/);
+  assert.match(text(guide), /Example brief:.*40 people/);
   assert.match(text(guide), /doesn’t send anything to AI or change your project/);
   assert.equal(steps[0].props['aria-current'], 'step');
   assert.equal(tree.some((node) => node.type === 'details'), false);

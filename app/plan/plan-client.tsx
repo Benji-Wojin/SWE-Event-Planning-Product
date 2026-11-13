@@ -12,7 +12,7 @@ import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan
 import { planApprovalHash } from '@/lib/plan-approval-hash';
 import { planTaskHref } from '@/lib/workspace-task-link';
 import {AskWeftPanel} from './ask-weft-panel';
-import { PlanGuideHint, type PlanGuideStage } from './guide-hint';
+import { examplePlanBrief, PlanGuideHint, type PlanGuideStage } from './guide-hint';
 import { PlanApprovalImpact } from './approval-impact';
 import {taskBreakdownContext, type TaskBreakdownContext} from '@/lib/task-breakdown';
 import {
@@ -100,6 +100,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     handoffLinkFocus = useRef<{id:string; intent:string}|null>(null),
     errorBox = useRef<HTMLParagraphElement>(null),
     noticeBox = useRef<HTMLParagraphElement>(null),
+    briefInput = useRef<HTMLTextAreaElement>(null),
     receiptHeading = useRef<HTMLHeadingElement>(null);
   const [checklist,setChecklist]=useState('');
   const checklistTooLong=checklist.length>pastedChecklistLimit;
@@ -158,6 +159,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     applied = !!data?.receipt && !chatStartingNew;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
     !data?.configured ? 'starter' : brief.description.trim() ? 'generate' : 'brief';
+  const canUseGuideExample = guideReturn && guideStage === 'brief' && !locked && brief.description === '';
   const guideDraftNeedsRecheck = guideStage === 'review' && !!data?.contextChanged;
   const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
     data?.draft?.source === 'starter' || !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
@@ -308,6 +310,11 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
     starterRequest.current = null;
     setBrief((current) => ({ ...current, [key]: value }));
   };
+  function useGuideExample() {
+    if (!canUseGuideExample || pending.current) return;
+    updateBrief('description', examplePlanBrief);
+    briefInput.current?.focus();
+  }
   const updateItem = (id: string, patch: Partial<ReviewedItem>) => {
     request.current = null;
     starterRequest.current = null;
@@ -611,7 +618,8 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
           again.
         </p>
       )}
-      {guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck} />}
+      {guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck}
+        onUseExample={canUseGuideExample ? useGuideExample : undefined} />}
       {applied && (
         <section aria-labelledby="plan-receipt-heading" className="mb-5 space-y-3 rounded-lg border border-primary/40 p-4">
           <h2 id="plan-receipt-heading" ref={receiptHeading} tabIndex={-1} className="scroll-mt-6 font-medium">Plan added to the project</h2>
@@ -676,6 +684,7 @@ export function PlanReview({ query, embedded = false, guided = false }: { query:
               <Label htmlFor="plan-brief">{suggestions ? 'What should AI check for?' : 'What are you planning?'}</Label>
               <Textarea
                 id="plan-brief"
+                ref={briefInput}
                 rows={suggestions ? 2 : 4}
                 maxLength={4000}
                 value={brief.description}
