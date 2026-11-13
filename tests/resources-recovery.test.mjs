@@ -43,7 +43,7 @@ function fixture(fetcher) {
       reload() { listeners.click({ target: { closest: selector => selector === '[data-resource-retry]' ? {} : null }, preventDefault() {} }); },
     };
   }
-  return { window, document, calls, container, mount: (c, id = 'qa-task') => window.GatherResourcesUI.mount(id, c) };
+  return { window, document, calls, container, mount: (c, id = 'qa-task', options) => window.GatherResourcesUI.mount(id, c, options) };
 }
 
 test('stalled initial read aborts after 30 seconds and exposes read-only retry', async t => {
@@ -114,6 +114,16 @@ test('normal initial empty read still generates once and unconfigured search sta
   const disabled = fixture(() => response({ status: 'unconfigured', links: [] }));
   const c = disabled.container(); await disabled.mount(c);
   assert.equal(c.elements.form, undefined); assert.equal(disabled.calls.length, 1);
+});
+
+test('read-only activity redraw checks cached links without generating an empty result', async () => {
+  const f = fixture((_, options) => response(options.method === 'GET' ? {status:'empty',links:[]} : ready()));
+  const c = f.container();
+  await f.mount(c,'qa-task',{readOnly:true});
+  assert.deepEqual(f.calls.map(c => c.method),['GET']);
+  assert.match(c.node.html,/No saved links yet/);
+  c.submit(); await flush();
+  assert.deepEqual(f.calls.map(c => c.method),['GET','POST'],'a later explicit search is still available');
 });
 
 test('pending requests for equal task IDs in different projects remain separate', async () => {

@@ -31,7 +31,7 @@ function start(response, { oldDocument = false, demo = false, search } = {}) {
   const requests=[];
   const run = vm.runInNewContext(source, { window, document,
     location: { search: search ?? (demo ? '?demo=1&as=jack' : '?project=new-project'), origin: 'https://weft.example', reload() { reloads++; } },
-    URL, URLSearchParams, structuredClone, fetch: (path,options) => { requests.push(path); return typeof response==='function'?response(options):response; },
+    URL, URLSearchParams, AbortSignal, structuredClone, fetch: (path,options) => { requests.push(path); return typeof response==='function'?response(options):response; },
   });
   return { boot: oldDocument ? body.children[0] : boot, shell, body, window, run, listeners,
     inviteLabel, requests, reloads: () => reloads, redirect: () => redirect };
@@ -285,6 +285,23 @@ test('a snapshot confirmation is a read-only check and never replaces the displa
   assert.equal(pending.newerRevision,2);
   assert.equal(store.getSnapshotRevision(),1);
   assert.deepEqual(fixture.requests,Array(4).fill('/api/workspace?project=new-project'));
+});
+
+test('verified refresh passes the candidate revision before publishing and holds below a known minimum',async()=>{
+  const candidate=[1,2,3];
+  const fixture=start({ok:true,status:200,json:async()=>({...state,state:{...state.state,tasks:[]},revision:candidate.shift()})});
+  await fixture.run;
+  const store=fixture.window.GatherStore.createStore(),seen=[];
+  const gate=revision=>{seen.push(revision);return revision>=3;};
+  const early=await store.refresh(gate,{requireFresh:true});
+  assert.equal(early.pending,true);
+  assert.equal(early.newerRevision,2);
+  assert.equal(store.getSnapshotRevision(),1);
+  const latest=await store.refresh(gate,{requireFresh:true});
+  assert.equal(latest.verified,true);
+  assert.equal(store.getSnapshotRevision(),3);
+  assert.deepEqual(seen,[2,3]);
+  assert.deepEqual(fixture.requests,Array(3).fill('/api/workspace?project=new-project'));
 });
 
 test('a concurrent failed save makes confirmation inconclusive without reporting a newer revision',async()=>{

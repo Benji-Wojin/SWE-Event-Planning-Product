@@ -632,8 +632,9 @@
   }
   function returnToAcceptanceReview() {
     const resume=ui.acceptanceReturn;
-    if(!resume||ui.dialogKind!=='task'||resume.actor!==ui.actor||resume.view!==ui.view||window.GatherAccessLost)return;
+    if(!resume||ui.dialogKind!=='task'||resume.actor!==ui.actor||resume.view!==ui.view||window.GatherAccessLost)return false;
     acceptanceDialog(resume.fromEventReview,resume);
+    return true;
   }
   function syncAcceptanceSelection(form) {
     const count=$$('input[name="acceptTask"]:checked',form).length;
@@ -996,7 +997,7 @@
     taskDialog(id,'',false,true);
     return true;
   }
-  function returnToOverlapReview() {
+  function returnToOverlapReview(readOnly=false) {
     const comparison=activeOverlapComparison();
     if(!comparison||!['task','delete-task'].includes(ui.dialogKind)||$('#dialogBackdrop').hidden)return false;
     const {originId,returnPeerId,reviewDay,kind,openedKinds,relatedBatch}=comparison;
@@ -1009,7 +1010,8 @@
     const stale=workspaceUpdatesPending();
     const pair=!stale&&GatherScheduleUI.overlapPairIsCurrent(state,originId,returnPeerId,kind);
     if(relatedBatch&&relatedBatchInScope(relatedBatch))ui.relatedBatch=relatedBatch;
-    taskDialog(originId,'',false,true,'',undefined,reviewDay);
+    if(readOnly)taskDialog(originId,'',false,true,'',undefined,reviewDay,{readOnly:true});
+    else taskDialog(originId,'',false,true,'',undefined,reviewDay);
     if(stale)showPendingUpdate();
     const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
     requestAnimationFrame(()=>{
@@ -1052,8 +1054,7 @@
     const notice=$('#workspaceSyncNotice');
     return (!!notice&&!notice.hidden)||recoveryConflictPending();
   }
-  function recoveryConflictPending() {
-    const revision=store.getSnapshotRevision?.();
+  function recoveryConflictPending(revision=store.getSnapshotRevision?.()) {
     return Number.isSafeInteger(ui.recoveryConflictRevision)&&Number.isSafeInteger(revision)&&revision<=ui.recoveryConflictRevision;
   }
   function eventReviewRefreshNotice(group) {
@@ -1120,6 +1121,67 @@
     beforeEventReview(source.group);
     return true;
   }
+  function canRefreshActivityReview(task) {
+    return !!(store.refresh&&!window.GatherAccessLost&&ui.dialogKind==='task'&&
+      (ui.view==='timeline'||ui.overlapComparison)&&
+      (task?.schedule||task?.eventActivity||ui.overlapReviewDay||ui.overlapComparison));
+  }
+  function activityReviewRefreshNotice() {
+    return '<p id="activityReviewRefreshStatus" role="status">Newer project changes are available. Refresh this activity to review the latest schedule. Refreshing does not save your edits.</p>'+
+      '<button type="button" id="activityReviewRefresh" class="btn btn-secondary" data-action="refresh-activity-review" aria-describedby="activityReviewRefreshStatus">Refresh activity review</button>';
+  }
+  async function refreshActivityReview(button) {
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog),status=$('#activityReviewRefreshStatus',dialog);
+    const {actor,view,detailId:id,timelineMode,scheduleDate,scheduleMine,overlapReviewDay,overlapComparison}=ui;
+    const project=window.GatherMode?.projectId;
+    const sameReview=()=>!!title&&!!status&&!!button?.isConnected&&!window.GatherAccessLost&&
+      ui.dialogKind==='task'&&ui.detailId===id&&ui.actor===actor&&ui.view===view&&ui.timelineMode===timelineMode&&
+      ui.scheduleDate===scheduleDate&&ui.scheduleMine===scheduleMine&&ui.overlapReviewDay===overlapReviewDay&&
+      ui.overlapComparison===overlapComparison&&window.GatherMode?.projectId===project&&!$('#dialogBackdrop').hidden&&
+      $('#dialogTitle',dialog)===title&&$('#activityReviewRefresh',dialog)===button;
+    const ready=()=>sameReview()&&!ui.pendingSave&&!document.hidden&&!hasUnsavedFields(dialog);
+    const edits='Your unsaved edits are still here. Copy or clear them before refreshing this activity.';
+    if(!sameReview()||!canRefreshActivityReview(store.getState().tasks.find(task=>task.id===id))||
+      ui.syncing||ui.pendingSave||document.hidden||!workspaceUpdatesPending())return;
+    if(hasUnsavedFields(dialog)){status.textContent=edits;return;}
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Refreshing activity review…';
+    try{
+      const result=await store.refresh(revision=>ready()&&!recoveryConflictPending(revision)&&!scheduleRevisionIsStale(revision),{requireFresh:true});
+      if(!sameReview())return;
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){
+        status.textContent=hasUnsavedFields(dialog)?edits:'Refresh paused. Your current view is unchanged. Try again.';
+        return;
+      }
+      if(!result.verified||result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.()))
+        throw new Error('A newer project snapshot is not ready.');
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();
+      if(!store.getState().tasks.some(task=>task.id===id)){
+        if(!returnToOverlapReview(true)&&!(ui.relatedBatch&&returnToRelatedBatch(true))&&
+          !(ui.acceptanceReturn&&returnToAcceptanceReview())&&!returnToEventTaskReview())closeDialog();
+        toast('This activity is no longer available.');
+        return;
+      }
+      taskDialog(id,'',true,true,'',undefined,'',{readOnly:true});
+      const updatedTitle=$('#dialogTitle',dialog);
+      requestAnimationFrame(()=>{
+        if(!updatedTitle||$('#dialogTitle',dialog)!==updatedTitle||window.GatherAccessLost||ui.actor!==actor||
+          ui.detailId!==id||ui.dialogKind!=='task'||window.GatherMode?.projectId!==project||$('#dialogBackdrop').hidden)return;
+        const overlap=$('[data-schedule-overlap-kind][open] summary',dialog);
+        focusTaskDialogControl(overlap||updatedTitle,dialog);
+      });
+      toast('Activity review refreshed.');
+    }catch{
+      if(sameReview())status.textContent='Could not refresh this activity. Your current view is unchanged. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
   function showPendingUpdate(newerRevision) {
     if(Number.isSafeInteger(newerRevision))rememberNewerSchedule(ui.runSheet,newerRevision);
     const banner=$('#workspaceSyncNotice');if(banner)banner.hidden=false;
@@ -1130,6 +1192,7 @@
     const note=document.createElement('div');note.id='dialogStaleNotice';note.className='notice';note.setAttribute('role','alert');
     const group=ui.dialogKind==='before-event-review'?document.activeElement?.closest('[data-event-review-group]')?.dataset.eventReviewGroup||'':'';
     note.innerHTML=ui.dialogKind==='before-event-review'?eventReviewRefreshNotice(group):
+      ui.dialogKind==='task'&&canRefreshActivityReview(store.getState().tasks.find(task=>task.id===ui.detailId))?activityReviewRefreshNotice():
       '<p>The project changed in another tab. Your unsaved text is still here. Copy it before reloading.</p><button class="btn btn-secondary" data-action="reload-workspace">Reload &amp; discard edits</button>';
     $('.dialog-body').prepend(note);
   }
@@ -1379,7 +1442,7 @@
     batch.childId=id;
     taskDialog(id,'',false,true);
   }
-  function returnToRelatedBatch() {
+  function returnToRelatedBatch(readOnly=false) {
     const batch=ui.relatedBatch;
     if(!relatedBatchInScope(batch)||!['task','delete-task'].includes(ui.dialogKind)||!batch.childId||ui.detailId!==batch.childId)return false;
     const childId=batch.childId, parentId=batch.parentId;
@@ -1387,7 +1450,8 @@
       closeDialog();toast('The original task is no longer available.');return true;
     }
     batch.childId='';
-    taskDialog(parentId,'',false,true);
+    if(readOnly)taskDialog(parentId,'',false,true,'',undefined,'',{readOnly:true});
+    else taskDialog(parentId,'',false,true);
     const dialog=$('#dialog'),heading=$('#dialogTitle',dialog);
     requestAnimationFrame(()=>{
       if(!relatedBatchInScope(batch)||ui.relatedBatch!==batch||ui.dialogKind!=='task'||ui.detailId!==parentId||
@@ -1594,7 +1658,7 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='') {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     if(ui.dialogKind==='before-event-review'&&eventGroup&&!window.GatherAccessLost)ui.eventTaskReview={actor:ui.actor,group:eventGroup};
@@ -1645,8 +1709,8 @@
     window.GatherCompletionUI?.mount($('#dialog'));
     const resourceDraft=drafts.find(draft=>draft.form==='resourceForm'&&draft.name==='location');
     if(sameTask&&resourceDraft)$('#dialog').dataset.resourceDraft=resourceDraft.value;
-    window.GatherResourcesUI?.mount(id,$('#dialog'));
-    if((batch||ui.overlapComparison)&&workspaceUpdatesPending())showPendingUpdate();
+    window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly});
+    if((batch||ui.overlapComparison||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
   }
   function syncRecoveryForms() {
     const response=$('#responseForm'),decision=$('#recoveryDecisionForm');
@@ -2136,6 +2200,7 @@
       if(action==='run-sheet')openRunSheet();
       if(action==='before-event-review')beforeEventReview();
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
+      if(action==='refresh-activity-review')await refreshActivityReview(el);
       if(action==='schedule-review-activity'&&ui.dialogKind==='before-event-review'&&isOrganizer()&&!window.GatherAccessLost)openDialog('Review activity schedule',schedule.activityReviewForm(store.getState(),id),'<button class="btn btn-secondary" data-action="before-event-review">Back to event review</button>',false,'schedule-from-review');
       if(action==='print-run-sheet'&&currentRunSheet())window.print();
       if(action==='check-run-sheet')await checkRunSheet();
@@ -2447,7 +2512,7 @@
         const ticket=privateEpoch;
         try{await privateApi('records',{...data,id:form.dataset.id,version:form.dataset.version});if(ticket!==privateEpoch||document.hidden||ui.view!=='details')return;form.reset();closeDialog();await loadPrivate();toast('Encrypted booking saved. Shared tasks and exports are unchanged.');}finally{if(button.isConnected)button.disabled=false;}
       }
-    }catch(error){if(error.status===409){if(form.id==='recoveryDecisionForm')showRecoveryWriteConflict();else showPendingUpdate();}if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
+    }catch(error){if(error.status===409){if(form.id==='recoveryDecisionForm'||((form.id==='scheduleForm'||form.id==='taskDetailForm')&&ui.dialogKind==='task'&&ui.detailId===form.dataset.id))showRecoveryWriteConflict();else showPendingUpdate();}if(isSubmission&&form.dataset.completionUploaded==='true')error.message+=' Your file is saved in Event info, but this submission was not confirmed. Retry with the same file to avoid uploading it twice.';formError(form,error);toast(error.message||'Please check the form and try again.');}
     finally{release();if(form.id==='relatedReviewForm')paintRelatedSaveState(form);if(form.id==='emailReviewForm'&&form.isConnected)updateChangePreview();}
   });
 

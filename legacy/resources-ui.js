@@ -32,14 +32,14 @@
   function render(node,data){
     const disabled=data.status==='unconfigured',busy=data.status==='loading'||data.recovering;
     const links=Array.isArray(data.links)?data.links:[];
-    const message=disabled?'New link searches are unavailable while the Groq connection is being verified.':busy?'Finding helpful links…':data.status==='cooldown'?'Please wait a minute before searching again.':data.status==='error'?'The last search couldn’t finish. Try again.':links.length?'':'No useful sources found. Try adding a city or region.';
+    const message=disabled?'New link searches are unavailable while the Groq connection is being verified.':busy?'Finding helpful links…':data.status==='cooldown'?'Please wait a minute before searching again.':data.status==='error'?'The last search couldn’t finish. Try again.':links.length?'':data.status==='empty'?'No saved links yet. Open Search details to look for sources.':'No useful sources found. Try adding a city or region.';
     node.innerHTML=(links.length?'<ul class="resource-links">'+links.map(link=>'<li><a href="'+escape(link.url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">'+escape(link.title)+'</a><span class="resource-host">'+escape(link.host)+'</span><p>'+escape(link.description)+'</p></li>').join('')+'</ul>':'<p class="muted">'+message+'</p>')+
       (disabled&&links.length?'<p class="muted">'+message+'</p>':'')+'<details class="resource-details"><summary>Search details</summary><p>Groq searches using this task’s name, category and optional city. Emails, comments and private bookings are excluded.</p>'+
       (disabled?'':'<form id="resourceForm" class="resource-form"><label class="field">City or region (optional)<input name="location" maxlength="80" autocomplete="off" value="'+escape(data.location||'')+'" placeholder="e.g. Portland, Oregon"></label><button class="btn btn-secondary btn-small" type="submit" '+(busy?'disabled':'')+'>Find links</button></form>')+
       '<p class="muted">'+(data.generatedAt?'Searched '+escape(new Date(data.generatedAt).toLocaleDateString())+'. ':'')+'Suggestions, not endorsements. Confirm availability and suitability.</p></details>'+
       (data.recoveryError?'<p class="resource-error warning-note" role="alert">'+escape(data.recoveryError)+'</p><button type="button" class="btn btn-secondary btn-small" data-resource-retry>Reload links</button>':'');
   }
-  async function mount(taskId,container){
+  async function mount(taskId,container,{readOnly=false}={}){
     if(!container)return;
     const node=container.querySelector('[data-resource-results]');
     if(!node)return;
@@ -96,7 +96,7 @@
     }
     node.addEventListener('submit',event=>{if(!event.target.matches('.resource-form'))return;event.preventDefault();event.stopPropagation();show({location:event.target.elements.location.value,refresh:true});});
     node.addEventListener('click',event=>{if(!event.target.closest('[data-resource-retry]'))return;event.preventDefault();show(undefined,true);});
-    await show();
+    await show(undefined,readOnly);
   }
   root.GatherResourcesUI={markup,mount};
 })(window);
