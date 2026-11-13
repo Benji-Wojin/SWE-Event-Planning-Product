@@ -738,6 +738,25 @@
       $(section+' h3',$('#dialog'))?.focus();
     });
   }
+  function openReturnedCompletion(id) {
+    if(window.GatherAccessLost)return;
+    const task=store.getState().tasks.find(item=>item.id===id&&item.owner===ui.actor);
+    if(!task||!GatherPriorities.changesRequested(task)){
+      render();toast('This completion no longer needs changes from you.');return;
+    }
+    taskDialog(id);
+    requestAnimationFrame(()=>{
+      if(ui.dialogKind!=='task'||ui.detailId!==id)return;
+      $('[aria-label="Completion changes requested"] h4',$('#dialog'))?.focus();
+    });
+  }
+  function prepareRevisedCompletion(id) {
+    if(window.GatherAccessLost||ui.dialogKind!=='task'||ui.detailId!==id)return;
+    const task=store.getState().tasks.find(item=>item.id===id&&item.owner===ui.actor);
+    if(!task||!GatherPriorities.changesRequested(task)||dependencyInfo(task).open.length)return;
+    const form=$('#responseForm',$('#dialog'));
+    if(form?.dataset.id===id)recovery.prepareCompletion(form);
+  }
   function eventReviewScope() {
     return {mine:ui.timelineMode!=='deadlines'&&ui.scheduleMine,actor:ui.actor};
   }
@@ -1026,7 +1045,7 @@
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
-      ${window.GatherCompletionUI?.section(task,own||organizer,organizer)||''}
+      ${window.GatherCompletionUI?.section(task,own||organizer,organizer,{canPrepareRevision:own&&!window.GatherAccessLost,completionBlocked})||''}
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.${organizer?`<button class="btn btn-primary btn-small" data-action="verify-task" data-id="${h(id)}" ${completionBlocked?'disabled':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" data-id="${h(id)}" class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
       ${recovery.recoveryMarkup(task,organizer)}
       ${dependencyMarkup(task)}
@@ -1444,7 +1463,7 @@
     const {action,id}=el.dataset;
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     replacesDialog.push('related-checklist','notifications');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,replacesReview.includes(action)?$('#emailReviewForm'):null))return;
@@ -1461,6 +1480,7 @@
         joinWelcome=false;paintTeammateHandoff();
       }
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind);
+      if(action==='review-returned-completion')openReturnedCompletion(id);
       if(action==='related-checklist')openRelatedBatch(id);
       if(action==='related-ai-generate'||action==='related-ai-review')await relatedAi(action==='related-ai-generate');
       if(action==='expand-organizer-reviews'&&isOrganizer()&&!window.GatherAccessLost){
@@ -1574,6 +1594,7 @@
       }
       if(action==='report-task')responseDialog(id);
       if(action==='prepare-completion')recovery.prepareCompletion(el.closest('#responseForm'));
+      if(action==='prepare-revised-completion')prepareRevisedCompletion(id);
       if(action==='resume-task'){el.disabled=true;try{store.resumeTask(id,ui.actor);render();taskDialog(id);toast('Task resumed.');}finally{if(el.isConnected)el.disabled=false;}}
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);

@@ -50,7 +50,7 @@ test('only the organizer gets an explicit revision-bound review control, separat
   assert.match(html,/does not reverify the task/);
   for(const args of [[true,false],[false,false],[true]])assert.doesNotMatch(GatherCompletionUI.section(task,...args),/I reviewed this amendment/);
   const app=readFileSync('legacy/app.js','utf8'),prepare=readFileSync('scripts/prepare.mjs','utf8');
-  assert.match(app,/section\(task,own\|\|organizer,organizer\)/);
+  assert.match(app,/section\(task,own\|\|organizer,organizer[,)]/);
   assert.match(app,/store\.reviewCompletionEvidence\(id,Number\(el.dataset.revision\),ui.actor\)/);
   assert.match(prepare,/'reviewCompletionEvidence'/);
   assert.match(readFileSync('legacy/hosted-store.js','utf8'),/reviewCompletionEvidence: 2/);

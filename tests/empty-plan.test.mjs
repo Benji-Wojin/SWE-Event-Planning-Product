@@ -2,6 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import '../legacy/calendar.js';
+import '../legacy/store.js';
 
 const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s,');
@@ -84,6 +86,31 @@ test('personal Overview does not suggest blocked work, but makes the personal re
   const html=render({organizer:false,tasks:[{id:'blocked',title:'Not ready to start',owner:'maya',status:'blocked'}]});
   assert.match(html,/Nothing ready to start/);assert.match(html,/Open My tasks/);
   assert.match(html,/View my tasks/);assert.doesNotMatch(html,/data-id="blocked"/);
+});
+
+test('personal Overview routes only your returned reports, even when blocked, until you resubmit',()=>{
+  const store=GatherStore.createStore({storage:null});
+  const report=(title,owner,feedback)=>{
+    const task=store.addTask({title,owner,requiresVerification:true});
+    store.reportCompletion(task.id,'Earlier fictional submission.',owner);
+    store.returnCompletion(task.id,feedback);
+    return task.id;
+  };
+  const mine=report('My returned report','maya','FICTIONAL_REVIEW_REASON_MINE');
+  const other=report('Another teammate’s returned report','dev','FICTIONAL_REVIEW_REASON_OTHER');
+  const ready=store.addTask({title:'Ordinary preparation',owner:'maya'}).id;
+  const html=()=>render({organizer:false,tasks:store.getState().tasks.filter(task=>[mine,other,ready].includes(task.id))});
+  for(const status of ['progress','blocked']){
+    store.updateTask(mine,{status});
+    const view=html();
+    assert.match(view,/Completion changes requested/);
+    assert.match(view,new RegExp(`data-action="review-returned-completion"[^>]*data-id="${mine}"`));
+    assert.equal((view.match(/My returned report/g)||[]).length,1,'returned work should not also appear as a next-task suggestion');
+    assert.match(view,/Ordinary preparation/);
+    assert.doesNotMatch(view,/Another teammate’s returned report|FICTIONAL_REVIEW_REASON_/);
+  }
+  store.reportCompletion(mine,'Revised fictional submission.','maya');
+  assert.doesNotMatch(html(),/Completion changes requested|review-returned-completion|My returned report/);
 });
 
 test('only organizers see pending reviews on Overview',()=>{
