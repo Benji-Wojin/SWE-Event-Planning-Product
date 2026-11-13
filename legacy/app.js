@@ -317,6 +317,11 @@
       return restoreLessonLinkedTaskFocus(previous,root);
     if(previous.id==='wrapFollowUpHeading'||previous.id==='wrapFollowUpOpen'||previous.id==='wrapFollowUpDismiss')
       return focusWrapFollowUpReceipt(previous.dataset.id,root,previous.dataset.action);
+    if(previous.id==='acceptanceHandoffNextUp'&&ui.acceptanceHandoff?.id===previous.dataset.id&&
+      currentAcceptanceHandoff(store.getState())){
+      if(restoreFocus(previous,root))return true;
+      return focusScheduleTarget($('#acceptanceHandoffOpen',root));
+    }
     if(['scheduleFirstReceiptTitle','scheduleSavedDay'].includes(previous.id)&&ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&
       !window.GatherAccessLost&&!root.closest('[hidden],[inert]')){
       const heading=$('#scheduleFirstReceiptTitle',root);
@@ -757,19 +762,27 @@
     return state.tasks.find(task=>task.id===receipt.id&&task.owner===receipt.actor&&task.acceptedBy===receipt.actor&&
       task.acceptedAt===receipt.acceptedAt&&!task.archivedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt)||null;
   }
+  function acceptedNextUpAvailable(task,state) {
+    return !!task&&resumedNextUpAvailable(task,state)&&!(task.dependencies||[]).some(link=>link.kind!=='related'&&
+      state.tasks.some(item=>item.id===link.taskId&&item.archivedAt));
+  }
   function acceptanceHandoffMarkup(state) {
     const task=currentAcceptanceHandoff(state);
     if(!task)return '';
     const readiness=assignmentReadiness(task,state.tasks);
+    const nextUp=acceptedNextUpAvailable(task,state);
+    const full=nextUp&&GatherPriorities.nextUp(state.tasks,ui.actor,new Date(),state.event.timeZone).length>=3;
     return `<section class="panel notice section-gap" id="acceptanceHandoff" aria-labelledby="acceptanceHandoffHeading">
       <h2 id="acceptanceHandoffHeading" tabindex="-1">Responsibility accepted</h2>
       <p><strong>${h(task.title)}</strong> is in My tasks. Its completion status hasn’t changed.</p>
       ${readiness?`<p class="muted">${h(readiness)}</p>`:''}
+      ${nextUp?'<p class="muted">Nothing is added to Next up until you confirm in the task.</p>':''}
       <div class="inline"><button id="acceptanceHandoffOpen" class="btn btn-primary" type="button" data-action="open-accepted-handoff" data-id="${h(task.id)}">Open accepted task</button>
+      ${nextUp?`<button id="acceptanceHandoffNextUp" class="btn btn-secondary" type="button" data-action="open-accepted-next-up" data-id="${h(task.id)}">${full?'Review Next up swap':'Go to Next up controls'}</button>`:''}
       <button id="acceptanceHandoffDismiss" class="btn btn-secondary" type="button" data-action="dismiss-accepted-handoff">Dismiss</button></div></section>`;
   }
   function actOnAcceptanceHandoff(opener,id='') {
-    const task=currentAcceptanceHandoff(store.getState()),root=$('#viewRoot');
+    const state=store.getState(),task=currentAcceptanceHandoff(state),root=$('#viewRoot');
     if(!task||ui.pendingSave||document.hidden||!$('#dialogBackdrop').hidden||!opener?.isConnected||
       opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
     if(!id&&opener===$('#acceptanceHandoffDismiss',root)&&opener.dataset.action==='dismiss-accepted-handoff'){
@@ -778,13 +791,31 @@
       skipToContent();
       return true;
     }
-    if(id!==task.id||opener!==$('#acceptanceHandoffOpen',root)||opener.dataset.action!=='open-accepted-handoff'||opener.dataset.id!==id)return false;
+    const nextUp=opener.dataset.action==='open-accepted-next-up';
+    if(id!==task.id||opener.dataset.id!==id||opener!==(nextUp?$('#acceptanceHandoffNextUp',root):$('#acceptanceHandoffOpen',root))||
+      (nextUp?!acceptedNextUpAvailable(task,state):opener.dataset.action!=='open-accepted-handoff'))return false;
     if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
       toast('Refresh the project before opening this accepted task.');return false;
     }
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
-    if(ui.dialogKind==='task'&&ui.detailId===id)ui.lastFocus=opener;
+    if(ui.dialogKind==='task'&&ui.detailId===id){
+      ui.lastFocus=opener;
+      if(nextUp)focusAcceptedNextUp(id);
+    }
     return true;
+  }
+  function focusAcceptedNextUp(id) {
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog),receipt=ui.acceptanceHandoff,revision=store.getSnapshotRevision?.();
+    requestAnimationFrame(()=>{
+      if(!title||$('#dialogTitle',dialog)!==title||document.activeElement!==title||document.hidden||ui.pendingSave||
+        ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||ui.acceptanceHandoff!==receipt||
+        store.getSnapshotRevision?.()!==revision||workspaceUpdatesPending()||scheduleRevisionIsStale(revision))return;
+      const state=store.getState(),task=currentAcceptanceHandoff(state),form=$('#nextUpForm',dialog);
+      if(task?.id!==id||!acceptedNextUpAvailable(task,state)||form?.dataset.id!==id)return;
+      const target=$('select[name="replaceTaskId"]',form)||$('#nextUpTaskState',form);
+      if(target&&!target.matches(':disabled')&&!target.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(target))
+        focusTaskDialogControl(target,dialog);
+    });
   }
   function teammateHandoff(s,welcome) {
     const pending=s.tasks.filter(waitsForAcceptance).length;
@@ -3358,7 +3389,7 @@
     const fromLinkedResults=linkedReview?.id===id&&linkedReview.actor===ui.actor&&linkedReview.project===window.GatherMode?.projectId;
     const fromRequiredReview=ui.completionLinkedReturn?.targetId===id;
     const fromPlanReceipt=ui.planReceiptReturn?.id===id;
-    const fromAcceptanceHandoff=ui.lastFocus?.id==='acceptanceHandoffOpen'&&ui.lastFocus.dataset.id===id&&
+    const fromAcceptanceHandoff=['acceptanceHandoffOpen','acceptanceHandoffNextUp'].includes(ui.lastFocus?.id)&&ui.lastFocus.dataset.id===id&&
       currentAcceptanceHandoff(taskState)?.id===id;
     window.GatherResourcesUI?.mount(id,$('#dialog'),{readOnly:readOnly||fromAcceptanceHandoff||fromPlanReceipt||fromRequiredReview||fromWrapReceipt||fromWrapOpenWork||fromWrapLesson||fromBudget||fromScheduleReceipt||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults});
     if((batch||ui.overlapComparison||fromScheduleReconfirmation||fromEventScheduleReview||fromLinkedResults||(store.refresh&&canRefreshActivityReview(task)))&&workspaceUpdatesPending())showPendingUpdate();
@@ -4204,7 +4235,7 @@
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
-    if(action==='open-accepted-handoff'||action==='dismiss-accepted-handoff'){actOnAcceptanceHandoff(el,id);return;}
+    if(['open-accepted-handoff','open-accepted-next-up','dismiss-accepted-handoff'].includes(action)){actOnAcceptanceHandoff(el,id);return;}
     if(action==='refresh-lesson-draft'){await refreshLessonDraft(el);return;}
     if(action==='use-latest-lesson'){useLatestLesson(el);return;}
     if(action==='discard-completion-draft'){
