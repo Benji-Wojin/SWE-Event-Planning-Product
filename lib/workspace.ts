@@ -334,7 +334,7 @@ export async function mutateWorkspace(
     if (!membership) throw new HttpError(400, 'Choose an active project teammate.');
     assignment = { actor, revision: membership.revision };
   }
-  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
+  const organizerOnly = ['rescheduleEvent', 'assignTasks', 'deleteTask', 'setTaskSchedule', 'setTaskOutcome', 'returnCompletion', 'reviewCompletionEvidence', 'addRelatedTasks'].includes(input.method) || input.method==='resolveRecovery' && input.args[1]?.action==='scope' || input.method==='addLinkedTask' && authorized.role==='admin';
   const serialized = store.exportState();
   if (new TextEncoder().encode(serialized).length > 1500000)
     throw new HttpError(

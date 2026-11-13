@@ -332,9 +332,17 @@
       actorId(actor);
       const schedule = scheduleFields(data, actor), task = taskById(taskId);
       if (JSON.stringify(task.schedule) === JSON.stringify(schedule)) return copy(task);
+      const hadSchedule=!!task.schedule;
+      const reconfirm=task.owner&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&(task.acceptedAt||task.nextUpAt);
       task.schedule = schedule;
+      if(reconfirm){
+        for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])task[key]='';
+        const change=schedule?(hadSchedule?'Activity time or location changed.':'Activity added to the schedule.'):'Activity removed from the schedule.';
+        task.comments.push({id:id('comment'),actor,at:timestamp(),kind:'plan-decision',
+          text:change+' Review the current plan and accept responsibility again. Progress is unchanged.'});
+      }
       task.revision += 1;
-      entry(actor, `${schedule ? 'scheduled' : 'removed from the schedule:'} ${task.title}`, task.id, 'schedule');
+      entry(actor, `${schedule ? 'scheduled' : 'removed from the schedule:'} ${task.title}${reconfirm?' · owner needs to reconfirm':''}`, task.id, 'schedule');
       // Changing the timetable is not progress, a completion report, or a dependency result.
       save(true, false);
       return copy(task);

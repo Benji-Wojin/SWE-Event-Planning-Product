@@ -555,7 +555,7 @@
     const changed=previous.size-selectedCount;
     const choices=tasks.map(task=>{
       const key=h(task.id);
-      const when=task.schedule?`Activity starts ${h(task.schedule.start.replace('T',' '))} · ${h(state.event.timeZone)}`:task.eventActivity===true?'Planned activity · start time not set':'';
+      const when=task.schedule?`Activity: ${h(GatherScheduleUI.dateLabel(task.schedule.start))} · ${h(GatherScheduleUI.range(task.schedule))} · ${h(state.event.timeZone)}${task.schedule.end?'':' · No end time set'} · ${h(task.schedule.location||'No location entered')}`:task.eventActivity===true?'Planned activity · start time not set':'';
       const readiness=assignmentReadiness(task,state.tasks);
       return `<div class="acceptance-choice">
         <label class="acceptance-item"><input type="checkbox" name="acceptTask" value="${key}" data-revision="${task.revision}"${keep(task)?' checked':''} aria-labelledby="accept-title-${key}" aria-describedby="accept-date-${key}${when?' accept-activity-'+key:''}${readiness?' accept-readiness-'+key:''} accept-outcome-${key}">
@@ -2186,15 +2186,18 @@
       }
       if(form.id==='scheduleForm'||form.id==='schedulePickerForm'){
         const taskId=form.dataset.id||data.taskId;
-        store.setTaskSchedule(taskId,event.submitter?.value==='remove'?null:{start:data.start,end:data.end,location:data.location},ui.actor);
-        render();taskDialog(taskId,form.id);toast(event.submitter?.value==='remove'?'Removed from schedule. The task is unchanged.':'Schedule saved.');
+        const before=store.getState().tasks.find(task=>task.id===taskId),remove=event.submitter?.value==='remove';
+        const saved=store.setTaskSchedule(taskId,remove?null:{start:data.start,end:data.end,location:data.location},ui.actor);
+        const reconfirm=(before?.acceptedAt||before?.nextUpAt)&&saved&&!saved.acceptedAt&&!saved.nextUpAt;
+        render();taskDialog(taskId,form.id);toast((remove?'Removed from schedule. The task was kept.':'Schedule saved.')+(reconfirm?' The owner needs to accept again.':''));
       }
       if(form.id==='reviewScheduleForm'){
         if(ui.dialogKind!=='schedule-from-review'||!isOrganizer()||window.GatherAccessLost)throw new Error('Reopen the event review as the organizer.');
         const task=store.getState().tasks.find(item=>item.id===form.dataset.id);
         if(!task||task.revision!==Number(form.dataset.revision))throw new Error('This activity changed. Reopen the event review before saving.');
-        store.setTaskSchedule(task.id,{start:data.start,end:data.end,location:data.location},ui.actor);
-        render();beforeEventReview();toast('Schedule saved. Event review updated.');
+        const saved=store.setTaskSchedule(task.id,{start:data.start,end:data.end,location:data.location},ui.actor);
+        const reconfirm=(task.acceptedAt||task.nextUpAt)&&saved&&!saved.acceptedAt&&!saved.nextUpAt;
+        render();beforeEventReview();toast('Schedule saved. Event review updated.'+(reconfirm?' The owner needs to accept again.':''));
       }
       if(form.id==='taskDetailForm'){
         const before=store.getState().tasks.find(task=>task.id===form.dataset.id);

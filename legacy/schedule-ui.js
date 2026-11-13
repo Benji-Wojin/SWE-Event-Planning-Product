@@ -259,6 +259,11 @@
     function zone(event) {
       return `<p class="muted schedule-zone">All times: ${h(event.timeZone)}. Preparation deadlines are separate.</p>`;
     }
+    function scheduleCommitmentHint(task) {
+      if(!task)return '<p class="muted">Scheduling an open task resets any existing acceptance and Next up commitment so its owner can reconfirm. Progress is unchanged.</p>';
+      if(task.status==='done'||task.reportedAt||task.verifiedAt||!task.owner||!(task.acceptedAt||task.nextUpAt))return '';
+      return '<p class="notice">Changing or removing this schedule clears the current acceptance and Next up commitment. The same owner can accept again after reviewing the change. Progress is unchanged.</p>';
+    }
     function needsZone() {
       return '<p class="muted">Set the event time zone before scheduling activities.</p><button class="btn btn-secondary" data-action="event-context">Project settings</button>';
     }
@@ -296,20 +301,20 @@
       const warning=overlaps.length?`<details class="schedule-overlap-details"><summary>Owner overlap · ${overlaps.length} ${overlaps.length===1?'activity':'activities'}</summary><p>The same owner is scheduled at overlapping times. ${organizer?'Review the times or choose another owner.':'Ask the organizer to review the times or owner.'}</p><ul>${overlaps.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul>${!current?.end||overlaps.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
       const locationWarning=locations.length?`<details class="schedule-overlap-details"><summary>Potential location overlap · ${locations.length} ${locations.length===1?'activity':'activities'}</summary><p>Matching location labels have overlapping entered times. The space may be shared or divisible. ${organizer?'Confirm whether these activities can share the space, or edit the times or activity location.':'Ask the organizer to confirm shared space, times or activity locations.'}</p><ul>${locations.map(other=>`<li><button class="text-button" data-action="task" data-id="${h(other.id)}">${h(other.title)}</button><span class="muted">${h(other.schedule.location)} · ${h(dateLabel(other.schedule.start))} · ${h(range(other.schedule))}</span></li>`).join('')}</ul><p class="muted">Only matching labels are checked, ignoring case and extra spaces. Different room names, capacity, travel and external bookings are not checked.</p>${!current?.end||locations.some(other=>!other.schedule.end)?'<p class="muted">An end time is missing. Only overlaps known from the entered times are shown.</p>':''}</details>`:'';
       const facts=current?`<section class="schedule-facts"><h3>Scheduled activity</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(event.timeZone)}${current.location?' · '+h(current.location):''}</p>${warning}${locationWarning}</section>`:needsActivityTime(task)?'<section class="schedule-facts"><h3>Planned activity · no start time</h3><p class="muted">This activity is not on the schedule or run sheet yet.</p></section>':'';
-      return facts+(organizer?`<details class="task-schedule task-organizer section-gap"><summary>${current?'Edit schedule':'Add to event schedule'}</summary>${event.timeZone?`<form id="scheduleForm" data-id="${h(task.id)}" class="section-gap">${zone(event)}${fields(current||{})}<div class="form-actions"><button class="btn btn-secondary" type="submit" value="save">Save schedule</button>${current?'<button class="text-button" type="submit" value="remove" formnovalidate>Remove from schedule</button>':''}</div></form>`:needsZone()}</details>`:'');
+      return facts+(organizer?`<details class="task-schedule task-organizer section-gap"><summary>${current?'Edit schedule':'Add to event schedule'}</summary>${event.timeZone?`<form id="scheduleForm" data-id="${h(task.id)}" class="section-gap">${zone(event)}${scheduleCommitmentHint(task)}${fields(current||{})}<div class="form-actions"><button class="btn btn-secondary" type="submit" value="save">Save schedule</button>${current?'<button class="text-button" type="submit" value="remove" formnovalidate>Remove from schedule</button>':''}</div></form>`:needsZone()}</details>`:'');
     }
     function picker(state,taskId='') {
       if(!state.event.timeZone)return needsZone();
       const available=state.tasks.filter(task=>!task.schedule);
       if(!available.length)return '<p>All existing tasks are scheduled.</p><button class="btn btn-primary" data-action="add-activity">Add activity</button>';
-      return `<form id="schedulePickerForm">${zone(state.event)}<label class="field">Existing task<select name="taskId" required>${options([['','Choose a task'],...available.map(task=>[task.id,task.title])],available.some(task=>task.id===taskId)?taskId:'')}</select></label>${fields()}<div class="form-actions"><button class="btn btn-primary" type="submit">Add to schedule</button></div></form>`;
+      return `<form id="schedulePickerForm">${zone(state.event)}${scheduleCommitmentHint()}<label class="field">Existing task<select name="taskId" required>${options([['','Choose a task'],...available.map(task=>[task.id,task.title])],available.some(task=>task.id===taskId)?taskId:'')}</select></label>${fields()}<div class="form-actions"><button class="btn btn-primary" type="submit">Add to schedule</button></div></form>`;
     }
     function activityReviewForm(state,taskId) {
       const task=state.tasks.find(task=>task.id===taskId);
       if(!task||!(needsActivityTime(task)||needsActivityDetails(task)))
         throw new Error('This schedule item has changed. Reopen the event review.');
       if(!state.event.timeZone)return needsZone();
-      return `<p><strong>${h(task.title)}</strong></p><form id="reviewScheduleForm" data-id="${h(task.id)}" data-revision="${h(task.revision)}">${zone(state.event)}${fields(task.schedule||{})}<div class="form-actions"><button class="btn btn-primary" type="submit">Save schedule</button></div></form>`;
+      return `<p><strong>${h(task.title)}</strong></p><form id="reviewScheduleForm" data-id="${h(task.id)}" data-revision="${h(task.revision)}">${zone(state.event)}${scheduleCommitmentHint(task)}${fields(task.schedule||{})}<div class="form-actions"><button class="btn btn-primary" type="submit">Save schedule</button></div></form>`;
     }
     function reviewAssignmentTasks(state,scope,key) {
       if(!assignmentGroup(key))return [];

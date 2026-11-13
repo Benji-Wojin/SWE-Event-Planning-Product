@@ -193,7 +193,7 @@ Server and hook-level UI tests cover authorization, privacy, stale writes, retri
 
 ### Schedule and shared information
 
-Timeline has an event schedule and a preparation-deadline view. Organizers can add activities or schedule existing tasks with local start/end dates and a location. Every activity uses the same task, owner, comments, blockers and completion flow; completed activities remain visible. Removing a schedule entry does not delete its task. Preparation deadlines and progress timestamps are not changed by scheduling.
+Timeline has an event schedule and a preparation-deadline view. Organizers can add activities or schedule existing tasks with local start/end dates and a location. Every activity uses the same task, owner, comments, blockers and completion flow; completed activities remain visible. Adding, changing or removing a schedule on open, accepted work clears its acceptance and Next up commitment so the same owner can reconfirm. The assignment review shows the current time and location. Unchanged schedules and completed or reported work keep their recorded commitments and evidence. Removing a schedule entry does not delete its task; scheduling does not change preparation deadlines, progress or send a message.
 
 Project settings stores the event time zone explicitly; all teammates see event-local times. Multi-day and overnight activities have their own dates. Changing the event date never moves activities automatically; changing a zone with scheduled work requires acknowledgment and preserves the entered clock times. This is a timetable, not background reminders or automatic status changes. Fresh/restarted demos include three sample activities; real projects stay empty.
 

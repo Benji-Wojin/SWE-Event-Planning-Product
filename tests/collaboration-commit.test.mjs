@@ -245,6 +245,70 @@ test('event reschedule uses real project guards, stale CAS and commit-time organ
   beforeRun=(sql,args)=>{if(isCommit(race,sql,args)){intercepted=true;sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId,race);}};
   try{assert.equal((await mutate(race,organizer,'rescheduleEvent',[{...input,tasks:[]}])).status,409);assert.ok(intercepted);assert.deepEqual(stored(race),original);}finally{beforeRun=undefined;}
 });
+
+test('moving one accepted activity requests fresh owner acceptance without changing work progress', async () => {
+  const { project, actor } = await setup();
+  const originalSlot = { start: '2026-11-20T09:00', end: '2026-11-20T10:00', location: 'Hall A' };
+  const movedSlot = { start: '2026-11-20T11:00', end: '2026-11-20T12:00', location: 'Hall B' };
+  const linked = (await save(project, organizer, 'addTask', [{ title: 'Fictional welcome signs' }])).result;
+  const task = (await save(project, organizer, 'addTask', [{
+    title: 'Fictional arrival shift', owner: actor, status: 'progress', schedule: originalSlot,
+    note: 'Greeter briefed.', scope: 'Guests know where to check in.', dueDate: '2026-11-19', requiresVerification: true,
+  }])).result;
+  await save(project, organizer, 'addDependency', [task.id, { taskId: linked.id, kind: 'related', reason: 'Signs can be prepared in parallel.' }]);
+  await save(project, teammate, 'acceptTask', [task.id]);
+  await save(project, teammate, 'setNextUp', [task.id, { enabled: true }]);
+  const current = await read(project, teammate), find = snapshot => snapshot.state.tasks.find(row => row.id === task.id);
+  const prior = find(current), baseline = stored(project), args = [task.id, movedSlot];
+  assert.equal(prior.acceptedBy, actor);
+  assert.equal(prior.nextUpBy, actor);
+  assert.equal((await mutate(project, teammate, 'setTaskSchedule', args, current.revision)).status, 403);
+  assert.equal((await mutate(project, organizer, 'setTaskSchedule', args, current.revision - 1)).status, 409);
+  assert.deepEqual(stored(project), baseline);
+
+  const saved = await save(project, organizer, 'setTaskSchedule', args);
+  const latest = await read(project, teammate), next = find(latest);
+  assert.equal(latest.revision, current.revision + 1);
+  assert.equal(saved.revision, latest.revision);
+  assert.deepEqual(next, saved.result);
+  assert.deepEqual(next.schedule, movedSlot);
+  for (const key of ['acceptedAt', 'acceptedBy', 'acceptedSourceId', 'acceptedRecordedBy', 'nextUpAt', 'nextUpBy']) assert.equal(next[key], '', key);
+  for (const key of ['status', 'note', 'scope', 'owner', 'dueDate', 'dependencies', 'requiresVerification', 'reportedAt', 'verifiedAt', 'updatedAt', 'updatedBy'])
+    assert.deepEqual(next[key], prior[key], key);
+
+  const moved = stored(project);
+  const staleRefs = [[{ id: task.id, revision: prior.revision }]];
+  assert.equal((await mutate(project, teammate, 'acceptTasks', staleRefs, current.revision)).status, 409);
+  assert.equal((await mutate(project, teammate, 'acceptTasks', staleRefs, latest.revision)).status, 400);
+  assert.deepEqual(stored(project), moved);
+  const renewed = await save(project, teammate, 'acceptTasks', [[{ id: task.id, revision: next.revision }]]);
+  assert.equal(renewed.result[0].acceptedBy, actor);
+  assert.equal(renewed.result[0].nextUpAt, '', 'renewed acceptance alone is not a new commitment');
+  assert.deepEqual(renewed.result[0].schedule, movedSlot);
+  assert.equal(find(await read(project, teammate)).acceptedBy, actor);
+});
+
+test('individual schedule edit loses organizer authority at commit even if the old organizer retains member access', async () => {
+  const { project } = await setup();
+  const task = (await save(project, organizer, 'addTask', [{ title: 'Fictional organizer schedule' }])).result;
+  sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revision) VALUES (?,?,?,?,?,?,0)')
+    .run('schedule-old-owner-' + project, project, organizer.userId, 'jack', 'fictional', new Date().toISOString());
+  const baseline = stored(project);
+  let intercepted = false;
+  beforeRun = (sql, args) => {
+    if (!isCommit(project, sql, args) || intercepted) return;
+    intercepted = true;
+    sqlite.prepare('UPDATE projects SET owner_id=? WHERE id=?').run(teammate.userId, project);
+  };
+  try {
+    const slot = { start: '2026-11-20T10:00', end: '', location: '' };
+    const denied = await mutate(project, organizer, 'setTaskSchedule', [task.id, slot], baseline.revision);
+    assert.equal(denied.status, 409);
+    assert.equal(intercepted, true);
+    assert.deepEqual(stored(project), baseline);
+  } finally { beforeRun = undefined; }
+});
+
 test('batch acceptance commits one reviewed owner-only selection with no partial invalid or stale save', async () => {
   const { project, actor } = await setup();
   const a = (

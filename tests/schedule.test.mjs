@@ -29,6 +29,34 @@ test('schedule persists without changing preparation deadlines, progress, report
   assert.deepEqual({...task(store),revision:original.revision},original);
 });
 
+test('changing, adding or removing a schedule clears only open-work commitments and leaves an explanation',()=>{
+  const store=create();
+  const original=store.addTask({title:'Greet guests',owner:'maya',dueDate:'2026-10-02',note:'The route is ready.',schedule:slot});
+  const id=original.id;
+  store.updateTask(id,{status:'progress',note:'The route is marked.'},'maya');
+  store.setNextUp(id,{enabled:true},'maya');
+  let before=task(store,id),raw=store.exportState();
+  store.setTaskSchedule(id,{...slot,location:'  East entrance  '});
+  assert.equal(store.exportState(),raw,'an unchanged normalized schedule must keep acceptance');
+  const check=(next,message)=>{
+    const saved=store.setTaskSchedule(id,next),comment=saved.comments.at(-1);
+    assert.equal(saved.revision,before.revision+1);
+    for(const key of ['acceptedAt','acceptedBy','acceptedSourceId','acceptedRecordedBy','nextUpAt','nextUpBy'])assert.equal(saved[key],'',key);
+    for(const key of ['owner','status','dueDate','note','noteUpdatedAt','noteUpdatedBy','ownerRespondedAt','dependencies','recoveryRequests','completionReview'])assert.deepEqual(saved[key],before[key],key);
+    assert.match(comment.text,message);
+    assert.match(comment.text,/accept responsibility again/);
+    assert.equal(comment.actor,'jack');
+    assert.equal(task(reload(store.exportState()),id).acceptedAt,'');
+    assert.equal(GatherScheduleUI.reviewItems(store.getState(),now,{mine:true,actor:'maya'}).find(group=>group.key==='acceptance').tasks.some(t=>t.id===id),true);
+    store.setNextUp(id,{enabled:true},'maya');
+    before=task(store,id);
+    assert.ok(before.acceptedAt&&before.nextUpAt);
+  };
+  check({...slot,location:'West entrance'},/Activity time or location changed/);
+  check(null,/Activity removed from the schedule/);
+  check(slot,/Activity added to the schedule/);
+});
+
 test('legacy workspaces stay unscheduled; malformed schedules are not silently overwritten',()=>{
   const state=JSON.parse(create().exportState());delete state.event.timeZone;state.tasks.forEach(t=>delete t.schedule);
   const old=reload(JSON.stringify(state));assert.equal(old.getState().persistence,'saved');
@@ -73,6 +101,17 @@ test('multi-day and overnight activities keep explicit dates; zone changes requi
 
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ui=GatherScheduleUI.create({h,options:items=>items.map(([value,label])=>`<option value="${h(value)}">${h(label)}</option>`).join(''),person:id=>h(id),statusBadge:status=>h(status)});
+test('organizer schedule forms disclose the reconfirmation consequence before saving',()=>{
+  const store=create();
+  const {id}=store.addTask({title:'Check welcome hall',owner:'maya',schedule:{...slot,end:''}});
+  store.acceptTask(id,'maya');
+  const state=store.getState(),current=task(store,id);
+  assert.match(ui.details(current,true,state.event),/clears the current acceptance and Next up commitment/);
+  assert.match(ui.activityReviewForm(state,id),/same owner can accept again/);
+  assert.match(ui.picker(state),/resets any existing acceptance/);
+  assert.doesNotMatch(ui.details(current,false,state.event),/clears the current acceptance/);
+  assert.doesNotMatch(ui.details({...current,reportedAt:'reported'},true,state.event),/clears the current acceptance/);
+});
 test('manual activities can be created without a time zone or date and keep their identity after scheduling',()=>{
   const store=GatherStore.createStore({storage:null,now});
   const form=ui.newActivity(store.getState());
@@ -126,7 +165,7 @@ test('hosted schedule save awaits success and keeps the draft intact on failure'
     const form={id,dataset:{id:'dietary',scheduled:'true'},isConnected:true,closest(){return this;}};
     const context=vm.createContext({document:{addEventListener:(_type,handler)=>{submit=handler;}},ui:{actor:'jack'},GatherScheduleUI,
       FormData:class {constructor(){return Object.entries(fields);}},$:()=>null,
-      saveLock:()=>{locked=true;return()=>{locked=false;}},store:{setTaskSchedule:()=>pending,addTask:()=>pending},
+      saveLock:()=>{locked=true;return()=>{locked=false;}},store:{getState:()=>({tasks:[]}),setTaskSchedule:()=>pending,addTask:()=>pending},
       formError:(_form,error)=>events.push('error:'+error.message),toast:text=>events.push(text),
       render:()=>events.push('render'),closeDialog:()=>events.push('close'),taskDialog:()=>events.push('task')});
     vm.runInContext(submitSource,context);

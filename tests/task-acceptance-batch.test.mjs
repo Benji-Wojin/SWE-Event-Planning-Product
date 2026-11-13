@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
+import '../legacy/schedule-ui.js';
 import '../legacy/calendar.js';
 import '../legacy/store.js';
 import '../legacy/priorities.js';
@@ -196,6 +197,8 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
       eventActivity: true,
     },
     { id: 'other', owner: 'dev', status: 'todo' },
+    { id: 'timed', revision: 2, title: 'Welcome crew', owner: 'maya', status: 'todo',
+      schedule: {start:'2030-11-10T09:00',end:'2030-11-10T10:30',location:'East <Hall>'} },
     { id: 'accepted', owner: 'maya', acceptedAt: 'date', status: 'todo' },
     { id: 'done', owner: 'maya', status: 'done' },
     { id: 'reported', owner: 'maya', status: 'progress', reportedAt: 'date' },
@@ -205,7 +208,7 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   const context = vm.createContext({
     ui: { actor: 'maya' },
     window: {GatherAccessLost:false},
-    GatherPriorities,
+    GatherPriorities, GatherScheduleUI,
     eventReviewScope: () => ({mine:false,actor:'maya'}),
     schedule: {reviewAcceptanceTasks:(_state,scope)=>{
       assert.equal(scope.actor,'maya');return tasks.filter(task=>task.id==='a');
@@ -239,6 +242,7 @@ test('review is current-view owned/open/unaccepted only, escaped and selected by
   assert.match(markup, /id="acceptanceSubmit"[^>]*disabled/);
   assert.match(markup, /does not mark work complete/);
   assert.match(markup, /data-action="inspect-acceptance-task" data-id="a"/);
+  assert.match(markup, /id="accept-activity-timed">Activity: .*9:00 AM – 10:30 AM · UTC · East &lt;Hall&gt;/);
   vm.runInContext('acceptanceDialog(true);',context);
   assert.match(markup,/data-return-to="event-review"/);
   assert.match(markup,/Planned activity · start time not set/);

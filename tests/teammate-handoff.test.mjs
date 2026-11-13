@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import '../legacy/priorities.js';
+import '../legacy/schedule-ui.js';
 
 const source=readFileSync('legacy/app.js','utf8');
 const start=source.indexOf('  function acceptanceCandidates(');
@@ -11,7 +12,7 @@ const task=(id,owner='',fields={})=>({id,owner,title:id,status:'todo',revision:1
 const escape=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
 function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={}){
   const host={hidden:true,innerHTML:'',contains:()=>false};
-  const state={event:{name:'Fictional <School> dance'},tasks};
+  const state={event:{name:'Fictional <School> dance',timeZone:'America/Los_Angeles'},tasks};
   const actions=[];
   let dialog;
   const ctx=vm.createContext({
@@ -19,7 +20,7 @@ function context(tasks=[],{role='member',demo=false,lost=false,welcome=true}={})
     window:{GatherMode:{demo},GatherIdentity:{role},GatherAccessLost:lost},
     joinWelcome:welcome,renderedTeammateHandoff:'',document:{activeElement:null},
     $:selector=>selector==='#workspaceHandoff'?host:null,store:{getState:()=>state},
-    GatherPriorities,h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
+    GatherPriorities,GatherScheduleUI,h:escape,statuses:{todo:'To do',progress:'In progress',blocked:'Blocked'},dayLabel:value=>value,
     navigate:view=>{ctx.ui.view=view;actions.push(view);return true;},
     filteredTasks:()=>state.tasks.filter(item=>item.owner==='maya'),
     skipToContent:()=>actions.push('focus'),toast:message=>actions.push(message),
@@ -77,7 +78,7 @@ test('assignment handoff uses the real personal review without writing or select
   assert.match(markup,/Open task details for Review mine/);
   assert.match(markup,/aria-labelledby="accept-title-review-mine" aria-describedby="accept-date-review-mine accept-activity-review-mine accept-outcome-review-mine"/);
   assert.match(markup,/id="accept-date-review-mine">To do · Due 2030-11-18/);
-  assert.match(markup,/id="accept-activity-review-mine">Activity starts 2030-11-19 17:00/);
+  assert.match(markup,/id="accept-activity-review-mine">Activity: .*5:00 PM · America\/Los_Angeles · No end time set · No location entered/);
   assert.match(markup,/id="accept-outcome-review-mine">/);
   assert.doesNotMatch(markup,/\bchecked\b|ignore other|Do not display/);
 });
