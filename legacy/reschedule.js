@@ -20,7 +20,7 @@
     if(!validDay(fromDate))throw new Error('Set the current event date in Project settings before moving the plan.');
     if(!validDay(toDate)||toDate===fromDate)throw new Error('Choose a different valid event date.');
     const days=(Date.parse(toDate+'T00:00:00Z')-Date.parse(fromDate+'T00:00:00Z'))/86400000;
-    const rows=state.tasks.filter(task=>task.dueDate||task.schedule).map(task=>{
+    const rows=state.tasks.filter(task=>!task.archivedAt&&(task.dueDate||task.schedule)).map(task=>{
       const blocked=task.status==='done'?'Completed work stays unchanged.':task.reportedAt?'Completion reported; review it before moving this task.':'';
       let due='',schedule=null,dueError='',scheduleError='';
       if(task.dueDate&&!blocked&&!task.hardDeadline)try{due=shiftDay(task.dueDate,days);}catch(error){dueError=error.message;}

@@ -4,8 +4,12 @@
   const dateLabel = value => new Date(value.slice(0,10)+'T12:00:00Z').toLocaleDateString(undefined,{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
   const timeLabel = value => new Date(value+'Z').toLocaleTimeString(undefined,{timeZone:'UTC',hour:'numeric',minute:'2-digit'});
   const range = schedule => timeLabel(schedule.start)+(schedule.end ? ' – '+(schedule.end.slice(0,10)!==schedule.start.slice(0,10)?dateLabel(schedule.end)+' · ':'')+timeLabel(schedule.end) : '');
-  const ordered = tasks => tasks.filter(task=>task.schedule).slice().sort((a,b)=>a.schedule.start.localeCompare(b.schedule.start)||a.id.localeCompare(b.id));
-  const scoped = (tasks,scope={}) => scope.mine ? tasks.filter(task=>!!scope.actor&&task.owner===scope.actor) : tasks;
+  // Operational views leave archived rows out, but dependency lookups still
+  // use the full saved plan: an archived prerequisite is unavailable.
+  const active = task => !task.archivedAt;
+  const scheduled = task => active(task)&&!!task.schedule;
+  const ordered = tasks => tasks.filter(scheduled).sort((a,b)=>a.schedule.start.localeCompare(b.schedule.start)||a.id.localeCompare(b.id));
+  const scoped = (tasks,scope={}) => tasks.filter(task=>active(task)&&(!scope.mine||!!scope.actor&&task.owner===scope.actor));
   function selectedDate(scope) {
     const day=scope.date;
     if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day)||day.startsWith('0000-'))return '';
@@ -112,13 +116,13 @@
   }
   const activityDayLabels={first:'First activity day',previous:'Previous activity day',next:'Next activity day',today:'Today'};
   const resolved = task => task.status==='done'&&(!task.requiresVerification||task.verifiedAt);
-  const needsActivityTime = task => task.eventActivity===true&&!task.schedule&&!resolved(task);
+  const needsActivityTime = task => active(task)&&task.eventActivity===true&&!task.schedule&&!resolved(task);
   const noActivityEnd='No end time set',noActivityLocation='Location not set';
   const activityLocation = slot => typeof slot.location==='string'?slot.location.trim():'';
-  const needsActivityDetails = task => !!task.schedule&&!resolved(task)&&(!task.schedule.end||!activityLocation(task.schedule));
+  const needsActivityDetails = task => scheduled(task)&&!resolved(task)&&(!task.schedule.end||!activityLocation(task.schedule));
   const scheduledInScope = (tasks,scope) => ordered(scoped(tasks,scope).filter(task=>onDate(task,selectedDate(scope))));
   const assignmentGroup = key => key==='unassigned'||key==='owner-unavailable';
-  const canReviewAssignment = task => task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
+  const canReviewAssignment = task => active(task)&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
   const assignmentIssue = (task,members) => !task.owner?'unassigned':
     members.some(member=>member.id===task.owner&&member.active!==false)?'':'owner-unavailable';
   function scheduleOwnerLabel(id,members=[]) {
@@ -178,7 +182,7 @@
     return required.length>0&&required.every(link=>requiredResultReady(byId.get(link.taskId)));
   }
   const wallTimeIssue=(task,zone)=>zone&&root.GatherCalendar?.scheduleTimeIssue(task.schedule,zone);
-  const usableWallTimes=(tasks,zone)=>tasks.filter(task=>!wallTimeIssue(task,zone));
+  const usableWallTimes=(tasks,zone)=>tasks.filter(task=>active(task)&&!wallTimeIssue(task,zone));
   const wallTimeWarning=(task,zone,nextStep)=>{
     const issue=wallTimeIssue(task,zone);
     return issue?root.GatherCalendar.scheduleTimeMessage(issue,zone,nextStep):'';
@@ -284,7 +288,6 @@
     const byId=new Map(state.tasks.map(task=>[task.id,task]));
     const requiredSummaries=new Map(),needsRequiredWork=[];
     for(const task of open){
-      if(task.archivedAt)continue;
       const summary=requiredWorkSummary(task,byId);
       if(!summary)continue;
       requiredSummaries.set(task.id,summary);
@@ -424,11 +427,12 @@
       const tasks=ordered(visible.filter(task=>onDate(task,day))),days=activityDateGroups(tasks,day);
       const matches=scheduleOverlaps(state,tasks,day),{overlaps,locations}=matches;
       const pending=visible.filter(needsActivityTime);
-      const live=clock(state,now,scope,organizer,matches),hasActivities=state.tasks.some(task=>task.schedule||needsActivityTime(task)),byId=new Map(state.tasks.map(task=>[task.id,task]));
+      const hasScheduled=state.tasks.some(scheduled);
+      const live=clock(state,now,scope,organizer,matches),hasActivities=hasScheduled||state.tasks.some(needsActivityTime),byId=new Map(state.tasks.map(task=>[task.id,task]));
       const refresh=scope.canRefresh?`<div class="schedule-refresh"><button id="timelineScheduleRefresh" class="btn btn-secondary" type="button" data-action="refresh-timeline-schedule" aria-describedby="timelineScheduleRefreshStatus">Check for schedule updates</button><p id="timelineScheduleRefreshStatus" role="status" class="muted"${scope.updatesPending?' data-pending="true"':''}>${scope.updatesPending?'Project updates are available. This schedule shows the last loaded times.':''}</p></div>`:'';
       const shortcuts=Object.entries(activityDays(state,now,scope)).filter(([,date])=>date).map(([key])=>`<button class="btn btn-secondary" type="button" id="schedule-jump-${key}" data-action="jump-schedule-date" data-id="${key}">${activityDayLabels[key]}</button>`).join('');
       const shareDay=day&&scope.shareDay?`<div class="schedule-share"><button class="btn btn-secondary" type="button" data-action="copy-schedule-day" aria-describedby="scheduleDayShareHelp">Copy day link</button><p class="muted" id="scheduleDayShareHelp">Opens this date in the live project. Recipients still need project access. Their view starts with all activities.</p></div>`:'';
-      const dateFilter=(state.tasks.some(task=>task.schedule)||day||scope.keepDateFilter)?`${shortcuts?`<div class="schedule-date-shortcuts" role="group" aria-label="Jump to an activity day">${shortcuts}</div>`:''}<form id="scheduleDateForm" class="schedule-date-filter"><label class="field">Schedule date<input type="date" id="scheduleDate" name="scheduleDate" value="${h(day)}" min="0001-01-01" max="9999-12-31" required aria-describedby="scheduleDateHelp"></label><button id="applyScheduleDate" class="btn btn-secondary" type="submit">Apply date</button>${day?'<button class="btn btn-secondary" type="button" data-action="clear-schedule-date">Show all dates</button>':''}</form><p class="muted schedule-date-help" id="scheduleDateHelp">${day?'Showing '+h(dateLabel(day))+' in the event time zone. Live clock cues show only for today. The run sheet uses this date.':'Apply a date to see everything scheduled that day, including activities continuing from an earlier date.'} Before the event still reviews all dates.</p>`:'';
+      const dateFilter=(hasScheduled||day||scope.keepDateFilter)?`${shortcuts?`<div class="schedule-date-shortcuts" role="group" aria-label="Jump to an activity day">${shortcuts}</div>`:''}<form id="scheduleDateForm" class="schedule-date-filter"><label class="field">Schedule date<input type="date" id="scheduleDate" name="scheduleDate" value="${h(day)}" min="0001-01-01" max="9999-12-31" required aria-describedby="scheduleDateHelp"></label><button id="applyScheduleDate" class="btn btn-secondary" type="submit">Apply date</button>${day?'<button class="btn btn-secondary" type="button" data-action="clear-schedule-date">Show all dates</button>':''}</form><p class="muted schedule-date-help" id="scheduleDateHelp">${day?'Showing '+h(dateLabel(day))+' in the event time zone. Live clock cues show only for today. The run sheet uses this date.':'Apply a date to see everything scheduled that day, including activities continuing from an earlier date.'} Before the event still reviews all dates.</p>`:'';
       const awaitingTime=pending.length?`<section class="schedule-pending" aria-labelledby="schedulePendingHeading"><h2 id="schedulePendingHeading">Activities need a start time · ${pending.length}</h2><p class="muted">These are planned activities. They won’t appear on the run sheet until a start time is saved.${day?' Undated activities are shown here regardless of the selected date.':''}</p><ul>${pending.map(task=>`<li><button class="text-button" data-action="task" data-id="${h(task.id)}">${h(task.title)}</button>${liveOwner(task,state)}${organizer?`<button type="button" class="btn btn-secondary btn-small" data-action="schedule-set-start" data-id="${h(task.id)}" aria-label="Set start time for ${h(task.title)}">Set start time</button>`:''}</li>`).join('')}</ul></section>`:'';
       const filters=hasActivities||scope.canRefresh?`<div class="schedule-switch" role="group" aria-label="Activity scope"><button class="filter-tab ${scope.mine?'':'active'}" aria-pressed="${!scope.mine}" data-action="schedule-scope" data-id="all">All activities</button><button class="filter-tab ${scope.mine?'active':''}" aria-pressed="${!!scope.mine}" data-action="schedule-scope" data-id="mine">My activities</button></div>`:'';
       const empty=day?`<h2>${scope.mine?'No activities assigned to you on this date':'No scheduled activities on this date'}</h2>${scope.mine&&hasActivities?'<button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':''}`:scope.mine&&hasActivities&&!pending.length?'<h2>No activities assigned to you</h2><button class="btn btn-secondary" data-action="schedule-scope" data-id="all">Show all activities</button>':pending.length?'<h2>No scheduled activities yet</h2>':`<h2>No scheduled activities</h2>${organizer?(state.event.timeZone?'<p class="muted">Add an activity or schedule an existing task.</p>':needsZone()):'<p class="muted">The organizer can add the event schedule here.</p>'}`;
@@ -436,6 +440,9 @@
     }
     function details(task,organizer,event,tasks=[],reviewDay='') {
       const current=task.schedule;
+      if(!active(task))return current
+        ? `<section class="schedule-facts"><h3>Archived activity schedule</h3><p>${h(dateLabel(current.start))} · ${h(range(current))}</p><p class="muted">${h(activityLocation(current)||noActivityLocation)} · Not part of the active schedule.</p></section>`
+        : '';
       const usable=usableWallTimes(tasks,event.timeZone);
       const date=selectedDate({date:reviewDay});
       const matchesDate=other=>!!date&&onDate(task,date)&&onDate(other,date);
@@ -453,8 +460,8 @@
     }
     function picker(state,taskId='') {
       if(!state.event.timeZone)return needsZone();
-      const available=state.tasks.filter(task=>!task.schedule);
-      if(!available.length)return '<p>All existing tasks are scheduled.</p><button class="btn btn-primary" data-action="add-activity">Add activity</button>';
+      const available=state.tasks.filter(task=>active(task)&&!task.schedule);
+      if(!available.length)return '<p>No unscheduled active tasks.</p><button class="btn btn-primary" data-action="add-activity">Add activity</button>';
       return `<form id="schedulePickerForm">${zone(state.event)}${scheduleCommitmentHint()}<label class="field">Existing task<select name="taskId" required>${options([['','Choose a task'],...available.map(task=>[task.id,task.title])],available.some(task=>task.id===taskId)?taskId:'')}</select></label>${fields()}<div class="form-actions"><button class="btn btn-primary" type="submit">Add to schedule</button></div></form>`;
     }
     function activityReviewForm(state,taskId) {
@@ -492,6 +499,8 @@
       const local=momentKey(now,state.event.timeZone);
       const name=id=>state.members.find(member=>member.id===id)?.name||'Unassigned';
       const scopeLabel=scope.mine?'My tasks · '+name(scope.actor):'All tasks';
+      const emptyTasks=scope.mine?'No active tasks assigned to you. This does not mean the whole event is ready.':
+        state.tasks.length?'No active tasks in this plan. Archived tasks are not included in this review.':'No tasks in this plan yet. Build a plan or add the work your event needs.';
       const context=[!state.event.date?'Event date not entered':'Event date: '+dateLabel(state.event.date),
         !local?'Event time zone not set or unavailable':'Event time zone: '+state.event.timeZone,
         !state.event.location?'Event location not entered':'Event location: '+state.event.location];
@@ -529,7 +538,7 @@
         }).join('');
         return `<details class="before-event-group" data-event-review-group="${h(group.key)}"${expanded?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${rows?`<ul>${rows}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`;
       };
-      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${scope.mine?'No tasks assigned to you. This does not mean the whole event is ready.':'No tasks in this plan yet. Build a plan or add the work your event needs.'}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(groupMarkup).join('')}</article>`;
+      return `<article class="before-event-review"><p class="eyebrow">${h(scopeLabel)}</p><h3>${h(state.event.name||'Untitled event')}</h3><p>Snapshot: ${h(local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC')}. Reopen this review to refresh it.</p><p>This checks saved planning facts only. It does not certify safety, approvals, bookings or event readiness. Tasks can appear in more than one section. Opening this review does not change tasks or send messages.</p><section aria-label="Saved event details"><h3>Event details</h3><ul>${context.map(fact=>`<li>${h(fact)}</li>`).join('')}</ul><button class="text-button" data-action="event-context">Review event details</button></section>${!tasks.length?`<p class="notice">${emptyTasks}</p>`:''}<p class="muted">${tasks.filter(task=>task.schedule).length} scheduled activities in this scope. This review covers all event dates in this scope. Only planned activities need a start time. Preparation tasks do not need an activity time.</p>${acceptanceAction}${groups.map(groupMarkup).join('')}</article>`;
     }
     function runSheetModel(state,now=Date.now(),scope={},liveTargets) {
       liveTargets?.clear();

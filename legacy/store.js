@@ -367,7 +367,9 @@
     }
     function setTaskSchedule(taskId, data, actor = 'jack') {
       actorId(actor);
-      const task = taskById(taskId), schedule = scheduleFields(data, actor, task.schedule);
+      const task = taskById(taskId);
+      if(task.archivedAt)throw new Error('Archived tasks cannot be rescheduled.');
+      const schedule = scheduleFields(data, actor, task.schedule);
       if (JSON.stringify(task.schedule) === JSON.stringify(schedule)) return copy(task);
       const hadSchedule=!!task.schedule;
       const reconfirm=rememberAcceptedSchedule(task);
@@ -910,13 +912,16 @@
       if (data.confirmScheduleTimeZone !== undefined && typeof data.confirmScheduleTimeZone !== 'boolean') throw new Error('Confirm the time zone change.');
       if (data.timeZone !== undefined) {
         if (data.timeZone !== '' && !validZone(data.timeZone)) throw new Error('Choose a valid event time zone, such as America/Los_Angeles.');
-        if (data.timeZone !== next.timeZone && state.tasks.some(task=>task.schedule)) {
-          if (!data.timeZone) throw new Error('Scheduled activities need an event time zone.');
-          if (!data.confirmScheduleTimeZone) throw new Error('Confirm the time zone change. Existing schedule times will stay the same in the new zone.');
-          const calendar=globalThis.GatherCalendar;
-          for(const task of state.tasks){
-            const issue=calendar.scheduleTimeIssue(task.schedule,data.timeZone);
-            if(issue)throw new Error(`Can’t change the event time zone with the current schedule for “${task.title}”. ${calendar.scheduleTimeMessage(issue,data.timeZone)} Edit the activity before changing the time zone.`);
+        if (data.timeZone !== next.timeZone) {
+          const scheduled=state.tasks.filter(task=>!task.archivedAt&&task.schedule);
+          if (scheduled.length) {
+            if (!data.timeZone) throw new Error('Scheduled activities need an event time zone.');
+            if (!data.confirmScheduleTimeZone) throw new Error('Confirm the time zone change. Existing schedule times will stay the same in the new zone.');
+            const calendar=globalThis.GatherCalendar;
+            for(const task of scheduled){
+              const issue=calendar.scheduleTimeIssue(task.schedule,data.timeZone);
+              if(issue)throw new Error(`Can’t change the event time zone with the current schedule for “${task.title}”. ${calendar.scheduleTimeMessage(issue,data.timeZone)} Edit the activity before changing the time zone.`);
+            }
           }
         }
         next.timeZone = data.timeZone;

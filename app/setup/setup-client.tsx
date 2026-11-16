@@ -75,7 +75,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form || !project || pending.current) return;
-    const changingScheduleZone = Boolean(project.state?.tasks.some((task: any) => task.schedule) && form.timeZone !== project.state.event.timeZone);
+    const changingScheduleZone = Boolean(project.state?.tasks.some((task: any) => !task.archivedAt && task.schedule) && form.timeZone !== project.state.event.timeZone);
     if (changingScheduleZone && !window.confirm('Change the event time zone? Existing activity dates and clock times will stay the same in the new zone.')) return;
     pending.current = true; setBusy(true); setError(''); setReminderNotice(''); setConflict(false);
     try {
