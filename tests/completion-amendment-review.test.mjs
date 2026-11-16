@@ -57,7 +57,7 @@ test('only the organizer gets an explicit revision-bound review control, separat
 });
 test('completion review rebuild preserves sibling drafts instead of discarding them',()=>{
   const source=readFileSync('legacy/app.js','utf8'),start=source.indexOf('  function taskDialog('),end=source.indexOf('    const expanded=',start);
-  let captures=0;const context=vm.createContext({store:{getState:()=>({tasks:[{id:'fictional'}]})},ui:{dialogKind:'task',detailId:'fictional'},taskDrafts(){captures++;return ['unsaved-evidence','unsaved-comment'];},taskCompletionDraftContext:()=>[],toast(){}});
+  let captures=0;const context=vm.createContext({store:{getState:()=>({tasks:[{id:'fictional'}]})},ui:{dialogKind:'task',detailId:'fictional'},taskDrafts(){captures++;return ['unsaved-evidence','unsaved-comment'];},taskCompletionDraftContext:()=>[],teammateUpdateConflicts:new WeakMap(),$:()=>null,toast(){}});
   vm.runInContext(source.slice(start,end)+'return drafts;}',context);
   assert.deepEqual([...context.taskDialog('fictional','',true)],[]);assert.equal(captures,0);
   assert.deepEqual([...context.taskDialog('fictional')],['unsaved-evidence','unsaved-comment']);assert.equal(captures,1);

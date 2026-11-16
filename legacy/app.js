@@ -19,6 +19,7 @@
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
   let joinWelcomeScope = '', joinWelcomeLocal = false;
   const unconfirmedRelatedSaves=new Map();
+  const teammateUpdateConflicts=new WeakMap();
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
@@ -2919,7 +2920,10 @@
     if(ui.dialogKind==='lesson-follow-up'&&store.refresh){
       markLessonDraftForReview($('#newTaskForm'),{afterRevision:Number.isSafeInteger(newerRevision)?newerRevision-1:undefined});return;
     }
-    if(ui.dialogKind==='task'){paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();}
+    if(ui.dialogKind==='task'){
+      paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();
+      if($('#responseForm [data-teammate-update-conflict]'))return;
+    }
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications')return;
     const ownerChoices=ui.dialogKind==='task'&&$('#receiptOwnerChoicesStatus',$('#dialog'));
     if(ownerChoices&&!ownerChoices.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(ownerChoices)){
@@ -3881,6 +3885,8 @@
     ui.overlapReviewDay=overlapDay||(sameTask?ui.overlapReviewDay:'');
     const drafts=sameTask&&!discardDrafts?taskDrafts(submittedForm):[];
     const completionDraftContext=sameTask&&!discardDrafts?taskCompletionDraftContext(drafts,submittedForm):[];
+    const updateConflict=sameTask&&!discardDrafts&&submittedForm!=='responseForm'?
+      teammateUpdateConflicts.get($('#responseForm',$('#dialog'))):null;
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
     const previousFocus=sameTask?document.activeElement:null;
     const scroll=sameTask?$('#dialog').scrollTop:0;
@@ -3987,6 +3993,10 @@
     }
     if(scheduleReceiptReturn)focusPlanReceiptAfterSchedule(scheduleReceiptReturn);
     syncRecoveryForms();
+    const responseForm=$('#responseForm',$('#dialog'));
+    if(updateConflict&&teammateUpdateInScope(responseForm,updateConflict)){
+      teammateUpdateConflicts.set(responseForm,updateConflict);paintTeammateUpdateConflict(responseForm);
+    }
     window.GatherCompletionUI?.mount($('#dialog'));
     for(const {id:formId} of completionDraftContext){
       const form=$('#'+formId,$('#dialog'));
@@ -4637,6 +4647,110 @@
     $('[data-completion-attachment-recovery]',form)?.remove();
     $('.form-error',form)?.remove();
   }
+  const teammateUpdateTypes={progress:'Share progress',blocked:'Report blocked',date:'Propose a new date',help:'Ask for help'};
+  function teammateUpdateInScope(form,review) {
+    return !!form?.isConnected&&!!review&&isLiveTeammate()&&ui.dialogKind==='task'&&ui.detailId===review.id&&
+      ui.actor===review.actor&&ui.view===review.view&&window.GatherMode.projectId===review.project&&
+      !$('#dialogBackdrop').hidden&&form.dataset.id===review.id&&form===$('#responseForm',$('#dialog'));
+  }
+  function teammateUpdateReview(form,response) {
+    if(!Object.hasOwn(teammateUpdateTypes,response)||!store.refresh||!isLiveTeammate())return null;
+    const state=store.getState(),id=form.dataset.id,task=state.tasks.find(item=>item.id===id);
+    const workspaceRevision=Number(form.dataset.workspaceRevision),taskRevision=Number(form.dataset.revision);
+    const review={id,actor:ui.actor,view:ui.view,project:window.GatherMode.projectId,response,taskRevision,workspaceRevision,
+      zone:state.event.timeZone,needsReview:store.getSnapshotRevision?.()!==workspaceRevision||task?.owner!==ui.actor||task.revision!==taskRevision};
+    return teammateUpdateInScope(form,review)&&Number.isSafeInteger(taskRevision)&&Number.isSafeInteger(workspaceRevision)?review:null;
+  }
+  function paintTeammateUpdateConflict(form) {
+    const review=teammateUpdateConflicts.get(form);
+    if(!teammateUpdateInScope(form,review))return;
+    let panel=$('[data-teammate-update-conflict]',form);
+    if(!panel){
+      panel=document.createElement('div');panel.className='notice section-gap';panel.dataset.teammateUpdateConflict='true';
+      panel.innerHTML='<p role="status" data-teammate-update-status></p><div class="inline"><button type="button" class="btn btn-secondary" data-action="refresh-teammate-update">Check latest task</button><button type="button" class="btn btn-secondary" data-action="copy-teammate-update">Copy draft</button></div>';
+      form.prepend(panel);
+    }
+    $('[data-teammate-update-status]',panel).textContent=review.message;
+    $('button[type="submit"]',form)?.setAttribute('aria-disabled','true');
+  }
+  function markTeammateUpdateConflict(form,review) {
+    if(!teammateUpdateInScope(form,review))return false;
+    review.message='This update wasn’t saved because the project changed. Your draft is still here. Check the latest task before sending it.';
+    teammateUpdateConflicts.set(form,review);
+    $('#dialogStaleNotice',$('#dialog'))?.remove();
+    paintTeammateUpdateConflict(form);showRecoveryWriteConflict(review.workspaceRevision);
+    return true;
+  }
+  async function copyTeammateUpdate(button) {
+    const form=button.closest('form'),review=teammateUpdateConflicts.get(form);
+    const current=()=>teammateUpdateInScope(form,review)&&!document.hidden&&button===$('[data-action="copy-teammate-update"]',form);
+    if(!current())return;
+    const {response,proposedDate,note}=form.elements,type=response.value;
+    const draft=[Object.hasOwn(teammateUpdateTypes,type)?teammateUpdateTypes[type]:'Task update',
+      type==='date'&&proposedDate.value?'Proposed date: '+proposedDate.value:'',note.value].filter(Boolean).join('\n');
+    const copied=await copyText(draft);
+    if(!current())return;
+    toast(copied?'Draft copied. Nothing was sent.':'Couldn’t copy automatically. Select and copy the note and date from the form.');
+    if(!copied){note.focus();note.select();}
+  }
+  async function refreshTeammateUpdate(button) {
+    const form=button.closest('form'),review=teammateUpdateConflicts.get(form),dialog=$('#dialog');
+    const current=()=>teammateUpdateInScope(form,review)&&teammateUpdateConflicts.get(form)===review&&
+      button===$('[data-action="refresh-teammate-update"]',form);
+    if(!current()||ui.syncing||ui.pendingSave||document.hidden)return;
+    const siblingDirty=()=>$$('form',dialog).some(other=>other!==form&&hasUnsavedFields(other));
+    const mode=()=>form.elements.response.value;
+    const canKeepFields=()=>Object.hasOwn(teammateUpdateTypes,mode())&&!completionDraftHasEdits(form)&&
+      (mode()!=='date'||!form.elements.proposedDate.validity.badInput);
+    const pauseMessage=()=>siblingDirty()?'Your other task edits are still here. Finish or clear them before checking this update.':
+      'Check paused. Keep the draft in an update type supported here, or copy it before reopening the task.';
+    const say=message=>{review.message=message;paintTeammateUpdateConflict(form);};
+    if(siblingDirty()||!canKeepFields()){say(pauseMessage());return;}
+    const ready=()=>current()&&!ui.pendingSave&&!document.hidden&&!siblingDirty()&&canKeepFields();
+    const originalMode=mode();
+    const candidateReason=(revision,state)=>{
+      if(!Number.isSafeInteger(revision)||revision<=review.workspaceRevision||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))
+        return 'The latest project revision couldn’t be confirmed. Try checking again.';
+      const task=state.tasks?.find(item=>item.id===review.id);
+      if(!task||task.archivedAt)return 'This task is no longer available.';
+      if(task.owner!==review.actor)return 'You’re no longer assigned to this task.';
+      if(task.revision!==review.taskRevision||task.status==='done')return task.reportedAt||task.verifiedAt||task.status==='done'
+        ?'The latest task has a completion report or is complete. This draft won’t replace it.':'The task itself changed. This draft can’t be sent against those changes.';
+      if(originalMode==='date'&&(state.event.timeZone!==review.zone||form.elements.proposedDate.value&&
+        (form.elements.proposedDate.value===task.dueDate||form.elements.proposedDate.value<dateKey(new Date()))))
+        return 'The proposed date needs a fresh review.';
+      return '';
+    };
+    ui.syncing=true;button.setAttribute('aria-disabled','true');say('Checking the latest task…');
+    let reason='';
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready()||mode()!==originalMode)return false;
+        reason=candidateReason(revision,state);return !reason;
+      },{requireFresh:true});
+      if(!current())return;
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()||mode()!==originalMode){say(pauseMessage());return;}
+      if(reason){say(reason+' Your draft is still here. Copy it before reopening the task.');return;}
+      if(!result.verified||result.pending||candidateReason(store.getSnapshotRevision(),store.getState()))throw new Error('Latest task unavailable');
+      teammateUpdateConflicts.delete(form);
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();taskDialog(review.id,'',false,true,'',undefined,'',{readOnly:true});
+      const updated=$('#responseForm',dialog);
+      if(!teammateUpdateInScope(updated,review)||updated===form)return;
+      const notice=document.createElement('p');notice.className='notice';notice.setAttribute('role','status');notice.tabIndex=-1;
+      notice.textContent='Latest task checked. Your draft hasn’t been sent. Review it and send it when you’re ready.';updated.prepend(notice);
+      requestAnimationFrame(()=>{
+        if(teammateUpdateInScope(updated,review)&&notice.isConnected&&
+          [document.body,$('#dialogTitle',dialog)].includes(document.activeElement))focusTaskDialogControl(notice,dialog);
+      });
+    }catch{
+      if(current())say('Couldn’t check the latest task. Your draft is still here. Try again.');
+    }finally{
+      ui.syncing=false;if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
   async function refreshCompletionDraft(button) {
     const form=button?.closest('form'),dialog=$('#dialog'),title=$('#dialogTitle',dialog);
     if(!form||!dialog||!title||!['responseForm','completionEvidenceForm'].includes(form.id))return;
@@ -4873,6 +4987,8 @@
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
+    if(action==='refresh-teammate-update'){await refreshTeammateUpdate(el);return;}
+    if(action==='copy-teammate-update'){await copyTeammateUpdate(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
     if(action==='review-event-required-work'){openEventRequiredWork(id,el);return;}
@@ -5219,6 +5335,9 @@
       }
       return;
     }
+    if(form.id==='responseForm'&&teammateUpdateConflicts.has(form)){
+      $('[data-action="refresh-teammate-update"]',form)?.focus();return;
+    }
     if(form.id==='responseForm'&&form.querySelector('[data-proposed-date]')&&!syncTaskResponseMode(form))return;
     const data=Object.fromEntries(new FormData(form));
     let taskAcceptance,taskAcceptanceRevision;
@@ -5254,6 +5373,10 @@
     const assignmentReviewRevision=assignmentReview?store.getSnapshotRevision?.():undefined;
     const lessonSave=form.id==='newTaskForm'&&ui.dialogKind==='lesson-follow-up'&&store.refresh&&lessonDraftContext(form)?{revision:store.getSnapshotRevision(),actor:ui.actor,
       project:window.GatherMode?.projectId,generation:store.getState().demoGeneration}:null;
+    const teammateUpdate=form.id==='responseForm'?teammateUpdateReview(form,event.submitter?.value||data.response):null;
+    if(teammateUpdate?.needsReview&&markTeammateUpdateConflict(form,teammateUpdate)){
+      focusTaskDialogControl($('[data-action="refresh-teammate-update"]',form),$('#dialog'));return;
+    }
     const release=saveLock(form.closest('#dialog')||form,event.submitter);
     try {
       if(form.id==='rescheduleDateForm'){
@@ -5521,6 +5644,13 @@
           }});
           return;
         }
+      }
+      if(error.status===409&&teammateUpdate&&markTeammateUpdateConflict(form,teammateUpdate)){
+        queueMicrotask(()=>{
+          if(teammateUpdateInScope(form,teammateUpdate)&&[document.body,event.submitter].includes(document.activeElement))
+            focusTaskDialogControl($('[data-action="refresh-teammate-update"]',form),$('#dialog'));
+        });
+        return;
       }
       if(error.status===409&&assignmentReview){showRecoveryWriteConflict(assignmentReviewRevision);return;}
       if(error.status===409&&taskAcceptance&&!window.GatherAccessLost){
