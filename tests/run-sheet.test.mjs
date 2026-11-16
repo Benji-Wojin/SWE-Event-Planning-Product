@@ -104,6 +104,11 @@ test('live Run sheet row targets use a separate ordinal map and leave every expo
   assert.match(buttons[2],/aria-label="Show in Timeline: Same &lt;hall&gt; title · Sat, Nov 21, 2026 · 4:00 AM/);
   assert.doesNotMatch(interactive,/private-(?:overnight|later|other)-id|Other scope|data-id=/);
   assert.equal(interactive.replace(/<button[^>]*data-action="review-run-sheet-row"[^>]*>Show in Timeline<\/button>/g,''),printable);
+  assert.match(printable,/<header>[\s\S]*?<p[^>]*data-run-sheet-update-warning hidden><\/p>[\s\S]*?<\/header>/);
+  const continuationHeaders=[...printable.matchAll(/<tr class="run-sheet-repeat-heading">(.*?)<\/tr>/g)].map(([,heading])=>heading);
+  assert.equal(continuationHeaders.length,model.days.length);
+  assert.ok(continuationHeaders.every(heading=>/<span data-run-sheet-update-warning hidden><\/span>/.test(heading)),
+    'each repeating print header can distinguish an offline copy');
   assert.equal(ui.runSheet(input,now,scope),printable);
   assert.equal(ui.runSheetText(model),ui.runSheetText(plain));
   assert.doesNotMatch(ui.runSheetText(model),/Show in Timeline|private-(?:overnight|later|other)-id/);
@@ -319,15 +324,19 @@ function runSheetHarness(){
   const start=source.indexOf("      if(action==='run-sheet'");
   const end=source.indexOf("      if(action==='task')",start);
   assert.ok(start>=0&&end>start);
-  const fixture={prints:0,opens:[],exists:true,revision:1,downloads:0,revokes:0,blob:null,remote:1,reads:0,refreshes:0,renders:0};
+  const fixture={prints:0,printedWarnings:[],opens:[],exists:true,revision:1,downloads:0,revokes:0,blob:null,remote:1,reads:0,refreshes:0,renders:0};
   const staleNotice={hidden:true},fallback={hidden:false},sync={hidden:true},attrs=new Map();
+  const copyText={value:''},copyWarnings=Array.from({length:3},()=>({hidden:true,textContent:''}));
   const refreshButton={hidden:true,setAttribute:(key,value)=>attrs.set('refresh:'+key,value)};
   const refreshStatus={textContent:''},checkStatus={textContent:''},printable={dataset:{},toggleAttribute(){},setAttribute(){},removeAttribute(){}};
   const printAttributes=new Set();
   const printBlocked={toggleAttribute(key,active){if(active)printAttributes.add(key);else printAttributes.delete(key);}};
   const heading={focus(){},setAttribute(){}},backdrop={hidden:false,dataset:{}};
   const link={click(){fixture.downloads++;},remove(){}};
-  const context=vm.createContext({action:'run-sheet',window:{print(){fixture.prints++;}},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,scheduleWorkspaceKey:()=> 'fictional-project:maya',
+  const context=vm.createContext({action:'run-sheet',window:{print(){
+    fixture.prints++;
+    fixture.printedWarnings.push(copyWarnings.filter(node=>!node.hidden).map(node=>node.textContent));
+  }},ui:{view:'timeline',dialogKind:'',scheduleMine:true,scheduleDate:'2026-11-21',actor:'maya'},Date,Blob,h,scheduleWorkspaceKey:()=> 'fictional-project:maya',
     URL:{createObjectURL(value){fixture.blob=value;return 'blob:fixture';},revokeObjectURL(url){assert.equal(url,'blob:fixture');fixture.revokes++;}},setTimeout:callback=>callback(),requestAnimationFrame:callback=>callback(),
     document:{hidden:false,createElement:()=>link,body:{append(){} }},toast:()=>{},render:()=>fixture.renders++,
     store:{getState:()=>({revision:fixture.revision}),getSnapshotRevision:()=>fixture.revision,
@@ -352,15 +361,19 @@ function runSheetHarness(){
       runSheetModel(s,time,scope){return {days:[{}],...scope,day:scope.date,revision:s.revision};},
       runSheetMarkup:model=>'<article>Preview '+model.revision+'</article>',runSheetText:model=>'Frozen '+model.date+' revision '+model.revision,
     },
-    openDialog(title,body,footer,wide,kind){fixture.opens.push({body,footer});checkStatus.textContent='';assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;},
-    $:selector=>({'#eventRunSheet':fixture.exists?printable:null,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback,'#runSheetRefresh':refreshButton,'#runSheetRefreshStatus':refreshStatus,'#runSheetCheckStatus':checkStatus,'#runSheetPrintBlocked':printBlocked,'#dialogTitle':heading,'#dialogBackdrop':backdrop})[selector],
-    $$:()=>[{setAttribute:(key,value)=>attrs.set(key,value)}]});
+    openDialog(title,body,footer,wide,kind){
+      fixture.opens.push({body,footer});checkStatus.textContent='';copyText.value=context.ui.runSheet.text;
+      for(const marker of copyWarnings){marker.hidden=true;marker.textContent='';}
+      assert.match(footer,/Download text/);assert.match(footer,/Print \/ save PDF/);assert.match(footer,/Check for updates/);assert.equal(wide,true);context.ui.dialogKind=kind;
+    },
+    $:selector=>({'#eventRunSheet':fixture.exists?printable:null,'#workspaceSyncNotice':sync,'#runSheetStale':staleNotice,'#runSheetTextFallback':fallback,'#runSheetCopyText':copyText,'#runSheetRefresh':refreshButton,'#runSheetRefreshStatus':refreshStatus,'#runSheetCheckStatus':checkStatus,'#runSheetPrintBlocked':printBlocked,'#dialogTitle':heading,'#dialogBackdrop':backdrop})[selector],
+    $$:selector=>selector.includes('[data-run-sheet-update-warning]')?copyWarnings:[{setAttribute:(key,value)=>attrs.set(key,value)}]});
   const helperStart=source.indexOf('  let staleScheduleRevision');
   assert.ok(helperStart>=0);
   vm.runInContext(source.slice(helperStart,source.indexOf('  function dependencyInfo(',helperStart)),context);
   const run=vm.runInContext('(async action=>{'+source.slice(start,end)+'})',context);
   const close=()=>{context.ui.dialogKind='';context.ui.runSheet=null;};
-  return {fixture,context,run,close,staleNotice,fallback,sync,attrs,link,source,checkStatus,blocksNativePrint:()=>printAttributes.has('data-blocked')};
+  return {fixture,context,run,close,staleNotice,fallback,sync,attrs,link,source,checkStatus,copyText,copyWarnings,blocksNativePrint:()=>printAttributes.has('data-blocked')};
 }
 
 test('run-sheet controls export only the active snapshot and block known newer revisions and lost access',async()=>{
@@ -464,13 +477,18 @@ test('an inconclusive run-sheet check can recover by re-confirming the same revi
 });
 
 test('a timed-out run-sheet check releases the offline copy and keeps its caution across reopening until a verified retry',async()=>{
-  const {fixture,run,close,staleNotice,fallback,checkStatus,blocksNativePrint}=runSheetHarness();
+  const {fixture,context,run,close,staleNotice,fallback,checkStatus,copyText,copyWarnings,blocksNativePrint}=runSheetHarness();
   await run('run-sheet');
   assert.match(fixture.opens[0].body,/<p id="runSheetCheckStatus"[^>]*role="status"/);
+  assert.match(fixture.opens[0].body,/<textarea[^>]*id="runSheetCopyText"[^>]*readonly/);
+  const baseText='Frozen 2026-11-21 revision 1';
+  assert.equal(copyText.value,baseText);
+  assert.ok(copyWarnings.every(marker=>marker.hidden));
   const deferred=Promise.withResolvers();fixture.waitForCheck=deferred.promise;
   const pending=run('check-run-sheet');
   assert.match(checkStatus.textContent,/Checking the saved plan/);
   assert.equal(fallback.hidden,true);assert.equal(blocksNativePrint(),true);
+  assert.equal(copyText.value,'','in-flight checks also block the readonly copy field');
   close();await run('run-sheet');
   assert.match(checkStatus.textContent,/Checking the saved plan/);
   await run('download-run-sheet');
@@ -482,18 +500,45 @@ test('a timed-out run-sheet check releases the offline copy and keeps its cautio
   assert.equal(checkStatus.textContent,warning);
   assert.equal(staleNotice.hidden,true,'a timed-out read does not prove the revision changed');
   assert.equal(fallback.hidden,false);assert.equal(blocksNativePrint(),false);
+  const warnedText=warning+'\n\n'+baseText;
+  assert.equal(copyText.value,warnedText,'manual copy preserves the freshness warning');
+  assert.ok(copyWarnings.every(marker=>!marker.hidden&&marker.textContent===warning));
   await run('print-run-sheet');await run('download-run-sheet');
   assert.deepEqual([fixture.prints,fixture.downloads,fixture.reads],[1,1,1]);
-  assert.equal(await fixture.blob.text(),'Frozen 2026-11-21 revision 1');
+  assert.deepEqual(fixture.printedWarnings,[[warning,warning,warning]],'print and continuation headers keep the same warning');
+  assert.equal(await fixture.blob.text(),warnedText);
+  assert.equal(context.ui.runSheet.text,baseText,'the frozen projection stays unchanged');
 
   close();await run('run-sheet');
   assert.equal(checkStatus.textContent,warning);
+  assert.equal(copyText.value,warnedText,'reopening does not duplicate or clear the warning for this revision');
   fixture.waitForCheck=null;
   await run('check-run-sheet');
   assert.equal(fixture.reads,2);
   assert.doesNotMatch(checkStatus.textContent,/Could not check|Checking the saved plan/);
   assert.equal(staleNotice.hidden,true);
   assert.equal(blocksNativePrint(),false);
+  assert.ok(copyWarnings.every(marker=>marker.hidden));
+  assert.equal(copyText.value,baseText);
+  await run('download-run-sheet');
+  assert.equal(await fixture.blob.text(),baseText,'a verified retry clears the warning from downloads');
+  assert.equal(fixture.reads,2,'neither offline nor verified exports start another check');
+});
+
+test('a failed check never makes an older revision exportable after a newer revision is known',async()=>{
+  const {fixture,context,run,staleNotice,fallback,copyText,copyWarnings,blocksNativePrint}=runSheetHarness();
+  await run('run-sheet');
+  fixture.waitForCheck=Promise.reject(new Error('Fictional network failure'));
+  await run('check-run-sheet');
+  assert.ok(copyWarnings.every(marker=>!marker.hidden));
+  context.rememberNewerSchedule(context.ui.runSheet,fixture.revision+1);
+  await run('download-run-sheet');await run('print-run-sheet');
+  assert.equal(staleNotice.hidden,false);
+  assert.equal(fallback.hidden,true);
+  assert.equal(copyText.value,'');
+  assert.ok(copyWarnings.every(marker=>marker.hidden));
+  assert.equal(blocksNativePrint(),true);
+  assert.deepEqual([fixture.reads,fixture.downloads,fixture.prints],[1,0,0]);
 });
 
 test('a refresh superseded by reopening cannot expose a snapshot older than its pending result',async()=>{
@@ -544,6 +589,8 @@ test('print isolation hides every other body surface, retains table headers and 
   const css=readFileSync('legacy/styles.css','utf8');
   const source=readFileSync('legacy/app.js','utf8');
   assert.match(css,/@media print\{/);
+  assert.match(css,/^#eventRunSheet \[data-run-sheet-update-warning\]\{display:none\}/m);
+  assert.match(css,/@media print\{[\s\S]*#eventRunSheet \[data-run-sheet-update-warning\]:not\(\[hidden\]\)\{display:block/);
   assert.match(css,/body:has\(#eventRunSheet\)>:not\(#dialogBackdrop\)\{display:none!important\}/);
   assert.match(css,/#eventRunSheet thead\{display:table-header-group\}/);
   assert.match(css,/#eventRunSheet tr\{break-inside:avoid\}/);

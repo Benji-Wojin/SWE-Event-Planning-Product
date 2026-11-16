@@ -10,6 +10,7 @@ const yesterday='2026-11-20',today='2026-11-21',tomorrow='2026-11-22',id='fictio
 const mine={mine:true,actor:'maya',date:today};
 const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const schedule=GatherScheduleUI.create({h,options:()=>'',statusBadge:h});
+const offlineWarning='Could not check for updates. This is the last loaded copy; confirm changes with your team before using it.';
 
 function stateFixture(){
   const activity=(id,owner,start,end,location,extra={})=>({id,title:id,owner,status:'todo',eventActivity:true,
@@ -71,14 +72,17 @@ function fixture({hosted=true,date=today}={}){
   let rows=[previous,other,exact];
   const backdrop={hidden:true},sync={hidden:true},view=control('view'),panel=control('panel'),heading=control('schedule heading');
   const stale=control('stale'),print=control('print marker'),refresh=control('run sheet refresh'),
-    checkStatus=control('check status'),refreshStatus=control('refresh status');
+    checkStatus=control('check status'),refreshStatus=control('refresh status'),copyText={value:''};
   let button=control('handoff'),handoffStatus=control('handoff status'),title=control('dialog title');
-  let rowButtons=[],sheet;
+  let rowButtons=[],copyWarnings=[],sheet;
   function connectRunSheetRows(markup){
     for(const button of rowButtons)button.isConnected=false;
     rowButtons=[];
+    copyWarnings=Array.from(markup.matchAll(/data-run-sheet-update-warning hidden/g),()=>({hidden:true,textContent:''}));
+    copyText.value=ui.runSheet.text;
     sheet={id:'eventRunSheet',contains:node=>rowButtons.includes(node),querySelector:selector=>select(selector),
-      querySelectorAll:selector=>selector.includes('review-run-sheet-row')?rowButtons:[]};
+      querySelectorAll:selector=>selector.includes('review-run-sheet-row')?rowButtons:
+        selector.includes('[data-run-sheet-update-warning]')?copyWarnings:[]};
     const findButton=/<button\b[^>]*\bdata-action="review-run-sheet-row"[^>]*>/g;
     for(const [tag] of markup.matchAll(findButton)){
       const key=tag.match(/\bdata-run-sheet-row="([^"]*)"/)?.[1];
@@ -102,6 +106,7 @@ function fixture({hosted=true,date=today}={}){
       '#dialog':dialog,'#dialogTitle':title,'#dialogBackdrop':backdrop,'#viewRoot':view,
       '#workspaceSyncNotice':sync,'#eventRunSheet':sheet,'#runSheetStale':stale,
       '#runSheetPrintBlocked':print,'#runSheetRefresh':refresh,'#runSheetCheckStatus':checkStatus,
+      '#runSheetCopyText':copyText,
       '#runSheetRefreshStatus':refreshStatus,'#runSheetReviewDetails':button,'#runSheetReviewDetailsStatus':handoffStatus,
       '[data-action="review-run-sheet-details"]':button,
       '.schedule-panel':panel,'#schedulePanelHeading':heading,
@@ -116,7 +121,7 @@ function fixture({hosted=true,date=today}={}){
     }}));
   const context=vm.createContext({
     ui,window,document,store,schedule,GatherScheduleUI,h,busyRunSheetRevisions,runSheetCheckOutcome:null,
-    $:select,$$:selector=>selector.includes('schedule-row')?rows:selector.includes('review-run-sheet-row')?rowButtons:[],
+    $:select,$$:selector=>selector.includes('schedule-row')?rows:sheet?.querySelectorAll(selector)??[],
     focusable:()=>rows,focusScheduleTarget:target=>{target?.focus();return !!target;},
     requestAnimationFrame:fn=>frames.push(fn),
     workspaceUpdatesPending:()=>!sync.hidden,
@@ -135,6 +140,7 @@ function fixture({hosted=true,date=today}={}){
   context.openRunSheet();
   return {ui,window,document,state,sync,backdrop,exact,previous,other,heading,calls,requests,busyRunSheetRevisions,
     get body(){return body;},get footer(){return footer;},get status(){return handoffStatus;},get button(){return button;},
+    copyText,checkStatus,get copyWarnings(){return copyWarnings;},
     get rowButtons(){return rowButtons;},row,
     rowButton(target,day){
       const key=[...ui.runSheet.liveTargets].find(([,item])=>item.id===target&&item.day===day)?.[0];
@@ -312,6 +318,56 @@ test('failed, changed, and late confirmations never jump into another live conte
     }
     if(reason==='button')assert.equal(f.status.textContent,'','late result cannot repaint replacement status');
     if(reason==='hidden')assert.match(f.status.textContent,/Jump paused/);
+  }
+});
+
+test('an unsuccessful Run sheet row check keeps the dialog open and marks the offline copy until an exact retry succeeds',async()=>{
+  const f=fixture(),snapshot=f.ui.runSheet,base=snapshot.text;
+  const choice=()=>f.rowButton('fictional-complete-fields',today);
+  assert.ok(f.copyWarnings.length>1);
+  const pending=f.handoff(choice());
+  assert.equal(f.requests.length,1);
+  f.requests[0].reject(new Error('Fictional network failure'));
+  await pending;
+  assert.deepEqual(closes(f),[]);
+  assert.equal(f.ui.runSheet,snapshot);
+  assert.match(f.status.textContent,/check the schedule.*try again/i);
+  assert.equal(f.checkStatus.textContent,offlineWarning);
+  assert.equal(f.copyText.value,offlineWarning+'\n\n'+base);
+  assert.equal(snapshot.text,base);
+  assert.ok(f.copyWarnings.every(marker=>!marker.hidden&&marker.textContent===offlineWarning));
+  f.print();
+  assert.deepEqual(f.calls.filter(([kind])=>kind==='print'),[['print']]);
+  assert.equal(f.requests.length,1,'offline printing does not retry the network');
+
+  f.reopen();
+  assert.equal(f.copyText.value,offlineWarning+'\n\n'+f.ui.runSheet.text);
+  const retry=f.handoff(choice());
+  f.requests[1].finish();
+  await retry;
+  assert.equal(closes(f).length,1,'verified retry finishes the requested jump');
+  f.reopen();
+  assert.ok(f.copyWarnings.every(marker=>marker.hidden));
+  assert.equal(f.copyText.value,f.ui.runSheet.text);
+  assert.doesNotMatch(f.checkStatus.textContent,/Could not check/);
+  assert.equal(f.requests.length,2);
+});
+
+test('a failed Run sheet row check cannot add its warning to a different workspace or loaded revision',async()=>{
+  for(const reason of ['workspace','revision']){
+    const f=fixture(),pending=f.handoff(f.rowButton('fictional-complete-fields',today));
+    if(reason==='workspace')f.window.GatherMode.projectId='fictional-different-project';
+    else f.revision=f.ui.runSheet.revision+1;
+    f.reopen();
+    const replacement=f.ui.runSheet;
+    f.requests[0].reject(new Error('Fictional read error after leaving the old revision'));
+    await pending;
+    f.current();
+    assert.deepEqual(closes(f),[],reason);
+    assert.equal(f.ui.runSheet,replacement,reason);
+    assert.ok(f.copyWarnings.every(marker=>marker.hidden),reason);
+    assert.equal(f.copyText.value,replacement.text,reason);
+    assert.equal(f.status.textContent,'',reason);
   }
 });
 

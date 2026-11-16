@@ -702,6 +702,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .empty-plan{padding:clamp(16px,3vw,24px);overflow-wrap:anywhere}.empty-plan p{margin:12px 0;max-width:62ch}.empty-plan .form-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:20px}
 .event-run-sheet{font-size:.875rem;line-height:1.6;overflow-wrap:anywhere}.event-run-sheet header h2{font-size:1.5rem;margin:8px 0}.event-run-sheet header p{margin:8px 0}.run-sheet-snapshot{font-weight:600}.run-sheet-table-wrap{max-width:100%;overflow-x:auto;margin-top:24px}.run-sheet-table{width:100%;border-collapse:collapse;min-width:540px;text-align:left}.run-sheet-table caption{text-align:left;font-weight:650;font-size:1rem;margin-bottom:10px}.run-sheet-table th,.run-sheet-table td{border-bottom:1px solid var(--line);padding:12px 10px;vertical-align:top;overflow-wrap:anywhere}.run-sheet-table thead th{font-size:.75rem;color:var(--muted)}.run-sheet-table tbody th{font-weight:600;width:38%}.run-sheet-table span{display:block;font-weight:400;margin-top:4px}.run-sheet-table td:first-child{width:22%}
 .run-sheet-repeat-heading{display:none}
+#eventRunSheet [data-run-sheet-update-warning]{display:none}
 .run-sheet-live-action{display:inline-flex;min-height:44px;max-width:100%;align-items:center;text-align:left;white-space:normal;overflow-wrap:anywhere}
 #runSheetPrintBlocked{display:none}
 @media screen and (max-width:640px){
@@ -712,6 +713,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 }
 @media print{
   #eventRunSheet .run-sheet-live-action{display:none!important}
+  #eventRunSheet [data-run-sheet-update-warning]:not([hidden]){display:block;font-weight:650}
   #eventRunSheet .run-sheet-repeat-heading{display:table-row}
   #eventRunSheet .run-sheet-repeat-heading th{font-size:11pt;padding:10px 0;text-align:left}#eventRunSheet .run-sheet-repeat-heading span{font-size:9pt;font-weight:400}#eventRunSheet caption{display:none}
   body:has(#eventRunSheet){height:auto!important;overflow:visible!important;background:#fff!important;color:#000!important}

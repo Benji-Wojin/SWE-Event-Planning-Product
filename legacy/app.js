@@ -2643,12 +2643,23 @@
       (hasRows?'Run sheet isn’t ready to print. Return to Weft to check or refresh it.':'No run sheet to print: this view has no scheduled activities. Return to Weft to check the schedule.')+
       '</p>'+schedule.runSheetMarkup(model,liveTargets)+
       (hasRows?'':'<p id="runSheetEmpty" class="notice">There’s nothing to print or download from this view. '+emptyHelp+'</p>')+
-      (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
+      (text?'<details id="runSheetTextFallback" class="section-gap"><summary>Show text to copy</summary><label class="field section-gap">Team run sheet text<textarea id="runSheetCopyText" rows="8" readonly>'+h(text)+'</textarea></label></details>':''),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
       (store.confirmSnapshotRevision?'<button class="btn btn-secondary" data-action="check-run-sheet">Check for updates</button>':'')+
       (text?'<button class="btn btn-secondary" data-action="download-run-sheet">Download text (.txt)</button>':'')+
       (hasRows?'<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>':''),true,'run-sheet',focusHeading||!hasRows);
     currentRunSheet();
+  }
+  function runSheetCheckKind(snapshot) {
+    return runSheetCheckOutcome&&runSheetCheckOutcome.revision===snapshot.revision?runSheetCheckOutcome.kind:null;
+  }
+  function runSheetCopyWarning(snapshot) {
+    return runSheetCheckKind(snapshot)==='failed'
+      ?'Could not check for updates. This is the last loaded copy; confirm changes with your team before using it.':'';
+  }
+  function runSheetCopyText(snapshot) {
+    const warning=runSheetCopyWarning(snapshot);
+    return warning?warning+'\n\n'+snapshot.text:snapshot.text;
   }
   function currentRunSheet() {
     const snapshot=ui.runSheet;
@@ -2658,7 +2669,7 @@
       printNotice?.toggleAttribute('data-blocked',true);
       return null;
     }
-    const outcome=runSheetCheckOutcome&&runSheetCheckOutcome.revision===snapshot.revision?runSheetCheckOutcome.kind:null;
+    const outcome=runSheetCheckKind(snapshot);
     const sync=$('#workspaceSyncNotice'),stale=snapshot.stale||outcome==='inconclusive'||scheduleRevisionIsStale(snapshot.revision)||
       (sync&&!sync.hidden)||store.getSnapshotRevision?.()!==snapshot.revision;
     const busy=busyRunSheetRevisions.has(snapshot.revision),blocked=!!(stale||busy);
@@ -2671,13 +2682,23 @@
     const message=outcome==='checking'?'Checking the saved plan…':
       outcome==='inconclusive'?'Could not confirm the saved plan. Refresh this view to check again.':
       stale?'':outcome==='failed'?(noRows?'Could not check for updates. Try again to check this schedule.':
-        'Could not check for updates. This is the last loaded copy; confirm changes with your team before using it.'):
+        runSheetCopyWarning(snapshot)):
       outcome==='checked'?(noRows?'No newer plan found. This view still has no scheduled activities.':
         'No newer plan found. This copy is still a snapshot.'):'';
     if(checkStatus&&checkStatus.textContent!==message)checkStatus.textContent=message;
     printNotice?.toggleAttribute('data-blocked',blocked||noRows);
     $('#runSheetRefresh')?.setAttribute('aria-disabled',String(!!busy));
     const fallback=$('#runSheetTextFallback');if(fallback)fallback.hidden=blocked;
+    const copyWarning=blocked||noRows?'':runSheetCopyWarning(snapshot);
+    for(const warning of $$('#eventRunSheet [data-run-sheet-update-warning]')){
+      warning.hidden=!copyWarning;
+      if(warning.textContent!==copyWarning)warning.textContent=copyWarning;
+    }
+    const copyText=$('#runSheetCopyText');
+    if(copyText){
+      const nextText=blocked||noRows?'':runSheetCopyText(snapshot);
+      if(copyText.value!==nextText)copyText.value=nextText;
+    }
     for(const button of $$('#dialog [data-action="download-run-sheet"], #dialog [data-action="print-run-sheet"], #dialog [data-action="check-run-sheet"]'))
       button.setAttribute('aria-disabled',String(blocked||(noRows&&button.dataset?.action!=='check-run-sheet')));
     return blocked?null:snapshot;
@@ -2716,6 +2737,8 @@
           if(store.getSnapshotRevision?.()===snapshot.revision&&!scheduleRevisionIsStale(snapshot.revision))
             runSheetCheckOutcome={revision:snapshot.revision,kind:'inconclusive'};
         }
+        else if(confirmed&&sameWorkspace()&&store.getSnapshotRevision?.()===snapshot.revision)
+          runSheetCheckOutcome={revision:snapshot.revision,kind:'checked'};
         if(!sameSheet())return;
         if(document.hidden||ui.pendingSave){status.textContent='Jump paused. Choose the activity again to open it in Timeline.';return;}
         if(!confirmed){
@@ -2723,6 +2746,8 @@
           return;
         }
       }catch{
+        if(sameWorkspace()&&store.getSnapshotRevision?.()===snapshot.revision)
+          runSheetCheckOutcome={revision:snapshot.revision,kind:'failed'};
         if(sameSheet())status.textContent='Couldn’t check the schedule. Try again, or go back to Timeline.';
         return;
       }finally{
@@ -2809,7 +2834,7 @@
     const snapshot=currentRunSheet();
     if(!snapshot?.model.days.length||!snapshot.text)return;
     // Download the exact projected preview. No request, mutation or share.
-    const url=URL.createObjectURL(new Blob([snapshot.text],{type:'text/plain;charset=utf-8'}));
+    const url=URL.createObjectURL(new Blob([runSheetCopyText(snapshot)],{type:'text/plain;charset=utf-8'}));
     const link=document.createElement('a');
     link.href=url;
     link.download='weft-run-sheet'+(snapshot.model.mine?'-my-activities':'')+(snapshot.model.day?'-'+snapshot.model.day:'')+'.txt';
