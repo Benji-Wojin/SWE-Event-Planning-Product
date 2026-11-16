@@ -544,13 +544,28 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     await run(async()=>{
       if(checklistRequest.current?.key!==key)checklistRequest.current={key,requestId:crypto.randomUUID()};
       const requestId=checklistRequest.current.requestId;
-      const result=await api(query,{...input,requestId});
-      const {added,skipped}=result.checklistImportResult;
+      const couldNotConfirm='We couldn’t confirm the saved checklist. Your pasted text is still here. Retry the same import, or copy the text before reloading the draft to check what was saved.';
+      let result;
+      try{
+        result=await api(query,{...input,requestId},AbortSignal.timeout(approvalTimeout));
+      }catch(e){
+        const response=e as {status?:number;unreadable?:boolean}|null;
+        if(!response?.status||response.unreadable||response.status>=500)throw new Error(couldNotConfirm);
+        throw e;
+      }
+      const {added,skipped}=result.checklistImportResult??{};
+      if(!Number.isSafeInteger(added)||added<0||!Number.isSafeInteger(skipped)||skipped<0)
+        throw new Error(couldNotConfirm);
       if(added){
-        if(completedPlan&&(result.receipt||result.status!=='ready'||result.revision!==input.revision+1||
-          result.draft?.source!=='pasted'||result.draft.generation!==requestId||!Array.isArray(result.draft.items)||
-          result.draft.items.length!==added||result.draft.items.some((item:ReviewedItem)=>item.included!==false)))
-          throw new Error('We couldn’t confirm this checklist replaced the handoff. Your pasted text is still here. Retry the same import or reload the saved draft to check what was saved.');
+        const appending=!!input.generation&&!completedPlan;
+        const generation=appending?input.generation:requestId;
+        const source=appending?data.draft.source:'pasted';
+        if(result.receipt||result.status!=='ready'||result.revision!==input.revision+1||
+          result.workspaceRevision!==input.workspaceRevision||result.draft?.generation!==generation||
+          result.draft.source!==source||!Array.isArray(result.draft.items)||
+          result.draft.items.length!==input.items.length+added||
+          result.draft.items.slice(input.items.length).some((item:ReviewedItem)=>item?.included!==false))
+          throw new Error(couldNotConfirm);
         accept(result);
         setChecklist('');
         request.current=null;

@@ -168,7 +168,9 @@ function planAssignees(c: Context): { id: string; name: string }[] {
     (!c.memberAssistant || member.id === c.user.actorId));
 }
 
-async function snapshot(c: Context) {
+type ChecklistImportConfirmation = {requestId:string; revision:number; workspaceRevision:number; generation:string};
+
+async function snapshot(c: Context, checklistImport?: ChecklistImportConfirmation) {
   const row = await read(c.id),
     data = await decode(row);
   if(c.breakdown){
@@ -185,6 +187,15 @@ async function snapshot(c: Context) {
   }
   await authorized(c);
   const {lastChecklistImport,...draftView}=data.draft||{};
+  // Match the marker on the same read used to build the response. Counts
+  // from one import must never describe a newer draft or shared project.
+  if (checklistImport && (
+    row?.revision !== checklistImport.revision || row.status !== 'ready' || data.receipt ||
+    c.row.revision !== checklistImport.workspaceRevision || lastChecklistImport?.requestId !== checklistImport.requestId ||
+    draftView.generation !== checklistImport.generation
+  )) {
+    throw new HttpError(409,'We couldn’t confirm the saved checklist because the project or draft changed. Your pasted text is still here. Copy it before reloading the draft to check what was saved.');
+  }
   const members = planAssignees(c);
   const receiptTasks: PlanReceiptTask[]=[];
   if(data.receipt){
@@ -906,7 +917,11 @@ export async function writeEventPlan(request: Request, input: any) {
   if (input.action === 'starter') return createStarter(c, input);
   if (input.action === 'import-checklist') {
     const checklistImportResult=await importChecklist(c,input);
-    return {...await snapshot(await loadContext(request)),checklistImportResult};
+    const confirmation=checklistImportResult.added ? {
+      requestId:input.requestId, revision:input.revision+1, workspaceRevision:input.workspaceRevision,
+      generation:input.replaceHandoff ? input.requestId : input.generation ?? input.requestId,
+    } : undefined;
+    return {...await snapshot(await loadContext(request),confirmation),checklistImportResult};
   }
   if (input.action === 'recheck-pasted' || input.action === 'recheck-starter') {
     await recheckChecklist(c,input,input.action==='recheck-starter'?'starter':'pasted');

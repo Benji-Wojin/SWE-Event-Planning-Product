@@ -2116,6 +2116,77 @@ export async function eventPlanTests({
       assert.deepEqual(workspaceRow(),sharedRow);
     });
 
+    for(const mode of ['first import','append import','workspace update']){
+      await t.test(`pasted checklist ${mode} does not confirm an import against a newer snapshot`,async(test)=>{
+        const project=await setup();
+        test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+        let before=await read(project);
+        if(mode==='append import'){
+          const seed=await post(project,paste(before,'Check the entrance'));
+          assert.equal(seed.status,200,await seed.clone().text());
+          before=await seed.json();
+        }
+        const request=paste(before,'Print volunteer badges');
+        const originalDb=globalThis.__gatherEnv.DB;
+        let committed,release,armed=true;
+        const committedBarrier=new Promise(resolve=>{committed=resolve;});
+        const holdResponse=new Promise(resolve=>{release=resolve;});
+        globalThis.__gatherEnv.DB={...db,prepare(sql){
+          const stmt=db.prepare(sql);
+          if(sql.startsWith('INSERT INTO plan_drafts')&&sql.includes("(plan_drafts.status='applied')=?")){
+            const run=stmt.run.bind(stmt);
+            stmt.run=async()=>{
+              const saved=await run();
+              if(armed&&saved.meta.changes===1){
+                armed=false;
+                committed();
+                await holdResponse;
+              }
+              return saved;
+            };
+          }
+          return stmt;
+        }};
+        const importing=post(project,request);
+        try{
+          await Promise.race([committedBarrier,importing.then(()=>assert.fail('import never reached its committed response barrier'))]);
+          const committedDraft=await read(project);
+          assert.equal(committedDraft.revision,before.revision+1);
+          assert.equal(committedDraft.draft.items.at(-1).title,'Print volunteer badges');
+          assert.equal(committedDraft.draft.items.at(-1).included,false);
+          if(mode==='workspace update'){
+            await change(project,'addTask',[{title:'Reserve a team table'}]);
+          }else{
+            const replacement=committedDraft.draft.items.map((item,index)=>index===0?{...item,note:'Confirmed by the other tab'}:item);
+            const otherTab=await post(project,save(committedDraft,{items:replacement}));
+            assert.equal(otherTab.status,200,await otherTab.clone().text());
+          }
+          const current=await read(project);
+          release();
+          const reply=await importing;
+          assert.equal(reply.status,409,await reply.clone().text());
+          const failure=await reply.json();
+          assert.match(failure.error,/pasted text is still here/);
+          assert.equal(failure.checklistImportResult,undefined,'a conflict is not a success receipt');
+          assert.equal(failure.draft,undefined,'do not send a different draft with the import response');
+          assert.equal((await post(project,request)).status,409,'a retry cannot confirm or overwrite newer project/draft state');
+          assert.deepEqual(await read(project),current);
+          if(mode==='workspace update'){
+            assert.ok(current.workspaceRevision>before.workspaceRevision);
+            assert.equal(current.revision,before.revision+1);
+            assert.deepEqual(current.existingTasks.map(task=>task.title),['Reserve a team table']);
+          }else{
+            assert.equal(current.revision,before.revision+2);
+            assert.equal(current.draft.items[0].note,'Confirmed by the other tab');
+            assert.equal(current.existingTaskCount,0,'neither private operation publishes shared tasks');
+          }
+          assert.equal(calls.length,0);
+        }finally{
+          release();await importing.catch(()=>{});globalThis.__gatherEnv.DB=originalDb;
+        }
+      });
+    }
+
     await t.test('a concurrent handoff import does not replay across a workspace revision advanced after the winner',async(test)=>{
       const project=await setup();
       test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));

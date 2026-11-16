@@ -1152,8 +1152,10 @@ test('suggestion mode keeps its event type in its own brief and never exposes th
   }finally{active.dispose();}
 });
 
-test('pasted text and pending edits survive a lost response and retry without changing selection',async()=>{
+for(const failure of ['lost response','unreadable success','gateway error','response timeout'])
+test(`pasted text and pending edits survive import uncertainty (${failure}) and retry without changing selection`,async()=>{
   const pasted={...item,id:'pasted-signage',title:'Prepare signage',note:'',included:false};
+  const originalTimeout=AbortSignal.timeout,controllers=[],deadlines=[];
   let loseResponse=true;
   const app=harness(context=>{
     if(context.input?.action!=='import-checklist')return;
@@ -1162,25 +1164,135 @@ test('pasted text and pending edits survive a lost response and retry without ch
         draft:{...context.saved.draft,items:[...context.input.items,pasted]},
         checklistImportResult:{added:1,skipped:1}};
       loseResponse=false;
+      if(failure==='unreadable success')return new Response('unfinished JSON',{status:200});
+      if(failure==='gateway error')return Response.json({error:'Fictional gateway failure'},{status:503});
+      if(failure==='response timeout'){
+        if(!context.signal)throw new Error('Missing timeout signal');
+        return new Promise((_,reject)=>{
+          context.signal.addEventListener('abort',()=>reject(context.signal.reason),{once:true});
+        });
+      }
       throw new Error('Response lost');
     }
   });
+  let pendingImport;
   try{
     await app.start();
     await app.edit('title-one','Keep the revised programme');
     const input='- Keep the revised programme\n- [x] Prepare signage';
     await app.edit('plan-pasted-checklist',input);
-    await app.click('Import for review');
+    if(failure==='response timeout'){
+      AbortSignal.timeout=duration=>{
+        deadlines.push(duration);
+        const controller=new AbortController();controllers.push(controller);return controller.signal;
+      };
+      pendingImport=app.click('Import for review');
+      await app.start();
+      assert.deepEqual(deadlines,[15000]);
+      assert.equal(planButton(app.tree,'Import for review').props.disabled,true);
+      controllers[0].abort(new DOMException('Fictional import timeout','TimeoutError'));
+      await pendingImport;
+    }else await app.click('Import for review');
     assert.equal(app.find('plan-pasted-checklist').props.value,input);
     assert.equal(app.find('title-one').props.value,'Keep the revised programme');
+    assert.equal(app.find('include-'+pasted.id),undefined,'unconfirmed import is not shown as a saved row');
+    assert.match(text(nodes(app.tree).find(node=>node.props.role==='alert')),
+      /couldn’t confirm the saved checklist.*pasted text is still here.*retry the same import.*copy the text/i);
+    assert.deepEqual(app.requests.map(x=>x.action),['get','import-checklist'],'uncertainty does not trigger an automatic request');
     await app.click('Import for review');
     assert.deepEqual(app.requests.map(x=>x.action),['get','import-checklist','import-checklist']);
     assert.deepEqual(app.requests[1],app.requests[2]);
+    assert.equal(app.saved.draft.items.filter(row=>row.id===pasted.id).length,1);
     assert.equal(app.find('plan-pasted-checklist').props.value,'');
     assert.equal(app.find('include-one').props.checked,true);
     assert.equal(app.find('include-'+pasted.id).props.checked,false);
     assert.match(text(app.tree),/1 matching line was skipped/);
-  }finally{app.dispose();}
+  }finally{
+    for(const controller of controllers)controller.abort();
+    await pendingImport?.catch(()=>{});
+    AbortSignal.timeout=originalTimeout;
+    app.dispose();
+  }
+});
+
+function exactChecklistImport(input,saved,appended){
+  const before=input.generation&&!input.replaceHandoff?saved.draft:null;
+  return {...saved,revision:input.revision+1,workspaceRevision:input.workspaceRevision,status:'ready',receipt:null,contextChanged:false,
+    brief:copy(input.brief),draft:{...before,source:before?before.source:'pasted',generation:before?before.generation:input.requestId,
+      brief:copy(input.brief),items:[...input.items.map(normalizeSavedRow),normalizeSavedRow(appended)],questions:[],assumptions:[]},
+    checklistImportResult:{added:1,skipped:0}};
+}
+
+test('first and appended pasted imports retain local work when a late snapshot cannot prove the exact import',async()=>{
+  for(const append of [false,true])
+  for(const failure of ['server conflict','later revision','newer workspace','other generation','other source','receipt','checked addition']){
+    const initial=append?fixture():{...fixture(),revision:0,brief:{...brief,description:''},status:'empty',draft:null};
+    if(append)initial.draft.source='starter';
+    const pasted='- [ ] Place signs near the fictional welcome desk',localBrief='Fictional agenda notes not yet saved';
+    const added={...copy(item),id:'private-imported-signs',title:'Place signs near the fictional welcome desk',note:'',included:false};
+    const label=`${append?'append':'first'} ${failure}`;
+    let attempts=0;
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(input?.action!=='import-checklist')return;
+      assert.equal(input.revision,initial.revision);assert.equal(input.workspaceRevision,initial.workspaceRevision);
+      assert.equal(input.generation,initial.draft?.generation??null);assert.ok(input.requestId);assert.equal(input.text,pasted);
+      if(++attempts>1||failure==='server conflict')return Response.json({error:'The draft changed. Reload it to check what was saved.'},{status:409});
+      const reply=exactChecklistImport(input,saved,added);
+      if(failure==='later revision')reply.revision++;
+      if(failure==='newer workspace')reply.workspaceRevision++;
+      if(failure==='other generation')reply.draft.generation='later-fictional-draft';
+      if(failure==='other source')reply.draft.source=append?'pasted':'starter';
+      if(failure==='receipt')reply.receipt={generation:reply.draft.generation,taskIds:['other-fictional-task']};
+      if(failure==='checked addition')reply.draft.items.at(-1).included=true;
+      return Response.json(reply);
+    },initial);
+    try{
+      await app.start();await app.edit('plan-brief',localBrief);
+      if(append){await app.edit('title-one','Fictional earlier row edit');await app.check('include-one',false);}
+      await app.edit('plan-pasted-checklist',pasted);
+      await app.click('Import for review');
+      assert.equal(app.find('plan-pasted-checklist').props.value,pasted,label);
+      assert.equal(app.find('plan-brief').props.value,localBrief,label);
+      if(append){assert.equal(app.find('title-one').props.value,'Fictional earlier row edit',label);assert.equal(app.find('include-one').props.checked,false,label);}
+      assert.equal(app.find('include-'+added.id),undefined,label);assert.equal(app.find('plan-receipt-heading'),undefined,label);
+      assert.doesNotMatch(text(app.tree),/task added unchecked to your private draft/,label);
+      assert.match(text(nodes(app.tree).find(node=>node.props.role==='alert')),/reload|couldn’t confirm/i,label);
+      assert.deepEqual(app.requests.map(row=>row.action),['get','import-checklist'],label);
+
+      await app.click('Import for review');
+      assert.deepEqual(app.requests.map(row=>row.action),['get','import-checklist','import-checklist'],label);
+      assert.deepEqual(app.requests[2],app.requests[1],'the deliberate retry reuses the exact request ID and data: '+label);
+      assert.equal(app.find('plan-pasted-checklist').props.value,pasted,label);
+      assert.equal(app.find('include-'+added.id),undefined,label);
+    } finally {app.dispose();}
+  }
+});
+
+test('fresh exact first and append imports adopt only unchecked new private rows',async()=>{
+  for(const append of [false,true]){
+    const initial=append?fixture():{...fixture(),revision:0,status:'empty',draft:null};
+    if(append)initial.draft.source='pasted';
+    const added={...copy(item),id:'private-new-signs',title:'Prepare the fictional welcome signs',note:'',included:false};
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(input?.action==='import-checklist'){
+        assert.equal(input.generation,initial.draft?.generation??null);
+        context.value=exactChecklistImport(input,saved,added);
+      }
+    },initial);
+    try{
+      await app.start();if(append)await app.edit('title-one','  Fictional existing draft edit  ');
+      await app.edit('plan-pasted-checklist','- [x] '+added.title);await app.click('Import for review');
+      assert.deepEqual(app.requests.map(row=>row.action),['get','import-checklist']);
+      assert.equal(app.find('plan-pasted-checklist').props.value,'');
+      assert.equal(app.find('title-'+added.id).props.value,added.title);assert.equal(app.find('include-'+added.id).props.checked,false);
+      if(append){assert.equal(app.find('title-one').props.value,'Fictional existing draft edit');assert.equal(app.find('include-one').props.checked,true);}
+      assert.equal(app.saved.draft.generation,append?initial.draft.generation:app.requests[1].requestId);
+      assert.equal(app.saved.receipt,null);assert.equal(app.find('plan-receipt-heading'),undefined);
+      assert.match(text(app.tree),/1 task added unchecked to your private draft/i);
+    } finally {app.dispose();}
+  }
 });
 
 test('starter replacement saves edited work and retries the same request after an uncertain response',async()=>{
@@ -2039,7 +2151,7 @@ test('only an exact, unchecked replacement response can replace the live handoff
       assert.ok(app.find('plan-receipt-heading'),bad);
       assert.ok(planLink(app.tree,'Current shared venue task'),bad);
       assert.equal(app.find('plan-proposed-items'),undefined,bad);
-      assert.match(text(app.tree),/couldn’t confirm this checklist replaced the handoff/i,bad);
+      assert.match(text(app.tree),/couldn’t confirm the saved checklist.*pasted text is still here/i,bad);
       assert.deepEqual(app.requests.map(request=>request.action),['get','import-checklist'],bad);
 
       await app.click('Import for review');
