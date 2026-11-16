@@ -163,6 +163,50 @@ test('run sheet retains blocked/completed/review states and warns about entered 
   assert.doesNotMatch(html,/Scheduled now/);
 });
 
+test('the printable and text run sheets aggregate saved completion awaiting verification once per scoped activity',()=>{
+  const input=state(),report='2026-11-20T22:00:00Z';
+  input.members.push({id:'dev',name:'Fictional other host'});
+  input.tasks=[
+    activity('private-carryover-id','maya','2026-11-20T23:20','2026-11-21T01:00',{title:'Overnight report',status:'progress',
+      requiresVerification:true,reportedAt:report,completionEvidence:{note:'PRIVATE-EVIDENCE',links:['https://private.example/'],fileIds:['PRIVATE-ATTACHMENT']},
+      completionResult:{text:'PRIVATE-RESULT'},note:'PRIVATE-NOTE',comments:[{text:'PRIVATE-COMMENT'}]}),
+    activity('private-legacy-id','maya','2026-11-21T10:00','2026-11-21T10:30',{title:'Legacy unverified',status:'done',requiresVerification:true}),
+    activity('private-other-id','dev','2026-11-21T11:00','2026-11-21T11:30',{title:'Different owner report',status:'progress',requiresVerification:true,reportedAt:report}),
+    activity('private-amendment-id','maya','2026-11-21T12:00','2026-11-21T12:30',{title:'Already verified amendment',status:'done',requiresVerification:true,
+      verifiedAt:report,completionEvidence:{note:'PRIVATE-AMENDMENT'}}),
+    activity('private-open-id','maya','2026-11-21T13:00','2026-11-21T13:30',{title:'Work with no report',status:'progress',requiresVerification:true}),
+    activity('private-archived-id','maya','2026-11-21T14:00','2026-11-21T14:30',{title:'Archived task',status:'done',requiresVerification:true,archivedAt:report}),
+    {id:'private-unscheduled-id',owner:'maya',title:'Unscheduled report',status:'progress',requiresVerification:true,reportedAt:report},
+  ];
+  const before=structuredClone(input);
+  for(const [scope,expected,count] of [
+    [{},3,4],
+    [{date:'2026-11-20'},1,1],
+    [{date:'2026-11-21'},3,3],
+    [{date:'2026-11-21',mine:true,actor:'maya'},2,2],
+    [{date:'2026-11-21',mine:true,actor:'dev'},1,1],
+    [{date:'2026-11-21',mine:true,actor:'unknown'},0,0],
+    [{date:'2026-11-22'},0,0],
+  ]){
+    const model=ui.runSheetModel(input,now,scope),print=ui.runSheetMarkup(model),plain=ui.runSheetText(model);
+    const notices=model.cautions.filter(message=>message.includes('completion awaiting organizer verification'));
+    const expectedNotice=new RegExp(`\\b${expected} ${expected===1?'activity has':'activities have'} completion awaiting organizer verification`);
+    assert.equal(notices.length,expected?1:0,JSON.stringify(scope));
+    assert.equal(model.days.flatMap(day=>day.rows).filter(row=>row.status==='Awaiting verification').length,count,JSON.stringify(scope));
+    assert.equal(print,ui.runSheet(input,now,scope));
+    for(const copy of [print,plain]){
+      if(expected){
+        assert.match(copy,expectedNotice,JSON.stringify(scope));
+        assert.match(copy,/this copy does not include completion evidence/);
+      }else assert.doesNotMatch(copy,/completion awaiting organizer verification/);
+      assert.doesNotMatch(copy,/PRIVATE-|private\.example|private-[a-z-]+-id|Unscheduled report|Archived task|data-review-kind|Scheduled now/);
+      if(scope.actor==='maya')assert.doesNotMatch(copy,/Different owner report/);
+      if(scope.actor==='dev')assert.doesNotMatch(copy,/Overnight report|Legacy unverified/);
+    }
+  }
+  assert.deepEqual(input,before);
+});
+
 test('run sheet escapes entered facts and is stable across viewer time zones',()=>{
   const input=state();input.event.name='<script>EVENT</script>';input.members[0].name='<img src=x>';
   input.tasks[1].title='<svg onload=alert(1)>';input.tasks[1].schedule.location='</td><script>LOCATION</script>';

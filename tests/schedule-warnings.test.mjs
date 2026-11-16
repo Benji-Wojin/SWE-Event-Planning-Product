@@ -142,7 +142,10 @@ test('linked-result review respects scope, scheduled dates and actual required l
       completionResult:{text:'PRIVATE-RESULT-TEXT'}},
   ];
   const snapshot=state(tasks),scope={mine:true,actor:'maya',date},cue=/Review linked results/;
-  assert.equal(ui.clock(snapshot,now,scope).markup,'','a future selected date has no live focus strip');
+  const datedAttention=ui.clock(snapshot,now,scope).markup;
+  assert.match(datedAttention,/Completion awaiting verification · 1/);
+  assert.match(datedAttention,/data-id="parent-awaiting-review"/);
+  assert.doesNotMatch(datedAttention,/Scheduled now|\bNext\b|Check progress|Review linked results/,'the dated attention strip shows durable review only');
   const html=ui.view(snapshot,false,now,scope);
   assert.equal((html.match(/Review linked results/g)||[]).length,1);
   assert.match(html.match(/<button class="schedule-row"[^>]*data-id="ready-on-future-date"[\s\S]*?<\/button>/)?.[0]||'',cue);

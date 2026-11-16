@@ -408,23 +408,27 @@
     }
     function clock(state,now=Date.now(),scope={},organizer=false,matches) {
       const day=selectedDate(scope);
-      if(day&&momentKey(now,state.event.timeZone)?.slice(0,10)!==day)return {markup:'',labels:new Map(),rowDays:new Map()};
-      const scopedTasks=scoped(state.tasks,scope).filter(task=>onDate(task,day));
-      const live=timing(scopedTasks,state.event.timeZone,now),byId=new Map(state.tasks.map(task=>[task.id,task]));
-      const today=live.local?.slice(0,10),rowDays=new Map([
+      const tasks=scheduledInScope(state.tasks,scope);
+      const empty=()=>({markup:'',labels:new Map(),rowDays:new Map()});
+      if(!tasks.length)return empty();
+      const today=momentKey(now,state.event.timeZone)?.slice(0,10);
+      // A date filter can hide live clock cues, not saved review obligations.
+      const live=today&&(!day||day===today)?timing(tasks,state.event.timeZone,now):null;
+      const verification=tasks.filter(waitingVerification),amendments=tasks.filter(evidenceAmended);
+      if(!live&&!verification.length&&!amendments.length)return empty();
+      const byId=new Map(state.tasks.map(task=>[task.id,task]));
+      const rowDays=new Map(live?[
         ...live.current.map(task=>[task.id,today]),
         ...live.next.map(task=>[task.id,task.schedule.start.slice(0,10)]),
         ...live.followUp.map(task=>[task.id,lastActivityDate(task)]),
-      ]);
-      if(!live.local||!scopedTasks.some(task=>task.schedule))return {markup:'',labels:live.labels,rowDays};
-      const verification=ordered(scopedTasks).filter(waitingVerification),amendments=ordered(scopedTasks).filter(evidenceAmended);
-      const focusDate=task=>rowDays.get(task.id)||day||(onDate(task,today)?today:lastActivityDate(task));
-      const activityConflicts=(task,date)=>overlapKinds(matches??=scheduleOverlaps(state,scopedTasks,day),task,date);
-      const group=(title,tasks,empty,{followUp=false,reviewKind=''}={})=>`<div class="schedule-focus-group"><h3>${title}</h3>${reviewKind==='completion'?'<p class="muted schedule-follow-up-help">Recorded completion still needs the required organizer verification. Open an activity to review its result; only the organizer can verify or request changes.</p>':''}${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${tasks.length?tasks.map(task=>{
+      ]:[]);
+      const focusDate=task=>rowDays.get(task.id)||day||(today&&onDate(task,today)?today:lastActivityDate(task));
+      const activityConflicts=(task,date)=>overlapKinds(matches??=scheduleOverlaps(state,tasks,day),task,date);
+      const group=(title,groupTasks,empty,{followUp=false,reviewKind=''}={})=>`<div class="schedule-focus-group"><h3>${title}</h3>${reviewKind==='completion'?'<p class="muted schedule-follow-up-help">Open an activity to review its completion status. When a report is available, only the organizer can verify it or request changes.</p>':''}${followUp?'<p class="muted schedule-follow-up-help">A scheduled time has passed, but these activities are not marked complete. Check with the owner before changing their status.</p>':''}${groupTasks.length?groupTasks.map(task=>{
         const date=focusDate(task), conflicts=activityConflicts(task,date);
         return `<button class="text-button schedule-focus-task" data-schedule-focus-day="${h(date)}"${reviewKind?` data-schedule-focus-kind="${reviewKind}"`:''}${overlapIntent(conflicts,task,reviewKind)} ${reviewKind?reviewRoute(task,reviewKind,organizer):taskRoute(task,!!planRequestKind(task))}><strong>${h(task.title)}</strong>${followUp?`<span class="schedule-focus-reason">${h(live.labels.get(task.id))}</span>`:''}<span class="muted">${task.schedule.start.slice(0,10)!==today?h(dateLabel(task.schedule.start))+' · ':''}${h(range(task.schedule))}</span>${liveHandoff(task.schedule)}${overlapMarkup(conflicts)}<span class="schedule-focus-meta">${liveOwner(task,state)}${waitingVerification(task)?'<span class="status-badge status-blocked">Awaiting verification</span>':statusBadge(task.status)}</span>${liveWarnings(task,state,byId)}</button>`;
       }).join(''):`<p class="muted">${empty}</p>`}</div>`;
-      return {markup:`<div class="schedule-focus">${group('Scheduled now',live.current,'No current time slot')}${group('Next',live.next,'No upcoming activities')}${verification.length?`<div class="schedule-completion-review">${group('Completion awaiting verification · '+verification.length,verification,'',{reviewKind:'completion'})}</div>`:''}${amendments.length?`<div class="schedule-completion-review"><p class="muted schedule-follow-up-help">The current submission was edited after verification and has not been reviewed. Task verification is unchanged; open the activity to review the amendment.</p>${group('Evidence amended after verification · '+amendments.length,amendments,'',{reviewKind:'amendment'})}</div>`:''}${live.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',{followUp:true})}</div>`:''}</div>`,labels:live.labels,rowDays};
+      return {markup:`<div class="schedule-focus${live?'':' schedule-focus-review-only'}">${live?group('Scheduled now',live.current,'No current time slot')+group('Next',live.next,'No upcoming activities'):''}${verification.length?`<div class="schedule-completion-review">${group('Completion awaiting verification · '+verification.length,verification,'',{reviewKind:'completion'})}</div>`:''}${amendments.length?`<div class="schedule-completion-review"><p class="muted schedule-follow-up-help">The current submission was edited after verification and has not been reviewed. Task verification is unchanged; open the activity to review the amendment.</p>${group('Evidence amended after verification · '+amendments.length,amendments,'',{reviewKind:'amendment'})}</div>`:''}${live?.followUp.length?`<div class="schedule-follow-up">${group('Check progress',live.followUp,'',{followUp:true})}</div>`:''}</div>`,labels:live?.labels||new Map(),rowDays};
     }
     function view(state,organizer,now=Date.now(),scope={}) {
       const visible=scoped(state.tasks,scope),day=selectedDate(scope);
@@ -570,6 +574,8 @@
       const acceptance=new Set(tasks.filter(task=>!reconfirmation.has(task.id)&&pendingAcceptance(task,state.members,assignableTaskOwner)).map(task=>task.id));
       const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
       const reconfirmationNotice=reconfirmation.size?`${reconfirmation.size} ${reconfirmation.size===1?'activity needs':'activities need'} renewed owner acceptance after a schedule change. Confirm responsibility against the current plan with the assigned owner.`:'';
+      const verification=tasks.filter(waitingVerification).length;
+      const verificationNotice=verification?`${verification} ${verification===1?'activity has':'activities have'} completion awaiting organizer verification. Open the live project to review the saved completion status; this copy does not include completion evidence.`:'';
       const changes=new Set(tasks.filter(changesRequested).map(task=>task.id));
       const changesNotice=changes.size?changes.size+' '+(changes.size===1?'activity has':'activities have')+' completion changes requested. Review the task with the owner before resubmitting. Review notes are not included in this copy; the work is not verified.':'';
       const amendments=new Set(tasks.filter(evidenceAmended).map(task=>task.id));
@@ -577,7 +583,7 @@
       const local=momentKey(now,state.event.timeZone);
       const timestamp=local?local.replace('T',' · ')+' · '+state.event.timeZone:new Date(now).toISOString()+' · UTC';
       const title=state.event.name||'Untitled event',scopeLabel=(scope.mine?'My activities · '+name(scope.actor):'All activities')+(day?' · '+dateLabel(day):'');
-      const status=task=>task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
+      const status=task=>waitingVerification(task)?'Awaiting verification':({todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'})[task.status]||'Unknown';
       // Deliberately project only schedule facts. Never serialize the workspace,
       // notes, comments, guest records, email, files or private booking details.
       const days=activityDateGroups(tasks,day).filter(group=>group.tasks.length).map(({date,tasks:dayTasks},dayIndex)=>({label:dateLabel(date),rows:dayTasks.map((task,rowIndex)=>{
@@ -590,7 +596,7 @@
           statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,missingDetails,timeZone:state.event.timeZone||'Time zone not set',
-        cautions:[invalidTimeNotice,untimedNotice,detailsNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,changesNotice,amendmentNotice,
+        cautions:[invalidTimeNotice,untimedNotice,detailsNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,verificationNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',

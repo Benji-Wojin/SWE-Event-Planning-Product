@@ -692,6 +692,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .schedule-focus-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;font-weight:400}.schedule-focus-meta .person-chip{white-space:normal}
 .schedule-warnings{display:grid;gap:4px;font-size:.75rem;font-weight:600;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
 .schedule-follow-up,.schedule-completion-review{grid-column:1/-1;border-top:1px solid var(--line);padding-top:16px}.schedule-focus .schedule-follow-up-help{margin-bottom:12px;max-width:65ch}.schedule-focus-reason{font-size:.75rem;font-weight:500;color:var(--ink)}
+.schedule-focus-review-only>.schedule-completion-review:first-child{border-top:0;padding-top:0}
 .schedule-phase{display:block;margin-top:6px;font-size:.75rem;font-weight:600}
 .before-event-review{line-height:1.6;overflow-wrap:anywhere}.before-event-review h3{font-size:1rem;margin:12px 0 8px}.before-event-review>p{margin:12px 0}.before-event-group{border-top:1px solid var(--line);padding:16px 0}.before-event-group summary{cursor:pointer;font-weight:600}.before-event-group ul{padding-left:20px}.before-event-group li+li{margin-top:12px}.before-event-group li span{display:block;font-size:.875rem;color:var(--muted)}.before-event-group .text-button{text-align:left;white-space:normal;overflow-wrap:anywhere}
 .before-event-group [data-action=review-event-required-work]{min-height:44px}
