@@ -2020,7 +2020,13 @@ export async function eventPlanTests({
       const project=await setup();
       const defaultKey=globalThis.__gatherEnv.GROQ_API_KEY;
       globalThis.__gatherEnv.GROQ_API_KEY='';
-      test.after(()=>{owner();globalThis.__gatherEnv.GROQ_API_KEY=defaultKey;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);});
+      test.after(()=>{
+        owner();globalThis.__gatherEnv.GROQ_API_KEY=defaultKey;
+        // The in-memory invite table does not cascade project deletion and its
+        // daily creation limit counts accepted rows too. Keep this fixture isolated.
+        sqlite.prepare('DELETE FROM project_invites WHERE project_id=?').run(project);
+        sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+      });
       await joinPerson(project,'fictional-checklist-person@example.com','fictional-checklist-person');
       const teammate=globalThis.__gatherUser;
       owner();
