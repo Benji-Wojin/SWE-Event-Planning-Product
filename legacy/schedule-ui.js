@@ -570,6 +570,12 @@
       const linkedResults=new Set(tasks.filter(task=>linkedResultsReady(task,byId)).map(task=>task.id));
       const linkedResultsNotice=linkedResults.size?`${linkedResults.size} ${linkedResults.size===1?'activity remains':'activities remain'} marked Blocked after required linked work finished. Open the live project to review the linked results and check for other blockers before resuming.`:'';
       // Count unique scheduled activities before creating any carryover rows.
+      const planRequests=new Map();
+      for(const task of tasks){
+        const kind=planRequestKind(task);
+        if(kind)planRequests.set(task.id,planRequestLabels[kind]);
+      }
+      const planRequestNotice=planRequests.size?`${planRequests.size} ${planRequests.size===1?'scheduled activity has a request':'scheduled activities have requests'} awaiting organizer review. Pending requests don’t change saved activity times. Check the live project for the latest decision.`:'';
       const reconfirmation=new Set(tasks.filter(task=>awaitingOwnerReconfirmation(task,state.members)).map(task=>task.id));
       const acceptance=new Set(tasks.filter(task=>!reconfirmation.has(task.id)&&pendingAcceptance(task,state.members,assignableTaskOwner)).map(task=>task.id));
       const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
@@ -593,10 +599,10 @@
           continues:start<date?'Continues from '+dateLabel(start):'',
           activityWarnings:[wallTimeWarning(task,state.event.timeZone),...overlapLabels(matches,task,date)].filter(Boolean),
           owner:name(task.owner),acceptance:reconfirmation.has(id)?scheduleAcceptanceCue:acceptance.has(id)?'Acceptance not recorded':'',status:status(task),
-          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
+          statusWarnings:[amendments.has(id)?'Evidence amended after verification':'',changes.has(id)?'Changes requested':'',planRequests.get(id),prerequisites.has(id)?'Required work not complete':'',linkedResults.has(id)?'Review linked results':''].filter(Boolean)};
       })}));
       return {title,scopeLabel,timestamp,day,mine:!!scope.mine,missingDetails,timeZone:state.event.timeZone||'Time zone not set',
-        cautions:[invalidTimeNotice,untimedNotice,detailsNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,prerequisiteNotice,linkedResultsNotice,verificationNotice,changesNotice,amendmentNotice,
+        cautions:[invalidTimeNotice,untimedNotice,detailsNotice,unassignedNotice,ownerNotice,reconfirmationNotice,acceptanceNotice,planRequestNotice,prerequisiteNotice,linkedResultsNotice,verificationNotice,changesNotice,amendmentNotice,
           overlaps.size?`${overlaps.size} activities have owner overlaps. Review these with the organizer.`:''].filter(Boolean),
         locationWarning:locationWarning(tasks,locations),
         empty:day?'No scheduled activities in this scope on the selected date.':'No scheduled activities in this view.',

@@ -207,6 +207,69 @@ test('the printable and text run sheets aggregate saved completion awaiting veri
   assert.deepEqual(input,before);
 });
 
+test('run sheet flags only scoped scheduled requests, counts overnight activities once and omits request details',()=>{
+  const input=state(),help='Help requested · awaiting organizer',date='Date proposed · awaiting organizer';
+  input.members.push({id:'dev',name:'Fictional second owner'});
+  const request=(kind,status='pending')=>({id:`PRIVATE-REQUEST-ID-${kind}-${status}`,kind,status,
+    note:'PRIVATE-REQUEST-TEXT',decisionNote:'PRIVATE-DECISION-TEXT',createdBy:'PRIVATE-REQUESTER-ID',
+    proposedDate:'2099-05-06',originalDueDate:'2099-04-05'});
+  input.tasks=[
+    activity('PRIVATE-OVERNIGHT-ID','maya','2026-11-20T23:20','2026-11-21T01:00',{title:'Overnight desk',status:'blocked',
+      recoveryRequests:[request('date','resolved'),request('help')]}),
+    activity('PRIVATE-PROPOSAL-ID','maya','2026-11-21T10:00','2026-11-21T10:30',{title:'Venue check',status:'progress',recoveryRequests:[request('date')]}),
+    activity('PRIVATE-OTHER-OWNER-ID','dev','2026-11-21T11:00','2026-11-21T11:30',{title:'Another crew check',recoveryRequests:[request('help')]}),
+    activity('PRIVATE-OTHER-DAY-ID','maya','2026-11-22T10:00','2026-11-22T10:30',{title:'Sunday rehearsal',recoveryRequests:[request('date')]}),
+    activity('PRIVATE-RESOLVED-ID','maya','2026-11-20T19:00','2026-11-20T19:30',{title:'Resolved request',recoveryRequests:[request('help','resolved')]}),
+    activity('PRIVATE-REPLACED-ID','maya','2026-11-21T12:00','2026-11-21T12:30',{title:'Superseded request',recoveryRequests:[request('date','superseded')]}),
+    activity('PRIVATE-COMPLETED-ID','maya','2026-11-21T13:00','2026-11-21T13:30',{title:'Completed activity',status:'done',recoveryRequests:[request('help')]}),
+    activity('PRIVATE-REPORTED-ID','maya','2026-11-21T14:00','2026-11-21T14:30',{title:'Activity awaiting verification',status:'progress',
+      requiresVerification:true,reportedAt:'2026-11-20T22:00:00Z',recoveryRequests:[request('date')]}),
+    activity('PRIVATE-ARCHIVED-ID','maya','2026-11-21T15:00','2026-11-21T15:30',{title:'Archived activity',archivedAt:'2026-11-20T22:00:00Z',recoveryRequests:[request('help')]}),
+    {id:'PRIVATE-UNTIMED-ID',title:'Untimed activity',eventActivity:true,owner:'maya',status:'todo',recoveryRequests:[request('date')]},
+  ];
+  const before=structuredClone(input),count=(value,needle)=>value.split(needle).length-1;
+  for(const [scope,unique,helpRows,dateRows] of [
+    [{},4,3,2],
+    [{date:'2026-11-20'},1,1,0],
+    [{date:'2026-11-21'},3,2,1],
+    [{date:'2026-11-21',mine:true,actor:'maya'},2,1,1],
+    [{date:'2026-11-21',mine:true,actor:'dev'},1,1,0],
+    [{date:'2026-11-22',mine:true,actor:'maya'},1,0,1],
+    [{date:'2026-11-22',mine:true,actor:'dev'},0,0,0],
+    [{date:'2026-11-23'},0,0,0],
+  ]){
+    const label=JSON.stringify(scope),targets=new Map(),model=ui.runSheetModel(input,now,scope,targets);
+    const rows=model.days.flatMap(day=>day.rows);
+    assert.equal(rows.filter(row=>row.statusWarnings.includes(help)).length,helpRows,label);
+    assert.equal(rows.filter(row=>row.statusWarnings.includes(date)).length,dateRows,label);
+    const caution=model.cautions.filter(message=>message.includes('awaiting organizer review'));
+    assert.equal(caution.length,unique?1:0,label);
+    if(unique)assert.equal(caution[0],`${unique} ${unique===1?'scheduled activity has a request':'scheduled activities have requests'} awaiting organizer review. Pending requests don’t change saved activity times. Check the live project for the latest decision.`,label);
+    for(const row of rows.filter(row=>['Resolved request','Superseded request','Completed activity','Activity awaiting verification'].includes(row.title))){
+      assert.ok(!row.statusWarnings.some(warning=>warning===help||warning===date),row.title);
+      if(row.title==='Activity awaiting verification')assert.equal(row.status,'Awaiting verification');
+    }
+    for(const row of rows.filter(row=>row.title==='Overnight desk')){
+      assert.equal(row.status,'Blocked');assert.equal(row.range,'11:20 PM – Sat, Nov 21, 2026 · 1:00 AM');
+      assert.deepEqual(row.statusWarnings,[help]);
+    }
+    const print=ui.runSheetMarkup(model),copy=ui.runSheetText(model),live=ui.runSheetMarkup(model,targets);
+    assert.equal(print,ui.runSheet(input,now,scope));
+    assert.equal(live.replace(/<button[^>]+data-action="review-run-sheet-row"[^>]*>Show in Timeline<\/button>/g,''),print);
+    for(const output of [print,copy]){
+      assert.equal(count(output,help),helpRows,label);
+      assert.equal(count(output,date),dateRows,label);
+      if(unique)assert.ok(output.includes(caution[0]),label);
+    }
+    for(const output of [JSON.stringify(model),print,copy,live]){
+      assert.doesNotMatch(output,/PRIVATE-|2099-0[45]-0[56]|Archived activity|Untimed activity/,label);
+      if(scope.actor==='maya')assert.doesNotMatch(output,/Another crew check/,label);
+      if(scope.date==='2026-11-21')assert.doesNotMatch(output,/Sunday rehearsal/,label);
+    }
+  }
+  assert.deepEqual(input,before);
+});
+
 test('run sheet escapes entered facts and is stable across viewer time zones',()=>{
   const input=state();input.event.name='<script>EVENT</script>';input.members[0].name='<img src=x>';
   input.tasks[1].title='<svg onload=alert(1)>';input.tasks[1].schedule.location='</td><script>LOCATION</script>';
