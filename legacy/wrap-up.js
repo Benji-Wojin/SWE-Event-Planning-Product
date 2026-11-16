@@ -109,7 +109,7 @@
     return rows.map(({title,group},index)=>`<div data-reuse-row><label class="check-field"><input type="checkbox" data-reuse-choice value="${index}"><span>${h(title)}<small class="muted">${h(group)}</small></span></label><label class="field reuse-checklist-title" data-reuse-edit hidden>Title to copy for item ${index+1}<input data-reuse-title maxlength="180" value="${h(title)}"></label></div>`).join('');
   }
   function reusablePicker(rows,{mine=false,h=escape}={}) {
-    return `<p>Choose up to ${reuseLimit} tasks from ${mine?'My tasks':'All tasks'}. In your next event, open <strong>Build a plan → Paste a checklist</strong> and review the titles there before adding any shared tasks.</p>
+    return `<p>Choose up to ${reuseLimit} tasks from ${mine?'My tasks':'All tasks'}. In your next event, open <strong>Build a plan → Paste a checklist</strong> and review the titles there before adding any shared tasks. If that event already has a plan handoff, open <strong>Draft another plan</strong> first.</p>
       <p class="muted">Only selected task titles are copied. You can remove event-specific details from the copy without editing the original tasks. No owners, dates, notes, links or completion records are carried over.</p>
       <p id="reuseChecklistWarning" class="notice" role="status" hidden></p>
       <p id="reuseChecklistRefreshStatus" role="status" class="muted"></p>

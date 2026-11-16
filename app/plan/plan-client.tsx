@@ -189,6 +189,9 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     locked = checkingLocked || handoffRefreshing || !!approvalCheck,
     applied = !!data?.receipt && !chatStartingNew;
   const completedPlan = applied && !embedded && !assistant && !suggestions;
+  const canPasteChecklist = !suggestions && !assistant && (!applied || completedPlan);
+  const checklistContextChanged = !completedPlan && !!data?.contextChanged;
+  const checklistDraftFull = !completedPlan && items.length >= 24;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
     !data?.configured ? 'starter' : !request.current && (data.status === 'error' || data.status === 'interrupted') ? 'recover' :
     brief.description.trim() ? 'generate' : 'brief';
@@ -527,18 +530,29 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     });
   }
   async function importChecklist() {
-    if(locked||applied||data.contextChanged||items.length>=24||checklistTooLong||!checklist.trim())return;
+    if(locked||!canPasteChecklist||checklistContextChanged||checklistDraftFull||checklistTooLong||!checklist.trim())return;
+    const input={
+      action:'import-checklist',revision:data.revision,workspaceRevision:data.workspaceRevision,
+      generation:data.draft?.generation??null,items:completedPlan?[]:items,text:checklist,
+      // Pasting titles for a new handoff does not reuse the previous plan's
+      // optional date/time assumptions, which may no longer fit this event.
+      brief:{...brief,description:brief.description.trim()||data.event.name||names[brief.kind],
+        ...(completedPlan?{endDate:'',startTime:'',endTime:''}:{})},
+      ...(completedPlan?{replaceHandoff:true}:{}),
+    };
+    const key=JSON.stringify(input);
+    if(completedPlan&&checklistRequest.current?.key!==key&&
+      !window.confirm('Start a new private draft from this pasted checklist? '+replaceHandoffImpact))return;
     await run(async()=>{
-      const input={
-        action:'import-checklist',revision:data.revision,workspaceRevision:data.workspaceRevision,
-        generation:data.draft?.generation??null,items,text:checklist,
-        brief:{...brief,description:brief.description.trim()||data.event.name||names[brief.kind]},
-      };
-      const key=JSON.stringify(input);
       if(checklistRequest.current?.key!==key)checklistRequest.current={key,requestId:crypto.randomUUID()};
-      const result=await api(query,{...input,requestId:checklistRequest.current.requestId});
+      const requestId=checklistRequest.current.requestId;
+      const result=await api(query,{...input,requestId});
       const {added,skipped}=result.checklistImportResult;
       if(added){
+        if(completedPlan&&(result.receipt||result.status!=='ready'||result.revision!==input.revision+1||
+          result.draft?.source!=='pasted'||result.draft.generation!==requestId||!Array.isArray(result.draft.items)||
+          result.draft.items.length!==added||result.draft.items.some((item:ReviewedItem)=>item.included!==false)))
+          throw new Error('We couldn’t confirm this checklist replaced the handoff. Your pasted text is still here. Retry the same import or reload the saved draft to check what was saved.');
         accept(result);
         setChecklist('');
         request.current=null;
@@ -547,7 +561,9 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       focusNotice.current=true;
       setNotice((added?`${added} ${added===1?'task added':'tasks added'} unchecked to your private draft.`:'Nothing was added to your draft.')+
         (skipped?` ${skipped} matching ${skipped===1?'line was':'lines were'} skipped.`:'')+
-        (added?' Select what you want to share in Review proposed items. No AI was used.':' Edit the pasted text to try again.'));
+        (added?(completedPlan?' The previous handoff was replaced; existing shared tasks stayed in the project.':'')+
+          ' Select what you want to share in Review proposed items. No AI was used.':
+          (completedPlan?' This import didn’t replace your handoff.':'')+' Edit the pasted text to try again.'));
     });
   }
   async function recheckPasted() {
@@ -1020,25 +1036,25 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         </CardContent>
       </Card>
       </details>}
-      </>, completedPlan ? {id: 'plan-draft-again', title: 'Draft another plan', description: replaceHandoffImpact} : undefined)}
-      {!applied && !suggestions && !assistant && <details className="mt-4 space-y-3 rounded-lg border p-4">
+      {canPasteChecklist && <details className="mt-4 space-y-3 rounded-lg border p-4">
         <summary className="flex min-h-11 cursor-pointer items-center gap-2 font-medium">
           <span aria-hidden="true">+</span> Paste a checklist
         </summary>
         <div className="space-y-2 text-sm">
           <Label htmlFor="plan-pasted-checklist">Task titles, one per line</Label>
-          <p id="plan-pasted-checklist-help" className="text-muted-foreground">Paste up to 24 task titles. Bullets, numbers and checkboxes are removed. New items start unchecked, without dates or owners. Import saves to your private draft without AI or shared changes.</p>
+          <p id="plan-pasted-checklist-help" className="text-muted-foreground">Paste up to 24 task titles. Bullets, numbers and checkboxes are removed. New items start unchecked, without dates or owners. Import saves to your private draft without AI or shared changes.{completedPlan?' Your current handoff stays until a new draft with at least one new title is saved.':''}</p>
           <Textarea id="plan-pasted-checklist" rows={5} value={checklist} disabled={locked}
             aria-invalid={checklistTooLong||undefined} aria-describedby={'plan-pasted-checklist-help'+(checklistTooLong?' plan-pasted-checklist-length':'')}
             onChange={event=>setChecklist(event.target.value)} />
           {checklistTooLong && <p id="plan-pasted-checklist-length" role="status">Shorten the text to 6,000 characters or fewer. Nothing has been imported.</p>}
           <Button type="button" variant="outline" className="min-h-11"
-            disabled={locked||!!data.contextChanged||items.length>=24||checklistTooLong||!checklist.trim()}
+            disabled={locked||checklistContextChanged||checklistDraftFull||checklistTooLong||!checklist.trim()}
             onClick={()=>void importChecklist()}>Import for review</Button>
-          {data.contextChanged ? <p>Review the current project context before importing.</p> :
-            items.length>=24 ? <p>This draft already has 24 items.</p> : null}
+          {checklistContextChanged ? <p>Review the current project context before importing.</p> :
+            checklistDraftFull ? <p>This draft already has 24 items.</p> : null}
         </div>
       </details>}
+      </>, completedPlan ? {id: 'plan-draft-again', title: 'Draft another plan', description: replaceHandoffImpact} : undefined)}
       {waiting && (
         <p role="status" className="my-4 text-sm">
           Generating a private draft. You can return later; nothing is added

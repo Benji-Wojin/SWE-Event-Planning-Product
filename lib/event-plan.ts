@@ -375,16 +375,25 @@ async function createStarter(c: Context, input: any) {
 }
 async function importChecklist(c: Context, input: any) {
   if (c.purpose !== 'plan' ||
-    !exact(input, ['action','revision','workspaceRevision','generation','requestId','brief','items','text']) ||
+    !exact(input, ['action','revision','workspaceRevision','generation','requestId','brief','items','text','replaceHandoff']) ||
     !uuid(input.requestId) || !(input.generation === null || uuid(input.generation)) ||
+    (input.replaceHandoff !== undefined && input.replaceHandoff !== true) ||
     !Number.isSafeInteger(input.revision) || input.revision < 0)
     throw new HttpError(400,'Review the pasted checklist request.');
 
   const row = await read(c.id), data = await decode(row), draft = data.draft;
+  const replacing = input.replaceHandoff === true;
   const retrying = draft?.lastChecklistImport?.requestId === input.requestId;
-  if (data.receipt || (!retrying && (draft?.generation ?? null) !== input.generation) ||
+  if (replacing && input.requestId === input.generation)
+    throw new HttpError(400,'Use a new request for the next private draft.');
+  if (replacing && (!Array.isArray(input.items) || input.items.length))
+    throw new HttpError(400,'Start the new checklist without items from the old draft.');
+  const matchingHandoff = !!data.receipt && row?.status === 'applied' &&
+    data.receipt.generation === input.generation && draft?.generation === input.generation;
+  if ((data.receipt ? !replacing || !matchingHandoff : replacing && !retrying) ||
+    (!retrying && (draft?.generation ?? null) !== input.generation) ||
     row?.lease_until > Date.now() || c.row.revision !== input.workspaceRevision ||
-    draft && draft.contextHash !== c.contextHash)
+    !replacing && draft && draft.contextHash !== c.contextHash)
     throw new HttpError(409,'The project or draft changed. Refresh and review it before importing.');
 
   let titles: string[], brief: ReturnType<typeof parseBrief>;
@@ -392,7 +401,8 @@ async function importChecklist(c: Context, input: any) {
     titles = pastedChecklistTitles(input.text);
     brief = parseBrief(input.brief, c.state.event.date);
   } catch (error) { throw new HttpError(400,(error as Error).message); }
-  const fingerprint = await hash([input.revision,input.workspaceRevision,input.generation,brief,input.items,titles]);
+  const fingerprint = await hash([input.revision,input.workspaceRevision,input.generation,brief,input.items,titles,
+    ...(replacing ? ['replace-handoff'] : [])]);
   const replay = (latestRow: any, latestData: any) => {
     const saved = latestData.draft?.lastChecklistImport;
     if (latestData.receipt || saved?.requestId !== input.requestId) return null;
@@ -406,7 +416,7 @@ async function importChecklist(c: Context, input: any) {
     throw new HttpError(409,'The draft changed. Reload it before importing.');
   let items: ReviewedItem[] = [];
   try {
-    if (draft) items = reviewedItems(input.items,draft);
+    if (draft && !replacing) items = reviewedItems(input.items,draft);
     else if (!Array.isArray(input.items) || input.items.length)
       throw new Error('Start with a checklist or reload your existing draft.');
   } catch (error) { throw new HttpError(400,(error as Error).message); }
@@ -430,9 +440,10 @@ async function importChecklist(c: Context, input: any) {
   if (items.length + additions.length > 24)
     throw new HttpError(400,`This draft can fit ${24-items.length} more tasks. Paste fewer new lines; nothing was imported.`);
 
-  const generation = draft?.generation ?? input.requestId;
+  const priorDraft = replacing ? null : draft;
+  const generation = priorDraft?.generation ?? input.requestId;
   const payload = await seal({brief,receipt:null,draft:{
-    ...(draft ?? {source:'pasted',brief,generation,contextHash:c.contextHash,
+    ...(priorDraft ?? {source:'pasted',brief,generation,contextHash:c.contextHash,
       generatedAt:new Date().toISOString(),questions:[],assumptions:[]}),
     items:[...items,...additions],
     lastChecklistImport:{requestId:input.requestId,fingerprint,...outcome},
@@ -443,13 +454,20 @@ async function importChecklist(c: Context, input: any) {
     SELECT ?,?,?,?,?,'ready' WHERE ${c.ownerSql} AND EXISTS (SELECT 1 FROM workspaces WHERE id=? AND revision=?)
     AND (?=0 OR EXISTS (SELECT 1 FROM plan_drafts WHERE id=?))
     ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,draft_generation=excluded.draft_generation,
+    request_id=CASE WHEN plan_drafts.status='applied' THEN '' ELSE plan_drafts.request_id END,
+    request_hash=CASE WHEN plan_drafts.status='applied' THEN '' ELSE plan_drafts.request_hash END,
     status='ready',issue='',lease='',lease_until=0,revision=revision+1
-    WHERE plan_drafts.revision=? AND plan_drafts.draft_generation=? AND plan_drafts.status!='applied' AND plan_drafts.lease_until<=?`)
+    WHERE plan_drafts.revision=? AND plan_drafts.draft_generation=? AND (plan_drafts.status='applied')=? AND plan_drafts.lease_until<=?`)
     .bind(c.id,c.user.userId,c.projectId,payload,generation,...c.ownerArgs,c.projectId,c.row.revision,input.revision,c.id,
-      input.revision,input.generation ?? '',Date.now()).run();
+      input.revision,input.generation ?? '',replacing?1:0,Date.now()).run();
   if (saved.meta.changes === 1) return outcome;
   await authorized(c);
   const latest = await read(c.id), retried = replay(latest,await decode(latest));
+  if (replacing && retried) {
+    const workspace = await env.DB.prepare('SELECT revision FROM workspaces WHERE id=?').bind(c.projectId).first<{revision:number}>();
+    if (workspace?.revision !== input.workspaceRevision)
+      throw new HttpError(409,'The project changed. Reload the draft to see what was saved.');
+  }
   if (retried) return retried;
   throw new HttpError(409,'Another update saved first. Reload the draft before importing.');
 }

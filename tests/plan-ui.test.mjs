@@ -1623,6 +1623,129 @@ test('canceling either standalone replacement warns about losing the latest hand
   }
 });
 
+test('an applied plan can paste a new private checklist without starting a starter or AI draft first', async () => {
+  const initial = appliedStarterFixture();
+  initial.event.date='2026-11-25';
+  initial.contextChanged=true;
+  initial.brief={...initial.brief,endDate:'2026-11-20',startTime:'09:00',endTime:'17:00'};
+  initial.draft.brief=copy(initial.brief);
+  const duplicateText = '- [ ] Current shared venue task';
+  const freshText = duplicateText + '\n- [ ] Check foyer signs';
+  const pasted = {...copy(item), id:'pasted-foyer', title:'Check foyer signs', note:'', included:false};
+  const prompts = [];
+  const app = harness(context => {
+    const {input,saved} = context;
+    if (!input) return;
+    assert.equal(input.action,'import-checklist');
+    assert.equal(input.replaceHandoff,true);
+    assert.equal(input.revision,initial.revision);
+    assert.equal(input.workspaceRevision,initial.workspaceRevision);
+    assert.equal(input.generation,initial.receipt.generation);
+    assert.deepEqual(input.items,[],'prior applied proposals are not appended to the replacement');
+    assert.deepEqual(input.brief,{...initial.brief,endDate:'',startTime:'',endTime:''},
+      'an old date window cannot block a new title-only checklist after the event moves');
+    assert.ok(input.requestId);
+    assert.deepEqual(saved.receipt,initial.receipt,'the old handoff is retained until a successful replacement');
+    if(input.text===duplicateText){
+      return Response.json({...saved,checklistImportResult:{added:0,skipped:1}});
+    }
+    assert.equal(input.text,freshText);
+    context.value={...saved,status:'ready',receipt:null,receiptTasks:[],revision:saved.revision+1,contextChanged:false,
+      brief:copy(input.brief),draft:{...saved.draft,source:'pasted',generation:input.requestId,items:[pasted]},
+      checklistImportResult:{added:1,skipped:1}};
+  },initial,'project=p_example',false,false,undefined,true,undefined,{captureNoticeFocus:true});
+  try{
+    await app.start();
+    const draftAgain=app.find('plan-draft-again');
+    assert.ok(draftAgain&&!draftAgain.props.open,'Draft another plan remains collapsed by default');
+    const paste=nodes(draftAgain).find(node=>node!==draftAgain&&node.type==='details'&&nodes(node).some(child=>child.props?.id==='plan-pasted-checklist'));
+    assert.ok(paste&&!paste.props.open,'paste sits in a separate native disclosure inside future work');
+    assert.match(text(nodes(paste).find(node=>node.type==='summary')),/Paste a checklist/);
+    const handoffLink=planLink(app.tree,'Current shared venue task')?.props.href;
+    assert.ok(handoffLink);
+
+    await app.edit('plan-pasted-checklist',duplicateText);
+    assert.deepEqual(app.requests.map(request=>request.action),['get'],'typing does not save or replace anything');
+    globalThis.window.confirm=message=>{prompts.push(message);return false;};
+    await app.click('Import for review');
+    assert.equal(prompts.length,1);
+    assert.match(prompts[0],/current handoff will be replaced when the new draft is saved/i);
+    assert.match(prompts[0],/tasks already added stay in the project/i);
+    assert.deepEqual(app.requests.map(request=>request.action),['get'],'declining does not send a request');
+    assert.equal(app.find('plan-pasted-checklist').props.value,duplicateText);
+    assert.equal(planLink(app.tree,'Current shared venue task')?.props.href,handoffLink);
+    assert.deepEqual(app.saved.receipt,initial.receipt);
+
+    globalThis.window.confirm=message=>{prompts.push(message);return true;};
+    await app.click('Import for review');
+    assert.deepEqual(app.requests.map(request=>request.action),['get','import-checklist']);
+    assert.match(text(app.tree),/Nothing was added.*1 matching line was skipped/);
+    assert.match(text(app.tree),/This import didn’t replace your handoff/);
+    assert.equal(app.find('plan-pasted-checklist').props.value,duplicateText);
+    assert.equal(planLink(app.tree,'Current shared venue task')?.props.href,handoffLink);
+    assert.deepEqual(app.saved.receipt,initial.receipt);
+
+    await app.edit('plan-pasted-checklist',freshText);
+    await app.click('Import for review');
+    assert.equal(prompts.length,3,'changed pasted text receives its own replacement confirmation');
+    assert.deepEqual(app.requests.map(request=>request.action),['get','import-checklist','import-checklist']);
+    assert.notEqual(app.requests[1].requestId,app.requests[2].requestId);
+    assert.equal(app.saved.receipt,null);
+    assert.equal(app.saved.draft.generation,app.requests[2].requestId);
+    assert.equal(app.saved.workspaceRevision,initial.workspaceRevision);
+    assert.equal(app.saved.existingTaskCount,initial.existingTaskCount);
+    assert.equal(app.find('plan-receipt-heading'),undefined);
+    assert.equal(app.find('plan-original-proposals'),undefined);
+    assert.equal(app.find('plan-pasted-checklist').props.value,'');
+    assert.equal(app.find('title-'+pasted.id)?.props.value,pasted.title);
+    assert.equal(app.find('include-'+pasted.id)?.props.checked,false);
+    assert.equal(app.focused.at(-1),'plan-status-notice');
+  }finally{app.dispose();}
+});
+
+test('only an exact, unchecked replacement response can replace the live handoff in the planner', async () => {
+  for(const bad of ['generation','receipt','source','revision','status','item-count','checked-item']){
+    const initial=appliedStarterFixture();
+    const pasted='- [ ] Private follow-up from the previous event';
+    const freshItem={...copy(item),id:'pasted-follow-up',title:'Private follow-up from the previous event',note:'',included:false};
+    let attempt=0,prompts=0;
+    const app=harness(context=>{
+      if(!context.input)return;
+      assert.equal(context.input.action,'import-checklist');
+      const replacement={...context.saved,status:'ready',receipt:null,receiptTasks:[],revision:context.saved.revision+1,
+        draft:{...context.saved.draft,source:'pasted',generation:context.input.requestId,items:[copy(freshItem)]},
+        checklistImportResult:{added:1,skipped:0}};
+      if(++attempt===2){context.value=replacement;return;}
+      if(bad==='generation')replacement.draft.generation='other-private-draft-generation';
+      else if(bad==='receipt')replacement.receipt=initial.receipt;
+      else if(bad==='source')replacement.draft.source='starter';
+      else if(bad==='revision')replacement.revision++;
+      else if(bad==='status')replacement.status='generating';
+      else if(bad==='item-count')replacement.draft.items=[];
+      else replacement.draft.items[0].included=true;
+      return Response.json(replacement);
+    },initial);
+    try{
+      await app.start();
+      globalThis.window.confirm=()=>{prompts++;return true;};
+      await app.edit('plan-pasted-checklist',pasted);
+      await app.click('Import for review');
+      assert.equal(app.find('plan-pasted-checklist').props.value,pasted,bad);
+      assert.ok(app.find('plan-receipt-heading'),bad);
+      assert.ok(planLink(app.tree,'Current shared venue task'),bad);
+      assert.equal(app.find('plan-proposed-items'),undefined,bad);
+      assert.match(text(app.tree),/couldn’t confirm this checklist replaced the handoff/i,bad);
+      assert.deepEqual(app.requests.map(request=>request.action),['get','import-checklist'],bad);
+
+      await app.click('Import for review');
+      assert.equal(prompts,1,'same exact retry needs no second confirmation: '+bad);
+      assert.deepEqual(app.requests[2],app.requests[1],bad);
+      assert.equal(app.find('plan-receipt-heading'),undefined,bad);
+      assert.equal(app.find('include-'+freshItem.id).props.checked,false,bad);
+    }finally{app.dispose();}
+  }
+});
+
 test('a confirmed standalone AI replacement focuses the successful private-draft notice and links to the editable proposals', async () => {
   for (const viaPoll of [false, true]) {
     const initial = appliedStarterFixture(), prompts = [];

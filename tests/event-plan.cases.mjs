@@ -2016,6 +2016,140 @@ export async function eventPlanTests({
       assert.equal((await read(project)).draft.items.length,edited.length+1);
     });
 
+    await t.test('an explicit applied handoff replacement imports a fresh private checklist once without changing shared work',async(test)=>{
+      const project=await setup();
+      const defaultKey=globalThis.__gatherEnv.GROQ_API_KEY;
+      globalThis.__gatherEnv.GROQ_API_KEY='';
+      test.after(()=>{owner();globalThis.__gatherEnv.GROQ_API_KEY=defaultKey;sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);});
+      await joinPerson(project,'fictional-checklist-person@example.com','fictional-checklist-person');
+      const teammate=globalThis.__gatherUser;
+      owner();
+      await change(project,'addTask',[{title:'Confirm venue access',note:'Fictional shared instructions',owner:'jack',dueDate:'2030-10-03'}]);
+      const privateStart=await post(project,paste(await read(project),'Original check-in\nUnadded checklist idea'));
+      assert.equal(privateStart.status,200,await privateStart.clone().text());
+      const original=await privateStart.json();
+      const replacement=(snap,text,extra={})=>paste(snap,text,{items:[],replaceHandoff:true,...extra});
+      assert.equal((await post(project,replacement(original,'Fresh title'))).status,409,'a ready draft is not an applied handoff');
+      const initialApproval=approval(original,{items:original.draft.items.map((item,index)=>({...item,included:index===0,owner:index===0?'jack':''}))});
+      const appliedResponse=await post(project,initialApproval);
+      assert.equal(appliedResponse.status,200,await appliedResponse.clone().text());
+      const applied=await appliedResponse.json();
+      assert.equal(applied.status,'applied');
+      assert.equal(applied.receipt.generation,original.draft.generation);
+      assert.equal(applied.receipt.taskIds.length,1);
+      const oldPrivateRow=row(project);
+      const text='- [x] CONFIRM venue access\nOriginal check-in\nNew volunteer briefing\nUnadded checklist idea\nNEW VOLUNTEER BRIEFING';
+      const cancelled=paste(applied,text,{items:[]});
+      assert.equal((await post(project,cancelled)).status,409,'the normal import cannot replace an applied receipt');
+      const prepared=replacement(applied,text);
+      for(const [patch,status] of [
+        [{replaceHandoff:'true'},400],[{items:applied.draft.items},400],[{text:'- [x]'},400],
+        [{requestId:applied.receipt.generation},400],
+        [{generation:crypto.randomUUID()},409],[{revision:applied.revision-1},409],[{workspaceRevision:applied.workspaceRevision-1},409],
+      ])assert.equal((await post(project,{...prepared,...patch})).status,status,JSON.stringify(patch));
+      const duplicateOnly=await post(project,replacement(applied,'Confirm venue access\nOriginal check-in'));
+      assert.equal(duplicateOnly.status,200,await duplicateOnly.clone().text());
+      const noAddition=await duplicateOnly.json();
+      assert.deepEqual(noAddition.checklistImportResult,{added:0,skipped:2});
+      assert.equal(noAddition.status,'applied');
+      assert.deepEqual(noAddition.receipt,applied.receipt);
+      globalThis.__gatherUser=teammate;
+      assert.equal((await post(project,prepared)).status,403,'an invited team member cannot replace the private organizer receipt');
+      globalThis.__gatherUser=null;
+      assert.equal((await post(project,prepared)).status,401,'no anonymous import');
+      owner();
+      assert.equal((await post(project+'&mode=suggestions',prepared)).status,400,'private handoff replacement is only for a standalone plan');
+      assert.deepEqual(row(project),oldPrivateRow);
+      assert.deepEqual((await read(project)).receipt,applied.receipt);
+
+      // The applied draft context can age, but replacement must use the current workspace snapshot.
+      await change(project,'addTask',[{title:'Added in another fictional tab'}]);
+      assert.equal((await post(project,prepared)).status,409);
+      assert.deepEqual(row(project),oldPrivateRow);
+      const refreshed=await read(project);
+      assert.equal(refreshed.revision,applied.revision);
+      assert.ok(refreshed.workspaceRevision>applied.workspaceRevision);
+      assert.deepEqual(refreshed.receipt,applied.receipt);
+      const before=await (await realRead(project)).json();
+      const workspaceRow=()=>sqlite.prepare('SELECT * FROM workspaces WHERE id=?').get(project);
+      const sharedRow=workspaceRow(),usageBefore=sqlite.prepare('SELECT * FROM resource_usage').all();
+      const input=replacement(refreshed,text);
+      const [written,replay]=await Promise.all([post(project,input),post(project,input)]);
+      assert.equal(written.status,200,await written.clone().text());
+      assert.equal(replay.status,200,await replay.clone().text());
+      const ready=await written.json();
+      assert.deepEqual(await replay.json(),ready,'the exact lost response request is replayed, not applied again');
+      assert.equal(ready.status,'ready');assert.equal(ready.revision,applied.revision+1);
+      assert.equal(ready.configured,false);assert.equal(ready.receipt,null);
+      assert.ok(!ready.receiptTasks?.length);
+      assert.equal(ready.workspaceRevision,before.revision);
+      assert.equal(ready.draft.generation,input.requestId);
+      assert.notEqual(ready.draft.generation,applied.receipt.generation);
+      assert.equal(ready.draft.source,'pasted');
+      assert.deepEqual(ready.checklistImportResult,{added:2,skipped:3});
+      assert.deepEqual(ready.draft.items.map(item=>item.title),['New volunteer briefing','Unadded checklist idea']);
+      assert.ok(ready.draft.items.every(item=>!item.included&&!item.owner&&!item.note&&!item.scope&&!item.dueDate&&!item.start&&!item.end&&!item.location&&!item.dependsOn.length));
+      assert.equal(ready.draft.lastChecklistImport,undefined,'private retry metadata is not exposed');
+      assert.deepEqual(workspaceRow(),sharedRow);
+      const after=await (await realRead(project)).json();
+      assert.equal(after.revision,before.revision);
+      assert.deepEqual(after.state,before.state,'approval tasks, revisions, IDs and all other shared data are untouched');
+      assert.ok(applied.receipt.taskIds.every(id=>after.state.tasks.some(task=>task.id===id)));
+      assert.deepEqual(sqlite.prepare('SELECT * FROM resource_usage').all(),usageBefore,'no AI quota or activity telemetry is charged for a private draft import');
+      assert.equal(calls.length,0);
+
+      const saved=row(project);
+      assert.deepEqual(await (await post(project,input)).json(),ready);
+      assert.equal((await post(project,{...input,text:'A different pasted title'})).status,409);
+      assert.deepEqual(row(project),saved);
+      const changed=saved.revision;
+      const edited=await post(project,save(ready,{items:ready.draft.items.map((item,index)=>index===0?{...item,note:'Fictional draft edit'}:item)}));
+      assert.equal(edited.status,200,await edited.clone().text());
+      assert.equal(row(project).revision,changed+1);
+      assert.equal((await post(project,input)).status,409,'a replay cannot replace a newer private edit');
+      assert.deepEqual(workspaceRow(),sharedRow);
+    });
+
+    await t.test('a concurrent handoff import does not replay across a workspace revision advanced after the winner',async(test)=>{
+      const project=await setup();
+      test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const initial=await post(project,paste(await read(project),'Fictional original item'));
+      assert.equal(initial.status,200,await initial.clone().text());
+      const original=await initial.json();
+      const appliedResponse=await post(project,approval(original,{items:original.draft.items.map(item=>({...item,included:true}))}));
+      assert.equal(appliedResponse.status,200,await appliedResponse.clone().text());
+      const applied=await appliedResponse.json(),input=paste(applied,'New fictional item',{items:[],replaceHandoff:true});
+      const originalDb=globalThis.__gatherEnv.DB;
+      let entered,release,attempted=0;
+      const waiting=new Promise(resolve=>{entered=resolve;}),hold=new Promise(resolve=>{release=resolve;});
+      globalThis.__gatherEnv.DB={...db,prepare(sql){
+        const stmt=db.prepare(sql);
+        if(sql.startsWith('INSERT INTO plan_drafts')&&sql.includes("(plan_drafts.status='applied')=?")){
+          const run=stmt.run.bind(stmt);
+          stmt.run=async()=>{if(++attempted===1){entered();await hold;}return run();};
+        }
+        return stmt;
+      }};
+      const losing=post(project,input);
+      try{
+        await Promise.race([waiting,losing.then(()=>assert.fail('expected the first replacement to reach its guarded write'))]);
+        const winner=await post(project,input);
+        assert.equal(winner.status,200,await winner.clone().text());
+        assert.equal((await winner.json()).draft.generation,input.requestId);
+        const winningRow=row(project);
+        sqlite.prepare('UPDATE workspaces SET revision=revision+1 WHERE id=?').run(project);
+        release();
+        assert.equal((await losing).status,409,'a CAS loss is not a successful replay against a newer workspace');
+        assert.equal(attempted,2);
+        assert.deepEqual(row(project),winningRow,'the first committed private draft survives');
+        assert.deepEqual((await read(project)).draft.items.map(item=>item.title),['New fictional item']);
+        assert.equal((await (await realRead(project)).json()).state.tasks.length,1);
+        assert.equal(calls.length,0);
+      }finally{
+        release();await losing.catch(()=>{});globalThis.__gatherEnv.DB=originalDb;
+      }
+    });
+
     await t.test('rechecking a pasted draft preserves edits and makes new exact matches visible before approval',async(test)=>{
       const project=await setup();
       test.after(()=>sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
