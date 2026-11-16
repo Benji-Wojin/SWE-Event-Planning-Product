@@ -2,6 +2,13 @@
   'use strict';
   const reviewLabels={completion:'Verify completion',amendment:'Review amended evidence',help:'Respond to help request',date:'Review proposed date'};
   const requestDecisionLabels={date:'Due date changed',reassign:'Task reassigned',scope:'Outcome reviewed',checkin:'Current plan kept'};
+  function personalHandoffReply(task,actor) {
+    if(!actor||!task||task.archivedAt||task.owner===actor||root.GatherAccessLost)return null;
+    // Find the latest request belonging to this requester, not the task’s
+    // latest request: the new owner may have asked for help in the meantime.
+    const request=(task.recoveryRequests||[]).findLast(item=>item?.createdBy===actor);
+    return typeof request?.id==='string'&&request.id&&request.status==='resolved'&&request.decision==='reassign'&&['help','date'].includes(request.kind)?request:null;
+  }
   function organizerReviews(tasks) {
     const time=value=>{const parsed=Date.parse(value||'');return Number.isFinite(parsed)?parsed:Number.MAX_SAFE_INTEGER;};
     return tasks.flatMap(task=>{
@@ -45,6 +52,17 @@
       if(!owner)return '';
       const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>!t.archivedAt&&t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
       return '<div class="owner-load"><span>'+h(member(owner).name.split(' ')[0])+': '+next.length+'/3 next tasks · '+others.length+' other assignments</span>'+(next.length?'<details><summary>Current commitments</summary><ul>'+next.map(t=>'<li>'+h(t.title)+'</li>').join('')+'</ul></details>':'')+'</div>';
+    }
+    function handoffReplies(s) {
+      const replies=s.tasks.flatMap(task=>{
+        const request=personalHandoffReply(task,ui.actor);
+        return request?[{task,request}]:[];
+      }).sort((a,b)=>String(b.request.resolvedAt||'').localeCompare(String(a.request.resolvedAt||''))||a.task.id.localeCompare(b.task.id));
+      if(!replies.length)return '';
+      const rows=items=>items.map(({task,request})=>`<article><button type="button" class="text-button" data-action="review-request-handoff-reply" data-next-up-origin="handoff-reply" data-id="${h(task.id)}" data-request-id="${h(request.id)}" aria-label="${h('Read organizer reply for '+task.title)}">${h(task.title)}</button><span class="muted">${request.kind==='date'?'Date proposal':'Help request'} · Reassigned</span></article>`).join('');
+      const limit=3,older=replies.length-limit;
+      return `<section class="section-gap" aria-labelledby="requestHandoffRepliesHeading"><h3 id="requestHandoffRepliesHeading" tabindex="-1">Tasks handed off</h3><p class="muted">The organizer replied to your requests and reassigned these tasks. They’re no longer in My tasks.</p>
+        ${rows(replies.slice(0,limit))}${older>0?`<details class="next-up-suggestions" data-next-up-older-handoffs><summary data-next-up-origin="handoff-summary">Show ${older} earlier ${older===1?'reply':'replies'}</summary>${rows(replies.slice(limit))}</details>`:''}</section>`;
     }
     function nextUpPanel(s,{overview=false}={}) {
       const changed=s.tasks.filter(task=>root.GatherScheduleUI?.pendingReconfirmation(task,ui.actor));
@@ -90,7 +108,7 @@
       const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
       const help=overview?'<p class="muted">Your returned reports, commitments, and suggested tasks. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
       const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>personalRow(t,{detail:t.acceptedAt?'Accepted · Not committed':'Review assignment'})).join('')+'</details>':'';
-      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+scheduleChanges+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,{showDeadline:true})).join('')+(active.length||(returned.length||waiting.length||separateChanges.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+'</div></section>';
+      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+scheduleChanges+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,{showDeadline:true})).join('')+(active.length||(returned.length||waiting.length||separateChanges.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+handoffReplies(s)+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();
@@ -167,5 +185,5 @@
     }
     return {nextUpPanel,organizerReviewPanel,responseMarkup,recoveryMarkup,recoveryReply,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
   }
-  root.GatherRecoveryUI={create,organizerReviews};
+  root.GatherRecoveryUI={create,organizerReviews,personalHandoffReply};
 })(typeof window!=='undefined'?window:globalThis);

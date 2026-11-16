@@ -107,3 +107,184 @@ test('reply affordance is requester-owned and My tasks only, with current state 
   assert.equal(get(store, id).status, 'done');
   assert.match(action(), /data-open-recovery-reply/, 'completed My tasks can still show the last explicit reply');
 });
+
+test('the saved reassignment reply follows the original requester, not the task or a newer author',t=>{
+  const {store,ui,render,advance}=fixture();
+  const {personalHandoffReply}=GatherRecoveryUI;
+  const {id}=store.addTask({title:'Fictional hall coverage',owner:'maya',dueDate:day});
+  store.setNextUp(id,{enabled:true},'maya');
+  ask(store,id);
+  const requestId=GatherPriorities.pendingRequest(get(store,id)).id;
+  assert.ok(!personalHandoffReply(get(store,id),'maya'),'a pending request is not a handoff');
+  decide(store,id,{action:'reassign',owner:'jules'});
+  const reassigned=get(store,id);
+  assert.equal(personalHandoffReply(reassigned,'maya')?.id,requestId);
+  assert.equal(reassigned.owner,'jules');
+  assert.equal(reassigned.nextUpAt,'');
+  assert.equal(reassigned.acceptedAt,'');
+  assert.doesNotMatch(details(render(id)),hasReply,'the normal My tasks owner link is not reused');
+  for(const actor of ['jules','jack','dev','',undefined])assert.ok(!personalHandoffReply(reassigned,actor),String(actor));
+
+  advance();
+  store.requestRecovery(id,{kind:'date',note:'Fictional request from new owner',proposedDate:'2026-11-26'},'jules');
+  const anotherRequestId=GatherPriorities.pendingRequest(get(store,id)).id;
+  assert.equal(personalHandoffReply(get(store,id),'maya')?.id,requestId,'a newer pending request from a different author cannot hide this reply');
+  advance();
+  decide(store,id,{action:'reassign',owner:'dev',note:'Fictional decision for new owner'});
+  assert.equal(personalHandoffReply(get(store,id),'maya')?.id,requestId);
+  assert.equal(personalHandoffReply(get(store,id),'jules')?.id,anotherRequestId);
+  assert.ok(!personalHandoffReply(get(store,id),'dev'));
+
+  const originalFlag=globalThis.GatherAccessLost,hadFlag=Object.hasOwn(globalThis,'GatherAccessLost');
+  t.after(()=>{if(hadFlag)globalThis.GatherAccessLost=originalFlag;else delete globalThis.GatherAccessLost;});
+  globalThis.GatherAccessLost=true;
+  assert.ok(!personalHandoffReply(get(store,id),'maya'));
+  globalThis.GatherAccessLost=false;
+  assert.ok(!personalHandoffReply({...get(store,id),archivedAt:day},'maya'));
+
+  advance();
+  store.updateTask(id,{owner:'maya'},'jack');
+  assert.ok(!personalHandoffReply(get(store,id),'maya'),'returning the assignment hides historical handoff');
+  ask(store,id);
+  const newerRequestId=GatherPriorities.pendingRequest(get(store,id)).id;
+  assert.notEqual(newerRequestId,requestId);
+  decide(store,id);
+  advance();
+  store.updateTask(id,{owner:'dev'},'jack');
+  const before=store.exportState();
+  assert.ok(!personalHandoffReply(get(store,id),'maya'),'a newer decision for that requester masks the first handoff even after ownership changes again');
+  ui.actor='maya';
+  assert.doesNotMatch(details(render(id)),hasReply);
+  assert.equal(store.exportState(),before);
+});
+
+test('a superseded or malformed request never creates or resurrects a personal handoff reply',()=>{
+  const {store,advance}=fixture();
+  const {personalHandoffReply}=GatherRecoveryUI;
+  const {id}=store.addTask({title:'Fictional appointment',owner:'maya'});
+  ask(store,id);
+  const staleId=GatherPriorities.pendingRequest(get(store,id)).id;
+  advance();
+  store.requestRecovery(id,{kind:'date',note:'Replacement proposal',proposedDate:'2026-11-22'},'maya');
+  const before=store.exportState();
+  assert.throws(()=>decide(store,id,{requestId:staleId,action:'reassign',owner:'jules'}),/already handled|replaced/);
+  assert.equal(store.exportState(),before);
+  assert.ok(!personalHandoffReply(get(store,id),'maya'));
+  // An ordinary assignment edit supersedes the request without making a decision.
+  store.updateTask(id,{owner:'jules'},'jack');
+  const assigned=get(store,id);
+  assert.ok(!personalHandoffReply(assigned,'maya'));
+  const valid={...assigned.recoveryRequests.at(-1),status:'resolved',decision:'reassign',decisionNote:'Fictional decision',resolvedAt:day+'T19:00:00Z',resolvedBy:'jack'};
+  const candidate=patch=>({...assigned,recoveryRequests:[{...valid,...patch}]});
+  for(const patch of [{id:''},{id:null},{id:123},{status:'pending'},{status:'superseded'},{kind:'other'},{decision:'checkin'},{createdBy:'dev'}]){
+    assert.ok(!personalHandoffReply(candidate(patch),'maya'),JSON.stringify(patch));
+  }
+  const candidates={...assigned,recoveryRequests:[valid,{...valid,id:staleId,status:'pending'}]};
+  assert.ok(!personalHandoffReply(candidates,'maya'),'a newer own pending request also masks the old reply if the task is no longer assigned');
+});
+
+function handoffDialogFixture(kind='help',view='tasks'){
+  const {store}=fixture(),{id}=store.addTask({title:'Fictional <handoff> & coverage',owner:'maya'});
+  const note='Saved reply <tag> & "details".';
+  store.requestRecovery(id,{kind,note:'Fictional original request',...(kind==='date'?{proposedDate:'2026-11-22'}:{})},'maya');
+  const requestId=GatherPriorities.pendingRequest(get(store,id)).id;
+  decide(store,id,{action:'reassign',owner:'jules',note});
+  const ui={view,tab:'mine',actor:'maya'},window={},document={hidden:false},backdrop={hidden:true};
+  const root={},calls=[],buttons=[];
+  const node=(name,dataset={},parent)=>({name,dataset,isConnected:true,parentElement:parent,hidden:false,inert:false,
+    closest(selector){
+      if(selector==='[data-next-up-panel]')return this.panel??null;
+      return this.hidden||this.inert?this:null;
+    },matches(){return !!this.disabled;},getClientRects(){return this.hidden||this.inert||this.older&&!this.older.open?[]:[{}];},
+    focus(options){assert.equal(options.preventScroll,true);calls.push(['focus',this.name]);},
+  });
+  const panel=node('panel',{nextUpPanel:view==='overview'?'overview':'mine',nextUpActor:'maya'},root);
+  panel.contains=button=>buttons.includes(button);
+  const older={open:false,contains:button=>button.older===older};
+  const heading=node('Handoffs heading'),panelHeading=node('Next up heading');
+  function button(name='receipt',patch={}){
+    const result=node(name,{action:'review-request-handoff-reply',nextUpOrigin:'handoff-reply',id,requestId,...patch},panel);
+    result.panel=panel;buttons.push(result);return result;
+  }
+  const opener=button(),flags={pending:false,stale:false,missingHeading:false};
+  const state=store.getState();
+  const context=vm.createContext({
+    ui,window,document,h,GatherRecoveryUI,
+    store:{getState:()=>state,getSnapshotRevision:()=>12},
+    $$:(selector,parent)=>selector==='[data-next-up-panel]'&&parent===root?[panel]:parent===panel?buttons:[],
+    $:(selector,parent)=>({ '#viewRoot':root,'#dialogBackdrop':backdrop,'[data-next-up-older-handoffs]':parent===panel?older:null,
+      '#requestHandoffRepliesHeading':flags.missingHeading?null:heading,'[data-next-up-heading]':panelHeading })[selector]??null,
+    workspaceUpdatesPending:()=>flags.pending,scheduleRevisionIsStale:()=>flags.stale,
+    hiddenByClosedDisclosure:node=>!!node.closedDisclosure||!!node.older&&!node.older.open,
+    openDialog(...args){calls.push(['dialog',...args]);backdrop.hidden=false;},
+    render:()=>calls.push(['render']),toast:message=>calls.push(['toast',message]),
+  });
+  const block=(from,to)=>{const start=source.indexOf(from),end=source.indexOf(to,start+from.length);assert.ok(start>=0&&end>start);return source.slice(start,end);};
+  vm.runInContext(block('  function sameNextUpPanel(','  function sameWrapReview(')+
+    block('  function openRequestHandoffReply(','  function focusTaskDialogControl('),context);
+  return {id,requestId,opener,panel,ui,window,document,backdrop,flags,calls,older,buttons,button,state,store,
+    open(control=opener){return context.openRequestHandoffReply(id,control);},
+    restore(){return context.restoreNextUpFocus(opener,root);},
+  };
+}
+
+test('authorized card opens only its exact saved handoff note in a read-only dialog',()=>{
+  for(const [kind,view] of [['help','tasks'],['date','overview']]){
+    const f=handoffDialogFixture(kind,view),before=f.store.exportState();
+    assert.equal(f.open(),true);
+    const [[event,title,body,footer,wide,dialogKind,focusHeading]]=f.calls;
+    assert.equal(event,'dialog');assert.equal(title,'Organizer reply');assert.equal(dialogKind,'request-handoff-reply');
+    assert.equal(wide,false);assert.equal(focusHeading,true);
+    assert.equal(f.ui.lastFocus,f.opener);
+    assert.match(body,new RegExp(kind==='date'?'Date proposal':'Help request'));
+    assert.match(body,/no longer assigned to you/);
+    assert.match(body,/Saved reply<\/h3>[\s\S]*Saved reply &lt;tag&gt; &amp; &quot;details&quot;/);
+    assert.doesNotMatch(body,/Fictional original request|<tag>|<form|textarea|input/);
+    assert.match(footer,/data-action="close-dialog">Back to replies/);
+    assert.match(footer,new RegExp(`data-action="task" data-id="${f.id}">Open task`));
+    assert.equal(f.store.exportState(),before,'the reply dialog performs no writes');
+  }
+});
+
+test('wrong scope, replaced request, and stale workspace cannot open a handoff reply',()=>{
+  for(const [label,alter] of [
+    ['wrong view',f=>{f.ui.view='timeline';}],['different tab',f=>{f.ui.tab='all';}],
+    ['different actor',f=>{f.ui.actor='jules';}],['different panel',f=>{f.panel.dataset.nextUpPanel='overview';}],
+    ['foreign control',f=>({...f.opener})],['wrong origin',f=>{f.opener.dataset.nextUpOrigin='task';}],
+    ['hidden',f=>{f.opener.hidden=true;}],['inert',f=>{f.opener.inert=true;}],
+    ['closed older section',f=>{f.opener.closedDisclosure=true;}],['detached',f=>{f.opener.isConnected=false;}],
+    ['other dialog open',f=>{f.backdrop.hidden=false;}],['saving',f=>{f.ui.pendingSave=true;}],
+    ['hidden document',f=>{f.document.hidden=true;}],['lost access',f=>{f.window.GatherAccessLost=true;}],
+    ['updates queued',f=>{f.flags.pending=true;}],['stale workspace revision',f=>{f.flags.stale=true;}],
+    ['replaced reply',f=>{const task=f.state.tasks.find(row=>row.id===f.id);task.recoveryRequests.push({...task.recoveryRequests.at(-1),id:'new-reply'});}],
+    ['again assigned',f=>{f.state.tasks.find(row=>row.id===f.id).owner='maya';}],
+    ['archived',f=>{f.state.tasks.find(row=>row.id===f.id).archivedAt=day;}],
+  ]){
+    const f=handoffDialogFixture(),before=f.store.exportState();
+    const candidate=alter(f)||f.opener;
+    assert.equal(f.open(candidate),false,label);
+    assert.ok(!f.calls.some(([event])=>event==='dialog'),label);
+    assert.equal(f.ui.lastFocus,undefined,label);
+    if(label.includes('queued')||label.includes('stale'))assert.match(f.calls.find(([event])=>event==='toast')?.[1],/Check for project updates/);
+    if(label==='replaced reply')assert.match(f.calls.find(([event])=>event==='toast')?.[1],/no longer in your handoff list/);
+    assert.equal(f.store.exportState(),before,label);
+  }
+});
+
+test('return focus reopens only the exact older reply, never a newer reply to the same task',()=>{
+  for(const findExact of [true,false]){
+    const f=handoffDialogFixture();
+    f.buttons.length=0;f.opener.isConnected=false;
+    f.button('different reply',{requestId:'different-id'});
+    if(findExact)f.button('exact older reply').older=f.older;
+    assert.equal(f.restore(),true);
+    assert.equal(f.older.open,findExact);
+    assert.deepEqual(f.calls,[['focus',findExact?'exact older reply':'Handoffs heading']]);
+    f.calls.length=0;
+    f.panel.dataset.nextUpActor='jules';
+    // Old and remounted controls use different panels in a real redraw.
+    f.opener.panel={dataset:{nextUpPanel:'mine',nextUpActor:'maya'}};
+    assert.equal(f.restore(),false);
+    assert.deepEqual(f.calls,[]);
+  }
+});

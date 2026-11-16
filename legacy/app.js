@@ -245,11 +245,18 @@
     const panel=currentNextUpPanel(root);
     if(!sameNextUpPanel(oldPanel,panel)||panel.closest('[hidden],[inert]'))return false;
     const suggestions=$('[data-next-up-suggestions]',panel);
+    const handoff=['handoff-reply','handoff-summary'].includes(previous.dataset.nextUpOrigin);
+    const olderHandoffs=handoff&&$('[data-next-up-older-handoffs]',panel);
     const exact=previous.dataset.id&&$$('[data-next-up-origin]',panel).find(el=>
       el.dataset.nextUpOrigin===previous.dataset.nextUpOrigin&&el.dataset.id===previous.dataset.id&&
-      el.dataset.action===previous.dataset.action&&!el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
+      el.dataset.action===previous.dataset.action&&(!handoff||el.dataset.requestId===previous.dataset.requestId)&&
+      !el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
     if(exact&&suggestions?.contains(exact))suggestions.open=true;
-    const target=[exact,!['schedule-change','timeline'].includes(previous.dataset.nextUpOrigin)&&suggestions&&$('[data-next-up-origin="summary"]',suggestions),$('[data-next-up-heading]',panel)]
+    if(exact&&olderHandoffs&&olderHandoffs.contains(exact))olderHandoffs.open=true;
+    const fallback=handoff
+      ? (previous.dataset.nextUpOrigin==='handoff-summary'&&olderHandoffs&&$('summary',olderHandoffs))||$('#requestHandoffRepliesHeading',panel)
+      : !['schedule-change','timeline'].includes(previous.dataset.nextUpOrigin)&&suggestions&&$('[data-next-up-origin="summary"]',suggestions);
+    const target=[exact,fallback,$('[data-next-up-heading]',panel)]
       .find(el=>el&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
     if(!target)return false;
     target.focus({preventScroll:true});
@@ -1463,6 +1470,7 @@
     const previousFocus=$('#viewRoot').contains(document.activeElement)?document.activeElement:null;
     const oldNextUp=currentNextUpPanel($('#viewRoot'));
     const nextUpOpen=nextUpDisclosureOverride(oldNextUp);
+    const olderHandoffsOpen=oldNextUp&&$('[data-next-up-older-handoffs]',oldNextUp)?.open;
     const oldWrap=ui.view==='memory'?$('[data-wrap-review]',$('#viewRoot')):null;
     const wrapOverrides=oldWrap?wrapReviewOverrides(oldWrap):[];
     const s=store.getState();
@@ -1487,6 +1495,11 @@
     if(window.GatherMode&&isOrganizer())planSidebar.render($('#viewRoot'),markup,ui.view);
     else {$('#viewRoot').innerHTML=markup;planSidebar.reset();}
     restoreNextUpDisclosure(oldNextUp,nextUpOpen,$('#viewRoot'));
+    if(olderHandoffsOpen){
+      const newNextUp=currentNextUpPanel($('#viewRoot'));
+      const older=sameNextUpPanel(oldNextUp,newNextUp)&&$('[data-next-up-older-handoffs]',newNextUp);
+      if(older)older.open=true;
+    }
     if(oldWrap)restoreWrapReviewDisclosures(oldWrap,wrapOverrides,$('#viewRoot'));
     if(taskListScroll){const table=$('.task-table-wrap');if(table)table.scrollLeft=taskListScroll;}
     restoreScheduleDateDraft(scheduleDateDraft);
@@ -1731,6 +1744,31 @@
       if(exactDialog&&(!title||$('#dialogTitle',$('#dialog'))!==title||window.GatherMode?.projectId!==project))return;
       $(selector,$('#dialog'))?.focus();
     });
+  }
+  function openRequestHandoffReply(id,opener) {
+    const view=ui.view==='overview'?'overview':ui.view==='tasks'&&ui.tab==='mine'?'mine':'';
+    if(!view||window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||
+      !id||!opener?.isConnected||opener.dataset.action!=='review-request-handoff-reply'||
+      opener.dataset.id!==id||opener.dataset.nextUpOrigin!=='handoff-reply'||!opener.dataset.requestId||
+      opener.closest('[hidden],[inert]')||!opener.getClientRects().length||hiddenByClosedDisclosure(opener))return false;
+    const panel=currentNextUpPanel($('#viewRoot'));
+    if(panel?.dataset.nextUpPanel!==view||panel.dataset.nextUpActor!==ui.actor||!panel.contains(opener))return false;
+    if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+      toast('Check for project updates before opening this reply.');return false;
+    }
+    const task=store.getState().tasks.find(item=>item.id===id);
+    const reply=GatherRecoveryUI.personalHandoffReply(task,ui.actor);
+    if(!reply||reply.id!==opener.dataset.requestId){
+      render();toast('This reply is no longer in your handoff list.');return false;
+    }
+    openDialog('Organizer reply',`<p class="eyebrow">${reply.kind==='date'?'Date proposal':'Help request'}</p>
+      <h3>${h(task.title)}</h3><p class="notice">The organizer reassigned this task. It is no longer assigned to you.</p>
+      <section class="task-recovery section-gap"><h3>Saved reply</h3><p class="request-handoff-note">${h(reply.decisionNote)}</p></section>
+      <p class="muted">This is the reply to your request. Open the task to see the current plan.</p>`,
+      `<button type="button" class="btn btn-secondary" data-action="close-dialog">Back to replies</button><button type="button" class="btn btn-primary" data-action="task" data-id="${h(id)}">Open task</button>`,
+      false,'request-handoff-reply',true);
+    ui.lastFocus=opener;
+    return true;
   }
   function focusTaskDialogControl(target,dialog) {
     if(!target)return;
@@ -4658,6 +4696,7 @@
     const {action,id}=el.dataset;
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
+    if(action==='review-request-handoff-reply'){openRequestHandoffReply(id,el);return;}
     if(action==='show-reconfirmed-activity-day'){showReconfirmedActivityDay(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}

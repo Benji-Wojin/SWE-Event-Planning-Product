@@ -197,6 +197,54 @@ test('pending help and date requests stay visible without taking commitment slot
   assert.doesNotMatch(uncommitted,/Suggested next tasks/);
 });
 
+test('recent task handoff replies sit outside assignments and commitments in Next up and Overview',()=>{
+  let clock=Date.parse('2026-11-20T16:00:00Z');
+  const store=GatherStore.createStore({storage:null,now:()=>clock});
+  const request=(owner,title,index,handoff=true)=>{
+    clock+=60_000;
+    const {id}=store.addTask({title,owner,dueDate:'2026-11-21'});
+    store.setNextUp(id,{enabled:true},owner);
+    const kind=index%2?'date':'help';
+    store.requestRecovery(id,{kind,note:'Fictional unseen request '+index,...(kind==='date'?{proposedDate:'2026-11-28'}:{})},owner);
+    const requestId=store.getState().tasks.find(row=>row.id===id).recoveryRequests.at(-1).id;
+    if(handoff)store.resolveRecovery(id,{action:'reassign',requestId,note:`Private decision ${index} <tag>`,owner:'jules',reviewAfter:'2026-11-29'},'jack');
+    return {id,requestId};
+  };
+  const own=Array.from({length:5},(_,index)=>request('maya',`Fictional handoff ${index+1}${index===4?' <latest>':''}`,index));
+  const {id:unrelated}=request('dev','Another requester’s handoff',5);
+  const waiting=request('maya','Fictional still waiting',6,false);
+  const wanted=new Set([...own.map(item=>item.id),unrelated,waiting.id]);
+  const snapshot=store.getState();snapshot.tasks=snapshot.tasks.filter(row=>wanted.has(row.id));
+  const before=store.exportState(),expected=[...own].reverse();
+  const links=markup=>[...markup.matchAll(/<button\b[^>]*data-action="review-request-handoff-reply"[^>]*>/g)].map(([button])=>{
+    assert.match(button,/data-next-up-origin="handoff-reply"/);
+    return Object.fromEntries(['id','request-id'].map(key=>[key==='id'?key:'requestId',button.match(new RegExp(`data-${key}="([^"]+)"`))?.[1]]));
+  });
+  for(const overview of [false,true]){
+    const html=panel(snapshot,'maya',overview);
+    const older=html.match(/<details\b([^>]*\bdata-next-up-older-handoffs\b[^>]*)>([\s\S]*?)<\/details>/);
+    assert.ok(older);
+    assert.doesNotMatch(older[1],/\bopen\b/,'older handoffs are a collapsed native disclosure');
+    assert.match(html,/Tasks handed off/);
+    assert.match(html,/Fictional handoff 5 &lt;latest&gt;/);
+    assert.deepEqual(links(html.replace(older[0],'')),expected.slice(0,3));
+    assert.deepEqual(links(older[2]),expected.slice(3));
+    assert.match(html,/Waiting for the organizer[\s\S]*Fictional still waiting/);
+    assert.match(html,/0\/3/);
+    assert.doesNotMatch(html,/Private decision|unseen request|<latest>|Another requester|data-action="(?:claim|accept-task|toggle-task)"|<form/);
+    for(const {id} of own){
+      assert.equal((html.match(new RegExp(`data-id="${id}"`,'g'))||[]).length,1,'there is a reply only, not a duplicate task row');
+      const row=snapshot.tasks.find(item=>item.id===id);
+      assert.equal(row.owner,'jules');
+      assert.equal(row.nextUpAt,'');
+      assert.equal(row.acceptedAt,'');
+    }
+    assert.deepEqual(links(panel(snapshot,'jules',overview)),[],'the assigned teammate does not receive someone else’s replies');
+    assert.deepEqual(links(panel(snapshot,'jack',overview)),[],'organizer status does not make this personal queue communal');
+  }
+  assert.equal(store.exportState(),before,'opening the panels never makes additional decisions or changes work');
+});
+
 test('suggested task text is escaped, actor-scoped, and committing continues through the existing owner action',()=>{
   const s=state([task('id"<>',{title:'<img src=x onerror=alert(1)>'})]);
   const html=panel(s);assert.match(html,/data-id="id&quot;&lt;&gt;"/);assert.match(html,/&lt;img/);assert.doesNotMatch(html,/<img/);
