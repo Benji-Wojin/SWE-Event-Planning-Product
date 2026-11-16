@@ -45,12 +45,15 @@ function boot(tab,{query='project=fictional-project',view='',role='member',opaqu
   frame.GatherAccessLost=lost;
   Object.defineProperty(frame,'sessionStorage',{get(){if(storageAccessorBlocked)throw Error('Storage getter denied');return tab.vault;}});
   const ui={view:'overview',actor:'fictional-teammate'},state={event:{name:'Fictional rehearsal'},tasks};
-  const focused=[],visited=[];let click,context;
+  const focused=[],visited=[];let click,context,ready=false;
+  frame.addEventListener('gather-workspace-ready',()=>{ready=true;});
   const document={hidden:false,activeElement:active,addEventListener(name,fn){assert.equal(name,'click');click=fn;}};
   const workspace={hidden:true,innerHTML:'',contains:element=>element===dismiss||element===heading};
   const backdrop={hidden:true};
   const control=name=>({name,isConnected:true,disabled:false,closest:()=>null,getClientRects:()=>[{}],focus(){document.activeElement=this;focused.push(name);}});
   const dismiss={...control('Dismiss welcome'),dataset:{action:'dismiss-handoff'}},heading=control('Welcome heading'),root=control('Workspace content');
+  const focusHeading=heading.focus;
+  heading.focus=function(){assert.equal(ready,true,'focus must follow display of the workspace');focusHeading.call(this);};
   const store={getState:()=>state,getReminderScope:()=>opaque,
     save(){assert.fail('welcome state must not write project data');}};
   function paint(){context.paintTeammateHandoff();}
@@ -76,7 +79,7 @@ function boot(tab,{query='project=fictional-project',view='',role='member',opaqu
     fragment('  function teammateHandoff(','  function openHandoffTasks(')+
     fragment('  const routeChanged=view=>','  window.addEventListener(\'beforeunload\'')+
     fragment("  document.addEventListener('click',async event=>{","      if(action==='review-organizer-item')")+'}finally{release();}});\n'+
-    fragment('  ui.scheduleDate=navigation.initialScheduleDate();','  void loadInitialGuide();'),context);
+    fragment('  ui.scheduleDate=navigation.initialScheduleDate();','  if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();'),context);
   return {host,frame,ui,workspace,focused,visited,dismiss,document,active,
     hasWelcome:()=>workspace.innerHTML.includes('Dismiss welcome'),
     click(control=dismiss){return click({target:{closest:()=>control},preventDefault(){}});},

@@ -5690,9 +5690,10 @@
   const activityDay=initialActivity?GatherScheduleUI.scheduledTimelineDay(store.getState().tasks.find(task=>task.id===initialActivity)):'';
   if(initialActivity)navigate('timeline',{scheduleDay:activityDay});
   else navigate(initialTask?'tasks':navigation.initial());
-  if(freshTeammateWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   void loadInitialGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
+  // The hosted shell is hidden until the ready event has revealed it.
+  if(freshTeammateWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
   if(initialActivity&&!window.GatherAccessLost&&ui.view==='timeline'){
     if(activityDay)focusTimelineRow(initialActivity,activityDay);

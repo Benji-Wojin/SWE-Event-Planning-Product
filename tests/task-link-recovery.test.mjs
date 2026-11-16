@@ -218,7 +218,7 @@ test('current links open the matching task with heading focus, ordinary navigati
   assert.deepEqual(current.events,['tasks','ready','opener visible','opener focus',[id,'',false,true]]);
   assert.equal(current.markup(),'');
   const ordinary=land('',[],{welcome:true});
-  assert.deepEqual(ordinary.events,['overview','welcome focus','ready']);
+  assert.deepEqual(ordinary.events,['overview','ready','welcome focus']);
   assert.equal(ordinary.markup(),'');
 });
 
