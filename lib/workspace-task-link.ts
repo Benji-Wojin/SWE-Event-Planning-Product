@@ -16,7 +16,7 @@ export function planTaskHref(params: URLSearchParams, id: string, guided = false
   if(!demo&&guided)query.set('guide','1');
   const focus=workspaceTaskReview(review);
   if(!demo&&focus)query.set('review',focus);
-  if(!demo&&returnToReceipt&&params.get('project')&&(focus==='owner'||focus==='schedule'))query.set('from','plan-receipt');
+  if(!demo&&returnToReceipt&&params.get('project')&&focus)query.set('from','plan-receipt');
   return (demo?'/demo?':'/project?')+query;
 }
 

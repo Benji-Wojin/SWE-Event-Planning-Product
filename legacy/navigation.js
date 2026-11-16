@@ -11,7 +11,7 @@
     const id=taskIdFrom(params),hints=params.getAll('review');
     const review=id&&!params.getAll('demo').includes('1')&&hints.length===1&&['completion','amendment','owner','schedule'].includes(hints[0])?hints[0]:'';
     const from=params.getAll('from'),projects=params.getAll('project');
-    const fromPlanReceipt=(review==='owner'||review==='schedule')&&from.length===1&&from[0]==='plan-receipt'&&
+    const fromPlanReceipt=review&&from.length===1&&from[0]==='plan-receipt'&&
       projects.length===1&&!!projects[0]&&!['activity','message','day','welcome'].some(key=>params.has(key));
     return {id,review,...(fromPlanReceipt?{fromPlanReceipt:true}:{})};
   }

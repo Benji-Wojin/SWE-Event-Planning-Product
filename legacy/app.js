@@ -2555,29 +2555,49 @@
       toast('Copy or clear your unsent completion or return note before verifying. Your text is still here.');
       return;
     }
+    const receiptLink=ui.planReceiptReturn&&activePlanReceiptReturn(id);
+    const receiptReview=receiptLink?.intent===(amendment?'amendment':'completion')?receiptLink:null;
     const release=saveLock(dialog,returning?$('button[type="submit"]',control):undefined);
     try{
       // Alias the operations: this shared helper awaits both the local and hosted store.
       const verify=store.verifyTask,acknowledge=store.reviewCompletionEvidence,sendBack=store.returnCompletion;
-      let verified;
-      if(returning)await sendBack(id,note,actor,revision);
-      else if(amendment)await acknowledge(id,revision,actor);
-      else verified=await verify(id,actor,revision);
+      const savedDecision=returning?await sendBack(id,note,actor,revision):
+        amendment?await acknowledge(id,revision,actor):await verify(id,actor,revision);
       if(!sameReview())return;
+      const followReceipt=receiptReview&&!hasUnsavedFields(dialog,[],returning?control:null)&&
+        (document.activeElement===document.body||document.activeElement===control||control.contains(document.activeElement));
       render();taskDialog(id,returning?control.id:'',false,true,'',undefined,'',{readOnly:true});
       const updatedTitle=$('#dialogTitle',dialog);
+      const back=followReceipt&&$('#planReceiptBack',dialog);
       requestAnimationFrame(()=>{
         if(!updatedTitle||!sameWorkspace()||ui.view!==view||ui.dialogKind!=='task'||ui.detailId!==id||
           $('#dialogBackdrop').hidden||$('#dialogTitle',dialog)!==updatedTitle)return;
         const impact=verifying&&$('#completionLinkedImpactHeading',dialog);
         if(impact){
           const current=store.getState().tasks.find(item=>item.id===id);
-          if(verified?.id===id&&verified.verifiedAt&&verified.revision>revision&&current?.status==='done'&&
-            current.revision===verified.revision&&current.verifiedAt===verified.verifiedAt&&!document.hidden&&
+          if(savedDecision?.id===id&&savedDecision.verifiedAt&&savedDecision.revision>revision&&current?.status==='done'&&
+            current.revision===savedDecision.revision&&current.verifiedAt===savedDecision.verifiedAt&&!document.hidden&&
             document.activeElement===updatedTitle&&!workspaceUpdatesPending()&&!scheduleRevisionIsStale(store.getSnapshotRevision?.()))
             focusTaskDialogControl(impact,dialog);
           return;
         }
+        if(followReceipt&&back?.isConnected&&$('#planReceiptBack',dialog)===back&&activePlanReceiptReturn(id)===receiptReview&&
+          document.activeElement===updatedTitle&&!document.hidden&&!ui.pendingSave&&!hasUnsavedFields(dialog)&&
+          !workspaceUpdatesPending()&&!scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+          const current=store.getState().tasks.find(item=>item.id===id),currentRevision=store.getSnapshotRevision?.();
+          if(savedDecision?.id===id&&current&&!current.archivedAt&&Number.isSafeInteger(savedDecision.revision)&&savedDecision.revision>revision&&
+            current.revision===savedDecision.revision&&Number.isSafeInteger(workspaceRevision)&&Number.isSafeInteger(currentRevision)&&currentRevision>workspaceRevision&&
+            (returning?current.status!=='done'&&!current.reportedAt&&current.completionReview?.reportedAt===task.reportedAt&&
+              !!savedDecision.completionReview?.at&&current.completionReview?.at===savedDecision.completionReview.at:
+              current.status==='done'&&!!savedDecision.verifiedAt&&current.verifiedAt===savedDecision.verifiedAt&&
+              (!amendment||(current.verifiedAt===task.verifiedAt&&current.completionEvidenceReviewAt===task.verifiedAt&&
+                savedDecision.completionEvidenceReviewAt===task.verifiedAt)))){
+            dialog.scrollTop=0;
+            back.focus({preventScroll:true});
+            return;
+          }
+        }
+        if(receiptReview&&document.activeElement!==updatedTitle)return;
         focusTaskDialogControl($('.completion-evidence h3',dialog)||updatedTitle,dialog);
       });
       if(returning)toast('Changes requested. The task is still incomplete.');
@@ -5448,8 +5468,8 @@
       // first so keyboard users can see where focus will return.
       opener?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
       opener?.focus({preventScroll:true});
+      if(fromPlanReceipt)setPlanReceiptReturn(initialTask,initialTaskReview);
       if(initialTaskReview==='owner'||initialTaskReview==='schedule'){
-        if(fromPlanReceipt)setPlanReceiptReturn(initialTask,initialTaskReview);
         openTaskHandoffLink(initialTask,initialTaskReview);
       }
       else if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))

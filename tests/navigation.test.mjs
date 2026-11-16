@@ -100,7 +100,7 @@ test('review hints need a single valid task, a supported kind and a non-demo wor
   }
 });
 test('a planner editor origin is consumed with the task and review on the frame and visible URL',()=>{
-  for(const review of ['owner','schedule']){
+  for(const review of ['owner','schedule','completion','amendment']){
     const query=`?project=school&guide=1&task=task-current&review=${review}&from=plan-receipt&unrelated=keep`;
     const host=surface('https://weft.example/project'+query+'#timeline');
     const frame=surface('https://weft.example/workspace.html'+query+'#tasks');
@@ -126,9 +126,11 @@ test('a planner origin needs one valid live project, task and editor review, wit
     'project=school&task=current&review=owner&review=owner&from=plan-receipt',
     'project=school&task=current&task=other&review=owner&from=plan-receipt',
     'project=school&task=%22%3E&review=owner&from=plan-receipt',
-    'project=school&task=current&review=completion&from=plan-receipt',
+    'project=school&task=current&review=help&from=plan-receipt',
     'project=school&task=current&from=plan-receipt',
-    ...['demo=1','day=','activity=other','welcome=1','message=other'].map(hint=>`project=school&task=current&review=schedule&from=plan-receipt&${hint}`),
+    ...['completion','amendment','schedule'].flatMap(review=>
+      ['demo=0&demo=1','day=','activity=other','welcome=1','message=other'].map(hint=>
+        `project=school&task=current&review=${review}&from=plan-receipt&${hint}`)),
   ]){
     const params=new URLSearchParams(query);
     assert.equal(Object.hasOwn(GatherNavigation.taskLinkFrom(params),'fromPlanReceipt'),false,query);

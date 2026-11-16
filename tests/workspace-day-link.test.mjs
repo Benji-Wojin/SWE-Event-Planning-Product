@@ -46,7 +46,7 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
     assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&task=task-123&review=owner');
     assert.equal(await landing({project:'school',guide:'1',task:'task-123',review:'schedule'}),'/workspace.html?project=school&guide=1&task=task-123&review=schedule#tasks');
     assert.equal(globalThis.__returnPath,'/project?project=school&guide=1&task=task-123&review=schedule');
-    for (const review of ['owner', 'schedule']) {
+    for (const review of ['owner', 'schedule', 'completion', 'amendment']) {
       const page = await Project({searchParams: Promise.resolve({project:'school',guide:'1',task:'task-123',review,from:'plan-receipt'})});
       const query = `project=school&guide=1&task=task-123&review=${review}&from=plan-receipt`;
       globalThis.__signedOut = true;
@@ -58,12 +58,18 @@ test('the signed-in project wrapper forwards valid workspace hints through sign-
     const returnable = {project:'school',task:'task-123',review:'owner',from:'plan-receipt'};
     for (const conflicts of [
       {project:undefined}, {project:['school']}, {project:''}, {task:['task-123']}, {task:'invalid task'},
-      {review:['owner']}, {review:'completion'}, {review:'amendment'}, {review:''}, {review:undefined},
+      {review:['owner']}, {review:'help'}, {review:'review-blocked'}, {review:''}, {review:undefined},
       {demo:'1'}, {demo:['1']}, {day:'2032-02-29'}, {day:'not-a-day'}, {message:'mail-1'}, {activity:'other-task'}, {welcome:'1'},
       {from:['plan-receipt']}, {from:'https://external.example/'},
     ]) {
       assert.doesNotMatch(await landing({...returnable,...conflicts}), /[?&]from=/, JSON.stringify(conflicts));
       assert.doesNotMatch(globalThis.__returnPath, /[?&]from=/, JSON.stringify(conflicts));
+    }
+    for (const review of ['completion','amendment']) {
+      for (const competing of [{day:''},{activity:'another-task'},{message:'mail-1'},{welcome:'1'},{demo:['0','1']}]) {
+        assert.doesNotMatch(await landing({...returnable,review,...competing}), /[?&]from=/, JSON.stringify(competing));
+        assert.doesNotMatch(globalThis.__returnPath, /[?&]from=/, JSON.stringify(competing));
+      }
     }
     for(const review of ['help','review-blocked',['completion','amendment'],'']){
       assert.equal(await landing({project:'school',task:'task-123',review}),'/workspace.html?project=school&task=task-123#tasks');

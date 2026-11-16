@@ -39,7 +39,10 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     requestAnimationFrame(fn){frames.push(fn);},focusTaskOwnerEditor(id){events.push(['owner focus',id]);},
     schedule:{firstTimeTask:(state,id)=>state.tasks.find(task=>task.id===id&&task.eventActivity&&!task.schedule&&!(task.status==='done'&&(!task.requiresVerification||task.verifiedAt)))},
     workspaceUpdatesPending:()=>updatesPending,focusTaskScheduleEditor(id,setup){events.push(['schedule focus',id,setup]);},
-    openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
+    openOrganizerReview(...args){
+      if(ui.planReceiptReturn)events.push(['capture plan receipt return',ui.planReceiptReturn.id]);
+      events.push(['review',...args]);return openReview;
+    },
   });
   vm.runInContext(ownerChoices+'\n'+notice+'\n'+receiptReturn+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
   return {ui,events,context,document,elements,frames,pending(){updatesPending=true;},markup:()=>vm.runInContext('taskLinkNotice()',context)};
@@ -234,4 +237,28 @@ test('authorized hosted receipt hints try the current organizer review, with qui
   }
   assert.deepEqual(land(id,tasks,{review:'completion',organizer:true,mode,accessLost:true}).events,['tasks','ready']);
   assert.deepEqual(land(id,[],{review:'completion',organizer:true,mode}).events,['tasks','ready','notice focus','notice visible']);
+});
+
+test('completion and amendment receipt links scope Back before the first review and preserve it on quiet fallback',()=>{
+  const id='exact-task',mode={demo:false,projectId:'fictional-project'},active={id},decoy={id:'different-task'};
+  for(const review of ['completion','amendment']){
+    const options={review,organizer:true,mode,fromPlanReceipt:true};
+    const reviewAttempt=['review',id,review,'',true];
+    for(const openReview of [true,false]){
+      const landing=land(id,[decoy,active],{...options,openReview});
+      assert.deepEqual({...landing.ui.planReceiptReturn},{id,intent:review,project:mode.projectId,actor:'fictional-actor',view:'tasks'});
+      const index=landing.events.findIndex(event=>Array.isArray(event)&&event[0]==='review');
+      assert.deepEqual(landing.events.slice(index-1,index+1),[['capture plan receipt return',id],reviewAttempt]);
+      if(!openReview)assert.deepEqual(landing.events.at(-1),[id,'',false,true]);
+    }
+    for(const [tasks,override] of [
+      [[active],{fromPlanReceipt:false}],[[active],{organizer:false}],[[active],{accessLost:true}],
+      [[active],{mode:{...mode,demo:true}}],[[active],{mode:undefined}],[[active],{mode:{demo:false}}],
+      [[decoy],{}],[[{...active,archivedAt:'archived'}],{}],
+    ]){
+      const landing=land(id,tasks,{...options,openReview:true,...override});
+      assert.equal(landing.ui.planReceiptReturn,undefined);
+      assert.ok(!landing.events.some(event=>event[0]==='capture plan receipt return'));
+    }
+  }
 });

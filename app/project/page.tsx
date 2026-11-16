@@ -20,7 +20,7 @@ export default async function Project({ searchParams }: { searchParams: Promise<
     query.set('task',task);
     const review=workspaceTaskReview(params.review);
     if(review)query.set('review',review);
-    if(project&&!demoHint&&(review==='owner'||review==='schedule')&&params.from==='plan-receipt'&&
+    if(project&&!demoHint&&review&&params.from==='plan-receipt'&&
       params.activity===undefined&&params.message===undefined&&params.day===undefined&&params.welcome===undefined)
       query.set('from','plan-receipt');
   }

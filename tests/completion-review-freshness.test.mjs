@@ -16,7 +16,7 @@ function sourceBlock(from,to){
   return app.slice(start,end);
 }
 
-function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={}){
+function fixture(kind,{hosted=true,blocked=false,related=false,impact=false,receiptIntent=''}={}){
   const core=GatherStore.createStore({storage:null});
   const {id}=core.addTask({title:'Fictional welcome desk',owner:'maya',requiresVerification:true});
   core.reportCompletion(id,'The welcome desk is set up.','maya');
@@ -37,7 +37,7 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
   const window=hosted?{GatherMode:{projectId:'fictional-project'}}:{GatherMode:{demo:true}};
   const dialog={isConnected:true,dataset:{}},backdrop={hidden:false};
   let title={},revision=hosted?11:undefined,stale=false,known=0,organizer=true,controls={};
-  let noteValue=reason,dirtyForm='';
+  let noteValue=reason,dirtyForm='',dirtyDialog=false,receiptBack;
   const writes=[],calls=[],frames=[];
   const impactHeading={};
   const refresh={focus:()=>calls.push(['focus'])};
@@ -49,10 +49,17 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
         ...(type==='return'?{}:{action:type==='verify'?'verify-task':'review-completion-evidence'}),
         ...(hosted?{workspaceRevision:'11'}:{})},
       elements:{note:{get value(){return noteValue;}}},
-      closest:()=>dialog,querySelector:()=>formSubmit,
+      closest:()=>dialog,querySelector:()=>formSubmit,contains:node=>type==='return'&&node===formSubmit,
       matches:selector=>selector.includes(type==='return'?'returnCompletionForm':type==='verify'?'verify-task':'review-completion-evidence'),
       getAttribute:key=>attr.get(key),setAttribute:(key,value)=>attr.set(key,value),removeAttribute:key=>attr.delete(key),
     };
+  }
+  function mountBack(){
+    if(receiptBack)receiptBack.isConnected=false;
+    receiptBack=ui.planReceiptReturn?{isConnected:true,focus(options){
+      assert.equal(ui.pendingSave,undefined,'Back receives focus only after save unlock');
+      assert.equal(options.preventScroll,true);document.activeElement=this;calls.push(['focus receipt back']);
+    }}:null;
   }
   const remount=()=>{
     controls=kind==='amendment'?{amendment:makeControl('amendment')}:
@@ -64,13 +71,14 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
     if(selector==='#dialog')return dialog;
     if(selector==='#dialogTitle')return title;
     if(selector==='#dialogBackdrop')return backdrop;
+    if(selector==='#planReceiptBack')return receiptBack;
     if(selector==='#completionLinkedImpactHeading')return impact&&getTask().status==='done'&&getTask().verifiedAt?impactHeading:null;
     if(selector==='#activityReviewRefresh')return refresh;
     if(['#completionEvidenceForm','#responseForm','#returnCompletionForm'].includes(selector)&&selector===dirtyForm)return {dirty:true};
     if(selector.includes('returnCompletionForm')&&selector.includes('button'))return formSubmit;
     return Object.values(controls).find(control=>control.isConnected&&control.matches(selector))||null;
   }
-  const document={hidden:false,activeElement:null};
+  const document={hidden:false,activeElement:null,body:{}};
   const store={getState:()=>core.getState(),getSnapshotRevision:()=>revision};
   for(const method of Object.values(reviewMethods)){
     store[method]=(...args)=>new Promise((resolve,reject)=>writes.push({method,args,reject,finish(replaceResult=value=>value){
@@ -83,7 +91,10 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
   }
   const context=vm.createContext({
     ui,window,document,store,isOrganizer:()=>organizer,
-    hasUnsavedFields:form=>!!form?.dirty,
+    hasUnsavedFields(form,_exclude,skip){
+      if(form===dialog)return dirtyDialog||dirtyForm==='#returnCompletionForm'&&skip!==controls.return;
+      return !!form?.dirty;
+    },
     $:select,$$:selector=>Object.values(controls).filter(control=>control.isConnected&&control.matches(selector)),
     workspaceUpdatesPending:()=>stale,
     scheduleRevisionIsStale:value=>Number.isSafeInteger(value)&&value<known,
@@ -99,7 +110,10 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
       return ()=>{delete ui.pendingSave;calls.push(['unlock']);};
     },
     render:()=>calls.push(['render']),
-    taskDialog(...args){calls.push(['dialog',...args]);title={};document.activeElement=title;},
+    taskDialog(...args){
+      calls.push(['dialog',...args]);title={};document.activeElement=title;mountBack();
+      if(args[1]==='returnCompletionForm'&&dirtyForm==='#returnCompletionForm')dirtyForm='';
+    },
     toast:message=>calls.push(['toast',message]),
     formError:(_form,error)=>calls.push(['formError',error.message]),
   });
@@ -109,14 +123,18 @@ function fixture(kind,{hosted=true,blocked=false,related=false,impact=false}={})
   dialog.querySelectorAll=context.$$;
   vm.runInContext(
     sourceBlock('  function dependencyInfo(','  function linkedTaskForm(')+
+    sourceBlock('  function setPlanReceiptReturn(','  function receiptOwnerReview(')+
     sourceBlock('  function acceptanceReviewPending(','  function paintAcceptanceRefresh(')+
     sourceBlock('  function completionReviewControls(','  function canRefreshActivityReview('),context,
   );
-  return {id,ui,window,document,backdrop,core,calls,writes,getTask,
+  if(receiptIntent){context.setPlanReceiptReturn(id,receiptIntent);mountBack();}
+  if(receiptIntent)document.activeElement=kind==='return'?formSubmit:controls[kind];
+  return {id,ui,window,document,backdrop,core,calls,writes,getTask,dialog,
+    get receiptBack(){return receiptBack;},replaceBack(){mountBack();},
     get control(){return controls[kind];}, get controls(){return controls;},
     set revision(value){revision=value;},set stale(value){stale=value;},set known(value){known=value;},
     set organizer(value){organizer=value;},set note(value){noteValue=value;},get note(){return noteValue;},
-    set dirtyForm(value){dirtyForm=value;},
+    set dirtyForm(value){dirtyForm=value;},set dirtyDialog(value){dirtyDialog=value;},
     save(opener=controls[kind],note=noteValue){return context.saveReviewedCompletion(opener,note);},
     replaceControls(){remount();},
     flush(){for(const frame of frames.splice(0))frame();},
@@ -155,6 +173,65 @@ test('only a current acknowledged verification moves focus from the dialog title
   f.writes[0].finish();await pending;f.flush();
   assert.ok(f.calls.some(([event])=>event==='focus heading'));
   assert.ok(!f.calls.some(([event])=>event==='focus linked impact'),'acknowledging an amendment is not a new verification');
+});
+
+test('verified, returned, and amended completion reviews focus exact Back only after fresh acknowledgments',async()=>{
+  for(const kind of Object.keys(reviewMethods)){
+    const receiptIntent=kind==='amendment'?'amendment':'completion';
+    const f=fixture(kind,{receiptIntent}),before=f.receiptBack;
+    if(kind==='return')f.dirtyForm='#returnCompletionForm';
+    f.dialog.scrollTop=90;
+    const pending=f.save();
+    f.flush();
+    assert.equal(f.writes.length,1,kind);
+    assert.deepEqual(f.calls,[],kind);
+    f.writes[0].finish();await pending;
+    assert.notEqual(f.receiptBack,before);
+    assert.equal(before.isConnected,false);
+    assert.notEqual(f.document.activeElement,f.receiptBack,'focus waits for the redraw frame');
+    f.flush();
+    assert.equal(f.document.activeElement,f.receiptBack,kind);
+    assert.equal(f.dialog.scrollTop,0);
+    assert.ok(f.calls.findIndex(([event])=>event==='unlock')<f.calls.findIndex(([event])=>event==='focus receipt back'),kind);
+    assert.equal(f.calls.some(([event])=>event==='focus heading'),false,kind);
+    assert.equal(f.writes.length,1,'the handoff only moves focus; it never writes or navigates');
+  }
+});
+
+test('verification with linked impact keeps that guidance ahead of the receipt; amendments still return to Back',async()=>{
+  for(const [kind,expected] of [['verify','focus linked impact'],['amendment','focus receipt back']]){
+    const f=fixture(kind,{receiptIntent:kind==='amendment'?'amendment':'completion',impact:true});
+    const pending=f.save();f.writes[0].finish();await pending;f.flush();
+    assert.deepEqual(f.calls.filter(([event])=>['focus receipt back','focus linked impact'].includes(event)),[[expected]]);
+  }
+});
+
+test('uncertain acknowledgments, changed scope, newer work, drafts, and moved focus never reclaim Back',async t=>{
+  for(const [label,options,beforeAck,receipt,afterAck] of [
+    ['wrong receipt intent',{receiptIntent:'amendment'}],
+    ['demo is out of scope',{hosted:false}],
+    ['mismatched task',{},null,result=>({...result,id:'other-task'})],
+    ['nonadvancing task',{},null,result=>({...result,revision:result.revision-1})],
+    ['missing done acknowledgment',{},null,result=>({...result,verifiedAt:''})],
+    ['no advancing snapshot',{},null,null,f=>{f.revision=11;}],
+    ['newer known snapshot',{},null,null,f=>{f.known=13;}],
+    ['revision changed',{},null,null,f=>{f.core.updateTask(f.id,{title:'Fictional changed task'},'jack');}],
+    ['moved before acknowledgement',{},f=>{f.document.activeElement={};}],
+    ['moved after redraw',{},null,null,f=>{f.document.activeElement={};}],
+    ['dirty before remount',{},f=>{f.dirtyDialog=true;},null,f=>{f.dirtyDialog=false;}],
+    ['dirty after remount',{},null,null,f=>{f.dirtyDialog=true;}],
+    ['replaced Back',{},null,null,f=>{f.replaceBack();}],
+    ['replaced receipt context',{},null,null,f=>{f.ui.planReceiptReturn={...f.ui.planReceiptReturn};}],
+    ['different project',{},null,null,f=>{f.window.GatherMode.projectId='other-project';}],
+    ['hidden workspace',{},null,null,f=>{f.document.hidden=true;}],
+  ])await t.test(label,async()=>{
+    const f=fixture('verify',{receiptIntent:'completion',...options}),pending=f.save();
+    assert.equal(f.writes.length,1);
+    beforeAck?.(f);
+    f.writes[0].finish(receipt||undefined);await pending;afterAck?.(f);f.flush();
+    assert.equal(f.calls.some(([event])=>event==='focus receipt back'),false);
+    assert.equal(f.writes.length,1);
+  });
 });
 
 const rendered=f=>f.calls.filter(([kind])=>['render','dialog','celebrate'].includes(kind));

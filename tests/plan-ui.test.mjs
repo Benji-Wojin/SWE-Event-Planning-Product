@@ -1733,7 +1733,7 @@ test('the organizer handoff separates next actions and refresh moves the same ta
       const start=all.indexOf(node)+1,end=i+1<headings.length?all.indexOf(headings[i+1].node):all.length;
       const links=all.slice(start,end).filter(row=>row.type==='a'&&row.props.href?.includes('&task='));
       assert.deepEqual(links.map(row=>[text(row),row.props.href]),expected[group].map(id=>[
-        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Assign an owner'?'&review=owner&from=plan-receipt':group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion'):''),
+        namesById.get(id),'/project?project=p_school&task='+id+'&guide=1'+(group==='Assign an owner'?'&review=owner&from=plan-receipt':group==='Review completion'?(id==='task-amended'?'&review=amendment':'&review=completion')+'&from=plan-receipt':''),
       ]),group);
     }
     assert.equal(all.filter(row=>row.type==='a'&&row.props.href?.includes('&task=')).length,initial.receiptTasks.length);
@@ -1784,7 +1784,7 @@ test('the handoff shows verification blockers separately and the same link moves
     }
   },initial,'project=p_school',false,true);
   const group=id=>nodes(app.tree).find(node=>node.props?.['aria-labelledby']==='handoff-'+id);
-  const taskLink=section=>nodes(section).find(node=>node.props?.href==='/project?project=p_school&task=task-blocked&guide=1&review=completion');
+  const taskLink=section=>nodes(section).find(node=>node.props?.href==='/project?project=p_school&task=task-blocked&guide=1&review=completion&from=plan-receipt');
   try{
     await app.start();
     const blocked=group('required-work'),review=group('review');
@@ -1832,20 +1832,30 @@ test('the receipt separates schedule reacceptance from new assignments, even whe
     assert.deepEqual(app.requests,[{action:'get'},{action:'get'}]);
   }finally{app.dispose();}
 });
-test('receipt review hints are limited to real project plan handoffs',async()=>{
-  for(const [query,expected] of [
-    ['project=p_school','/project?project=p_school&task=task-a&review=amendment'],
-    ['project=p_school&mode=suggestions','/project?project=p_school&task=task-a'],
-    ['project=p_school&mode=assistant','/project?project=p_school&task=task-a'],
-    ['demo=1','/demo?as=jack&task=task-a'],
+test('only an explicit real standalone handoff grants a receipt return for completion and amendment',async()=>{
+  for(const [query,embedded,receiptHandoff,reviewHint,origin,base] of [
+    ['project=p_school',false,true,true,true,'/project?project=p_school'],
+    ['project=p_school',true,true,true,false,'/project?project=p_school'],
+    ['project=p_school',false,false,true,false,'/project?project=p_school'],
+    ['',false,true,true,false,'/project?project=main'],
+    ['project=p_school&mode=suggestions',false,true,false,false,'/project?project=p_school'],
+    ['project=p_school&mode=assistant',false,true,false,false,'/project?project=p_school'],
+    ['project=p_school&demo=1',false,true,false,false,'/demo?as=jack'],
   ]){
     const initial=fixture();
-    initial.receipt={taskIds:['task-a']};
-    initial.receiptTasks=[{id:'task-a',title:'Fictional task',handoff:{state:'needs-amendment-review'}}];
-    const app=harness(null,initial,query);
+    const intents=[['task-completion','Fictional report','needs-review','completion'],['task-amendment','Fictional update','needs-amendment-review','amendment']];
+    initial.receipt={taskIds:intents.map(([id])=>id)};
+    initial.receiptTasks=intents.map(([id,title,state])=>({id,title,handoff:{state}}));
+    const app=harness(null,initial,query,embedded,false,undefined,receiptHandoff);
     try{
       await app.start();
-      assert.equal(nodes(app.tree).find(node=>node.type==='a'&&text(node)==='Fictional task')?.props.href,expected);
+      for(const [id,title,,kind] of intents){
+        const link=planLink(app.tree,title);
+        assert.equal(link?.props.href,base+'&task='+id+(reviewHint?'&review='+kind:'')+(origin?'&from=plan-receipt':''),query);
+        assert.equal(link?.props.target,embedded?'_top':undefined);
+        assert.equal(link?.props.onClick,undefined);
+      }
+      assert.deepEqual(app.requests,[{action:'get'}]);
     }finally{app.dispose();}
   }
 });
@@ -1913,7 +1923,7 @@ test('untimed activity shortcuts are separate from task review links and limited
         ]) {
           const task = planLink(app.tree, title);
           const schedule = links.find(node => node.props['aria-label'] === `Set start time for ${title}`);
-          assert.equal(task?.props.href, base + id + suffix + '&review=' + review + (review === 'owner' ? '&from=plan-receipt' : ''));
+          assert.equal(task?.props.href, base + id + suffix + '&review=' + review + '&from=plan-receipt');
           assert.equal(task.props['data-handoff-task'], id);
           assert.equal(schedule?.props.href, base + id + suffix + '&review=schedule&from=plan-receipt');
           assert.equal(schedule.props['data-handoff-task'], id);
@@ -1960,7 +1970,7 @@ test('scheduled receipt shortcuts target the exact activity without replacing ta
         ]) {
           const task = planLink(app.tree, title);
           const timeline = links.find(node => node.props['aria-label'] === `Show ${title} in Timeline`);
-          assert.equal(task?.props.href, '/project?project=p_school&task=' + id + suffix + '&review=' + review + (review === 'owner' ? '&from=plan-receipt' : ''));
+          assert.equal(task?.props.href, '/project?project=p_school&task=' + id + suffix + '&review=' + review + '&from=plan-receipt');
           assert.equal(task.props['data-handoff-task'], id);
           assert.equal(timeline?.props.href, '/project?project=p_school&activity=' + id + suffix);
           assert.equal(timeline.props['data-handoff-task'], id);
