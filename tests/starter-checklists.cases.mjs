@@ -5,6 +5,8 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
   const read=async project=>{const response=await planApi.GET(new Request('https://gather.example/api/plan?project='+project));assert.equal(response.status,200);return response.json();};
   const post=(project,input)=>planApi.POST(request('/api/plan?project='+project,input));
   const input=(snap,extra={})=>({action:'starter',revision:snap.revision,workspaceRevision:snap.workspaceRevision,requestId:crypto.randomUUID(),brief,replace:!!snap.draft,...extra});
+  const recheck=(snap,extra={})=>({action:'recheck-starter',revision:snap.revision,workspaceRevision:snap.workspaceRevision,
+    generation:snap.draft.generation,brief:snap.brief,items:snap.draft.items,...extra});
   const ws=project=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
   async function ready(project,extra={}){const result=await post(project,input(await read(project),extra));assert.equal(result.status,200,await result.clone().text());return result.json();}
   async function setup(){owner();globalThis.__gatherEnv.GROQ_API_KEY='';return newTeamProject('Fictional checklist event');}
@@ -30,6 +32,54 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       const again=await post(project,approval);assert.equal(again.status,200);assert.equal(JSON.parse(ws(project).data).tasks.length,1);
       const next=await ready(project);assert.equal(next.draft.items[0].included,false,'exact existing work is not preselected');
       assert.equal(JSON.parse(ws(project).data).tasks.length,1);
+    });
+    await t.test('starter recheck keeps edits and generation, exposes fresh exact matches, and never adds shared tasks',async()=>{
+      const project=await setup(),original=await ready(project);
+      const title='Confirm fictional welcome desk';
+      const add=await workspace.POST(request('/api/workspace?project='+project,{method:'addTask',args:[{title}],revision:ws(project).revision}));
+      assert.equal(add.status,200,await add.clone().text());
+      const existing=(await add.json()).state.tasks[0],latest=await read(project);
+      assert.equal(latest.contextChanged,true);
+      const privateBefore=sqlite.prepare('SELECT * FROM plan_drafts WHERE workspace_id=?').get(project);
+      const sharedBefore=ws(project),usage=sqlite.prepare('SELECT * FROM resource_usage').all();
+      const editedItems=original.draft.items.map((item,index)=>({...item,included:index<2}));
+      Object.assign(editedItems[0],{title,note:'Fictional edit retained on the matching proposal.',owner:'jack'});
+      Object.assign(editedItems[1],{title:'Brief the fictional welcome crew',scope:'The team has confirmed who opens and closes the welcome desk.',
+        note:'Keep the existing desk task as a prerequisite.',dependsOn:[editedItems[0].id]});
+      const editedBrief={...original.brief,description:'Fictional checklist with a specific welcome desk.'};
+      const body=recheck(latest,{items:editedItems,brief:editedBrief}),rejected=[
+        [{...body,revision:body.revision-1},409],
+        [{...body,workspaceRevision:body.workspaceRevision-1},409],
+        [{...body,generation:crypto.randomUUID()},409],
+        [{...body,items:[{...editedItems[0],id:'different-fictional-item'},...editedItems.slice(1)]},400],
+        [{...body,items:[{...editedItems[0],existingTaskIndex:0},...editedItems.slice(1)]},400],
+        [{...body,items:[{...editedItems[0],duplicateChoice:'reuse'},...editedItems.slice(1)]},400],
+        [{...body,action:'recheck-pasted'},409],
+      ];
+      for(const [payload,status] of rejected)assert.equal((await post(project,payload)).status,status);
+      assert.equal((await post(project+'&mode=suggestions',body)).status,400);
+      assert.deepEqual(sqlite.prepare('SELECT * FROM plan_drafts WHERE workspace_id=?').get(project),privateBefore);
+      assert.deepEqual(ws(project),sharedBefore);
+      const response=await post(project,body);assert.equal(response.status,200,await response.clone().text());
+      const reviewed=await response.json();
+      assert.equal(reviewed.revision,original.revision+1);assert.equal(reviewed.workspaceRevision,latest.workspaceRevision);
+      assert.equal(reviewed.status,'ready');assert.equal(reviewed.contextChanged,false);assert.equal(reviewed.receipt,null);
+      assert.equal(reviewed.draft.source,'starter');assert.equal(reviewed.draft.starterVersion,original.draft.starterVersion);
+      assert.equal(reviewed.draft.generation,original.draft.generation);
+      assert.deepEqual(reviewed.draft.items,editedItems);assert.deepEqual(reviewed.brief,editedBrief);
+      assert.deepEqual(reviewed.existingTasks.map(task=>task.id),[existing.id]);
+      assert.deepEqual(ws(project),sharedBefore);assert.deepEqual(sqlite.prepare('SELECT * FROM resource_usage').all(),usage);
+      assert.equal((await post(project,body)).status,409,'the completed private revision cannot be replayed as a new save');
+      const approval={action:'apply',revision:reviewed.revision,workspaceRevision:reviewed.workspaceRevision,
+        generation:reviewed.draft.generation,items:reviewed.draft.items,confirm:true};
+      assert.equal((await post(project,approval)).status,400,'recheck does not consent to creating a duplicate');
+      assert.deepEqual(ws(project),sharedBefore);
+      const applied=await post(project,{...approval,items:reviewed.draft.items.map((item,index)=>({...item,included:index===1}))});
+      assert.equal(applied.status,200,await applied.clone().text());
+      const handedOff=await applied.json(),tasks=JSON.parse(ws(project).data).tasks;
+      assert.equal(tasks.length,2);assert.equal(handedOff.receipt.taskIds.length,1);
+      assert.deepEqual(tasks.find(task=>task.id===handedOff.receipt.taskIds[0]).dependencies.map(link=>link.taskId),[existing.id]);
+      assert.equal((await post(project,recheck(handedOff))).status,409,'an applied receipt can’t be reopened by recheck');
     });
     await t.test('opt-in event-day drafts add activities only after review and schedule only supplied times',async()=>{
       const project=await setup();
@@ -101,6 +151,18 @@ export async function starterChecklistTests({t,assert,sqlite,db,owner,request,pl
       const latest=await read(project);assert.equal(latest.contextChanged,true);
       const response=await post(project,{action:'apply',revision:snap.revision,workspaceRevision:latest.workspaceRevision,generation:snap.draft.generation,items:snap.draft.items,confirm:true});
       assert.equal(response.status,409);assert.equal(JSON.parse(ws(project).data).tasks.length,0);
+      const editedItems=latest.draft.items.map(item=>({...item,included:false}));
+      assert.ok(editedItems.some(item=>item.dueDate),'unchecked items still have timing to review');
+      const before=ws(project),openingDraft=sqlite.prepare('SELECT * FROM plan_drafts WHERE workspace_id=?').get(project);
+      const noConfirmation=await post(project,recheck(latest,{items:editedItems}));
+      assert.equal(noConfirmation.status,400);
+      assert.match((await noConfirmation.json()).error,/review the proposed dates and times/i);
+      assert.deepEqual(sqlite.prepare('SELECT * FROM plan_drafts WHERE workspace_id=?').get(project),openingDraft);
+      const confirmed=await post(project,recheck(latest,{items:editedItems,reviewTiming:true}));
+      assert.equal(confirmed.status,200,await confirmed.clone().text());
+      const reviewed=await confirmed.json();
+      assert.equal(reviewed.contextChanged,false);assert.deepEqual(reviewed.draft.items,editedItems);
+      assert.equal(reviewed.draft.generation,latest.draft.generation);assert.deepEqual(ws(project),before);
     });
     await t.test('project-local midnight changes fresh short-notice proposals but never rewrites an idempotent replay',async()=>{
       const RealDate=Date;let instant=RealDate.parse('2028-03-12T04:59:00Z');

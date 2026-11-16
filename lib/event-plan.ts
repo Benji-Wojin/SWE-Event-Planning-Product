@@ -471,17 +471,29 @@ async function importChecklist(c: Context, input: any) {
   if (retried) return retried;
   throw new HttpError(409,'Another update saved first. Reload the draft before importing.');
 }
-async function recheckPasted(c: Context, input: any) {
-  if (c.purpose!=='plan' || !exact(input,['action','revision','workspaceRevision','generation','brief','items']))
-    throw new HttpError(400,'Review the pasted draft request.');
+async function recheckChecklist(c: Context, input: any, source: 'pasted' | 'starter') {
+  const starter=source==='starter';
+  if (c.purpose!=='plan' || !exact(input,['action','revision','workspaceRevision','generation','brief','items',...(starter?['reviewTiming']:[])]) ||
+    (starter && input.reviewTiming!==undefined && input.reviewTiming!==true))
+    throw new HttpError(400,starter?'Review the starter checklist request.':'Review the pasted draft request.');
   const row=await read(c.id), data=await decode(row), draft=data.draft;
-  if(!row||!draft||draft.source!=='pasted'||data.receipt||draft.generation!==input.generation||
+  if(!row||!draft||draft.source!==source||data.receipt||draft.generation!==input.generation||
     row.revision!==input.revision||row.lease_until>Date.now()||c.row.revision!==input.workspaceRevision)
     throw new HttpError(409,'The project or draft changed. Reload before rechecking.');
   try{
+    const items=reviewedItems(input.items,draft);
+    if(starter){
+      if(items.some(item=>item.existingTaskIndex!=null||item.duplicateChoice))
+        throw new Error('Starter checklists use exact title and time matches, not suggested reuse choices.');
+      if(items.some(item=>item.dueDate||item.start||item.end)&&input.reviewTiming!==true)
+        throw new Error('Review the proposed dates and times against the current event before rechecking.');
+      // Starter items never carry provider hints. Resolve exact matches with the
+      // current shared tasks on review/apply, not obsolete positional indices.
+      draft.duplicateSuggestions=[];
+    }
     data.brief=parseBrief(input.brief,c.state.event.date);
     draft.brief=data.brief;
-    draft.items=reviewedItems(input.items,draft);
+    draft.items=items;
   }catch(error){throw new HttpError(400,(error as Error).message);}
   draft.contextHash=c.contextHash;
   delete draft.lastChecklistImport;
@@ -896,8 +908,8 @@ export async function writeEventPlan(request: Request, input: any) {
     const checklistImportResult=await importChecklist(c,input);
     return {...await snapshot(await loadContext(request)),checklistImportResult};
   }
-  if (input.action === 'recheck-pasted') {
-    await recheckPasted(c,input);
+  if (input.action === 'recheck-pasted' || input.action === 'recheck-starter') {
+    await recheckChecklist(c,input,input.action==='recheck-starter'?'starter':'pasted');
     return snapshot(await loadContext(request));
   }
   if (input.action === 'generate') return generate(c, input);

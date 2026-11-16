@@ -200,7 +200,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   const unsentChecklist = !!checklist.trim();
   const offerGuidePause = guideReturn && !!data && !applied && (draftDirty || unsentChecklist);
   const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
-    data?.draft?.source === 'starter' || !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
+    data?.draft?.source === 'starter' ? ['#plan-recheck', 'Recheck your starter checklist'] :
+    !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
     ['#plan-generate', 'Generate a new draft'];
   const receiptTasks:PlanReceiptTask[]=applied?data.receiptTasks||[]:[];
   const addedCount:number=applied?data.receipt.taskIds.length:0;
@@ -576,6 +577,33 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       setNotice('Draft kept and checked against the current project. Review any matching tasks or dates before adding items.');
     });
   }
+  async function recheckStarter() {
+    if(locked||applied||data?.draft?.source!=='starter'||!data.contextChanged)return;
+    await run(async()=>{
+      const signal=AbortSignal.timeout(approvalTimeout),generation=data.draft.generation;
+      const current=await api(query,undefined,signal);
+      if(current.revision!==data.revision||current.draft?.source!=='starter'||current.draft.generation!==generation||
+        current.receipt||!['ready','error','interrupted'].includes(current.status)||
+        !Number.isSafeInteger(current.workspaceRevision)||current.workspaceRevision<data.workspaceRevision)
+        throw new Error('The saved draft changed or couldn’t be confirmed. Your edits are still here. Reload the saved draft to review it.');
+      const expected=savedEditable(brief,items,current.event.date);
+      const timed=items.some(item=>item.dueDate||item.start||item.end);
+      if(timed&&!window.confirm(`Review the checklist’s dates and times against the current event (date: ${current.event.date||'not set'}, time zone: ${current.event.timeZone||'not set'}). Rechecking keeps the dates and times as written and saves the draft privately. Nothing will be added. Keep these proposals?`))return;
+      const result=await api(query,{action:'recheck-starter',revision:current.revision,workspaceRevision:current.workspaceRevision,
+        generation,brief,items,...(timed?{reviewTiming:true}:{})},AbortSignal.timeout(approvalTimeout));
+      let confirmed=false;
+      if(result.revision===current.revision+1&&result.workspaceRevision===current.workspaceRevision&&result.contextChanged===false&&
+        result.status==='ready'&&!result.receipt&&result.draft?.source==='starter'&&result.draft.generation===generation&&Array.isArray(result.draft.items)){
+        try{confirmed=savedEditable(result.brief,result.draft.items,result.event.date)===expected;}catch{/* Not proof of the private save. */}
+      }
+      if(!confirmed)throw new Error('We couldn’t confirm the rechecked checklist. Your edits are still here; nothing was added. Use Reload saved draft to check what was saved.');
+      accept(result,false);
+      request.current=null;
+      starterRequest.current=null;
+      focusNotice.current=true;
+      setNotice('Starter checklist kept and checked against the current project. Review matching tasks, required links, and any dates or times before adding items. No shared tasks were added.');
+    });
+  }
   async function useStarter() {
     const message = completedPlan
       ? 'Start a new private draft from a starter checklist? ' + replaceHandoffImpact
@@ -642,7 +670,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       starterRequest.current = null;
       setNotice(
         result.receipt ? 'Task handoff refreshed from the project.' : result.contextChanged
-          ? result.draft?.source==='starter' ? 'Event details or tasks changed. Choose a fresh starter checklist before adding it.' : result.draft?.source==='pasted' ? 'Event details or tasks changed. Recheck the pasted draft before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
+          ? result.draft?.source==='starter' ? 'Event details or tasks changed. Recheck the starter checklist before adding it.' : result.draft?.source==='pasted' ? 'Event details or tasks changed. Recheck the pasted draft before adding it.' : 'Event details or tasks changed. Generate a new draft before adding it.'
           : 'Project context refreshed. Your draft edits are kept.',
       );
     });
@@ -1065,6 +1093,12 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         <section className={completedPlan ? 'space-y-4' : 'mt-8 space-y-4'} aria-label={completedPlan ? 'Original draft' : 'Review draft'}>
           {data.draft.source==='starter' && <p className="rounded-lg border p-4 text-sm">Product-authored starter checklist · No AI used.{!completedPlan && ' Not tailored to your brief; review every item, date and owner before adding it.'}</p>}
           {data.draft.source==='pasted' && <p className="rounded-lg border p-4 text-sm">Pasted checklist · No AI used.{!completedPlan && ' Review the titles and select only the tasks you want to share.'}</p>}
+          {!applied && data.draft.source==='starter' && data.contextChanged && (
+            <div className="space-y-2 rounded-lg border p-4 text-sm">
+              <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Recheck to keep your edits and see matching tasks in the current project. Dates and times stay as written for you to review. Nothing is added.</p>
+              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckStarter()}>Recheck starter checklist</Button>
+            </div>
+          )}
           {!applied && data.draft.source==='pasted' && data.contextChanged && (
             <div className="space-y-2 rounded-lg border p-4 text-sm">
               <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
@@ -1603,7 +1637,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
             <div className="rounded-lg border p-5 space-y-3">
               {data.contextChanged && (
                 <p role="status" className="text-sm">
-                  Project details or tasks changed. {data.draft.source==='starter' ? 'Choose a fresh starter checklist' : data.draft.source==='pasted' ? 'Recheck your pasted draft' : 'Generate a new draft'} before adding it.
+                  Project details or tasks changed. {data.draft.source==='starter' ? 'Recheck your starter checklist' : data.draft.source==='pasted' ? 'Recheck your pasted draft' : 'Generate a new draft'} before adding it.
                 </p>
               )}
               {missingDependencies && (
@@ -1660,7 +1694,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                         'Your private edits were saved. The project changed; no tasks were added. ' +
                           (latest.contextChanged
                             ? latest.draft?.source === 'starter'
-                              ? 'Choose a fresh starter checklist before adding tasks.'
+                              ? 'Recheck the starter checklist before adding tasks.'
                               : latest.draft?.source === 'pasted'
                                 ? 'Recheck the pasted draft before adding tasks.'
                                 : 'Generate a new draft before adding tasks.'

@@ -590,7 +590,7 @@ test('guided planner explains how to refresh stale proposals before adding', asy
   for (const [source, configured, label, anchor] of [
     [undefined, true, 'Generate a new draft', '#plan-generate'],
     [undefined, false, 'Start a fresh checklist', '#plan-starter'],
-    ['starter', true, 'Start a fresh checklist', '#plan-starter'],
+    ['starter', true, 'Recheck your starter checklist', '#plan-recheck'],
     ['pasted', true, 'Recheck your pasted draft', '#plan-recheck'],
   ]) {
     const initial = { ...fixture(), contextChanged: true, configured };
@@ -604,6 +604,146 @@ test('guided planner explains how to refresh stale proposals before adding', asy
       assert.equal(planButton(app.tree, 'Add 1 selected items to project').props.disabled, true);
       assert.deepEqual(app.requests.map(row => row.action), ['get']);
     } finally { app.dispose(); }
+  }
+});
+
+test('starter recheck saves the exact edited draft and leaves fresh duplicate choices for explicit approval',async()=>{
+  const initial=fixture();initial.contextChanged=true;initial.configured=false;initial.draft.source='starter';
+  initial.draft.starterVersion=5;
+  initial.draft.items.push({...copy(item),id:'two',title:'Brief volunteers',dependsOn:['one']});
+  const title='Confirm the fictional welcome desk',draftNote='Preserve the fictional pickup details.';
+  const shared={id:'task-matching-welcome',title,start:''};
+  const app=harness(context=>{
+    const {input,saved}=context;
+    if(!input&&saved.workspaceRevision===initial.workspaceRevision){
+      // The first load can already know the draft is stale; recheck must GET again.
+      if(app.requests.length>1)context.value={...saved,workspaceRevision:initial.workspaceRevision+1,existingTasks:[shared],existingTaskCount:1};
+      return;
+    }
+    if(input?.action==='recheck-starter'){
+      assert.equal(input.revision,initial.revision);assert.equal(input.workspaceRevision,initial.workspaceRevision+1);
+      assert.equal(input.generation,initial.draft.generation);assert.equal(input.items[0].title,title);assert.equal(input.items[0].note,draftNote);
+      assert.deepEqual(input.items.map(row=>[row.id,row.included]),[['one',true],['two',true]]);
+      assert.equal(Object.hasOwn(input,'reviewTiming'),false);
+      context.value={...saved,revision:saved.revision+1,contextChanged:false,brief:input.brief,
+        draft:{...saved.draft,brief:input.brief,items:input.items}};
+    }
+    if(input?.action==='save')context.value={...saved,revision:saved.revision+1,brief:input.brief,draft:{...saved.draft,items:input.items}};
+    if(input?.action==='apply'){
+      assert.equal(input.confirm,true);assert.deepEqual(input.items.filter(row=>row.included).map(row=>row.id),['two']);
+      assert.deepEqual(input.items[1].dependsOn,['one']);
+      context.value={...saved,revision:saved.revision+1,status:'applied',receipt:{generation:input.generation,
+        approvalHash:approvalHash(input),taskIds:['new-fictional-task']}};
+    }
+  },initial,'project=p_example',false,true);
+  try {
+    await app.start();assert.equal(planButton(app.tree,'Add 2 selected items to project').props.disabled,true);
+    await app.edit('title-one',title);await app.edit('note-one',draftNote);
+    await app.click('Recheck starter checklist');
+    assert.deepEqual(app.requests.map(row=>row.action),['get','get','recheck-starter']);
+    assert.equal(app.find('title-one').props.value,title);assert.equal(app.find('note-one').props.value,draftNote);
+    assert.equal(app.find('include-one').props.checked,true);assert.equal(app.find('include-two').props.checked,true);
+    assert.equal(app.find('plan-receipt-heading'),undefined);
+    assert.match(text(app.tree),/Already in project|same task|matching task/i);
+    assert.equal(planButton(app.tree,'Add 2 selected items to project').props.disabled,true,'a newly discovered duplicate still blocks shared creation');
+    await app.check('include-one',false);
+    assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,false);
+    assert.deepEqual(app.requests.map(row=>row.action),['get','get','recheck-starter']);
+    await app.click('Add 1 selected items to project');
+    assert.deepEqual(app.requests.map(row=>row.action),['get','get','recheck-starter','save','apply']);
+    assert.match(text(app.tree),/1 task added/);
+  } finally {app.dispose();}
+});
+
+test('a dated starter recheck asks about the current event and keeps even unchecked dates as entered',async()=>{
+  const initial=fixture();initial.contextChanged=true;initial.draft.source='starter';
+  initial.event={...initial.event,date:'2099-05-06',timeZone:'America/Los_Angeles'};
+  initial.draft.starterDates={eventDate:initial.event.date,endDate:initial.event.date};
+  initial.draft.items[0]={...initial.draft.items[0],dueDate:'2099-05-01',included:false};
+  const latestDate='2099-05-08',latestZone='America/New_York',editedDate='2099-05-02';
+  const app=harness(context=>{
+    if(!context.input&&app.requests.length>1)context.value={...context.saved,workspaceRevision:initial.workspaceRevision+1,
+      event:{...context.saved.event,date:latestDate,timeZone:latestZone}};
+    if(context.input?.action==='recheck-starter'){
+      assert.equal(context.input.reviewTiming,true);assert.equal(context.input.items[0].dueDate,editedDate);
+      assert.equal(context.input.items[0].included,false);
+      context.value={...context.saved,revision:context.saved.revision+1,contextChanged:false,
+        draft:{...context.saved.draft,items:context.input.items}};
+    }
+  },initial);
+  try {
+    const confirms=[];let allow=false;
+    window.confirm=message=>{confirms.push(message);return allow;};
+    await app.start();await app.edit('date-one',editedDate);
+    await app.click('Recheck starter checklist');
+    assert.deepEqual(app.requests.map(row=>row.action),['get','get']);
+    assert.ok(confirms[0]?.includes(latestDate));assert.ok(confirms[0]?.includes(latestZone));
+    assert.equal(app.find('date-one').props.value,editedDate);assert.equal(app.find('include-one').props.checked,false);
+    allow=true;await app.click('Recheck starter checklist');
+    assert.deepEqual(app.requests.map(row=>row.action),['get','get','get','recheck-starter']);
+    assert.equal(confirms.length,2);assert.equal(app.find('date-one').props.value,editedDate);
+    assert.equal(app.find('include-one').props.checked,false);assert.equal(app.find('plan-receipt-heading'),undefined);
+  } finally {app.dispose();}
+});
+
+test('starter recheck requires the same source, generation, revisions and returned edits before replacing local state',async()=>{
+  for(const change of ['opening revision','opening generation','opening source','ack revision','ack workspace','ack generation','ack source','ack edits','ack context']){
+    const initial=fixture();initial.contextChanged=true;initial.draft.source='starter';
+    const title='Fictional private replacement title';
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(!input&&app.requests.length===2){
+        const candidate={...copy(saved),workspaceRevision:initial.workspaceRevision+1};
+        if(change==='opening revision')candidate.revision++;
+        if(change==='opening generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
+        if(change==='opening source')candidate.draft.source='pasted';
+        context.value=candidate;
+      }
+      if(input?.action==='recheck-starter'){
+        const candidate={...copy(saved),revision:saved.revision+1,contextChanged:false};
+        candidate.draft.items=copy(input.items);
+        if(change==='ack revision')candidate.revision++;
+        if(change==='ack workspace')candidate.workspaceRevision++;
+        if(change==='ack generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
+        if(change==='ack source')candidate.draft.source='pasted';
+        if(change==='ack edits')candidate.draft.items[0].title='Different private item';
+        if(change==='ack context')candidate.contextChanged=true;
+        context.value=candidate;
+      }
+    },initial);
+    try {
+      await app.start();await app.edit('title-one',title);
+      await app.click('Recheck starter checklist');
+      assert.deepEqual(app.requests.map(row=>row.action),change.startsWith('opening')?['get','get']:['get','get','recheck-starter'],change);
+      assert.equal(app.find('title-one').props.value,title,change);
+      assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,true,change);
+      assert.equal(app.find('plan-receipt-heading'),undefined,change);
+      assert.match(text(app.tree),/reload|saved draft changed|local edits/i,change);
+    } finally {app.dispose();}
+  }
+});
+
+test('an exact starter can be rechecked after failed or interrupted generation, but not during an active lease',async()=>{
+  for(const status of ['error','interrupted','generating']){
+    const initial=fixture();initial.contextChanged=true;initial.draft.source='starter';
+    const note='Fictional checklist still worth keeping.';
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(!input&&app.requests.length===2)context.value={...saved,status,workspaceRevision:initial.workspaceRevision+1};
+      if(input?.action==='recheck-starter'){
+        assert.equal(input.items[0].note,note);
+        context.value={...saved,revision:saved.revision+1,status:'ready',contextChanged:false,
+          draft:{...saved.draft,items:input.items}};
+      }
+    },initial);
+    try {
+      await app.start();await app.edit('note-one',note);await app.click('Recheck starter checklist');
+      const active=status==='generating';
+      assert.deepEqual(app.requests.map(row=>row.action),active?['get','get']:['get','get','recheck-starter'],status);
+      assert.equal(app.find('note-one').props.value,note,status);
+      assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,active,status);
+      assert.equal(app.find('plan-receipt-heading'),undefined,status);
+    }finally{app.dispose();}
   }
 });
 
