@@ -2189,7 +2189,8 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
     assert.match(summary(), /Selected items preview/);
     assert.ok(nodes(preview()).some(node => node.type === 'strong' && text(node) === '1 preparation task'));
     assert.match(summary(), /1 event-day activity with a start time entered/);
-    assert.match(summary(), /if the time passes validation/);
+    assert.match(summary(), /Timeline timetable and run sheet/);
+    assert.doesNotMatch(summary(), /if the time passes validation/);
     assert.match(summary(), /1 event-day activity without a start time/);
     assert.match(summary(), /Needs a start time before appearing on the timetable or run sheet/i);
     assert.match(summary(), /Locations entered without a start time go into shared task notes, not Timeline locations/);
@@ -2228,6 +2229,138 @@ test('the selected-items preview updates draft-only scheduling impacts and disap
     assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'apply']);
     assert.ok(app.find('plan-receipt-heading'));
     assert.equal(preview(), undefined, 'the approval preview ends once the receipt exists');
+  } finally { app.dispose(); }
+});
+
+const scheduleSummary = app => text(app.find('plan-approval-impact'));
+const scheduleFixes = app => nodes(app.find('plan-approval-impact')).filter(node =>
+  node.type === 'button' && /^Fix (start|end) time for /.test(node.props['aria-label'] || ''));
+const disabledApproval = (app, count) => Boolean(planButton(app.tree, `Add ${count} selected items to project`).props.disabled);
+function assertScheduleError(app, proposal, field, message) {
+  const input = app.find(`${field === 'start' ? 'date' : 'end'}-${proposal}`);
+  const errorId = `schedule-${field}-error-${proposal}`;
+  assert.equal(String(input.props['aria-invalid']), 'true');
+  assert.ok(input.props['aria-describedby']?.split(/\s+/).includes(errorId));
+  assert.match(text(app.find(errorId)), message);
+}
+
+test('approval separates valid times from daylight-saving errors and never saves them on a blocked approval', async () => {
+  const initial = fixture();
+  initial.event.timeZone = 'America/Los_Angeles';
+  const gap = { ...copy(item), id: 'gap', kind: 'activity', title: 'Open doors', start: '2030-03-10T02:15' };
+  const repeatedEnd = { ...gap, id: 'repeated-end', start: '2030-11-03T00:30', end: '2030-11-03T01:15' };
+  const valid = { ...gap, id: 'valid', title: 'Review room setup', start: '2030-10-04T09:00' };
+  initial.draft.items = [gap, repeatedEnd, valid];
+  const app = harness(context => {
+    const { input, saved } = context;
+    if (input?.action === 'save') {
+      context.value = { ...saved, revision: 3, draft: { ...saved.draft, items: input.items } };
+    } else if (input?.action === 'apply') {
+      assert.deepEqual(input.items.filter(row => row.included).map(row => [row.id, row.start, row.end]), [
+        [repeatedEnd.id, repeatedEnd.start, '2030-11-03T02:15'], [valid.id, valid.start, valid.end],
+      ]);
+      context.value = { ...saved, status: 'applied', receipt: { generation: input.generation,
+        approvalHash: approvalHash(input), taskIds: ['added-doors', 'added-room'] } };
+    }
+  }, initial, 'project=p_example', true);
+  try {
+    await app.start();
+    assert.match(scheduleSummary(app), /Review activity times before adding items/i);
+    assert.match(scheduleSummary(app), /\b1 event-day activity with a start time/);
+    assertScheduleError(app, gap.id, 'start', /does not exist/i);
+    assertScheduleError(app, repeatedEnd.id, 'end', /occurs twice/i);
+    assert.deepEqual(scheduleFixes(app).map(node => node.props['aria-label']), [
+      'Fix start time for Open doors (item 1)', 'Fix end time for Open doors (item 2)',
+    ]);
+    assert.equal(disabledApproval(app, 3), true);
+
+    const inputId = 'end-' + repeatedEnd.id;
+    const renderedInput = app.find(inputId);
+    assert.ok(nodes(app.tree).some(node => node.type === 'details' && node.props['data-plan-item-details'] && nodes(node).includes(renderedInput)),
+      'the affected end time sits inside its item details disclosure');
+    const editor = { open: false };
+    let focused = false;
+    globalThis.document.getElementById = id => id === inputId ? {
+      localName: 'input', type: app.find(inputId).props.type,
+      matches: () => false,
+      closest: selector => selector === 'details[data-plan-item-details]' ? editor : null,
+      focus() {
+        assert.equal(editor.open, true, 'the end-time details open before moving focus');
+        focused = true;
+      },
+      scrollIntoView() {},
+    } : null;
+    const fixEnd = scheduleFixes(app)[1];
+    assert.equal(fixEnd.props.type, 'button');
+    fixEnd.props.onClick();
+    assert.equal(focused, true, 'the button targets this proposal’s end time, not the identical title’s start');
+    await app.edit(inputId, '2030-11-03T02:15');
+    assert.equal(app.find('schedule-end-error-' + repeatedEnd.id), undefined);
+    assert.notEqual(String(app.find(inputId).props['aria-invalid']), 'true');
+    assert.equal(disabledApproval(app, 3), true, 'the other selected item still has an invalid time');
+
+    await app.check('include-' + gap.id, false);
+    assert.doesNotMatch(scheduleSummary(app), /Review activity times before adding items/i);
+    assert.deepEqual(scheduleFixes(app), []);
+    assert.equal(disabledApproval(app, 2), false, 'an unchecked DST-invalid item is not going into the timetable');
+    assert.deepEqual(app.requests, [{ action: 'get' }], 'reporting, focusing and correcting private fields never save or apply');
+    assert.deepEqual(app.saved, initial);
+    await app.click('Add 2 selected items to project');
+    assert.deepEqual(app.requests.map(request => request.action), ['get', 'save', 'apply']);
+    assert.ok(app.find('plan-receipt-heading'));
+  } finally { app.dispose(); }
+});
+
+test('missing project time zone blocks timed approval but an organizer can leave an activity unscheduled', async () => {
+  const initial = fixture();
+  initial.event.timeZone = '';
+  const activity = { ...copy(item), id: 'arrival', kind: 'activity', title: 'Welcome guests', start: '2030-10-04T09:00', end: '2030-10-04T09:30' };
+  initial.draft.items = [activity];
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    assert.equal(disabledApproval(app, 1), true);
+    assert.match(scheduleSummary(app), /time zone.*Project settings|Project settings.*time zone/i);
+    assertScheduleError(app, activity.id, 'start', /time zone/i);
+    assert.deepEqual(scheduleFixes(app).map(node => node.props['aria-label']), ['Fix start time for Welcome guests (item 1)']);
+
+    await app.edit('date-' + activity.id, '');
+    assert.equal(app.find('end-' + activity.id).props.value, '', 'clearing the start also clears the end');
+    assert.match(scheduleSummary(app), /1 event-day activity without a start time/);
+    assert.doesNotMatch(scheduleSummary(app), /Review activity times before adding items/i);
+    assert.equal(disabledApproval(app, 1), false);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+  } finally { app.dispose(); }
+});
+
+test('an end before its start or without a start must be corrected even in an unchecked private item', async () => {
+  const initial = fixture();
+  const order = { ...copy(item), id: 'order', kind: 'activity', title: 'Open the foyer', start: '2030-10-04T09:00', included: false };
+  const orphanEnd = { ...order, id: 'orphan-end', title: 'Host welcome', start: '' };
+  initial.draft.items = [copy(item), order, orphanEnd];
+  const app = harness(undefined, initial, 'project=p_example', false, true);
+  try {
+    await app.start();
+    assert.equal(disabledApproval(app, 1), false);
+    await app.edit('end-' + order.id, '2030-10-04T09:00');
+    await app.edit('end-' + orphanEnd.id, '2030-10-04T09:30');
+    assert.equal(app.find('include-' + order.id).props.checked, false);
+    assert.equal(app.find('include-' + orphanEnd.id).props.checked, false);
+    assert.equal(disabledApproval(app, 1), true);
+    assert.equal(planButton(app.tree, saveDraftAndReturn).props.disabled, true, 'the whole draft must be valid before pausing the guide');
+    assertScheduleError(app, order.id, 'end', /after.*start|later.*start/i);
+    assertScheduleError(app, orphanEnd.id, 'end', /start/i);
+    assert.match(scheduleSummary(app), /Review activity times before adding items/i);
+    assert.deepEqual(scheduleFixes(app).map(node => node.props['aria-label']), [
+      'Fix end time for Open the foyer (item 2)', 'Fix end time for Host welcome (item 3)',
+    ]);
+    await app.edit('end-' + order.id, '2030-10-04T09:30');
+    assert.equal(disabledApproval(app, 1), true);
+    await app.edit('end-' + orphanEnd.id, '');
+    assert.equal(disabledApproval(app, 1), false);
+    assert.equal(planButton(app.tree, saveDraftAndReturn).props.disabled, false);
+    assert.deepEqual(scheduleFixes(app), []);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
   } finally { app.dispose(); }
 });
 

@@ -21,7 +21,9 @@ import {
   parseBrief,
   parsePlanItems,
   planCategories,
+  reviewPlanActivityTime,
   type PlanBrief,
+  type PlanScheduleIssue,
   type ReviewedItem,
 } from '@/lib/plan-generation';
 
@@ -177,7 +179,6 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   const guideDraftNeedsRecheck = guideStage === 'review' && !!data?.contextChanged;
   const unsentChecklist = !!checklist.trim();
   const offerGuidePause = guideReturn && !!data && !applied && (draftDirty || unsentChecklist);
-  const canPauseGuide = offerGuidePause && draftDirty && !locked && !!brief.description.trim() && !unsentChecklist;
   const guideRecovery = data?.draft?.source === 'pasted' ? ['#plan-recheck', 'Recheck your pasted draft'] :
     data?.draft?.source === 'starter' || !data?.configured ? ['#plan-starter', 'Start a fresh checklist'] :
     ['#plan-generate', 'Generate a new draft'];
@@ -255,6 +256,20 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     data?.draft?.duplicateSuggestions || [],
   );
   const itemNumbers = new Map(items.map((item, index) => [item.id, index + 1]));
+  const scheduleIssues = new Map<string, { item: ReviewedItem; issue: PlanScheduleIssue }>();
+  let invalidPrivateSchedule = false;
+  if (!applied) {
+    const selectedIds = new Set(selected.map(item => item.id));
+    for (const item of items) {
+      if (item.kind !== 'activity') continue;
+      const issue = reviewPlanActivityTime(item, data?.event.timeZone || '', selectedIds.has(item.id));
+      if (issue) {
+        scheduleIssues.set(item.id, { item, issue });
+        if (issue.blocksPrivateSave) invalidPrivateSchedule = true;
+      }
+    }
+  }
+  const canPauseGuide = offerGuidePause && draftDirty && !locked && !invalidPrivateSchedule && !!brief.description.trim() && !unsentChecklist;
   const missingDependencies = missing.length > 0;
   const mixedDraft = items.some(item=>item.kind==='preparation') && items.some(item=>item.kind==='activity');
   function accept(result: any, restoreActivityPreference = true) {
@@ -381,11 +396,13 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       }),
     );
   };
-  function focusDraftStart(itemId: string) {
-    if (locked || applied || pending.current || !selected.some(item => item.id === itemId && item.kind === 'activity' && !item.start)) return;
-    const field = document.getElementById('date-' + itemId) as HTMLInputElement | null;
+  function focusDraftScheduleField(itemId: string, name: 'start' | 'end') {
+    if (locked || applied || pending.current) return;
+    const issue = scheduleIssues.get(itemId)?.issue;
+    if (issue?.field !== name && !(name === 'start' && selected.some(item => item.id === itemId && item.kind === 'activity' && !item.start))) return;
+    const field = document.getElementById((name === 'start' ? 'date-' : 'end-') + itemId) as HTMLInputElement | null;
     if (field?.localName !== 'input' || field.type !== 'datetime-local' || field.matches(':disabled')) return;
-    const editor = field.closest<HTMLDetailsElement>('details[data-plan-owner-date]');
+    const editor = field.closest<HTMLDetailsElement>(name === 'start' ? 'details[data-plan-owner-date]' : 'details[data-plan-item-details]');
     if (!editor) return;
     editor.open = true;
     field.focus({ preventScroll: true });
@@ -689,6 +706,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         </div>
         {offerGuidePause && <p id="guide-pause-help" className="basis-full text-muted-foreground">{unsentChecklist
           ? 'Import or clear your pasted checklist before leaving. It isn’t part of the saved draft yet.'
+          : invalidPrivateSchedule ? <>Before saving, <a href="#plan-approval-impact" className="inline-flex min-h-11 items-center font-medium text-primary underline">review the highlighted activity times</a>.</>
           : !brief.description.trim() ? 'Add a short event description before saving.'
           : 'Save your private edits for later. Nothing is added to the project and no AI request is made.'}</p>}
       </div>}
@@ -852,7 +870,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               {!applied && (
                 <Button
                   variant="outline"
-                  disabled={locked || !brief.description.trim()}
+                  disabled={locked || invalidPrivateSchedule || !brief.description.trim()}
+                  aria-describedby={invalidPrivateSchedule ? 'plan-save-schedule-help' : undefined}
                   onClick={() =>
                     void run(async () => {
                       await save();
@@ -864,6 +883,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                 </Button>
               )}
             </div>
+            {invalidPrivateSchedule && <p id="plan-save-schedule-help" className="text-sm text-muted-foreground">Before saving, <a href="#plan-approval-impact" className="inline-flex min-h-11 items-center font-medium text-primary underline">review the highlighted activity times</a>.</p>}
             {guideReturn && guideStage === 'review' && !locked && <p className="text-sm text-muted-foreground">
               Your draft is private. <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to your draft</a>{guideDraftNeedsRecheck ? ' to review it against the current project.' : ' to choose what to add.'}
             </p>}
@@ -1018,6 +1038,9 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               <p className="text-sm text-muted-foreground">Changes only the selected private proposals, including any owners already chosen for them. Excluded and reused items, dates and prerequisites stay unchanged. Nothing is assigned in the shared project until you add the reviewed items.</p>
             </div>}
             {items.map((item, index) => {
+              const scheduleIssue = scheduleIssues.get(item.id)?.issue;
+              const startError = scheduleIssue?.field === 'start' ? `schedule-start-error-${item.id}` : undefined;
+              const endError = scheduleIssue?.field === 'end' ? `schedule-end-error-${item.id}` : undefined;
               const exact = matches.get(item.id) || [];
               const similar = possible.get(item.id);
               const reusedTask = existingById.get(reusable.get(item.id) || '');
@@ -1286,6 +1309,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                       <Input
                         id={'date-' + item.id}
                         aria-label={item.kind === 'activity' ? `Activity start for ${item.title.trim() || 'Untitled activity'} (item ${index + 1})` : undefined}
+                        aria-invalid={startError ? true : undefined}
+                        aria-describedby={startError}
                         type={
                           item.kind === 'activity' ? 'datetime-local' : 'date'
                         }
@@ -1304,10 +1329,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                           )
                         }
                       />
+                      {startError && <p id={startError} className="text-sm text-destructive">{scheduleIssue?.message}</p>}
                     </div>
                   </div>
                   </details>
-                  <details>
+                  <details data-plan-item-details>
                     <summary className="cursor-pointer text-sm font-medium">
                       Details
                       {item.dependsOn.length
@@ -1359,11 +1385,15 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                             <Input
                               id={'end-' + item.id}
                               type="datetime-local"
+                              aria-label={`Activity end for ${item.title.trim() || 'Untitled activity'} (item ${index + 1})`}
+                              aria-invalid={endError ? true : undefined}
+                              aria-describedby={endError}
                               value={item.end}
                               onChange={(e) =>
                                 updateItem(item.id, { end: e.target.value })
                               }
                             />
+                            {endError && <p id={endError} className="text-sm text-destructive">{scheduleIssue?.message}</p>}
                           </div>
                           <div className="space-y-2">
                             <Label htmlFor={'location-' + item.id}>
@@ -1446,13 +1476,14 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                   keep separate work.
                 </p>
               )}
-              <PlanApprovalImpact selected={selected} itemNumbers={itemNumbers} onSetStart={locked ? undefined : focusDraftStart} />
+              <PlanApprovalImpact selected={selected} itemNumbers={itemNumbers} scheduleIssues={scheduleIssues} onEditSchedule={locked ? undefined : focusDraftScheduleField} />
               <p className="text-sm text-muted-foreground">Nothing will be sent or booked.</p>
               <Button
                 className="h-auto min-h-10 whitespace-normal"
                 disabled={
                   locked ||
                   !selected.length ||
+                  scheduleIssues.size > 0 ||
                   missingDependencies ||
                   duplicates.size > 0 ||
                   unresolved.size > 0 ||
@@ -1517,7 +1548,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               {offerGuidePause && <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <Button type="button" variant="outline" className="h-auto min-h-11 whitespace-normal"
                   disabled={!canPauseGuide} aria-describedby="guide-pause-help" onClick={saveAndReturnToGuide}>Save draft and return to guide</Button>
-                <p className="text-sm text-muted-foreground">Keep working on this private draft later without sharing it.</p>
+                <p className="text-sm text-muted-foreground">{invalidPrivateSchedule ? 'Correct the highlighted activity times before saving.' : 'Keep working on this private draft later without sharing it.'}</p>
               </div>}
             </div>
           )}

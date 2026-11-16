@@ -87,6 +87,38 @@ const local = (value: unknown): value is string =>
       validPlanDate(value.slice(0, 10)) &&
       value[10] === 'T' &&
       time(value.slice(11))));
+const validEndOrder = (start: string, end: string) => !end || (!!start && end > start);
+
+export type PlanScheduleIssue = {
+  field: 'start' | 'end';
+  message: string;
+  blocksPrivateSave: boolean;
+};
+
+export function reviewPlanActivityTime(
+  item: Pick<PlanItem, 'start' | 'end'>,
+  timeZone: string,
+  selected: boolean,
+): PlanScheduleIssue | null {
+  // Both save and apply parse the whole draft; only selected new items reach
+  // the workspace's schedule validation.
+  if (!local(item.start)) return { field: 'start', message: 'Enter a valid start date and time.', blocksPrivateSave: true };
+  if (!local(item.end)) return { field: 'end', message: 'Enter a valid end date and time, or leave it blank.', blocksPrivateSave: true };
+  if (!validEndOrder(item.start, item.end)) return {
+    field: 'end', message: item.start ? 'Set the end after the start, or leave the end blank.' : 'Enter a start time first, or leave the end blank.', blocksPrivateSave: true,
+  };
+  if (!selected || !item.start) return null;
+  if (!timeZone) return {
+    field: 'start', message: 'Clear the start time to add this activity without a schedule. To schedule it afterward, set the event time zone in Project settings, then open Timeline.', blocksPrivateSave: false,
+  };
+  const calendar = (globalThis as typeof globalThis & { GatherCalendar: {
+    scheduleTimeIssue: (schedule: typeof item, zone: string) => { field: 'start' | 'end'; value: string; state: string } | null;
+    scheduleTimeMessage: (issue: { field: 'start' | 'end'; value: string; state: string }, zone: string) => string;
+  } }).GatherCalendar;
+  const issue = calendar.scheduleTimeIssue(item, timeZone);
+  return issue ? { field: issue.field, message: calendar.scheduleTimeMessage(issue, timeZone), blocksPrivateSave: false } : null;
+}
+
 export function parseBrief(value: any, eventDate: string): PlanBrief {
   if (
     !object(value, [
@@ -178,7 +210,7 @@ export function parsePlanItems(
       ['due_date', () => validPlanDate(item.dueDate)],
       ['start', () => local(item.start)],
       ['end', () => local(item.end)],
-      ['end_order', () => !item.end || (item.start && item.end > item.start)],
+      ['end_order', () => validEndOrder(item.start, item.end)],
       ['preparation_schedule', () => item.kind !== 'preparation' || (!item.start && !item.end)],
       ['activity_deadline', () => item.kind !== 'activity' || !item.dueDate],
       ['location', () => text(item.location, 240)],
