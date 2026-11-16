@@ -131,7 +131,7 @@ function assertExistingTaskLink(link, href) {
   assert.equal(link.props.rel, 'noopener noreferrer');
   assert.equal(link.props.onClick, undefined);
 }
-function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true, starterPreviews, {captureNoticeFocus = false} = {}) {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true, starterPreviews, {captureNoticeFocus = false,receiptPlan} = {}) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -223,7 +223,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query, embedded, guided, receiptTask, receiptHandoff, starterPreviews });
+    tree = PlanReview({ query, embedded, guided, receiptTask, receiptPlan, receiptHandoff, starterPreviews });
     // The hook renderer has no real DOM; attach focus refs before effects.
     for (const target of nodes(tree).filter(node => node.props?.ref && (['plan-receipt-heading', 'plan-receipt-return-status', 'plan-brief'].includes(node.props.id) ||
       (captureNoticeFocus && !node.props.id && node.props.role === 'status' && node.props.tabIndex === -1)))) {
@@ -1488,6 +1488,71 @@ function appliedStarterFixture() {
   initial.receiptTasks = [{ id: 'task-venue', title: 'Current shared venue task', handoff: { state: 'needs-owner' } }];
   return initial;
 }
+
+test('only a solo organizer’s real applied plan offers a scoped Team handoff to find an owner', async () => {
+  const project = 'p_12345678-1234-4234-8234-123456789abc';
+  const cases = [
+    { label:'singular guided activity', guided:true, expectedTask:'task-venue' },
+    { label:'singular', expectedTask:'task-venue' },
+    { label:'multiple without a source task', aliases:['task-ops'], expectedTask:'' },
+    { label:'multiple with exact source task', aliases:['task-ops'], receiptTask:'task-ops', expectedTask:'task-ops' },
+    { label:'not an owner-gap source task', aliases:['task-ops'], receiptTask:'task-accepted', expectedTask:'' },
+    { label:'solo with historical teammate', members:[{id:'former',name:'Former teammate',active:false}], expectedTask:'task-venue' },
+    { label:'another active teammate', members:[{id:'another',name:'Existing teammate',active:true}] },
+    { label:'unknown identity', identity:false },
+    { label:'identity not on the active roster', identity:false, actorId:'other-actor' },
+    { label:'without an owner gap', noGap:true },
+    { label:'demo', query:`project=${project}&demo=1` },
+    { label:'embedded sidebar', embedded:true },
+    { label:'suggestions', query:`project=${project}&mode=suggestions` },
+    { label:'assistant', query:`project=${project}&mode=assistant` },
+    { label:'missing explicit project', query:'' },
+  ];
+  for (const run of cases) {
+    const initial = appliedStarterFixture();
+    if (run.identity !== false || run.actorId) initial.actorId = run.actorId || 'jack';
+    if (run.members) initial.members.push(...run.members);
+    if (run.aliases) initial.receiptTasks.push(...run.aliases.map(id => ({id,title:'Another owner gap',handoff:{state:'needs-owner'}})));
+    initial.receiptTasks.push({id:'task-accepted',title:'Already accepted task',handoff:{state:'accepted'}});
+    initial.receipt.taskIds=initial.receiptTasks.map(task=>task.id);
+    if (run.noGap) initial.receiptTasks[0].handoff={state:'accepted'};
+    const app=harness(undefined,initial,run.query??`project=${project}`,!!run.embedded,!!run.guided,run.receiptTask);
+    try {
+      await app.start();
+      const handoffLinks=nodes(app.tree).filter(node=>node.type==='a'&&node.props.href?.includes('from=plan-handoff'));
+      if (run.expectedTask === undefined) assert.deepEqual(handoffLinks,[],run.label);
+      else {
+        assert.equal(handoffLinks.length,1,run.label);
+        const [link]=handoffLinks, url=new URL(link.props.href,'https://fixture.test');
+        assert.equal(url.pathname,'/team');
+        assert.deepEqual(Object.fromEntries(url.searchParams),{project,from:'plan-handoff',receiptPlan:initial.receipt.generation,
+          ...(run.expectedTask?{receiptTask:run.expectedTask}:{}),...(run.guided?{resumeGuide:'1'}:{})},run.label);
+        assert.equal(link.props.onClick,undefined,'opening Team access only navigates');
+        assert.match(text(link),/invite|team access/i);
+      }
+      assert.deepEqual(app.requests,[{action:'get'}],run.label);
+    } finally { app.dispose(); }
+  }
+});
+
+test('returning from Team focuses the exact receipt or reports that the original handoff is no longer current',async()=>{
+  const project='p_12345678-1234-4234-8234-123456789abc';
+  for(const variant of ['current group','current task','different generation','not applied']){
+    const initial=appliedStarterFixture(), receiptPlan=initial.receipt.generation;
+    if(variant==='different generation')initial.receipt.generation='2f3392ea-8e24-4944-80fc-6b6bf3e136d7';
+    if(variant==='not applied'){initial.status='ready';initial.receipt=null;initial.receiptTasks=[];}
+    const receiptTask=variant==='current group'?undefined:'task-venue';
+    const app=harness(undefined,initial,`project=${project}`,false,true,receiptTask,true,undefined,{receiptPlan});
+    try{
+      await app.start();
+      const current=variant.startsWith('current');
+      assert.deepEqual(app.focused,[variant==='current group'?'plan-receipt-heading':variant==='current task'?'task:task-venue':'plan-receipt-return-status'],variant);
+      if(!current)assert.match(text(app.find('plan-receipt-return-status')),/That plan handoff is no longer current\./);
+      else assert.equal(app.find('plan-receipt-return-status'),undefined);
+      assert.deepEqual(app.requests,[{action:'get'}],variant);
+    }finally{app.dispose();}
+  }
+});
 
 test('an applied standalone plan puts the live handoff before closed future-work and original-proposal disclosures', async () => {
   for (const guided of [false, true]) {

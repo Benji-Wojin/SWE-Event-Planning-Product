@@ -29,3 +29,23 @@ export function planActivityHref(params: URLSearchParams, id: string, guided = f
   if (guided) query.set('guide', '1');
   return '/project?' + query;
 }
+
+export function teamAccessFromPlanHref(project: string, receiptPlan: string, receiptTask = '', guided = false): string {
+  const plan = workspaceTaskId(receiptPlan);
+  if (!project || !plan) return '';
+  const query = new URLSearchParams({ project, from: 'plan-handoff', receiptPlan: plan });
+  const task = workspaceTaskId(receiptTask);
+  if (task) query.set('receiptTask', task);
+  if (guided) query.set('resumeGuide', '1');
+  return '/team?' + query;
+}
+
+export function planHandoffHref(project: string, receiptPlan: string, receiptTask = '', guided = false): string {
+  const plan = workspaceTaskId(receiptPlan);
+  if (!project || !plan) return '';
+  const query = new URLSearchParams({ project, receiptPlan: plan });
+  const task = workspaceTaskId(receiptTask);
+  if (task) query.set('receiptTask', task);
+  if (guided) query.set('guide', '1');
+  return '/plan?' + query;
+}

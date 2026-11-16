@@ -225,6 +225,67 @@ test('guided invite defaults to in-app delivery even with a connected sender', a
     delete globalThis.__selfserviceState;
   }
 });
+test('Team access handoff is read-only on entry and confirms leaving an unsent draft without enabling email', async () => {
+  const projectId='p_12345678-1234-4234-8234-123456789abc';
+  const handoffHref=`/plan?project=${projectId}&receiptPlan=de22719e-0292-4545-a5dd-fd2e50c5969e&receiptTask=task-venue&guide=1`;
+  const team={name:'Fictional event',projectId,owner:{name:'Organizer',email:'fixture@example.test'},members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@example.test'}};
+  const previous={fetch:globalThis.fetch,window:globalThis.window,document:globalThis.document,location:globalThis.location};
+  const calls=[], prompts=[], focused=[];
+  let acceptLeave=false, release;
+  const pending=new Promise(resolve=>{release=resolve;});
+  function follow(link){let prevented=false;link.props.onClick?.({preventDefault(){prevented=true;}});return prevented;}
+  try {
+    globalThis.window={confirm:message=>{prompts.push(message);return acceptLeave;}};
+    const body={};globalThis.document={body,activeElement:body};
+    globalThis.location={search:''};
+    globalThis.fetch=async(url,options={})=>{
+      calls.push({url,method:options.method||'GET',body:options.body&&JSON.parse(options.body)});
+      return options.method==='POST'?pending:Response.json(team);
+    };
+    const {tree,state,effects}=render(TeamClient,{projectId,handoffHref},[team,'','guest@example.test',false,'']);
+    const title=tree.find(node=>node.type==='h2'&&text(node)==='Invite to Fictional event');
+    title.props.ref.current={focus:()=>focused.push('invitation-heading')};
+    effects.forEach(effect=>effect());
+    await settle();
+    assert.equal(title.props.tabIndex,-1);
+    assert.deepEqual(focused,['invitation-heading']);
+    assert.deepEqual(calls,[{url:`/api/team?project=${projectId}`,method:'GET',body:undefined}], 'opening does not invite, send, or record a tutorial checkpoint');
+    const checkbox=tree.find(node=>node.type==='input'&&node.props.type==='checkbox');
+    assert.equal(checkbox.props.checked,false);
+    assert.ok(tree.find(node=>node.type==='button'&&text(node)==='Invite in Weft'));
+    const back=tree.find(node=>node.type==='a'&&text(node)==='Back to plan handoff');
+    const projectBack=tree.find(node=>node.type==='a'&&text(node)==='Back to project');
+    assert.equal(back.props.href,handoffHref);
+    assert.equal(projectBack.props.href,`/project?project=${projectId}`);
+    assert.equal(follow(back),true);
+    assert.equal(follow(projectBack),true);
+    assert.deepEqual(prompts,['Leave Team access? This email field won’t be kept.','Leave Team access? This email field won’t be kept.']);
+    assert.equal(state[2],'guest@example.test');
+    acceptLeave=true;
+    assert.equal(follow(back),false,'confirmed discard allows normal link navigation');
+    assert.equal(calls.length,1);
+
+    const submission=tree.find(node=>node.type==='form').props.onSubmit({preventDefault(){}});
+    assert.equal(follow(back),true,'an outstanding invitation cannot be left via the handoff');
+    assert.equal(follow(projectBack),true,'an outstanding invitation cannot be left via the ordinary link');
+    assert.equal(prompts.length,3,'the pending gate does not ask to discard in-flight data');
+    assert.equal(calls[1].body.action,'invite');
+    assert.equal(Object.hasOwn(calls[1].body,'senderEmail'),false);
+    assert.equal(Object.hasOwn(calls[1].body,'guidedTutorial'),false);
+    release(Response.json(team));await submission;
+    assert.equal(calls.length,2);
+    const refreshed=render(TeamClient,{projectId,handoffHref},state);
+    const refreshedBack=refreshed.tree.find(node=>node.type==='a'&&text(node)==='Back to plan handoff');
+    assert.equal(follow(refreshedBack),false,'a finished invitation no longer has an unsent email');
+    assert.equal(prompts.length,3);
+
+    const wrongProject=render(TeamClient,{projectId,handoffHref},[{...team,projectId:'another-project'}]);
+    assert.ok(!wrongProject.tree.some(node=>node.type==='a'&&text(node)==='Back to plan handoff'));
+    const blank=render(TeamClient,{projectId,handoffHref},[team,'','   ',false,'']);
+    assert.equal(follow(blank.tree.find(node=>node.type==='a'&&text(node)==='Back to plan handoff')),false);
+  } finally { Object.assign(globalThis,previous);delete globalThis.__selfserviceState; }
+});
 test('inviting sends email by default and reports the durable delivery result', async () => {
   const previous = globalThis.fetch;
   const team = { name: 'QA event', projectId: 'p_test', owner: {name:'Owner',email:'qa@example.com'},

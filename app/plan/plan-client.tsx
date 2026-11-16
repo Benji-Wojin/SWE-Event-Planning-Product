@@ -11,7 +11,7 @@ import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planApprovalHash } from '@/lib/plan-approval-hash';
 import { planPrerequisiteDependents, planPrerequisiteLimit, planPrerequisiteLoopSources } from '@/lib/plan-prerequisites';
-import { planActivityHref, planTaskHref } from '@/lib/workspace-task-link';
+import { planActivityHref, planTaskHref, teamAccessFromPlanHref } from '@/lib/workspace-task-link';
 import { workspaceScheduleDate } from '@/lib/workspace-day';
 import type { StarterChecklistPreview } from '@/lib/starter-checklists';
 import {AskWeftPanel} from './ask-weft-panel';
@@ -107,8 +107,8 @@ async function api(query: string, body?: unknown, signal?: AbortSignal) {
     );
   return data;
 }
-export function PlanReview({ query, embedded = false, guided = false, receiptTask = '', receiptHandoff = false, starterPreviews }: {
-  query: string; embedded?: boolean; guided?: boolean; receiptTask?: string; receiptHandoff?: boolean;
+export function PlanReview({ query, embedded = false, guided = false, receiptTask = '', receiptPlan = '', receiptHandoff = false, starterPreviews }: {
+  query: string; embedded?: boolean; guided?: boolean; receiptTask?: string; receiptPlan?: string; receiptHandoff?: boolean;
   starterPreviews?: Readonly<Record<string, StarterChecklistPreview>>;
 }) {
   const [data, setData] = useState<any>(null),
@@ -205,10 +205,13 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   const showHandoff=applied&&!assistant&&!suggestions;
   const canReturnToReceipt = receiptHandoff && !embedded && !demo && !assistant && !suggestions && !!params.get('project');
   const receiptReturnTask = canReturnToReceipt ? receiptTask : '';
-  const returnInReceipt = !!receiptReturnTask && applied && Array.isArray(data.receipt.taskIds) &&
+  const receiptReturnPlan = canReturnToReceipt ? receiptPlan : '';
+  const priorReceiptChanged = !!receiptReturnPlan && (!applied || data.receipt.generation !== receiptReturnPlan);
+  const returnInReceipt = !!receiptReturnTask && !priorReceiptChanged && applied && Array.isArray(data.receipt.taskIds) &&
     data.receipt.taskIds.includes(receiptReturnTask) === true;
   const returnTaskAvailable = returnInReceipt && receiptTasks.some(task => task.id === receiptReturnTask);
-  const receiptReturnMessage = !data || !receiptReturnTask || returnTaskAvailable ? '' : returnInReceipt
+  const receiptReturnMessage = !data ? '' : priorReceiptChanged ? 'That plan handoff is no longer current. You’re viewing the latest plan for this project.' :
+    !receiptReturnTask || returnTaskAvailable ? '' : returnInReceipt
     ? 'This task is no longer available in the project.' : 'This task is no longer in the current plan receipt.';
   const handoffGroups = showHandoff ? groupPlanHandoff(receiptTasks) : [];
   const untimedCount = showHandoff ? receiptTasks.filter(task => task.needsStartTime).length : 0;
@@ -238,14 +241,16 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     receiptHeading.current?.focus();
   },[applied]);
   useEffect(()=>{
-    if(!data||!receiptReturnTask||handledReceiptReturn.current===receiptReturnTask)return;
-    handledReceiptReturn.current=receiptReturnTask;
+    if(!data||(!receiptReturnTask&&!receiptReturnPlan))return;
+    const key=JSON.stringify([receiptReturnPlan,receiptReturnTask]);
+    if(handledReceiptReturn.current===key)return;
+    handledReceiptReturn.current=key;
     if(document.activeElement!==document.body)return;
     const heading=receiptHeading.current;
     const links=returnTaskAvailable ? heading?.closest('section')?.querySelectorAll<HTMLAnchorElement>('a[data-handoff-task]') : undefined;
     const link=links?Array.from(links).find(el=>el.dataset.handoffTask===receiptReturnTask&&!el.dataset.handoffIntent):undefined;
-    (returnInReceipt ? link||heading : receiptReturnNotice.current)?.focus();
-  },[!!data,receiptReturnTask,returnInReceipt,returnTaskAvailable]);
+    (priorReceiptChanged || (receiptReturnTask && !returnInReceipt) ? receiptReturnNotice.current : link||heading)?.focus();
+  },[!!data,receiptReturnTask,receiptReturnPlan,priorReceiptChanged,returnInReceipt,returnTaskAvailable]);
   useEffect(()=>{
     const previous=handoffLinkFocus.current;
     handoffLinkFocus.current=null;
@@ -276,6 +281,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   const itemNumbers = new Map(items.map((item, index) => [item.id, index + 1]));
   const assignees = ((data?.members || []) as { id: string; name: string; active?: boolean }[]).filter(member => member.active !== false);
   const assigneeIds = new Set(assignees.map(member => member.id));
+  const ownerHandoff = handoffGroups.find(group => group.id === 'owner');
+  const soloOwnerHandoff = canReturnToReceipt && ownerHandoff && typeof data?.actorId === 'string' && assigneeIds.has(data.actorId) && assigneeIds.size === 1;
+  const inviteTask = ownerHandoff?.tasks.some(task => task.id === receiptReturnTask) ? receiptReturnTask :
+    ownerHandoff?.tasks.length === 1 ? ownerHandoff.tasks[0].id : '';
+  const handoffInviteHref = soloOwnerHandoff ? teamAccessFromPlanHref(params.get('project')!, data.receipt.generation, inviteTask, guideReturn) : '';
   const unavailableOwners = applied ? [] : unavailablePlanOwnerItems(selected, assigneeIds);
   const unavailableOwnerItemIds = new Set(unavailableOwners.map(item => item.id));
   const prerequisiteDependents = planPrerequisiteDependents(items);
@@ -882,7 +892,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               {handoffGroups.map(group => (
                 <section key={group.id} aria-labelledby={'handoff-' + group.id} className="rounded-lg border p-3">
                   <h4 id={'handoff-' + group.id} className="font-medium">{group.title} <span className="text-muted-foreground">· {group.tasks.length}</span></h4>
-                  {group.help && <p className="text-muted-foreground">{group.help}</p>}
+                  {group.id === 'owner' && handoffInviteHref ? <p className="text-muted-foreground">
+                    Open a task to assign it to yourself, or invite a teammate and assign it after they join.
+                  </p> : group.help && <p className="text-muted-foreground">{group.help}</p>}
+                  {group.id === 'owner' && handoffInviteHref && !locked && <a href={handoffInviteHref}
+                    className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Invite a teammate</a>}
                   <ul className="mt-1 space-y-1">{group.tasks.map(receiptTaskRow)}</ul>
                 </section>
               ))}

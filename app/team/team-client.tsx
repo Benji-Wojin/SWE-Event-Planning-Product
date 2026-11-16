@@ -8,16 +8,19 @@ import { GMAIL_ENABLED } from '@/lib/release-policy';
 import { accountRequest } from '@/lib/account-request';
 import { observeTutorial } from '@/lib/guided-tutorial-client';
 import { GuideStage } from '@/components/guide-stage';
-export function TeamClient({ projectId, guided = false, tutorial = false }: { projectId: string; guided?: boolean; tutorial?: boolean }) {
+export function TeamClient({ projectId, guided = false, tutorial = false, handoffHref = '' }: {
+  projectId: string; guided?: boolean; tutorial?: boolean; handoffHref?: string;
+}) {
   const [team, setTeam] = useState<TeamView | null>(null),
     [error, setError] = useState(''),
     [email, setEmail] = useState(''),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(''),
-    [emailDelivery, setEmailDelivery] = useState(!guided);
+    [emailDelivery, setEmailDelivery] = useState(!guided && !handoffHref);
   const pending = useRef(false),
     requestId = useRef(''),
-    readEpoch = useRef(0);
+    readEpoch = useRef(0),
+    invitationHeading = useRef<HTMLHeadingElement>(null);
   const endpoint = '/api/team?project=' + encodeURIComponent(projectId);
   const [tutorialInviteCreated, setTutorialInviteCreated] = useState(false);
   async function finishWithoutInviting() {
@@ -38,9 +41,16 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
     }
   }
   const loaded = team !== null;
+  const canReturnToHandoff = Boolean(handoffHref && team?.projectId === projectId);
   useEffect(() => {
     if (tutorial && loaded) void observeTutorial('invite_form_viewed', projectId).catch(() => {});
   }, [tutorial, loaded, projectId]);
+  useEffect(() => {
+    if (canReturnToHandoff && document.activeElement === document.body) invitationHeading.current?.focus();
+  }, [canReturnToHandoff]);
+  function confirmLeavingInvitation(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (pending.current || (email.trim() && !window.confirm('Leave Team access? This email field won’t be kept.'))) event.preventDefault();
+  }
   async function reload() {
     const epoch = ++readEpoch.current;
     setError('');
@@ -168,6 +178,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
       <a
         className="text-sm underline"
         href={'/project?project=' + encodeURIComponent(projectId)}
+        onClick={canReturnToHandoff ? confirmLeavingInvitation : undefined}
       >
         Back to project
       </a>
@@ -251,7 +262,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
           </details> : null}
           <section className="space-y-4 rounded-xl border bg-card p-5">
             {tutorial && !tutorialInviteCreated ? <GuideStage step={5} /> : guided && <p className="text-sm font-medium text-primary">{tutorialInviteCreated ? 'Getting started · Complete' : 'Getting started · Invite a teammate'}</p>}
-            <h2 className="text-lg font-semibold">Invite to {team.name}</h2>
+            <h2 ref={invitationHeading} tabIndex={canReturnToHandoff ? -1 : undefined} className="scroll-mt-6 text-lg font-semibold">Invite to {team.name}</h2>
             <p id="invite-help" className="text-sm text-muted-foreground">
               Use the email they’ll sign in with. Once they have access to Weft, they can accept the invitation from Projects. It expires in 7 days.
               {!team.sender.connected && ' In-app invitations still work without email delivery.'}
@@ -314,6 +325,11 @@ export function TeamClient({ projectId, guided = false, tutorial = false }: { pr
                 Send an invitation email from {team.sender.email}
               </label>}
             </form>
+            {canReturnToHandoff && <div className="rounded-lg border bg-muted/35 p-3 text-sm">
+              <p className="text-muted-foreground">Inviting someone doesn’t assign work. Once your teammate joins, return to the handoff to assign a task.</p>
+              <a className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4" href={handoffHref}
+                aria-disabled={busy || undefined} onClick={confirmLeavingInvitation}>Back to plan handoff</a>
+            </div>}
             {tutorial ? <div className="weft-guide-actions">
               {!tutorialInviteCreated && <Button type="button" variant="outline" disabled={busy} onClick={finishWithoutInviting}>Finish without inviting</Button>}
               <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide">{tutorialInviteCreated ? 'Finish guide' : 'View guide progress'}</a>
