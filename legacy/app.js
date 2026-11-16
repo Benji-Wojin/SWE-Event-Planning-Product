@@ -4450,9 +4450,20 @@
     const workspaceRevision=store.getSnapshotRevision?.();
     openDialog(preview?'A simple participant response':'Report what is complete',`<p class="notice">${preview?'Local response preview only. This is not a shareable guest link; real guest access needs the hosted sign-in setup.':'This report records what the owner says. Tasks requiring verification stay open until the organizer confirms.'}</p><h3>${h(task.title)}</h3><p>Assigned to ${h(member(task.owner).name)}</p><form id="responseForm" data-id="${h(id)}" data-revision="${h(task.revision)}"${Number.isSafeInteger(workspaceRevision)?' data-workspace-revision="'+workspaceRevision+'"':''}><label class="field">Update<select name="response">${options(preview?[['accepted','I accept this task'],['blocked','I need help'],['completed','I have completed it']]:[['completed','I have completed it']],'completed')}</select></label><label class="field section-gap">What happened / what do you need?<textarea name="note" required rows="4" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit" ${task.owner!==ui.actor?'disabled':''}>Submit as ${h(member(ui.actor).name.split(' ')[0])}</button></div>${task.owner!==ui.actor?'<p class="warning-note">Switch the demo member to this task’s owner to try their response.</p>':''}</form>`,'',false,'completion-response');
   }
-  function contextDialog() {
+  function receiptZoneSetupHref(opener) {
+    const dialog=$('#dialog'),link=activePlanReceiptReturn(ui.detailId);
+    if(link?.intent!=='schedule'||ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||document.hidden||
+      !opener?.isConnected||opener!==$('.task-schedule [data-action="event-context"]',dialog)||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener)||!opener.getClientRects().length)return '';
+    const state=store.getState();
+    if(state.event.timeZone||!schedule.firstTimeTask(state,link.id,{}))return '';
+    const query=new URLSearchParams({project:link.project,scheduleTask:link.id});
+    if(guidedWorkspace)query.set('guide','1');
+    return '/setup?'+query;
+  }
+  function contextDialog(opener) {
     if(window.GatherAccessLost)return;
-    if(window.GatherMode&&!window.GatherMode.demo&&isOrganizer()){window.top.location.href=window.GatherMode.projectUrl('/setup');return;}
+    if(window.GatherMode&&!window.GatherMode.demo&&isOrganizer()){window.top.location.href=receiptZoneSetupHref(opener)||window.GatherMode.projectUrl('/setup');return;}
     if(!isOrganizer()){
       const e=store.getState().event;
       const date=e.date?new Date(e.date+'T00:00:00Z'):null;
@@ -4766,7 +4777,7 @@
       if(action==='unlink-dependency'){store.removeDependency(id,el.dataset.prerequisite,ui.actor);render();taskDialog(id);toast('Link removed. The follow-up task is unchanged.');}
       if(action==='participant-preview')responseDialog(id,true);
       if(action==='verification-toggle'){const task=store.getState().tasks.find(t=>t.id===id);store.updateTask(id,{requiresVerification:!task.requiresVerification},ui.actor);render();taskDialog(id);}
-      if(action==='event-context')contextDialog();
+      if(action==='event-context')contextDialog(el);
       if(action==='draft-plan'&&isOrganizer()&&window.GatherMode){window.top.location.href=window.GatherMode.demo?'/plan?demo=1&as=jack':window.GatherMode.projectUrl('/plan');return;}
       if(action==='ai-suggestions'&&isOrganizer()&&window.GatherMode){if(ui.view!=='overview'&&navigate('overview')===false)return;if(!$('#dialogBackdrop').hidden)closeDialog();planSidebar.open();return;}
       if(action==='ai-task-assistant'){toast('Ask Weft is coming soon.');return;}

@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 import { GuideStage } from '@/components/guide-stage';
 import { readReminderPreference, writeReminderPreference } from '@/legacy/notifications.cjs';
+import { planTaskHref, workspaceTaskId } from '@/lib/workspace-task-link';
 
 type Details = {
   name: string; date: string; location: string; timeZone: string; guestCount: string;
@@ -32,7 +33,17 @@ async function workspaceRequest(projectId: string, body?: unknown) {
   if (!result?.state?.event) throw new Error('Could not load the project. Please try again.');
   return result;
 }
-export function ProjectSetup({ projectId, guided = false }: { projectId?: string; guided?: boolean }) {
+function untimedScheduleTask(project: any, hint: string): {title: string} | undefined {
+  const id = workspaceTaskId(hint);
+  if (!id || project?.identity?.role !== 'admin' || typeof project.identity.actorId !== 'string' ||
+    !project.identity.actorId || !Array.isArray(project.state?.tasks)) return;
+  return project.state.tasks.find((task: any) => task?.id === id && typeof task.title === 'string' &&
+    task.eventActivity === true && !task.archivedAt && !task.schedule &&
+    !(task.status === 'done' && (!task.requiresVerification || task.verifiedAt)));
+}
+export function ProjectSetup({ projectId, guided = false, scheduleTask = '', resumeGuide = false }: {
+  projectId?: string; guided?: boolean; scheduleTask?: string; resumeGuide?: boolean;
+}) {
   const isNew = projectId === undefined;
   const backUrl = isNew ? '/' : '/project?project=' + encodeURIComponent(projectId);
   const requestId = useRef('');
@@ -42,8 +53,11 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   const [createdId, setCreatedId] = useState('');
   const [reminderNotice, setReminderNotice] = useState('');
   const createdHeading = useRef<HTMLHeadingElement>(null);
+  const timeZoneInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false), leaving = useRef(false), errorBox = useRef<HTMLParagraphElement>(null);
   const dirty = Boolean(form && JSON.stringify(form) !== initial);
+  const activity = isNew ? undefined : untimedScheduleTask(project, scheduleTask);
+  const awaitingZone = Boolean(activity && !project?.state?.event.timeZone);
   async function load() {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(''); setReminderNotice('');
@@ -54,6 +68,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
       }
       const result = await workspaceRequest(projectId!);
       if (result.identity.role !== 'admin') throw new Error('Only the organizer can change project setup.');
+      if (scheduleTask && result.projectId !== projectId) throw new Error('Could not confirm which project was loaded. Please try again.');
       const next = values(result.state.event, readReminderPreference(result.reminderScope));
       setProject(result); setForm(next); setInitial(JSON.stringify(next)); setConflict(false);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not load the project. Please try again.'); }
@@ -72,6 +87,9 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
   }, [dirty]);
   useEffect(() => { if (error) errorBox.current?.focus(); }, [error]);
   useEffect(() => { if (createdId) createdHeading.current?.focus(); }, [createdId]);
+  useEffect(() => {
+    if (awaitingZone && document.activeElement === document.body) timeZoneInput.current?.focus();
+  }, [awaitingZone]);
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!form || !project || pending.current) return;
@@ -79,6 +97,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
     if (changingScheduleZone && !window.confirm('Change the event time zone? Existing activity dates and clock times will stay the same in the new zone.')) return;
     pending.current = true; setBusy(true); setError(''); setReminderNotice(''); setConflict(false);
     try {
+      let destination = backUrl;
       const { taskReminders, ...eventDetails } = form;
       const details = { ...eventDetails,
         guestCount: Number(form.guestCount || 0), dietaryOutstanding: Number(form.dietaryOutstanding || 0),
@@ -102,6 +121,14 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
         const onlyReminderChange = changedReminders && !project.setupRequired &&
           JSON.stringify(eventDetails) === JSON.stringify(originalEventDetails);
         const updated = onlyReminderChange ? project : await workspaceRequest(projectId!, { method:'completeSetup', args:[details], revision:project.revision });
+        if (activity) {
+          if (updated.projectId !== projectId || updated.identity?.role !== 'admin' || updated.identity.actorId !== project.identity.actorId ||
+            !details.timeZone || updated.state.event.timeZone !== details.timeZone ||
+            (!onlyReminderChange && (!Number.isSafeInteger(project.revision) || !Number.isSafeInteger(updated.revision) || updated.revision <= project.revision)))
+            throw new Error('Could not confirm the event time zone. Your edits are still here.');
+          if (untimedScheduleTask(updated, scheduleTask))
+            destination = planTaskHref(new URLSearchParams({ project: projectId! }), scheduleTask, resumeGuide, 'schedule', true) || backUrl;
+        }
         if (changedReminders && !writeReminderPreference(updated.reminderScope, taskReminders)) {
           setProject(updated);
           setInitial(JSON.stringify({ ...form, taskReminders: readReminderPreference(updated.reminderScope) }));
@@ -111,7 +138,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
         }
       }
       leaving.current = true;
-      window.location.assign(backUrl);
+      window.location.assign(destination);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save. Your details are still here.');
       setConflict((e as { status?: number }).status === 409);
@@ -167,15 +194,19 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
       }}>Reload saved details</Button>}
       <Card className="py-6 sm:py-7"><CardContent className="px-5 sm:px-7">
         {guided && <div className="mb-6"><GuideStage step={1} /><h2 className="mb-2 text-2xl font-semibold">Give your event a home</h2><p className="text-sm text-muted-foreground">Start with a name and confirm your time zone. You can fill in the date, location, and other details later.</p></div>}
+        {activity && <p id="setup-schedule-return" className="mb-6 wrap-anywhere rounded-lg border bg-muted/35 p-4 text-sm">
+          {awaitingZone ? 'Set the event time zone to continue scheduling ' : 'After saving settings, return to '}<strong>{activity.title}</strong>. Saving here won’t set a start time.
+        </p>}
         <fieldset disabled={busy} className="space-y-6">
           <legend className="sr-only">Event details</legend>
           {textField('name', 'Event name', 'text', 160)}
           <div className="space-y-2">
             <Label htmlFor="setup-timeZone">Event time zone</Label>
-            <Input id="setup-timeZone" name="timeZone" list="event-time-zones" required maxLength={100} value={form.timeZone}
+            <Input ref={timeZoneInput} id="setup-timeZone" name="timeZone" list="event-time-zones" required maxLength={100}
+              aria-describedby={activity ? 'setup-time-zone-help setup-schedule-return' : 'setup-time-zone-help'} value={form.timeZone}
               placeholder="America/Los_Angeles" onChange={e => update('timeZone', e.target.value)} className="h-11 text-base md:text-base" />
             <datalist id="event-time-zones">{['UTC',...Intl.supportedValuesOf('timeZone')].map(zone=><option key={zone} value={zone} />)}</datalist>
-            <p className="text-sm text-muted-foreground">Schedule times use this zone for everyone. Changing the event date does not move scheduled activities.</p>
+            <p id="setup-time-zone-help" className="text-sm text-muted-foreground">Schedule times use this zone for everyone. Changing the event date does not move scheduled activities.</p>
           </div>
           {guided ? <details className="border-t pt-4"><summary className="cursor-pointer py-2 text-sm font-medium">Add optional event details</summary><div className="mt-4 space-y-5">{eventOptions}</div></details> : eventOptions}
           <details className="border-t pt-6" open={!isNew || undefined}>
@@ -203,7 +234,7 @@ export function ProjectSetup({ projectId, guided = false }: { projectId?: string
           </div>
           <div className="border-t pt-5">
             <p className="mb-5 text-sm text-muted-foreground">{guided ? 'Up next: add one real task to your project. Nothing is sent to anyone.' : isNew ? 'Next: invite a teammate, or open your project and add the first task.' : 'Changes only this project’s settings.'}</p>
-            <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : 'Save & open project'}</Button>
+            <Button type="submit" disabled={busy || !form.name.trim()} className="h-auto min-h-11 w-full whitespace-normal px-5 py-2 sm:w-auto">{busy ? 'Saving…' : isNew ? 'Create project' : activity ? 'Save & return to activity' : 'Save & open project'}</Button>
           </div>
         </fieldset>
       </CardContent></Card>
