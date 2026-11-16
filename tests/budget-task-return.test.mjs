@@ -28,7 +28,7 @@ function harness(items = [earlier, item, archived]) {
   function node(tagName, attrs = {}) {
     const dataset = Object.fromEntries(Object.entries(attrs).filter(([key]) => key.startsWith('data-')).map(([key, value]) => [camel(key.slice(5)), value]));
     return { tagName: tagName.toUpperCase(), id: attrs.id || '', dataset, children: [], listeners: {}, attributes: Object.entries(attrs).map(([name, value]) => ({ name, value })),
-      isConnected: true, hidden: false, inert: false,
+      isConnected: true, hidden: false, inert: false, checked: Object.hasOwn(attrs, 'checked'),
       append(child) { child.parentElement = this; this.children.push(child); },
       addEventListener(name, callback) { this.listeners[name] = callback; },
       hasAttribute(name) { return Object.hasOwn(attrs, name); },
@@ -122,7 +122,10 @@ function harness(items = [earlier, item, archived]) {
     },
     replyCosts(items, enabled = true) { return this.reply({ budget: { ...budget, enabled, items } }); },
     archiveMode(enabled) {
-      currentHost.listeners.change({ target: { checked: enabled, hasAttribute: name => name === 'data-budget-archived' } });
+      const target = currentHost.querySelector('[data-budget-archived]');
+      assert.ok(target, 'Budget’s mounted archive checkbox exists');
+      target.checked = enabled;
+      currentHost.listeners.change({ target });
     },
     reload() { poll(); },
     remount(keepPendingFocus = true) {

@@ -780,6 +780,9 @@ form[aria-busy="true"]{cursor:progress}
 .budget-totals .budget-forecast{border-color:var(--green)}
 .budget-incomplete-review{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:8px}
 .budget-incomplete-review .text-button{min-height:44px;white-space:normal;text-align:left;overflow-wrap:anywhere}
+.budget-review-tools{display:flex;align-items:center;justify-content:space-between;gap:4px 16px;flex-wrap:wrap;margin-block:8px 12px;padding-block:4px;border-bottom:1px solid var(--line)}
+.budget-review-tools p{margin:0}
+.budget-review-tools .text-button{min-height:44px;text-align:left;white-space:normal}
 .budget-incomplete-cost{font-size:.875rem;line-height:1.5;border-inline-start:3px solid var(--ink);padding-inline-start:10px;margin:10px 0}
 .budget-resolution-choice{min-width:0;margin:12px 0;padding:8px 12px;border:1px solid var(--line);border-radius:8px}
 .budget-resolution-choice legend{font-weight:600;padding-inline:4px}

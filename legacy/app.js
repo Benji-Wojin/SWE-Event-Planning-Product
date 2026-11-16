@@ -313,7 +313,9 @@
     if(!previous||previous.isConnected||document.activeElement!==document.body)return false;
     if(isScheduleControl(previous))
       return restoreScheduleFocus(previous,root);
-    if((previous.dataset.action==='budget-linked-task'||previous.dataset.budgetCostHeading||previous.dataset.budgetReviewIncomplete)&&ui.view==='budget')
+    if(ui.view==='budget'&&(previous.dataset.action==='budget-linked-task'||previous.dataset.budgetCostHeading||
+      previous.dataset.budgetReviewIncomplete||previous.dataset.budgetShowAll||previous.dataset.budgetEdit||
+      previous.hasAttribute('data-budget-archived')||previous.id==='budgetCostsHeading'))
       return !!projectBudget?.restoreLinkedTaskFocus(previous);
     if(previous.dataset.action==='wrap-review-task')
       return restoreWrapReviewFocus(previous,root);
@@ -1621,7 +1623,7 @@
     const lessonOpener=ui.lastFocus?.dataset?.action==='draft-lesson-follow-up';
     const linkedLessonOpener=ui.lastFocus?.dataset?.action==='open-lesson-linked-task';
     const receiptOpener=ui.lastFocus?.id==='wrapFollowUpOpen';
-    const budgetOpener=ui.lastFocus?.dataset?.action==='budget-linked-task'&&ui.view==='budget';
+    const budgetOpener=ui.view==='budget'&&(ui.lastFocus?.dataset?.action==='budget-linked-task'||ui.lastFocus?.dataset?.budgetEdit);
     const linkedResultsOpener=ui.lastFocus?.dataset?.action==='review-linked-results';
     const savedNotice=scheduleOpener&&ui.firstScheduleReceipt?.edited&&ui.lastFocus.dataset.id===ui.firstScheduleReceipt.id&&
       currentFirstScheduleReceipt(store.getState())&&$('#scheduleFirstReceiptTitle',view);
