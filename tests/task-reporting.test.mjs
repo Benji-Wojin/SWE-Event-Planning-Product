@@ -96,8 +96,10 @@ test('reassignment requires explicit confirmation and preserves pending completi
 
 test('reached follow-up dates appear in attention while future dates remain quiet',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const context=vm.createContext({store:{getState:()=>({event:{timeZone:'UTC'},tasks:[]})},GatherPriorities:{analyze:(task,tasks)=>GatherPriorities.analyze(task,tasks,new Date(2026,8,22,12))}});
-  vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const attention ='))+'globalThis.reason=reason;',context);
+  const context=vm.createContext({window:{},store:{getState:()=>({members:[{id:'maya',active:true}],event:{timeZone:'UTC'},tasks:[]})},
+    GatherPriorities:{analyze:(task,tasks,_when,zone,available)=>GatherPriorities.analyze(task,tasks,new Date(2026,8,22,12),zone,available)}});
+  vm.runInContext(source.slice(source.indexOf('  function assignableTaskOwner('),source.indexOf('  const ownerOptions ='))+
+    source.slice(source.indexOf('  const attentionRoster ='),source.indexOf('  const attention ='))+'globalThis.reason=reason;',context);
   const task={owner:'maya',status:'progress',acceptedAt:new Date().toISOString(),updatedAt:new Date().toISOString(),dueDate:'2026-10-06'};
   assert.equal(context.reason({...task,followupAfter:'2026-09-22'}).key,'followup');
   assert.equal(context.reason({...task,followupAfter:'2026-09-21'}).key,'followup');
@@ -222,6 +224,7 @@ function taskDialogHtml(actor,id='dietary',identity,store=create(),modules={}) {
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
   vm.runInContext(source.slice(source.indexOf('  function assignableTaskOwner('),source.indexOf('  const ownerOptions =')),context);
+  vm.runInContext(source.slice(source.indexOf('  function canClaimTask('),source.indexOf('  function attentionOwnerAction(')),context);
   context.recovery=GatherRecoveryUI.create(context);
   context.schedule=GatherScheduleUI.create(context);
   const resumeReceipt=source.slice(source.indexOf('  function currentResumeReceipt('),source.indexOf('  function focusTaskOwnerEditor('));
@@ -699,6 +702,29 @@ test('claiming assigns and accepts once without altering task details or stealin
   assert.equal(store.getState().activity.filter(a=>a.type==='claimed'&&a.taskId==='wayfinding').length,1);
   const done=store.addTask({title:'Finished unassigned task',status:'done'});
   assert.throws(()=>store.claimTask(done.id,'maya'),/Completed tasks/);
+});
+
+test('claiming cannot remove a reviewed email completion report from an unassigned task', () => {
+  const store=create();
+  const task=store.addTask({title:'Fictional floor signs',owner:'',requiresVerification:true});
+  const email=store.addMessage({sender:'Fictional vendor',subject:task.title,body:'The floor signs are complete.'});
+  const pending=store.applyMessage(email.id,{mode:'update',taskId:task.id,expectedRevision:task.revision});
+  assert.equal(pending.owner,'');
+  assert.equal(pending.status,'progress');
+  assert.ok(pending.reportedAt);
+  assert.equal(pending.completionReportSourceId,email.id);
+
+  const before=store.exportState();
+  for(const actor of ['maya','jack']){
+    assert.throws(()=>store.claimTask(task.id,actor),/completion report/i);
+    assert.equal(store.exportState(),before,'no owner, acceptance, report, evidence or activity changes');
+  }
+
+  const open=store.addTask({title:'Bring extra water',owner:''});
+  const claimed=store.claimTask(open.id,'maya');
+  assert.equal(claimed.owner,'maya');
+  assert.equal(claimed.acceptedBy,'maya');
+  assert.ok(claimed.acceptedAt);
 });
 
 test('task refresh preserves only dirty sibling fields, excluding the submitted form',()=>{

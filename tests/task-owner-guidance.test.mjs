@@ -156,7 +156,7 @@ test('missing owners never masquerade as Unassigned or expose IDs; pending repor
 
 test('Review owner opens and focuses only the current organizer task form, preserving drafts without writes',()=>{
   const begin=source.indexOf('  function focusTaskOwnerEditor(');
-  const handler=source.slice(begin,source.indexOf('  function focusTaskScheduleEditor(',begin));
+  const handler=source.slice(begin,source.indexOf('  function openAttentionOwnerReview(',begin));
   assert.match(source,/if\(action==='review-task-owner'\)focusTaskOwnerEditor\(id\)/);
   for(const mode of ['allowed','member','lost','other-dialog','other-task','stale-form','missing-form','missing-details','closed']){
     let focused=0;const details={open:false},field={value:'unsaved-owner',focus(){focused++;}};

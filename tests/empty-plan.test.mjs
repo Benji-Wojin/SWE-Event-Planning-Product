@@ -7,7 +7,9 @@ import '../legacy/store.js';
 
 const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s,');
-const overview=app.slice(app.indexOf('  const completed ='),app.indexOf('  const completionText ='))+
+const overview=app.slice(app.indexOf('  function assignableTaskOwner('),app.indexOf('  const ownerOptions ='))+
+  app.slice(app.indexOf('  const attentionRoster ='),app.indexOf('  const reason ='))+
+  app.slice(app.indexOf('  const completed ='),app.indexOf('  const completionText ='))+
   app.slice(start,app.indexOf('  function filteredTasks(s)',start));
 const linkedResults=app.slice(app.indexOf('  function personalLinkedResults('),app.indexOf('  function openLinkedResults('));
 function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){

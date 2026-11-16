@@ -58,6 +58,47 @@ test('follow-up scheduling suppresses routine reminders but not deadlines, block
   assert.ok(info({...snoozed,followupAfter:'2026-09-24'}).factors.some(f=>f.key==='followup'));
 });
 
+test('project attention surfaces unavailable owners instead of reminders no one can answer',()=>{
+  const available=new Set(['jack','maya']);
+  const old={dueDate:'',acceptedAt:'',updatedAt:'2026-09-01T12:00:00Z',followupAfter:'2026-09-24'};
+  const rows=[task('former',{...old,owner:'former'}),task('sample',{...old,owner:'sample'}),
+    task('missing',{...old,owner:'missing'}),task('unassigned',{...old,owner:''}),task('active',{...old})];
+  const items=GatherPriorities.rank(rows,now,false,'UTC',available).map(row=>row.id);
+  const analyze=row=>GatherPriorities.analyze(row,rows,now,'UTC',available);
+  const decision=row=>GatherPriorities.decision(row,rows,now,'UTC',available);
+  for(const row of rows.slice(0,3)){
+    const keys=analyze(row).factors.map(factor=>factor.key);
+    assert.ok(items.includes(row.id),row.id);
+    assert.equal(decision(row)?.key,'owner-unavailable',row.id);
+    assert.ok(keys.includes('owner-unavailable'),row.id);
+    assert.ok(!keys.some(key=>['acceptance','followup','stale'].includes(key)),row.id);
+  }
+  const noOwner=analyze(rows[3]).factors.map(factor=>factor.key);
+  assert.ok(noOwner.includes('unassigned'));
+  assert.ok(!noOwner.some(key=>['acceptance','followup','stale'].includes(key)));
+  const active=analyze(rows[4]).factors.map(factor=>factor.key);
+  for(const key of ['acceptance','followup','stale'])assert.ok(active.includes(key),key);
+  assert.ok(!active.includes('owner-unavailable'));
+
+  const previouslyAccepted=task('historical acceptance',{owner:'former',dueDate:''});
+  assert.equal(GatherPriorities.analyze(previouslyAccepted,[previouslyAccepted],now,'UTC'),null,
+    'callers without roster context retain existing model behavior');
+  assert.deepEqual(GatherPriorities.rank([previouslyAccepted],now,false,'UTC',available).map(row=>row.id),[previouslyAccepted.id]);
+});
+
+test('roster-aware attention keeps pending reports and requests visible and excludes archives',()=>{
+  const available=new Set(['jack','maya']),at=now.toISOString();
+  const report=task('pending review',{owner:'former',dueDate:'',requiresVerification:true,reportedAt:at});
+  const request=task('pending request',{owner:'former',dueDate:'',recoveryRequests:[{kind:'help',status:'pending'}]});
+  const archived=task('archive',{owner:'former',dueDate:'',archivedAt:at});
+  const rows=[report,request,archived];
+  assert.ok(GatherPriorities.analyze(report,rows,now,'UTC',available).factors.some(factor=>factor.key==='verification'));
+  assert.equal(GatherPriorities.decision(report,rows,now,'UTC',available),null);
+  assert.equal(GatherPriorities.decision(request,rows,now,'UTC',available)?.key,'request');
+  assert.equal(GatherPriorities.analyze(archived,rows,now,'UTC',available),null);
+  assert.deepEqual(new Set(GatherPriorities.rank(rows,now,false,'UTC',available).map(row=>row.id)),new Set([report.id,request.id]));
+});
+
 test('calendar-day deadlines are stable across DST and equal ranks have deterministic ordering',()=>{
   const local=new Date(2026,2,9,0,1);
   assert.equal(GatherPriorities.analyze(task('dst',{dueDate:'2026-03-08'}),[],local).label,'1 day overdue');
@@ -85,9 +126,16 @@ test('priority persists, is organizer-only, and never fabricates a progress upda
 
 test('Needs attention filters and search preserve the shared dashboard ranking',()=>{
   const source=readFileSync('legacy/app.js','utf8');
-  const s={event:{timeZone:'UTC'},tasks:[task('later',{priority:'high'}),task('late',{dueDate:'2026-09-21'}),task('today',{dueDate:'2026-09-24'})]};
-  const context=vm.createContext({ui:{tab:'attention',actor:'jack',owner:'',status:'',search:''},store:{getState:()=>s},GatherPriorities:{rank:tasks=>GatherPriorities.rank(tasks,now),analyze:(t,tasks)=>GatherPriorities.analyze(t,tasks,now)},member:()=>({name:'Maya'})});
-  vm.runInContext(source.slice(source.indexOf('  const reason ='),source.indexOf('  const pending ='))+source.slice(source.indexOf('  function filteredTasks('),source.indexOf('  const options ='))+'globalThis.attention=attention;',context);
+  const s={members:[{id:'maya',name:'Maya',active:true}],event:{timeZone:'UTC'},
+    tasks:[task('later',{priority:'high'}),task('late',{dueDate:'2026-09-21'}),task('today',{dueDate:'2026-09-24'}),
+      task('unavailable',{owner:'former',dueDate:''})]};
+  const context=vm.createContext({window:{GatherMode:{demo:false}},ui:{tab:'attention',actor:'jack',owner:'',status:'',search:''},store:{getState:()=>s},
+    GatherPriorities:{rank:(rows,_when,all,zone,available)=>GatherPriorities.rank(rows,now,all,zone,available),
+      analyze:(t,rows,_when,zone,available)=>GatherPriorities.analyze(t,rows,now,zone,available)},member:()=>({name:'Maya'})});
+  vm.runInContext(source.slice(source.indexOf('  function assignableTaskOwner('),source.indexOf('  const ownerOptions ='))+
+    source.slice(source.indexOf('  const attentionRoster ='),source.indexOf('  const pending ='))+
+    source.slice(source.indexOf('  function filteredTasks('),source.indexOf('  const options ='))+'globalThis.attention=attention;',context);
   assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),context.attention(s).map(t=>t.id));
+  assert.ok(context.attention(s).some(row=>row.id==='unavailable'));
   context.ui.search='late';assert.deepEqual(Array.from(context.filteredTasks(s),t=>t.id),context.attention(s).filter(t=>t.title.includes('late')).map(t=>t.id));
 });

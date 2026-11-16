@@ -64,17 +64,21 @@ test('active map preserves the unavailable warning without bringing an archived 
 test('People counts only current assignments and never offers an archived task to claim',()=>{
   const state={members:[{id:'dev',name:'Fictional teammate'}],tasks:[
     task('active','Current assignment','dev'),task('free','Current unassigned',''),
+    {...task('reported','Unassigned but reported complete',''),reportedAt:'2026-10-31',requiresVerification:true},
     {...task('arch-assigned','Historical assignment','dev','blocked'),archivedAt:'2026-11-01'},
     {...task('arch-finished','Historical completed','dev','done'),archivedAt:'2026-11-01'},
     {...task('arch-free','Historical unassigned',''),archivedAt:'2026-11-01'},
   ]};
   const before=structuredClone(state);
   const context=vm.createContext({avatar:()=>'',icon:()=>'',h:String,ui:{actor:'dev'},empty:()=>'',pageHeading:()=>'',isOrganizer:()=>false,state});
-  const markup=vm.runInContext(block('  function teamView(s) {','  function timelineScheduleScope()')+'teamView(state);',context);
+  const markup=vm.runInContext(block('  function canClaimTask(', '  function attentionOwnerAction(')+
+    block('  function teamView(s) {','  function timelineScheduleScope()')+'teamView(state);',context);
   assert.match(markup,/<strong>1<\/strong><span>Open/);
   assert.match(markup,/<strong>0<\/strong><span>Done/);
   assert.match(markup,/<strong>0<\/strong><span>Blocked/);
   assert.match(markup,/data-action="claim" data-id="free"/);
+  assert.match(markup,/data-action="task" data-id="reported">Review completion/);
+  assert.doesNotMatch(markup,/data-action="claim" data-id="reported"/);
   assert.doesNotMatch(markup,/Historical|arch-free/);
   assert.deepEqual(state,before);
 });

@@ -11,6 +11,7 @@
   const daysLeft = (task,now,zone) => dayNumber(task.dueDate)-dayNumber(dayKey(now,zone));
   const pendingRequest = task => (task.recoveryRequests || []).find(r=>r.status==='pending');
   const responseTime = task => Math.max(...[task.ownerRespondedAt,task.acceptedAt,task.nextUpAt].map(value=>new Date(value||0).getTime()||0));
+  const unavailableOwner = (task,assignableOwnerIds) => !!(task.owner&&assignableOwnerIds&&!assignableOwnerIds.has(task.owner));
   const unresolved = (task,tasks) => (task.dependencies || []).filter(link=>link.kind!=='related'&&!resolved(tasks.find(t=>t.id===link.taskId&&!t.archivedAt)));
   const actionable = (task,tasks) => !task.archivedAt&&!resolved(task)&&task.status!=='done'&&task.status!=='blocked'&&!awaiting(task)&&pendingRequest(task)?.kind!=='help'&&!unresolved(task,tasks).length;
   function downstream(task,tasks) {
@@ -23,7 +24,7 @@
     }
     return result;
   }
-  function decision(task,tasks,now=new Date(),zone='UTC') {
+  function decision(task,tasks,now=new Date(),zone='UTC',assignableOwnerIds) {
     if(task.archivedAt||resolved(task)||awaiting(task))return null;
     const request=pendingRequest(task);
     if(request)return {key:'request',label:request.kind==='date'?'Date proposal':'Help requested',request};
@@ -35,6 +36,7 @@
     if(waiting.length)return null;
     if(task.status==='blocked')return {key:'blocked',label:'Unblocking decision'};
     if(!task.owner)return {key:'owner',label:'Choose an owner'};
+    if(unavailableOwner(task,assignableOwnerIds))return {key:'owner-unavailable',label:'Reassign unavailable owner'};
     const responded=responseTime(task);
     const sent=new Date(task.followupSentAt||0).getTime();
     const check=task.planReviewAfter||task.followupAfter;
@@ -48,7 +50,7 @@
     const days=daysLeft(task,now,zone);
     return (task.hardDeadline?(days<=3?400:days<=7?160:0):0)+(task.essential?100:0);
   }
-  function analyze(task,tasks=[],now=new Date(),zone='UTC') {
+  function analyze(task,tasks=[],now=new Date(),zone='UTC',assignableOwnerIds) {
     if(task.archivedAt||resolved(task))return null;
     const today=dayNumber(dayKey(now,zone)),days=daysLeft(task,now,zone),priority=Object.hasOwn(labels,task.priority)?task.priority:'auto';
     const factors=[];
@@ -71,14 +73,17 @@
     if(unavailable)add('required-unavailable','Required work unavailable','Review the unavailable task link',45);
     else if(task.status==='blocked'&&required.length&&!waiting.length&&!awaiting(task)&&!task.archivedAt)add('ready','Ready to resume','Review linked results',55);
     else if(task.status==='blocked')add('blocked',waiting.length?'Waiting on linked work':'Blocked','Review the blocker',waiting.length?0:45);
-    const review=decision(task,tasks,now,zone);
+    const ownerGap=unavailableOwner(task,assignableOwnerIds);
+    if(ownerGap&&!task.reportedAt&&task.status!=='done')add('owner-unavailable','Owner unavailable','Choose an active assignee',35);
+    const review=decision(task,tasks,now,zone,assignableOwnerIds);
     if(review)add('decision',review.label,'Review the next step',35);
     if(!task.owner)add('unassigned','No owner','Assign an owner',25);
     if((task.handoffs||[]).some(item=>item.status==='pending'))add('handoff','Suggested follow-up','Review linked work',20);
     const followup=dayNumber(task.followupAfter);
     const answered=task.followupSentAt&&responseTime(task)>=new Date(task.followupSentAt).getTime();
-    if(followup<=today&&!answered)add('followup','Follow-up due','Check in with the owner',20);
-    if(!(followup>today)&&!(dayNumber(task.planReviewAfter)>today)) {
+    const canFollowOwner=!assignableOwnerIds||!!task.owner&&!ownerGap&&!awaiting(task);
+    if(canFollowOwner&&followup<=today&&!answered)add('followup','Follow-up due','Check in with the owner',20);
+    if(canFollowOwner&&!(followup>today)&&!(dayNumber(task.planReviewAfter)>today)) {
       if(!task.acceptedAt)add('acceptance','Acceptance pending','Ask the owner to accept',8);
       if(new Date(now).getTime()-Math.max(new Date(task.updatedAt||0).getTime()||0,responseTime(task))>=3*86400000)add('stale','No recent update','Request an update',15);
     }
@@ -88,11 +93,11 @@
       score:factors.reduce((sum,f)=>sum+f.weight,0)+priorityWeight(priority),
       summary:[priority!=='auto'?labels[priority]+' priority':'',...factors.slice(0,3).map(f=>f.label)].filter(Boolean).join(' · ')};
   }
-  const rankRow=(task,tasks,now,zone)=>({task,info:analyze(task,tasks,now,zone)});
+  const rankRow=(task,tasks,now,zone,assignableOwnerIds)=>({task,info:analyze(task,tasks,now,zone,assignableOwnerIds)});
   const compareDatesAndIds=(a,b)=>(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id));
   const compareAttention=(a,b)=>(b.info?.score||0)-(a.info?.score||0)||compareDatesAndIds(a,b);
-  function rank(tasks,now=new Date(),all=false,zone='UTC') {
-    return tasks.filter(task=>!task.archivedAt&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).filter(({task,info})=>all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task))).sort(compareAttention).map(item=>item.task);
+  function rank(tasks,now=new Date(),all=false,zone='UTC',assignableOwnerIds) {
+    return tasks.filter(task=>!task.archivedAt&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone,assignableOwnerIds)).filter(({task,info})=>all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task))).sort(compareAttention).map(item=>item.task);
   }
   const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
   function personalNextUp(tasks,actor,now=new Date(),zone='UTC',separateReviews) {

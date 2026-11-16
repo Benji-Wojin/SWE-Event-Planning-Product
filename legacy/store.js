@@ -750,6 +750,7 @@
       if (task.archivedAt) throw new Error('Archived tasks cannot be claimed.');
       if (task.owner) throw new Error('This task already has an owner. Refresh to see who claimed it.');
       if (task.status === 'done') throw new Error('Completed tasks cannot be claimed.');
+      if (task.reportedAt || task.verifiedAt) throw new Error('Review the completion report before claiming this task.');
       patchTask(task, { owner: actor }, actor);
       task.acceptedAt = timestamp(); task.acceptedBy = actor;
       task.acceptedSourceId = ''; task.acceptedRecordedBy = '';

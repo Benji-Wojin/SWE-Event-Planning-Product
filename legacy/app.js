@@ -432,8 +432,9 @@
   };
   const statusBadge = status => `<span class="status-badge status-${h(status)}">${h(statuses[status])}</span>`;
   const due = task => `<span class="${task.status!=='done' && task.dueDate && task.dueDate<dateKey()?'due-overdue':''}">${task.dueDate===dateKey()?'Today':dayLabel(task.dueDate)}</span>`;
-  const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone);
-  const attention = s => GatherPriorities.rank(s.tasks,new Date(),false,s.event.timeZone);
+  const attentionRoster = s => s.members ? new Set(s.members.filter(assignableTaskOwner).map(person=>person.id)) : undefined;
+  const reason = (task,s=store.getState(),roster=attentionRoster(s)) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone,roster);
+  const attention = (s,roster=attentionRoster(s)) => GatherPriorities.rank(s.tasks,new Date(),false,s.event.timeZone,roster);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
   const completed = s => s.tasks.filter(t=>!t.archivedAt&&t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => {
@@ -458,22 +459,37 @@
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
   const completionNeedsReview = task => task.status!=='done'&&(task.requiresVerification||dependencyInfo(task).open.length>0);
 
+  function canClaimTask(task) {
+    return !!task&&!task.archivedAt&&!task.owner&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
+  }
+  function attentionOwnerAction(task,state,organizer,roster=attentionRoster(state)) {
+    if(!task||!organizer||window.GatherAccessLost||task.archivedAt||task.status==='done'||task.reportedAt||task.verifiedAt)return '';
+    if(GatherPriorities.pendingRequest(task))return '';
+    if(!task.owner)return 'Assign owner';
+    return roster&&!roster.has(task.owner)?'Reassign owner':'';
+  }
+
   function taskRow(task) {
     const done=task.status==='done',organizer=isOrganizer(),inspect=!organizer||completionNeedsReview(task);
     const id=h(task.id),title=h(task.title),update=latestUpdateRecord(task);
     const ownerLabel=task.owner?member(task.owner).name:'Unassigned';
     const mobileLabel=label=>`<span class="task-card-label" aria-hidden="true">${label}</span>`;
-    let decision=null;
-    if(ui.tab==='attention'&&organizer) { const s=store.getState();decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone); }
+    const pendingRequest=ui.tab==='attention'&&GatherPriorities.pendingRequest(task);
+    let decision=null,ownerAction='';
+    if(ui.tab==='attention'&&organizer) {
+      const s=store.getState(),roster=attentionRoster(s);
+      decision=GatherPriorities.decision(task,s.tasks,new Date(),s.event.timeZone,roster);
+      ownerAction=attentionOwnerAction(task,s,organizer,roster);
+    }
     const reply=ui.tab==='mine'&&task.owner===ui.actor&&recovery.recoveryReply(task,false);
     return `<tr role="row"${task.id===guideTaskId?' class="guide-first-task-row"':''}>
       <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" data-task-focus="${inspect?'inspect':done?'reopen':'complete'}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
       <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}" data-task-focus="name">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
-      <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${!task.owner&&!done?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}" data-task-focus="owner">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" data-task-focus="owner" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(commitment(task))}</div></td>
+      <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${ownerAction?`<button type="button" class="btn btn-secondary btn-small" data-action="review-attention-owner" data-id="${id}" data-task-focus="owner" aria-label="${ownerAction} for ${title}">${ownerAction}</button>`:!pendingRequest&&canClaimTask(task)?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}" data-task-focus="owner">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" data-task-focus="owner" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(ownerAction==='Reassign owner'?'Owner unavailable':commitment(task))}</div></td>
       <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}" data-task-focus="links">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
       <td role="cell" class="task-cell-due" headers="tasks-due">${mobileLabel('Due')}${due(task)}</td>
       <td role="cell" class="task-cell-update" headers="tasks-update">${mobileLabel('Latest update')}<div class="task-meta">${h(updateAttribution(update))}</div><div class="task-note-preview" title="${h(update.text)}">${h(update.text || 'No progress note yet')}</div></td>
-      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision||reply?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details"${reply?' data-open-recovery-reply':''} aria-label="${reply?'Review organizer response for':decision?'Review plan for':'Open task:'} ${title}">${reply?'Review organizer response':decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
+      <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision||reply?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details"${reply?' data-open-recovery-reply':pendingRequest&&organizer?' data-open-recovery':''} aria-label="${reply?'Review organizer response for':decision?'Review plan for':'Open task:'} ${title}">${reply?'Review organizer response':decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
   }
   const empty = (title,copy,action='') => `<div class="empty-state">${icon('done')}<strong>${title}</strong>${copy?`<p>${copy}</p>`:''}${action}</div>`;
   function activityItem(item,taskIds,compact=false) {
@@ -483,8 +499,20 @@
     return `<article class="insight"><span class="insight-source">${h(item.source)}</span><h3>${h(item.title)}</h3><p>${h(item.body)}</p><div class="insight-actions"><button class="btn btn-small" data-action="accept-insight" data-id="${h(item.id)}">${icon('plus')} Add to plan</button><button class="icon-button" data-action="dismiss-insight" data-id="${h(item.id)}" aria-label="Dismiss ${h(item.title)}">${icon('close')}</button></div></article>`;
   }
 
+  function attentionItemMarkup(task,state,roster) {
+    const info=reason(task,state,roster),organizer=isOrganizer();
+    if(!info)return '';
+    const request=GatherPriorities.pendingRequest(task);
+    const requestLabel=organizer&&(request?.kind==='date'?'Review date proposal':request?.kind==='help'?'Review help request':'');
+    const ownerAction=attentionOwnerAction(task,state,organizer,roster),claim=!organizer&&!request&&canClaimTask(task);
+    const action=ownerAction?'review-attention-owner':claim?'claim':'task';
+    const label=ownerAction||(claim?'Claim task':task.requiresVerification&&task.reportedAt&&!task.verifiedAt?'Review completion':requestLabel||'Review');
+    const title=h(task.title),id=h(task.id);
+    const ownerUnavailable=task.owner&&roster&&!roster.has(task.owner);
+    return `<article class="attention-item"><div class="attention-reason reason-${info.key}">${info.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${id}">${title}</button><p>${h(task.note||info.action)}</p><div class="task-meta">${ownerUnavailable?'<span>Owner unavailable</span>':person(task.owner)}<span>·</span>${due(task)}<span>· Updated ${relative(task.updatedAt)}</span></div></div><div class="attention-actions"><button type="button" class="btn btn-small btn-secondary" data-action="${action}" data-id="${id}"${requestLabel&&label===requestLabel?' data-open-recovery':''} aria-label="${label}: ${title}">${label}</button></div></article>`;
+  }
   function overview(s,showGuideTask=false) {
-    const needs=attention(s), done=completed(s), emails=pending(s);
+    const roster=attentionRoster(s),needs=attention(s,roster), done=completed(s), emails=pending(s);
     const taskIds=new Set(s.tasks.map(task=>task.id));
     const taskCount=s.tasks.filter(task=>!task.archivedAt).length;
     const progress=Math.round(done.length/Math.max(taskCount,1)*100);
@@ -507,7 +535,7 @@
         ${recovery.nextUpPanel(s,{overview:true})}
         ${linkedResultsPanel(s)}
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Needs attention</h2></div><button class="text-button" data-action="task-filter" data-filter="attention">View all ${icon('arrow')}</button></div>
-          <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
+          <div class="attention-list">${needs.slice(0,4).map(task=>attentionItemMarkup(task,s,roster)).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
         `:GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode,hasArchived:s.tasks.length>0})}
@@ -519,7 +547,7 @@
   }
 
   function filteredTasks(s) {
-    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>!t.archivedAt&&(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>!t.archivedAt&&(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||canClaimTask(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   function setTaskFilters(filters) {
     Object.assign(ui,filters,{mapFocus:''});
@@ -1069,7 +1097,7 @@
   }
   function teamView(s) {
     const active=s.tasks.filter(task=>!task.archivedAt);
-    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=active.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${active.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=active.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${active.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="${canClaimTask(t)?'claim':'task'}" data-id="${h(t.id)}">${canClaimTask(t)?'Claim task':'Review completion'}</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineScheduleScope() {
     return {mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate};
@@ -1741,6 +1769,31 @@
     const dialog=$('#dialog'),form=$('#taskDetailForm',dialog);
     const owner=form?.dataset.id===id?$('select[name="owner"]',form):null,details=owner?form.closest('details'):null;
     if(details){details.open=true;focusTaskDialogControl(owner,dialog);}
+  }
+  function openAttentionOwnerReview(id,opener) {
+    const view=ui.view,tab=ui.tab,actor=ui.actor,project=window.GatherMode?.projectId;
+    const inScope=()=>isOrganizer()&&!window.GatherAccessLost&&ui.actor===actor&&window.GatherMode?.projectId===project&&
+      ui.view===view&&(view==='overview'||view==='tasks'&&tab==='attention'&&ui.tab===tab);
+    const root=$('#viewRoot'),section=opener?.closest(view==='overview'?'.attention-list':'#taskRows');
+    if(!inScope()||ui.pendingSave||document.hidden||!$('#dialogBackdrop').hidden||!opener?.isConnected||
+      opener.dataset.action!=='review-attention-owner'||opener.dataset.id!==id||!section||!root?.contains(section)||
+      opener.closest('[hidden],[inert]')||!opener.getClientRects().length)return false;
+    const current=()=>{
+      const state=store.getState(),task=state.tasks.find(row=>row.id===id);
+      return {task,ownerAction:attentionOwnerAction(task,state,true)};
+    };
+    const previous=current();
+    if(!previous.task||previous.task.archivedAt)return false;
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(!previous.ownerAction)return true;
+    const title=$('#dialogTitle',$('#dialog'));
+    requestAnimationFrame(()=>{
+      if(!inScope()||document.hidden||ui.pendingSave||!title||$('#dialogTitle',$('#dialog'))!==title||
+        document.activeElement!==title||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||!current().ownerAction)return;
+      if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){showPendingUpdate();return;}
+      focusTaskOwnerEditor(id);
+    });
+    return true;
   }
   function focusTaskScheduleEditor(id,allowZoneSetup=false) {
     if(window.GatherAccessLost||!isOrganizer()||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden)return;
@@ -3501,7 +3554,7 @@
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
       ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}${reconfirmationTimelineAction(task,taskState)}</section>`:''}
       ${teammateReconfirmation?'<p class="notice">The schedule changed after this teammate accepted. Ask the assigned owner to review the current plan and accept again.</p>':''}
-      ${!task.archivedAt&&!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
+      ${canClaimTask(task)?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
@@ -4450,7 +4503,7 @@
     if(action==='verify-task'||action==='review-completion-evidence'){await saveReviewedCompletion(el);return;}
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId&&$('#dialogBackdrop').hidden)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-attention-owner','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
     replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-from-event-review-schedule','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
@@ -4593,6 +4646,7 @@
         toast('Task deleted.');
       }
       if(action==='review-task-owner')focusTaskOwnerEditor(id);
+      if(action==='review-attention-owner')openAttentionOwnerReview(id,el);
       if(action==='review-overlap-schedule')focusTaskScheduleEditor(id);
       if(action==='quick-tour'){if(confirmCloseDialog()&&confirmDiscard($('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
