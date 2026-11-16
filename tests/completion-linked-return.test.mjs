@@ -8,11 +8,14 @@ const sourceId = 'required-source', targetId = 'required-target', otherId = 'sam
 const verifiedAt = '2026-11-18T20:00:00Z';
 const h = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const action = 'return-to-completion-linked-impact';
+const dependentMarker = 'data-completion-linked-target', prerequisiteMarker = 'data-completion-required-prerequisite';
 
-function fixture() {
-  const source = { id: sourceId, title: 'Fictional shared result', status: 'done', requiresVerification: true, verifiedAt, revision: 5, dependencies: [] };
-  const target = { id: targetId, title: 'Fictional downstream task', status: 'blocked', owner: 'maya', revision: 8,
-    dependencies: [{ kind: 'dependency', taskId: sourceId }] };
+function fixture({ receiptIntent = '', beforeVerify = false } = {}) {
+  const source = { id: sourceId, title: 'Fictional shared result', status: beforeVerify ? 'progress' : 'done', requiresVerification: true,
+    verifiedAt: beforeVerify ? '' : verifiedAt, reportedAt: beforeVerify ? verifiedAt : '', revision: 5,
+    dependencies: beforeVerify ? [{kind:'dependency',taskId:targetId},{kind:'dependency',taskId:otherId}] : [] };
+  const target = { id: targetId, title: 'Fictional linked task', status: 'blocked', owner: 'maya', revision: 8,
+    dependencies: beforeVerify ? [] : [{ kind: 'dependency', taskId: sourceId }] };
   const other = { ...structuredClone(target), id: otherId };
   const state = { tasks: [source, target, other], members: [], demoGeneration: undefined };
   const calls = [], frames = [], dialogContexts = [];
@@ -20,12 +23,12 @@ function fixture() {
   const window = { GatherMode: { projectId: 'fictional-project' }, GatherAccessLost: false };
   const document = { hidden: false, activeElement: null };
   let revision = 12, organizer = true, pending = false, stale = false, dirty = false, allowDiscard = false;
-  let form = null, title = null, section = null, impactHeading = null, back = null;
+  let form = null, title = null, section = null, impactHeading = null, back = null, receiptBack = null;
   let rows = [];
   const backdrop = { hidden: false };
   function node(name, opts = {}) {
     const n = { name, dataset: {}, isConnected: true, hidden: false, inert: false, tagName: 'BUTTON', ...opts };
-    n.hasAttribute = key => key === 'data-completion-linked-target' && n.impactTarget === true;
+    n.hasAttribute = key => key === n.marker;
     n.closest = selector => selector === 'section' ? n.section ?? null : selector === '[hidden],[inert]' && (n.hidden || n.inert) ? n : null;
     n.matches = selector => selector === ':disabled' ? !!n.disabled : false;
     n.getClientRects = () => n.hidden || n.inert ? [] : [{}];
@@ -33,32 +36,41 @@ function fixture() {
     return n;
   }
   const dialog = node('dialog');
-  dialog.contains = element => [title, section, impactHeading, back, form, ...rows].includes(element);
+  dialog.contains = element => [title, section, impactHeading, back, receiptBack, form, ...rows].includes(element);
   const select = (selector, parent) => {
     if (selector === '#dialog') return dialog;
     if (selector === '#dialogBackdrop') return backdrop;
     if (selector === '#dialogTitle' && (!parent || parent === dialog)) return title;
-    if (selector === '#completionLinkedImpactHeading' && (!parent || parent === dialog || parent === section)) return impactHeading;
+    if ((selector === '#completionLinkedImpactHeading' || selector === '#taskRelationshipsHeading') &&
+        (!parent || parent === dialog || parent === section)) return impactHeading?.id === selector.slice(1) ? impactHeading : null;
     if (selector === '#completionLinkedImpactBack' && (!parent || parent === dialog)) return back;
+    if (selector === '#planReceiptBack' && (!parent || parent === dialog)) return receiptBack;
     return null;
   };
-  const selectAll = (selector, parent) => (parent === section || parent === dialog) && selector.includes('[data-completion-linked-target]') ? rows : [];
   dialog.querySelector = selector => select(selector, dialog);
   function paint(id) {
-    for (const n of [title, section, impactHeading, back, form, ...rows].filter(Boolean)) n.isConnected = false;
+    for (const n of [title, section, impactHeading, back, receiptBack, form, ...rows].filter(Boolean)) n.isConnected = false;
     title = node('dialog title ' + id, { id: 'dialogTitle', tagName: 'H2' });
     section = null; impactHeading = null; rows = []; back = null; form = null;
-    if (id === sourceId) {
-      const task = state.tasks.find(item => item.id === id);
-      const current = context.completionLinkedImpact(task, state, state.tasks).shownIds;
-      if (current.size) {
-        section = node('required by section');
-        section.contains = el => rows.includes(el) || el === impactHeading;
-        impactHeading = node('required by heading', { section, id: 'completionLinkedImpactHeading', tagName: 'H3' });
-        rows = [...current].reverse().map(id => node('row ' + id, { impactTarget: true, dataset: { action: 'task', id } }));
-      }
-    } else {
-      back = node('back', { id: 'completionLinkedImpactBack', dataset: { action } });
+    const buttons = context.renderBackButtons('task');
+    const receiptButton = /id="planReceiptBack"[^>]*>([^<]*)</.exec(buttons);
+    receiptBack = receiptButton ? node(receiptButton[1], { id:'planReceiptBack' }) : null;
+    const task = state.tasks.find(item => item.id === id), prerequisiteRows = id === sourceId && beforeVerify;
+    const markup = prerequisiteRows ? context.dependencyMarkup(task) : context.completionLinkedImpact(task, state, state.tasks).markup;
+    if (markup) {
+      section = node(prerequisiteRows ? 'task relationships section' : 'required by section');
+      section.contains = el => rows.includes(el) || el === impactHeading;
+      impactHeading = node(prerequisiteRows ? 'task relationships heading' : 'required by heading', { section,
+        id:prerequisiteRows ? 'taskRelationshipsHeading' : 'completionLinkedImpactHeading', tagName:'H3' });
+      rows = [...markup.matchAll(/<button\b([^>]*\bdata-action="task"[^>]*)>/g)].reverse().map(([,attrs])=>{
+        const id = /\bdata-id="([^"]+)"/.exec(attrs)?.[1];
+        const marker = [dependentMarker, prerequisiteMarker].find(name=>attrs.includes(name));
+        return node('row '+id,{section,marker,dataset:{action:'task',id}});
+      });
+    }
+    if (id !== sourceId) {
+      const linkedButton = /id="completionLinkedImpactBack"[^>]*>([^<]*)</.exec(buttons);
+      back = linkedButton ? node(linkedButton[1], { id:'completionLinkedImpactBack', dataset:{action} }) : null;
       form = node('unsaved dependent draft', { value: 'Keep this fictional unsent draft.', files: [{ name: 'fictional-proof.txt' }] });
     }
     document.activeElement = title;
@@ -69,38 +81,52 @@ function fixture() {
     resumeTask() { assert.fail('return must not resume'); },
   };
   const context = vm.createContext({ ui, window, document, store, h,
-    $: select, $$: selectAll,
+    $: select,
     isOrganizer: () => organizer, member: () => ({ name: 'Fictional teammate' }),
     statuses: { todo: 'To do', blocked: 'Blocked', done: 'Done' },
+    linkedTaskForm: () => '', canCreateTasks: () => false, icon: () => '', options: () => '', completionText: () => '',
+    GatherPlanningUI: {readiness:()=>({label:'Fictional readiness'})}, activeOverlapComparison: () => false,
     workspaceUpdatesPending: () => pending, scheduleRevisionIsStale: () => stale,
     scheduleWorkspaceKey: () => JSON.stringify([window.GatherMode?.projectId, window.GatherMode?.demo, state.demoGeneration, ui.actor]),
     relatedBatchInScope: batch => batch.actor === ui.actor && batch.view === ui.view && batch.project === window.GatherMode.projectId,
     overlapComparisonInScope: comparison => comparison.actor === ui.actor && comparison.view === ui.view && comparison.project === window.GatherMode.projectId,
     hiddenByClosedDisclosure: control => !!control.closedDisclosure,
     confirmCloseDialog(keepAssignmentReview) { assert.equal(keepAssignmentReview, true); calls.push(['confirm close']); return !dirty || allowDiscard; },
-    focusable: parent => selectAll('[data-completion-linked-target]', parent).filter(row => row.isConnected && !row.hidden && !row.inert),
+    focusable: parent => (parent === section || parent === dialog ? rows : []).filter(row => row.isConnected && !row.hidden && !row.inert),
     showPendingUpdate: () => calls.push(['pending']), toast: message => calls.push(['toast', message]),
     requestAnimationFrame: fn => frames.push(fn),
     focusTaskDialogControl: (target, currentDialog) => { assert.equal(currentDialog, dialog); target?.focus(); },
     taskDialog(...args) {
       calls.push(['task dialog', ...args]);
-      dialogContexts.push({ relatedBatch: ui.relatedBatch, overlapComparison: ui.overlapComparison });
+      dialogContexts.push({ relatedBatch: ui.relatedBatch, overlapComparison: ui.overlapComparison, planReceiptReturn: ui.planReceiptReturn });
       ui.detailId = args[0]; ui.dialogKind = 'task';
+      if (ui.planReceiptReturn && !context.activePlanReceiptReturn(ui.detailId)) ui.planReceiptReturn = null;
+      if (ui.completionLinkedReturn && ui.completionLinkedReturn.targetId !== ui.detailId) ui.completionLinkedReturn = null;
       if (args[0] !== sourceId) { ui.relatedBatch = null; ui.overlapComparison = null; ui.overlapReviewDay = ''; }
       paint(args[0]);
     },
     closeDialog() { calls.push(['close']); backdrop.hidden = true; ui.dialogKind = ''; },
   });
-  const start = app.indexOf('  function completionLinkedImpact('), end = app.indexOf('  function dependencyMarkup(', start);
+  const start = app.indexOf('  function completionLinkedImpact('), end = app.indexOf('  function handoffMarkup(', start);
   assert.ok(start >= 0 && end > start);
-  vm.runInContext(app.slice(start, end), context);
+  const receiptStart=app.indexOf('  function setPlanReceiptReturn('),receiptEnd=app.indexOf('  function receiptOwnerReview(',receiptStart);
+  assert.ok(receiptStart >= 0 && receiptEnd > receiptStart);
+  const infoStart=app.indexOf('  function dependencyInfo('),infoEnd=app.indexOf('  function linkedTaskForm(',infoStart);
+  const dialogStart=app.indexOf('  function openDialog('),headerStart=app.indexOf('    const reviewBack=',dialogStart),
+    headerEnd=app.indexOf("    $('#dialog').innerHTML=",headerStart);
+  assert.ok(infoStart>=0&&infoEnd>infoStart&&dialogStart>=0&&headerStart>dialogStart&&headerEnd>headerStart);
+  vm.runInContext(app.slice(receiptStart,receiptEnd)+app.slice(infoStart,infoEnd)+app.slice(start,end)+
+    'function renderBackButtons(kind){'+app.slice(headerStart,headerEnd)+'return backButtons;}',context);
+  if (receiptIntent) context.setPlanReceiptReturn(sourceId, receiptIntent);
   paint(sourceId);
   return { source, target, other, state, calls, ui, window, document, backdrop, dialogContexts,
-    get form() { return form; }, get back() { return back; }, get title() { return title; },
+    get form() { return form; }, get back() { return back; }, get title() { return title; }, get receiptBack() { return receiptBack; },
     set revision(value) { revision = value; }, set organizer(value) { organizer = value; }, set pending(value) { pending = value; },
     set stale(value) { stale = value; }, set dirty(value) { dirty = value; }, set allowDiscard(value) { allowDiscard = value; },
-    replaceTitle() { title = node('replacement title'); document.activeElement = title; },
-    open() { return context.openCompletionLinkedTarget(targetId, rows.find(row => row.dataset.id === targetId)); },
+    replaceTitle() { title = node('replacement title'); document.activeElement = title; }, repaint() {paint(ui.detailId);},
+    row(id=targetId) { return rows.find(row => row.dataset.id === id); },
+    open(opener=rows.find(row=>row.dataset.id===targetId)) { return context.openCompletionLinkedTarget(targetId, opener); },
+    openTask(id) { return context.openCompletionLinkedTarget(id, rows.find(row=>row.dataset.id===id)); },
     returnToReview(opener = back) { return context.returnToCompletionLinkedImpact(opener); },
     flush() { for (const fn of frames.splice(0)) fn(); },
   };
@@ -284,4 +310,136 @@ test('Back restores the source day and scoped outer contexts, but never an unava
     }
     assert.deepEqual(focused(f), ['row ' + targetId], variant);
   }
+});
+
+test('Required by restores only an exact completion or amendment receipt on the source, never on the linked task', () => {
+  for (const variant of ['completion','amendment','owner','unavailable receipt','changed receipt scope']) {
+    const f = fixture({receiptIntent:variant==='owner'?'owner':variant==='amendment'?'amendment':'completion'});
+    const outer=f.ui.planReceiptReturn, originalButton=f.receiptBack;
+    if(variant==='unavailable receipt')outer.id=otherId;
+    f.open();
+    const expected=['owner','unavailable receipt'].includes(variant)?null:outer;
+    assert.equal(f.ui.completionLinkedReturn.receiptReturn,expected,variant);
+    assert.equal(f.ui.completionLinkedReturn.direction,'dependent');
+    assert.equal(f.ui.planReceiptReturn,null,'child never receives the original receipt');
+    assert.equal(f.receiptBack,null);
+    assert.equal(originalButton.isConnected,false);
+    assert.match(f.back.name,/Back to Required by/);
+    if(variant==='changed receipt scope')outer.project='other-project';
+    assert.equal(f.returnToReview(),true);
+    f.flush();
+    const shouldRestore=['completion','amendment'].includes(variant);
+    assert.equal(f.ui.planReceiptReturn,shouldRestore?outer:null,variant);
+    assert.equal(f.dialogContexts.at(-1).planReceiptReturn,shouldRestore?outer:null,variant);
+    assert.equal(Boolean(f.receiptBack),shouldRestore,variant);
+    assert.equal(f.ui.completionLinkedReturn,null,'return is consumed');
+    assert.deepEqual(focused(f),['row '+targetId]);
+  }
+});
+
+test('a live pending receipt completion review marks required task links and restores the exact row after a round trip', () => {
+  const f=fixture({receiptIntent:'completion',beforeVerify:true}),outer=f.ui.planReceiptReturn;
+  const originalState=structuredClone(f.state);
+  assert.equal(f.target.title,f.other.title);
+  assert.equal(f.row().hasAttribute(prerequisiteMarker),true);
+  assert.equal(f.row(otherId).hasAttribute(prerequisiteMarker),true);
+  f.open();
+  assert.equal(f.ui.detailId,targetId);
+  assert.equal(f.ui.completionLinkedReturn.direction,'prerequisite');
+  assert.equal(f.ui.completionLinkedReturn.receiptReturn,outer);
+  assert.equal(f.receiptBack,null);
+  assert.match(f.back.name,/Back to completion review/);
+  assert.ok(!f.back.name.includes('Required by'));
+  assert.equal(f.returnToReview(),true);
+  f.flush();
+  assert.equal(f.ui.detailId,sourceId);
+  assert.equal(f.ui.planReceiptReturn,outer);
+  assert.match(f.receiptBack.name,/Back to plan receipt/);
+  assert.deepEqual(taskCalls(f).map(call=>[call[1],call.at(-1).readOnly]),[[targetId,true],[sourceId,true]]);
+  assert.deepEqual(focused(f),['row '+targetId]);
+  assert.deepEqual(f.state,originalState,'opening and returning do not finish work or verify the report');
+});
+
+test('prerequisite deep review refuses non-receipt, non-pending, Related, unavailable and obsolete controls', () => {
+  for(const [label,options,alter] of [
+    ['not a receipt',{},()=>{}],
+    ['amendment origin',{receiptIntent:'amendment'},()=>{}],
+    ['draft report',{receiptIntent:'completion'},f=>{f.source.reportedAt='';}],
+    ['already verified',{receiptIntent:'completion'},f=>{f.source.verifiedAt=verifiedAt;}],
+    ['archived source',{receiptIntent:'completion'},f=>{f.source.archivedAt=verifiedAt;}],
+    ['Related link',{receiptIntent:'completion'},f=>{f.source.dependencies[0].kind='related';}],
+    ['missing prerequisite',{receiptIntent:'completion'},f=>{f.state.tasks.splice(1,1);}],
+    ['archived prerequisite',{receiptIntent:'completion'},f=>{f.target.archivedAt=verifiedAt;}],
+  ]){
+    const f=fixture({beforeVerify:true,...options});
+    alter(f);f.repaint();
+    assert.ok(!f.row()?.hasAttribute(prerequisiteMarker),label);
+    f.open();
+    assert.equal(f.ui.detailId,sourceId,label);
+    assert.deepEqual(taskCalls(f),[],label);
+  }
+  for(const [label,alter] of [
+    ['project changed',f=>{f.window.GatherMode.projectId='other';}],
+    ['not organizer',f=>{f.organizer=false;}],
+    ['pending write',f=>{f.ui.pendingSave=true;}],
+    ['hidden document',f=>{f.document.hidden=true;}],
+    ['stale workspace',f=>{f.stale=true;}],
+    ['unlinked before click',f=>{f.source.dependencies.shift();}],
+    ['changed to Related before click',f=>{f.source.dependencies[0].kind='related';}],
+    ['unavailable before click',f=>{f.target.archivedAt=verifiedAt;}],
+    ['another section',f=>{const row=f.row();return {...row};}],
+    ['another task',f=>f.row(otherId)],
+    ['detached control',f=>{f.row().isConnected=false;}],
+  ]){
+    const f=fixture({beforeVerify:true,receiptIntent:'completion'});
+    const opener=alter(f)||f.row();f.open(opener);
+    assert.equal(f.ui.completionLinkedReturn,undefined,label);
+    assert.deepEqual(taskCalls(f),[],label);
+  }
+});
+
+test('prerequisite Back honors draft and stale guards, then falls back to Task relationships if its row disappears', () => {
+  for(const changed of ['unlinked','Related','archived','review settled']){
+    const f=fixture({receiptIntent:'completion',beforeVerify:true});
+    f.open();f.dirty=true;
+    const form=f.form;f.document.activeElement=f.back;
+    f.stale=true;
+    assert.equal(f.returnToReview(),false);
+    assert.ok(!f.calls.some(([kind])=>kind==='confirm close'));
+    f.stale=false;
+    assert.equal(f.returnToReview(),false);
+    assert.ok(f.calls.some(([kind])=>kind==='confirm close'));
+    assert.equal(f.form,form);
+    assert.equal(f.form.value,'Keep this fictional unsent draft.');
+    assert.equal(f.document.activeElement,f.back);
+    assert.equal(f.receiptBack,null);
+    if(changed==='unlinked')f.source.dependencies.shift();
+    if(changed==='Related')f.source.dependencies[0].kind='related';
+    if(changed==='archived')f.target.archivedAt=verifiedAt;
+    if(changed==='review settled'){f.source.status='done';f.source.verifiedAt=verifiedAt;}
+    f.allowDiscard=true;
+    assert.equal(f.returnToReview(),true,changed);f.flush();
+    assert.match(f.receiptBack.name,/Back to plan receipt/,changed);
+    assert.deepEqual(focused(f),['task relationships heading'],changed);
+    assert.equal(form.isConnected,false);
+  }
+});
+
+test('a receipt-bearing prerequisite review keeps its existing Back instead of consuming a reverse Required by click',()=>{
+  const f=fixture({receiptIntent:'completion',beforeVerify:true}),outer=f.ui.planReceiptReturn;
+  f.target.status='done';
+  f.open();
+  const inner=f.ui.completionLinkedReturn,back=f.back;
+  assert.equal(f.row(sourceId).hasAttribute(dependentMarker),true,'reverse relationship is actually rendered');
+  f.openTask(sourceId);
+  assert.equal(f.ui.detailId,targetId);
+  assert.equal(f.ui.completionLinkedReturn,inner);
+  assert.equal(f.back,back);
+  assert.equal(f.document.activeElement,back,'the blocked deeper link points focus to the available return');
+  assert.deepEqual(taskCalls(f).map(call=>call[1]),[targetId]);
+  assert.match(f.calls.find(([kind])=>kind==='toast')?.[1],/Go back to the original review/);
+  assert.equal(f.returnToReview(),true);
+  f.flush();
+  assert.equal(f.ui.planReceiptReturn,outer);
+  assert.deepEqual(focused(f),[back.name,'row '+targetId]);
 });

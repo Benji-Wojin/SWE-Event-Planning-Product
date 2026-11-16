@@ -38,7 +38,7 @@ function fixture() {
     row('transitive-target', { dependencies: [link(ready.id)] }),
     row('unrelated-target'),
   ] };
-  const window = { GatherAccessLost: false }, ui = { actor: 'jack', dialogKind: 'task', detailId: source.id };
+  const window = { GatherAccessLost: false }, document = { hidden: false }, ui = { actor: 'jack', dialogKind: 'task', detailId: source.id };
   let organizer = true, pending = false, stale = false, closedDisclosure = false;
   const calls = [], backdrop = { hidden: false }, dialog = {}, mounted = new Set();
   const section = { contains: opener => mounted.has(opener) };
@@ -50,7 +50,7 @@ function fixture() {
     if (mount) mounted.add(opener);
     return opener;
   }
-  const context = vm.createContext({ window, ui, h, GatherScheduleUI, GatherPlanningUI,
+  const context = vm.createContext({ window, document, ui, h, GatherScheduleUI, GatherPlanningUI,
     store: { getState: () => state, getSnapshotRevision: () => 9,
       refresh() { assert.fail('Opening a required task should not fetch data.'); },
       resumeTask() { assert.fail('Opening a required task should not resume it.'); },
@@ -68,7 +68,7 @@ function fixture() {
   });
   vm.runInContext(sourceBlock('  function dependencyInfo(', '  function linkedTaskForm(') +
     sourceBlock('  function completionLinkedImpact(', '  function relationshipCard('), context);
-  return { source, state, ready, waiting, window, ui, backdrop, calls, control, set organizer(value) { organizer = value; },
+  return { source, state, ready, waiting, window, document, ui, backdrop, calls, control, set organizer(value) { organizer = value; },
     set pending(value) { pending = value; }, set stale(value) { stale = value; },
     set closedDisclosure(value) { closedDisclosure = value; },
     impact(task = source) {
@@ -156,6 +156,8 @@ test('stale snapshots, ineligible tasks, and hidden or foreign impact controls c
     'not organizer': f => { f.organizer = false; },
     'lost access': f => { f.window.GatherAccessLost = true; },
     'hidden backdrop': f => { f.backdrop.hidden = true; },
+    'hidden document': f => { f.document.hidden = true; },
+    'pending save': f => { f.ui.pendingSave = true; },
     'different dialog': f => { f.ui.dialogKind = 'notifications'; },
     'closed disclosure': f => { f.closedDisclosure = true; },
     'detached control': (_f, opener) => { opener.isConnected = false; },

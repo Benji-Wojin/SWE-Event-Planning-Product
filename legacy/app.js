@@ -1581,7 +1581,7 @@
       completionLinkedReturnInScope(ui.completionLinkedReturn);
     const receiptBack=kind==='task'&&ui.planReceiptReturn&&activePlanReceiptReturn(ui.detailId);
     const backButtons=(receiptBack?'<button id="planReceiptBack" type="button" class="text-button" data-action="return-to-plan-receipt">← Back to plan receipt</button>':'')+
-      (requiredBack?'<button id="completionLinkedImpactBack" type="button" class="text-button" data-action="return-to-completion-linked-impact">← Back to Required by</button>':'')+
+      (requiredBack?'<button id="completionLinkedImpactBack" type="button" class="text-button" data-action="return-to-completion-linked-impact">← '+(ui.completionLinkedReturn.direction==='prerequisite'?'Back to completion review':'Back to Required by')+'</button>':'')+
       (comparisonBack?'<button type="button" class="text-button" data-action="return-to-overlap-review">← Back to overlap review</button>':'')+
       (back?`<button type="button" class="text-button" data-action="${back[0]}">← ${back[1]}</button>`:'');
     $('#dialog').innerHTML=`<div class="dialog-header">${backButtons?`<div class="event-review-task-heading">${heading}${backButtons}</div>`:heading}<button class="icon-button dialog-close" data-action="close-dialog" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
@@ -1818,8 +1818,8 @@
       !store.getState().tasks.some(task=>task.id===id&&!task.archivedAt))return;
     ui.planReceiptReturn={id,intent,actor:ui.actor,view:ui.view,project:mode.projectId};
   }
-  function activePlanReceiptReturn(id) {
-    const link=ui.planReceiptReturn,mode=window.GatherMode;
+  function activePlanReceiptReturn(id,link=ui.planReceiptReturn) {
+    const mode=window.GatherMode;
     return link&&link.id===id&&link.actor===ui.actor&&link.view===ui.view&&link.project===mode?.projectId&&
       !mode.demo&&isOrganizer()&&!window.GatherAccessLost?link:null;
   }
@@ -3409,20 +3409,40 @@
     return !!link&&!window.GatherAccessLost&&isOrganizer()&&link.actor===ui.actor&&link.view===ui.view&&
       link.project===window.GatherMode?.projectId&&link.demo===window.GatherMode?.demo&&link.generation===state.demoGeneration;
   }
+  function completionReceiptOrigin(task) {
+    const link=ui.planReceiptReturn&&activePlanReceiptReturn(task?.id);
+    return link&&(link.intent==='completion'||link.intent==='amendment')?link:null;
+  }
+  function receiptPrerequisiteReview(task,link=completionReceiptOrigin(task)) {
+    return link?.intent==='completion'&&task&&!task.archivedAt&&task.status!=='done'&&
+      task.requiresVerification&&!!task.reportedAt&&!task.verifiedAt;
+  }
   function openCompletionLinkedTarget(id,opener) {
-    const dialog=$('#dialog'),heading=$('#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
-    if(ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||!id||!opener?.isConnected||
-      opener.dataset.action!=='task'||!opener.hasAttribute('data-completion-linked-target')||opener.dataset.id!==id||
+    const prerequisite=!!opener?.hasAttribute('data-completion-required-prerequisite');
+    const marker=prerequisite?'data-completion-required-prerequisite':'data-completion-linked-target';
+    const dialog=$('#dialog'),heading=$(prerequisite?'#taskRelationshipsHeading':'#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
+    if(document.hidden||ui.pendingSave||ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||!id||!opener?.isConnected||
+      opener.dataset.action!=='task'||!opener.hasAttribute(marker)||opener.dataset.id!==id||
       !section?.contains(opener)||opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener)||window.GatherAccessLost)return;
     if(workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
       toast('Refresh the project before opening a required task from this review.');return;
     }
-    const state=store.getState(),source=state.tasks.find(task=>task.id===ui.detailId);
-    if(!completionLinkedImpact(source,state,state.tasks).shownIds.has(id)){
+    const state=store.getState(),source=state.tasks.find(task=>task.id===ui.detailId),receiptReturn=completionReceiptOrigin(source);
+    const outerReview=ui.completionLinkedReturn;
+    if(outerReview?.receiptReturn&&outerReview.targetId===ui.detailId&&completionLinkedReturnInScope(outerReview,state)){
+      toast('Go back to the original review before opening another linked task.');
+      $('#completionLinkedImpactBack',dialog)?.focus({preventScroll:true});
+      return;
+    }
+    const current=prerequisite?receiptPrerequisiteReview(source,receiptReturn)&&id!==source.id&&
+      source.dependencies?.some(link=>link.taskId===id&&link.kind!=='related')&&state.tasks.some(task=>task.id===id&&!task.archivedAt):
+      completionLinkedImpact(source,state,state.tasks).shownIds.has(id);
+    if(!current){
       toast('This task is no longer in the required-work review.');return;
     }
     const batch=ui.relatedBatch,comparison=ui.overlapComparison;
-    ui.completionLinkedReturn={sourceId:source.id,targetId:id,actor:ui.actor,view:ui.view,project:window.GatherMode?.projectId,
+    ui.completionLinkedReturn={sourceId:source.id,targetId:id,direction:prerequisite?'prerequisite':'dependent',receiptReturn,
+      actor:ui.actor,view:ui.view,project:window.GatherMode?.projectId,
       demo:window.GatherMode?.demo,generation:state.demoGeneration,overlapDay:ui.overlapReviewDay||'',
       relatedBatch:batch&&{...batch,ids:[...batch.ids]},overlapComparison:comparison?.peerId===source.id?comparison:null};
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
@@ -3444,14 +3464,19 @@
     if(relatedBatch&&relatedBatchInScope(relatedBatch))ui.relatedBatch=relatedBatch;
     if(overlapComparison&&overlapComparisonInScope(overlapComparison)&&state.tasks.some(task=>task.id===overlapComparison.originId&&!task.archivedAt))
       ui.overlapComparison=overlapComparison;
+    const receipt=link.receiptReturn;
+    if(receipt&&(receipt.intent==='completion'||receipt.intent==='amendment')&&activePlanReceiptReturn(link.sourceId,receipt)===receipt)
+      ui.planReceiptReturn=receipt;
     taskDialog(link.sourceId,'',false,true,'',undefined,overlapDay,{readOnly:true});
     const title=$('#dialogTitle',dialog),revision=store.getSnapshotRevision?.();
     requestAnimationFrame(()=>{
       if(document.hidden||!completionLinkedReturnInScope(link)||ui.dialogKind!=='task'||ui.detailId!==link.sourceId||
         $('#dialogBackdrop').hidden||!title||$('#dialogTitle',dialog)!==title||document.activeElement!==title||
         store.getSnapshotRevision?.()!==revision||workspaceUpdatesPending()||scheduleRevisionIsStale(revision))return;
-      const heading=$('#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
-      const row=section&&focusable(section).find(el=>el.hasAttribute('data-completion-linked-target')&&el.dataset.id===link.targetId);
+      const prerequisite=link.direction==='prerequisite';
+      const heading=$(prerequisite?'#taskRelationshipsHeading':'#completionLinkedImpactHeading',dialog),section=heading?.closest('section');
+      const marker=prerequisite?'data-completion-required-prerequisite':'data-completion-linked-target';
+      const row=section&&focusable(section).find(el=>el.hasAttribute(marker)&&el.dataset.id===link.targetId);
       focusTaskDialogControl(row||heading||title,dialog);
     });
     return true;
@@ -3463,12 +3488,13 @@
     const otherDependents=dependents.filter(t=>!impact.shownIds.has(t.id));
     const owner=info.ready&&state.members.find(person=>person.id===task.owner&&person.active!==false);
     const linkCandidates=state.tasks.filter(t=>!t.archivedAt&&t.id!==task.id&&!info.links.some(l=>l.taskId===t.id));
-    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 tabindex="-1">Task relationships</h3>${task.archivedAt?'':`<button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button>`}</div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
+    const reviewPrerequisites=!!ui.planReceiptReturn&&receiptPrerequisiteReview(task);
+    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 id="taskRelationshipsHeading" tabindex="-1">Task relationships</h3>${task.archivedAt?'':`<button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button>`}</div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
       ${info.open.length&&task.status!=='done'?info.unavailable.length?
         '<p class="notice">A required link points to a missing or archived task. Review the link with the organizer before completing this task.</p>':
         '<p class="notice">Finish required work before completing this task. Unlink anything no longer needed.</p>':''}
       ${info.ready?`<div class="dependency-prompt"><div><strong>Ready to resume</strong><p>Required linked work is complete. Review the results below and check for other blockers before resuming.</p></div>${manage?`<button class="btn btn-primary" data-action="resume-task" data-id="${h(task.id)}">Resume task</button>`:owner?`<span>${h(owner.name)} can resume this task.</span>`:'<span>Ask the organizer to assign an active owner.</span>'}</div>`:''}
-      ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
+      ${info.links.length?info.links.map(link=>relationshipCard(task,link,info,manage,reviewPrerequisites)).join(''):task.status==='blocked'?'<p>No follow-up task linked yet.</p>':''}
       ${manage&&task.status!=='done'?`<details class="dependency-add"><summary>Link an existing task</summary><form id="relationshipAddForm" data-id="${h(task.id)}"><label class="field">Task<select name="taskId" required>${options([['','Choose a task'],...linkCandidates.map(t=>[t.id,t.title])],'')}</select></label><label class="field">Relationship<select name="kind">${options([['related','Related · can run in parallel'],['dependency','Required before this task can be completed']],'related')}</select></label><label class="field">Why link these tasks?<textarea name="reason" rows="2" maxlength="2000" required placeholder="Describe the shared context, or the exact output needed first."></textarea></label><button type="submit" class="btn btn-secondary btn-small">Save link</button></form></details>`:''}
       ${linkedTaskForm(task,state,isOrganizer())}
       ${isOrganizer()&&!window.GatherAccessLost&&task.status!=='done'&&!(task.reportedAt&&task.requiresVerification&&!task.verifiedAt)?`<button class="btn btn-secondary section-gap" data-action="related-checklist" data-id="${h(task.id)}">Break down task</button>`:''}
@@ -3478,13 +3504,13 @@
       ${otherDependents.length?`<h3>Linked from</h3><div class="dependency-targets">${otherDependents.map(t=>`<button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)} · ${h(member(t.owner).name)}</button>`).join('')}</div>${task.status!=='done'?'<p class="muted">Your completion note will be shared with these tasks.</p>':''}`:''}
     </section>`;
   }
-  function relationshipCard(task,link,info,manage) {
+  function relationshipCard(task,link,info,manage,reviewPrerequisites=false) {
     const t=link.task,related=link.kind==='related';
     if(!t||t.archivedAt)return `<article class="dependency-card"><span class="relationship-type ${related?'is-related':''}">${related?'RELATED · NOT A BLOCKER':'REQUIRED BEFORE COMPLETION'}</span><p>${t?`<strong>${h(t.title)}</strong> · Archived task.`:'Linked task unavailable.'}</p>${!related?'<p class="muted">This link does not satisfy required work.</p>':''}${link.reason?`<p class="relationship-reason"><strong>Why linked:</strong> ${h(link.reason)}</p>`:''}${manage&&!window.GatherAccessLost&&task.status!=='done'?`<button type="button" class="text-button dependency-unlink" data-action="unlink-dependency" data-id="${h(task.id)}" data-prerequisite="${h(link.taskId)}">Remove unavailable link</button>`:''}</article>`;
     const done=info.resolved(t);
     const awaiting=t.requiresVerification&&!t.verifiedAt&&(t.reportedAt||t.status==='done');
     const status=done?'Complete':awaiting?'Awaiting verification':statuses[t.status];
-    return `<article class="dependency-card"><span class="relationship-type ${related?'is-related':''}">${related?'RELATED · NOT A BLOCKER':'REQUIRED BEFORE COMPLETION'}</span><div class="dependency-card-heading"><button class="text-button" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><span class="status-badge ${done?'status-done':related?'':'status-blocked'}">${status}</span></div><p class="muted">${h(member(t.owner).name)}${link.automatic?' · Automatically linked; review the reason':''}</p><p class="relationship-reason"><strong>Why linked:</strong> ${h(link.reason||'No reason was recorded. Review whether this is really required.')}</p>${done?`<p class="dependency-result">${h(t.completionResult?.text||t.note||'No result provided.')}</p><p class="muted">${h(completionText(t))}</p>`:''}${manage&&task.status!=='done'?`<details class="relationship-edit"><summary>Change relationship</summary><form id="relationship-${h(t.id)}" class="relationship-form" data-id="${h(task.id)}" data-prerequisite="${h(t.id)}"><label class="field">Relationship<select name="kind">${options([['related','Related · does not block completion'],['dependency','Required before this task can be completed']],related?'related':'dependency')}</select></label><label class="field">Why is this link useful or required?<textarea name="reason" rows="2" maxlength="2000" required>${h(link.reason||'')}</textarea></label><button class="btn btn-secondary btn-small" type="submit">Save relationship</button></form></details><button class="text-button dependency-unlink" data-action="unlink-dependency" data-id="${h(task.id)}" data-prerequisite="${h(t.id)}" aria-label="Unlink ${h(t.title)}">Unlink · keep task</button>`:''}</article>`;
+    return `<article class="dependency-card"><span class="relationship-type ${related?'is-related':''}">${related?'RELATED · NOT A BLOCKER':'REQUIRED BEFORE COMPLETION'}</span><div class="dependency-card-heading"><button class="text-button" data-action="task" data-id="${h(t.id)}"${reviewPrerequisites&&!related?' data-completion-required-prerequisite':''}>${h(t.title)}</button><span class="status-badge ${done?'status-done':related?'':'status-blocked'}">${status}</span></div><p class="muted">${h(member(t.owner).name)}${link.automatic?' · Automatically linked; review the reason':''}</p><p class="relationship-reason"><strong>Why linked:</strong> ${h(link.reason||'No reason was recorded. Review whether this is really required.')}</p>${done?`<p class="dependency-result">${h(t.completionResult?.text||t.note||'No result provided.')}</p><p class="muted">${h(completionText(t))}</p>`:''}${manage&&task.status!=='done'?`<details class="relationship-edit"><summary>Change relationship</summary><form id="relationship-${h(t.id)}" class="relationship-form" data-id="${h(task.id)}" data-prerequisite="${h(t.id)}"><label class="field">Relationship<select name="kind">${options([['related','Related · does not block completion'],['dependency','Required before this task can be completed']],related?'related':'dependency')}</select></label><label class="field">Why is this link useful or required?<textarea name="reason" rows="2" maxlength="2000" required>${h(link.reason||'')}</textarea></label><button class="btn btn-secondary btn-small" type="submit">Save relationship</button></form></details><button class="text-button dependency-unlink" data-action="unlink-dependency" data-id="${h(task.id)}" data-prerequisite="${h(t.id)}" aria-label="Unlink ${h(t.title)}">Unlink · keep task</button>`:''}</article>`;
   }
   function handoffMarkup(task) {
     const pending=(task.handoffs||[]).filter(item=>item.status==='pending');
@@ -4780,7 +4806,7 @@
       if(action==='check-run-sheet')await checkRunSheet();
       if(action==='refresh-run-sheet')await refreshRunSheet();
       if(action==='download-run-sheet')downloadRunSheet();
-      if(action==='task'&&el.hasAttribute('data-completion-linked-target')){openCompletionLinkedTarget(id,el);return;}
+      if(action==='task'&&(el.hasAttribute('data-completion-linked-target')||el.hasAttribute('data-completion-required-prerequisite'))){openCompletionLinkedTarget(id,el);return;}
       if(action==='task'){
         const requestLink=el.hasAttribute('data-open-recovery'),replyLink=el.hasAttribute('data-open-recovery-reply');
         if(eventReviewGroup==='schedule-reconfirmation'&&workspaceUpdatesPending()){

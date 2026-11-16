@@ -483,7 +483,7 @@ test('task dialogs explain prerequisites and offer completion only when required
   html=taskDialogHtml('jack','catering',undefined,store);
   assert.match(html,/data-action="verify-task"[^>]*disabled aria-describedby="verificationRequiredWork"/);
   assert.match(html,/id="verificationRequiredWork">Verification is waiting on required work\. See Task relationships below\. You can still request changes to this report\./);
-  assert.match(html,/<h3 tabindex="-1">Task relationships<\/h3>/);
+  assert.match(html,/<h3 id="taskRelationshipsHeading" tabindex="-1">Task relationships<\/h3>/);
   assert.match(html,/<summary>Request changes<\/summary><form id="returnCompletionForm"/);
   assert.match(html,/Finish required work/);
   const teammate=taskDialogHtml('maya','catering',undefined,store);
