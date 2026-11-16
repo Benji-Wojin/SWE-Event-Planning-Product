@@ -12,6 +12,13 @@ export type DuplicateSuggestion = {
 type PlanPrerequisite =
   | { kind: 'existing'; taskId: string; proposalIds: string[] }
   | { kind: 'draft'; proposalId: string };
+
+export function unavailablePlanOwnerItems<T extends { owner: string }>(selected: readonly T[], available: ReadonlySet<string>) {
+  return selected.filter(item => {
+    const owner = item.owner.trim();
+    return !!owner && !available.has(owner);
+  });
+}
 // Bind suggestions to reviewed content, not just a mutable item ID. Any change
 // to meaning or timing invalidates the old AI suggestion and reuse decision.
 export function duplicateItemIdentity(item: ReviewedItem) {

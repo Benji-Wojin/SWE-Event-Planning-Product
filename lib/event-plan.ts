@@ -20,7 +20,7 @@ import { demoPersona, loadDemo } from './demo';
 import { loadWorkspace } from './workspace';
 import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
-import { duplicateSuggestions, planSelection, planTaskSignature } from './plan-selection';
+import { duplicateSuggestions, planSelection, planTaskSignature, unavailablePlanOwnerItems } from './plan-selection';
 import type { PlanReceiptTask } from './plan-receipt';
 import { planApprovalHash } from './plan-approval-hash';
 import {
@@ -162,6 +162,12 @@ const issueText: Record<string, string> = {
   context:
     'The project changed while AI was working. Refresh the project context before generating again.',
 };
+function planAssignees(c: Context): { id: string; name: string }[] {
+  return c.state.members.filter((member: { id: string; active?: boolean; role?: string }) =>
+    member.active !== false && (c.demo || !member.role?.includes('· example')) &&
+    (!c.memberAssistant || member.id === c.user.actorId));
+}
+
 async function snapshot(c: Context) {
   const row = await read(c.id),
     data = await decode(row);
@@ -179,12 +185,11 @@ async function snapshot(c: Context) {
   }
   await authorized(c);
   const {lastChecklistImport,...draftView}=data.draft||{};
+  const members = planAssignees(c);
   const receiptTasks: PlanReceiptTask[]=[];
   if(data.receipt){
     const tasks=new Map<string,any>(c.state.tasks.map((task:any)=>[task.id,task]));
-    const owners=c.purpose==='plan'?new Map<string,string>(c.state.members
-      .filter((member:any)=>member.active!==false&&(c.demo||!member.role?.includes('· example')))
-      .map((member:any)=>[member.id,member.name])):null;
+    const owners=c.purpose==='plan'?new Map(members.map(member=>[member.id,member.name])):null;
     const completionStates: Map<string, boolean> | null = owners ? c.store.taskCompletionStates() : null;
     for(const id of data.receipt.taskIds){
       const task=tasks.get(id);
@@ -226,7 +231,7 @@ async function snapshot(c: Context) {
     workspaceRevision: c.row.revision,
     event: c.state.event,
     ...(c.purpose !== 'plan' ? {purpose: c.purpose} : {}),
-    members: c.state.members.filter((m: any) => m.active !== false && (!c.memberAssistant || m.id===c.user.actorId)),
+    members,
     actorId:c.user.actorId,
     suggestionScope:c.purpose==='suggestions'?c.id:undefined,
     contextKey:c.purpose==='suggestions'?c.contextHash:undefined,
@@ -743,6 +748,8 @@ async function applyDraft(c: Context, input: any) {
       400,
       'A selected task depends on an unchecked item. Include that item or remove the dependency.',
     );
+  if (unavailablePlanOwnerItems(selected, new Set(planAssignees(c).map(member => member.id))).length)
+    throw new HttpError(400, 'A selected item’s owner is no longer available. Choose an active teammate or leave it unassigned.');
   const selectedById = new Map(selected.map(item => [item.id, item]));
   const ids = new Map<string, string>();
   const createdIds: string[] = [];

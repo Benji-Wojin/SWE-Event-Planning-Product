@@ -2670,6 +2670,134 @@ test('prep-only starters leave activities off and do not show group controls',as
   }finally{app.dispose();}
 });
 
+test('owner recovery after a roster refresh keeps draft edits and focuses the exact assignment before approval', async () => {
+  const initial = fixture();
+  const removed = { id: 'prior-owner', name: 'Fictional departed planner' };
+  const replacement = { id: 'current-owner', name: 'Fictional current planner' };
+  initial.members.push(removed, replacement);
+  initial.draft.items = [
+    { ...copy(item), owner: removed.id },
+    { ...copy(item), id: 'unchecked', title: 'Consider a follow-up', owner: removed.id, included: false },
+    { ...copy(item), id: 'active', title: 'Coordinate the foyer', owner: 'jack' },
+  ];
+  let reads = 0;
+  const app = harness(context => {
+    const { input, saved } = context;
+    if (!input && ++reads === 2) {
+      context.value = { ...saved, workspaceRevision: 5, members: saved.members.filter(member => member.id !== removed.id) };
+    }
+    if (input?.action === 'save') context.value = pausedPlanResult(input, saved);
+    if (input?.action === 'apply') context.value = { ...saved, status: 'applied', receipt: {
+      generation: input.generation, approvalHash: approvalHash(input), taskIds: ['saved-one', 'saved-active'],
+    } };
+  }, initial, 'project=p_example', true);
+  const approvals = () => planButton(app.tree, 'Add 2 selected items to project');
+  const shortcuts = () => nodes(app.tree).filter(node => node.type === 'button' && node.props['aria-label']?.startsWith('Review owner for '));
+  try {
+    await app.start();
+    assert.equal(Boolean(approvals().props.disabled), false);
+    await app.edit('note-one', 'Keep this updated programme note.');
+    await app.click('Refresh project context');
+    assert.equal(app.find('note-one').props.value, 'Keep this updated programme note.');
+    assert.equal(app.find('owner-one').props.value, removed.id, 'refresh does not silently clear the existing private choice');
+    assert.equal(app.find('owner-unchecked').props.value, removed.id);
+    assert.equal(app.find('owner-one').props['aria-invalid'], true);
+    assert.equal(app.find('owner-one').props['aria-describedby'], 'plan-owner-error-one');
+    assert.ok(text(app.find('plan-owner-error-one')).length > 0);
+    assert.notEqual(app.find('owner-unchecked').props['aria-invalid'], true, 'only selected proposals need an owner review before adding');
+    assert.match(text(app.tree), /Review unavailable owners before adding items/);
+    assert.doesNotMatch(text(app.tree), /Fictional departed planner/);
+    assert.deepEqual(shortcuts().map(node => node.props['aria-label']), ['Review owner for Confirm activities (item 1)']);
+    assert.equal(approvals().props.disabled, true);
+
+    const ownerSelect = app.find('owner-one');
+    const ownerEditor = nodes(app.tree).find(node => node.type === 'details' && nodes(node).includes(ownerSelect));
+    assert.ok(ownerEditor?.props['data-plan-owner-date']);
+    const disclosure = { open: false };
+    const focused = [];
+    globalThis.document.getElementById = id => id === 'owner-one' ? {
+      localName: 'select', tagName: 'SELECT', type: 'select-one', matches: () => false,
+      closest: selector => {
+        assert.equal(selector, 'details[data-plan-owner-date]');
+        return disclosure;
+      },
+      focus: () => {
+        assert.equal(disclosure.open, true, 'the owner disclosure opens before focusing its select');
+        focused.push(id);
+      },
+      scrollIntoView: () => {},
+    } : null;
+    await shortcuts()[0].props.onClick();
+    assert.deepEqual(focused, ['owner-one']);
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }]);
+    assert.equal(app.saved.draft.items[0].note, item.note);
+
+    await app.edit('owner-one', replacement.id);
+    assert.equal(Boolean(approvals().props.disabled), false);
+    assert.notEqual(app.find('owner-one').props['aria-invalid'], true);
+    assert.equal(app.find('plan-owner-error-one'), undefined);
+    assert.equal(shortcuts().length, 0);
+    assert.equal(app.find('owner-unchecked').props.value, removed.id);
+    assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }]);
+    await app.click('Add 2 selected items to project');
+    assert.deepEqual(app.requests.map(request => request.action), ['get', 'get', 'save', 'apply']);
+    assert.equal(app.requests.at(-1).workspaceRevision, 5);
+    for (const request of app.requests.slice(-2)) {
+      assert.deepEqual(request.items.map(row => [row.id, row.owner, row.included]), [
+        ['one', replacement.id, true], ['unchecked', removed.id, false], ['active', 'jack', true],
+      ]);
+      assert.equal(request.items[0].note, 'Keep this updated programme note.');
+    }
+    assert.ok(app.find('plan-receipt-heading'));
+  } finally { app.dispose(); }
+});
+
+test('an unavailable draft owner does not prevent private save and can be explicitly left unassigned', async () => {
+  const initial = fixture();
+  const inactive = { id: 'inactive-owner', name: 'Fictional inactive planner', active: false };
+  initial.members.push(inactive, { id: 'current-owner', name: 'Fictional current planner', active: true });
+  initial.draft.items = [
+    { ...copy(item), owner: inactive.id },
+    { ...copy(item), id: 'unchecked', title: 'Consider a follow-up', owner: 'unknown-owner', included: false },
+  ];
+  const app = harness(context => {
+    const { input, saved } = context;
+    if (input?.action === 'save') context.value = pausedPlanResult(input, saved);
+    if (input?.action === 'apply') context.value = { ...saved, status: 'applied', receipt: {
+      generation: input.generation, approvalHash: approvalHash(input), taskIds: ['saved-one'],
+    } };
+  }, initial);
+  const choices = id => nodes(app.find(id)).filter(node => node.type === 'option' && !node.props.disabled).map(node => node.props.value);
+  const approval = () => planButton(app.tree, 'Add 1 selected items to project');
+  try {
+    await app.start();
+    assert.equal(approval().props.disabled, true);
+    assert.equal(app.find('owner-one').props['aria-invalid'], true);
+    assert.equal(app.find('owner-one').props.value, inactive.id);
+    assert.deepEqual(choices('owner-one'), ['', 'jack', 'current-owner']);
+    assert.deepEqual(choices('batch-owner'), ['jack', 'current-owner']);
+    assert.doesNotMatch(text(app.tree), /Fictional inactive planner/);
+    await app.edit('note-one', 'Save this private note first.');
+    assert.equal(Boolean(planButton(app.tree, 'Save draft').props.disabled), false);
+    await app.click('Save draft');
+    assert.deepEqual(app.requests.map(request => request.action), ['get', 'save']);
+    assert.equal(app.saved.draft.items[0].owner, inactive.id);
+    assert.equal(app.saved.draft.items[0].note, 'Save this private note first.');
+    assert.equal(approval().props.disabled, true);
+
+    await app.edit('owner-one', '');
+    assert.equal(Boolean(approval().props.disabled), false);
+    assert.doesNotMatch(text(app.tree), /Review unavailable owners before adding items/);
+    assert.deepEqual(app.requests.map(request => request.action), ['get', 'save']);
+    await app.click('Add 1 selected items to project');
+    assert.deepEqual(app.requests.map(request => request.action), ['get', 'save', 'save', 'apply']);
+    assert.equal(app.requests.at(-1).items[0].owner, '');
+    assert.equal(app.requests.at(-1).items[1].owner, 'unknown-owner');
+    assert.equal(app.requests.at(-1).items[1].included, false);
+    assert.ok(app.find('plan-receipt-heading'));
+  } finally { app.dispose(); }
+});
+
 test('batch owner assignment changes selected proposals only and saves through the existing draft workflow',async()=>{
   const initial=fixture();initial.members.push({id:'maya',name:'Maya'},{id:'former',name:'Former',active:false});
   initial.draft.items=[{...copy(item),owner:'jack',dueDate:'2030-10-02'},

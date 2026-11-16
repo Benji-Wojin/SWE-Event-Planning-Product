@@ -1485,6 +1485,91 @@ export async function eventPlanTests({
       assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project),beforeSave,'stale Apply creates no tasks or links');
       assert.deepEqual(await read(project),saved,'stale Apply neither consumes nor changes the saved private draft');
     });
+    await t.test('a departed teammate stays in the private draft until the organizer repairs selected owners', async test => {
+      const project = await setup();
+      test.after(() => {
+        owner();
+        sqlite.prepare('DELETE FROM project_members WHERE project_id=?').run(project);
+        sqlite.prepare('DELETE FROM project_invites WHERE project_id=?').run(project);
+        sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+      });
+      await joinPerson(project, 'fictional-owner-recovery@example.com', 'fictional-owner-recovery-user');
+      const formerOwner = (await (await realRead(project)).json()).identity.actorId;
+      owner();
+      const draft = await ready(project);
+      assert.ok(draft.members.some(member => member.id === formerOwner));
+      const items = draft.draft.items.map(item => ({ ...item, owner: formerOwner, included: item.id !== 'cleanup' }));
+      const saveBeforeRemoval = await post(project, save(draft, { items }));
+      assert.equal(saveBeforeRemoval.status, 200, await saveBeforeRemoval.clone().text());
+      const beforeRemoval = await saveBeforeRemoval.json();
+
+      const member = (await (await teamRead(project)).json()).members[0];
+      const removed = await teamWrite(project, { action: 'removeMember', id: member.id, revision: member.revision });
+      assert.equal(removed.status, 200, await removed.clone().text());
+      const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+      const afterRemoval = workspaceRow();
+      assert.equal(afterRemoval.revision, beforeRemoval.workspaceRevision + 1);
+      const draftAfterRemoval = row(project);
+      const staleApproval = await post(project, approval(beforeRemoval));
+      assert.equal(staleApproval.status, 409, await staleApproval.clone().text());
+      assert.deepEqual(workspaceRow(), afterRemoval);
+      assert.deepEqual(row(project), draftAfterRemoval);
+
+      const fresh = await read(project);
+      assert.equal(fresh.contextChanged, false, 'team roster changes do not invalidate the generated content');
+      assert.ok(!fresh.members.some(member => member.id === formerOwner));
+      assert.deepEqual(fresh.draft.items, beforeRemoval.draft.items, 'refresh does not reassign the private draft');
+      assert.equal(fresh.receipt, null);
+      const revisedNote = 'Keep this private venue handoff note while correcting ownership.';
+      const editedItems = fresh.draft.items.map(item => item.id === baseItem.id ? { ...item, note: revisedNote } : item);
+      const saveWithFormerOwner = await post(project, save(fresh, { items: editedItems }));
+      assert.equal(saveWithFormerOwner.status, 200, await saveWithFormerOwner.clone().text());
+      const saved = await saveWithFormerOwner.json();
+      assert.equal(saved.draft.items[0].owner, formerOwner);
+      assert.equal(saved.draft.items[0].note, revisedNote);
+      assert.deepEqual(workspaceRow(), afterRemoval, 'explicit private Save is still allowed and does not change the workspace');
+
+      const beforeRejectedApproval = row(project);
+      const rejected = await post(project, approval(saved));
+      assert.equal(rejected.status, 400, await rejected.clone().text());
+      assert.match((await rejected.json()).error, /no longer available/i);
+      assert.deepEqual(workspaceRow(), afterRemoval, 'no tasks are created on an unavailable-owner rejection');
+      assert.deepEqual(row(project), beforeRejectedApproval, 'rejected approval does not change or consume the private draft');
+      assert.equal((await read(project)).receipt, null);
+
+      const repaired = saved.draft.items.map(item => item.id === baseItem.id ? { ...item, owner: 'jack' }
+        : item.id === 'arrive' ? { ...item, owner: '' } : item);
+      const approved = await post(project, approval(saved, { items: repaired }));
+      assert.equal(approved.status, 200, await approved.clone().text());
+      const result = await approved.json();
+      assert.equal(result.receipt.taskIds.length, 2);
+      assert.equal(result.draft.items.find(item => item.id === 'cleanup').owner, formerOwner, 'unchecked former owner remains private');
+      const tasks = JSON.parse(workspaceRow().data).tasks;
+      assert.deepEqual(tasks.map(task => [task.title, task.owner]).sort(), [[baseItem.title, 'jack'], ['Welcome attendees', '']]);
+      assert.equal(tasks.find(task => task.title === baseItem.title).note, revisedNote);
+      assert.deepEqual(tasks.find(task => task.title === 'Welcome attendees').dependencies.map(link => link.taskId), [tasks.find(task => task.title === baseItem.title).id]);
+      assert.equal(calls.length, 1, 'membership review, draft recovery and approval make no new provider calls');
+    });
+    await t.test('legacy sample actors are not plan assignees in real projects but demo personas are available', async test => {
+      const project = await setup();
+      test.after(() => sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+      const legacy = JSON.parse(workspaceRow().data);
+      legacy.members.push({ id: 'legacy-example', name: 'Fictional Sample Actor', initials: 'FS', role: 'Logistics', color: 'mint' });
+      sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(JSON.stringify(legacy), project);
+      const draft = await ready(project);
+      assert.ok(!draft.members.some(member => member.id === 'legacy-example'));
+      const before = workspaceRow();
+      const items = draft.draft.items.map(item => item.id === baseItem.id ? { ...item, owner: 'legacy-example' } : item);
+      const rejected = await post(project, approval(draft, { items }));
+      assert.equal(rejected.status, 400, await rejected.clone().text());
+      assert.match((await rejected.json()).error, /no longer available/i);
+      assert.deepEqual(workspaceRow(), before);
+      assert.equal((await read(project)).receipt, null);
+
+      const demo = await read('demo=1&as=jack');
+      assert.deepEqual(demo.members.map(member => member.id).sort(), ['dev', 'jack', 'jules', 'maya']);
+    });
     await t.test(
       'invalid owners, hidden status, duplicates and unchecked prerequisites add no tasks',
       async () => {

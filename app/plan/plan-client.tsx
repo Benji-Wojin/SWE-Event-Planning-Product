@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Card, CardContent } from '@/components/ui/card';
-import { duplicateItemIdentity, planSelection, selectNewPlanItems, type ExistingPlanTask } from '@/lib/plan-selection';
+import { duplicateItemIdentity, planSelection, selectNewPlanItems, unavailablePlanOwnerItems, type ExistingPlanTask } from '@/lib/plan-selection';
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planApprovalHash } from '@/lib/plan-approval-hash';
@@ -258,6 +258,10 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     data?.draft?.duplicateSuggestions || [],
   );
   const itemNumbers = new Map(items.map((item, index) => [item.id, index + 1]));
+  const assignees = ((data?.members || []) as { id: string; name: string; active?: boolean }[]).filter(member => member.active !== false);
+  const assigneeIds = new Set(assignees.map(member => member.id));
+  const unavailableOwners = applied ? [] : unavailablePlanOwnerItems(selected, assigneeIds);
+  const unavailableOwnerItemIds = new Set(unavailableOwners.map(item => item.id));
   const prerequisiteDependents = planPrerequisiteDependents(items);
   const scheduleIssues = new Map<string, { item: ReviewedItem; issue: PlanScheduleIssue }>();
   let invalidPrivateSchedule = false;
@@ -419,8 +423,17 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     const issue = scheduleIssues.get(itemId)?.issue;
     if (issue?.field !== name && !(name === 'start' && selected.some(item => item.id === itemId && item.kind === 'activity' && !item.start))) return;
     const field = document.getElementById((name === 'start' ? 'date-' : 'end-') + itemId) as HTMLInputElement | null;
-    if (field?.localName !== 'input' || field.type !== 'datetime-local' || field.matches(':disabled')) return;
-    const editor = field.closest<HTMLDetailsElement>(name === 'start' ? 'details[data-plan-owner-date]' : 'details[data-plan-item-details]');
+    if (field?.localName !== 'input' || field.type !== 'datetime-local') return;
+    focusDraftField(field, name === 'start' ? 'details[data-plan-owner-date]' : 'details[data-plan-item-details]');
+  }
+  function focusDraftOwner(itemId: string) {
+    if (locked || applied || pending.current || !unavailableOwnerItemIds.has(itemId)) return;
+    const field = document.getElementById('owner-' + itemId);
+    if (field?.localName === 'select') focusDraftField(field, 'details[data-plan-owner-date]');
+  }
+  function focusDraftField(field: HTMLElement, editorSelector: string) {
+    if (field.matches(':disabled')) return;
+    const editor = field.closest<HTMLDetailsElement>(editorSelector);
     if (!editor) return;
     editor.open = true;
     field.focus({ preventScroll: true });
@@ -1045,11 +1058,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                   <Label htmlFor="batch-owner">Owner for selected items</Label>
                   <NativeSelect id="batch-owner" className="w-full" value={batchOwner} onChange={e=>setBatchOwner(e.target.value)}>
                     <option value="" disabled>Choose an owner</option>
-                    {data.members.filter((member:any)=>member.active!==false).map((member:any)=><option key={member.id} value={member.id}>{member.name}</option>)}
+                    {assignees.map(member=><option key={member.id} value={member.id}>{member.name}</option>)}
                   </NativeSelect>
                 </div>
-                <Button type="button" variant="outline" disabled={locked||!selected.length||!batchOwner||!data.members.some((member:any)=>member.id===batchOwner&&member.active!==false)} onClick={()=>{
-                  if(!batchOwner||!data.members.some((member:any)=>member.id===batchOwner&&member.active!==false))return;
+                <Button type="button" variant="outline" disabled={locked||!selected.length||!assigneeIds.has(batchOwner)} onClick={()=>{
+                  if(!assigneeIds.has(batchOwner))return;
                   editBatch(current=>current.map(item=>item.included&&item.duplicateChoice!=='reuse'?{...item,owner:batchOwner}:item));
                 }}>Assign selected</Button>
               </div>
@@ -1060,6 +1073,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               const prerequisiteLimitReached = item.dependsOn.length >= planPrerequisiteLimit;
               const prerequisiteCountId = `required-count-${item.id}`;
               const scheduleIssue = scheduleIssues.get(item.id)?.issue;
+              const draftOwner = item.owner.trim();
+              const ownerError = unavailableOwnerItemIds.has(item.id) ? `plan-owner-error-${item.id}` : undefined;
               const startError = scheduleIssue?.field === 'start' ? `schedule-start-error-${item.id}` : undefined;
               const endError = scheduleIssue?.field === 'end' ? `schedule-end-error-${item.id}` : undefined;
               const exact = matches.get(item.id) || [];
@@ -1306,26 +1321,22 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                       <NativeSelect
                         id={'owner-' + item.id}
                         className="w-full"
-                        value={item.owner}
+                        value={draftOwner}
+                        aria-invalid={ownerError ? true : undefined}
+                        aria-describedby={ownerError}
                         onChange={(e) =>
                           updateItem(item.id, { owner: e.target.value })
                         }
                       >
                         <option value="">Unassigned</option>
-                        {data.members.map((member: any) => (
+                        {assignees.map(member => (
                           <option key={member.id} value={member.id}>
                             {member.name}
                           </option>
                         ))}
-                        {item.owner &&
-                          !data.members.some(
-                            (member: any) => member.id === item.owner,
-                          ) && (
-                            <option value={item.owner}>
-                              Former teammate — choose another owner
-                            </option>
-                          )}
+                        {draftOwner && !assigneeIds.has(draftOwner) && <option value={draftOwner} disabled>Unavailable owner</option>}
                       </NativeSelect>
+                      {ownerError && <p id={ownerError} className="text-sm text-destructive">This owner is no longer available. Choose an active teammate or leave this item unassigned.</p>}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor={'date-' + item.id}>
@@ -1506,6 +1517,21 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                   keep separate work.
                 </p>
               )}
+              {unavailableOwners.length > 0 && <section aria-labelledby="plan-unavailable-owners-heading" className="space-y-2 rounded-md border border-destructive/40 p-3 text-sm">
+                <h3 id="plan-unavailable-owners-heading" className="font-semibold">Review unavailable owners before adding items</h3>
+                <p className="text-muted-foreground">Choose an active teammate or leave each affected item unassigned. No shared assignments have changed.</p>
+                <ul className="space-y-2">
+                  {unavailableOwners.map(item => {
+                    const title = item.title.trim() || 'Untitled draft item';
+                    const number = itemNumbers.get(item.id);
+                    return <li key={item.id} className="flex flex-wrap items-center gap-x-3 wrap-anywhere">
+                      <span><strong>{title}</strong> <span className="text-xs text-muted-foreground">Item {number}</span></span>
+                      {!locked && <button type="button" aria-label={`Review owner for ${title} (item ${number})`}
+                        className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4" onClick={() => focusDraftOwner(item.id)}>Review owner</button>}
+                    </li>;
+                  })}
+                </ul>
+              </section>}
               <PlanApprovalImpact selected={selected} itemNumbers={itemNumbers} scheduleIssues={scheduleIssues} onEditSchedule={locked ? undefined : focusDraftScheduleField} />
               <p className="text-sm text-muted-foreground">Nothing will be sent or booked.</p>
               <Button
@@ -1513,6 +1539,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                 disabled={
                   locked ||
                   !selected.length ||
+                  unavailableOwners.length > 0 ||
                   scheduleIssues.size > 0 ||
                   missingDependencies ||
                   duplicates.size > 0 ||
