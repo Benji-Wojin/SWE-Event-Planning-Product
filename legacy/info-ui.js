@@ -53,11 +53,12 @@
         return `<li><strong>${h(dateLabel(date))}</strong><p>${Object.entries(availability).map(([value,label])=>`${answers.filter(row=>row.answer===value).length} ${h(label.toLowerCase())}`).join(' · ')}</p><details data-info-responses="${h(key)}"><summary data-info-poll-summary="${h(key)}">Recorded responses for ${h(dateLabel(date))}</summary>${answers.length?`<ul>${answers.map(row=>`<li>${h(row.name)} · ${h(availability[row.answer]||'No response for this date')}</li>`).join('')}</ul>`:'<p class="muted">No responses recorded.</p>'}</details></li>`;
       }).join('')}</ul><div class="inline">${!poll.closedAt?`<button class="btn btn-secondary" data-info-poll-vote="${h(poll.id)}">${poll.responses.some(row=>row.actor===state.identity.actor)?'Edit':'Record'} my availability<span class="sr-only"> for ${h(poll.title)}</span></button>`:''}${state.identity.admin?`<button class="text-button" data-info-poll-close="${h(poll.id)}">${poll.closedAt?'Reopen':'Close'} poll<span class="sr-only"> ${h(poll.title)}</span></button>`:''}</div></section>`).join('')||'<section class="panel"><h2>No date options yet</h2><p>The organizer can propose dates for the team to compare before agreeing when to meet.</p></section>'}</div>`;
     }
-    async function request(data, extra) {
+    async function request(data, extra, signal) {
       const response = await fetch(endpoint(extra), {
         method: data ? 'POST' : 'GET',
         credentials: 'same-origin',
         cache: 'no-store',
+        signal,
         headers: data
           ? {
               'X-Gather-Request': '1',
@@ -76,12 +77,14 @@
       try {
         value = await response.json();
       } catch {
-        throw new Error(
+        const error = new Error(
           'Event info could not be loaded. Retry when your connection returns.',
         );
+        if (!response.ok) error.status = response.status;
+        throw error;
       }
       if (!response.ok) {
-        const error = new Error(value.error || 'Unable to save event info.');
+        const error = new Error(value?.error || 'Unable to save event info.');
         error.status = response.status;
         throw error;
       }
@@ -304,69 +307,130 @@
       const row=[...host.querySelectorAll('[data-info-arrival]')].find(button=>button.dataset.infoArrival===id);
       (row||host.querySelector('[data-info-search]'))?.focus();
     }
-    function arrivalDialog(id,reviewedIntent,refreshed=false) {
+    const arrivalIdentity = identity => typeof identity?.actor==='string' && !!identity.actor && typeof identity.admin==='boolean';
+    const sameArrivalIdentity = (a,b) => arrivalIdentity(a) && a.actor===b?.actor && a.admin===b?.admin;
+    function arrivalDialog(id,reviewedIntent,review={}) {
       const guest = state.guests.find((g) => g.id === id && !g.archivedAt);
-      if (!guest) return;
+      if (!guest || !arrivalIdentity(state.identity)) return;
       const arrived = !!guest.arrival?.at,
         intent = reviewedIntent ?? !arrived,
+        opening = review.opening ?? guest.arrival,
+        refreshed = !!review.refreshed,
         alreadyDone = refreshed && arrived===intent,
+        replaced = refreshed && !intent && arrived &&
+          (guest.arrival?.at!==opening?.at || guest.arrival?.actor!==opening?.actor),
+        readOnly = !!review.reason || alreadyDone || replaced,
         revision = state.revision,
-        requestId = crypto.randomUUID();
-      let reloading=false, needsReview=false;
+        scope = endpoint(), identity = state.identity, target = host,
+        allowRetry = !root.GatherMode?.demo,
+        requestId = crypto.randomUUID(),
+        input = {action:'arrival',id,arrived:intent,revision,requestId};
+      let sending=false, reloading=false, needsReview=false, uncertain=false, canRetry=false;
+      const details = [guest.type,guest.group,guest.email||guest.phone].filter(Boolean).map(h).join(' · ');
+      const note = review.reason || (alreadyDone
+        ? 'The latest record already matches the change you were reviewing. Nothing was changed by this refresh.'
+        : replaced ? 'The arrival record you reviewed was replaced. Close this review and open the current record before deciding whether to clear it.'
+        : 'Latest guest record loaded. Review it before confirming.');
       openDialog(
         arrived ? 'Review guest arrival' : 'Record guest arrival',
-        `<form id="guestArrivalForm">${refreshed?'<p class="notice" role="status">'+(alreadyDone?'The latest record already matches the change you were reviewing. Nothing was changed by this refresh.':'Latest guest record loaded. Review it before confirming.')+'</p>':''}<h3>${h(guest.name)}</h3><p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>Only record an arrival you have confirmed. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${alreadyDone ? 'This review is read-only.' : arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'This records arrival now, using your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit">${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Review latest record</button></div></form>`,
+        `<form id="guestArrivalForm">${refreshed?'<p class="notice" role="status">'+h(note)+'</p>':''}<h3>${h(guest.name)}</h3>${details?`<p class="muted">${details}</p>`:''}<p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>No arrival recorded. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${readOnly ? 'This review is read-only.' : arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'Only record an arrival you have confirmed. This uses your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit"${readOnly?' hidden':''}>${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Review latest record</button><button class="btn btn-secondary" type="button" data-arrival-retry hidden>Retry same change</button></div></form>`,
         '', false, 'info',refreshed,
       );
       const form = document.getElementById('guestArrivalForm');
       const confirm=form.querySelector('button[type="submit"]');
       const reload=form.querySelector('[data-arrival-reload]');
-      if(alreadyDone&&confirm)confirm.hidden=true;
-      form.addEventListener('submit', async (event) => {
-        if(reloading||needsReview||alreadyDone){event.preventDefault();event.stopPropagation();return;}
-        let conflict=false;
+      const retry=form.querySelector('[data-arrival-retry]');
+      if(readOnly&&confirm)confirm.hidden=true;
+      const live = () => host===target && target?.isConnected && scope===endpoint() && !root.GatherAccessLost &&
+        sameArrivalIdentity(state?.identity,identity) && document.getElementById('guestArrivalForm')===form;
+      function inspect(next,minRevision) {
+        if (arrivalIdentity(next?.identity) && !sameArrivalIdentity(next.identity,identity)) {
+          const changed = new Error('Your project identity changed. Reload the guest list.');
+          changed.status=403;
+          throw changed;
+        }
+        if (!sameArrivalIdentity(next?.identity,identity) || !Number.isSafeInteger(next.revision) ||
+          next.revision<minRevision || !Array.isArray(next.guests) || !Array.isArray(next.files))
+          throw new Error('Could not confirm the latest guest record.');
+        const latest=next.guests.find(g=>g?.id===id&&!g.archivedAt);
+        if(latest?.arrival!=null&&(typeof latest.arrival.at!=='string'||!Number.isFinite(Date.parse(latest.arrival.at))))
+          throw new Error('Could not confirm the latest guest record.');
+        return latest;
+      }
+      function showLatest(next,latest,reason) {
+        state=next;
+        render();
+        if (!latest) {
+          closeDialog();
+          focusArrivalList(id);
+          toast('This guest is no longer on the active guest list.');
+          return;
+        }
+        arrivalDialog(id,intent,{refreshed:true,opening,reason});
+      }
+      async function sendArrival(event, retrying=false) {
+        if (!live()||sending||reloading||readOnly||(retrying?!uncertain||!canRetry:needsReview||uncertain)) {
+          event.preventDefault();event.stopPropagation();return;
+        }
+        sending=true;
         await submit(form,event,async()=>{
-          try{
-            await save({action:'arrival',id,arrived:intent,revision,requestId},
-              arrived?'Arrival record cleared. RSVP response unchanged.':'Arrival recorded. RSVP response unchanged.');
+          const ticket=++loadTicket;
+          try {
+            const next=await request(input,undefined,AbortSignal.timeout(12000));
+            if(!live()||ticket!==loadTicket)return;
+            const latest=inspect(next,Math.max(revision+1,state.revision));
+            if (!latest || (intent ? !latest.arrival?.at : latest.arrival!==null)) {
+              showLatest(next,latest,'The latest record does not confirm the requested change. Close this review to make any new correction.');
+              return;
+            }
+            state=next;
+            render();
+            closeDialog();
             focusArrivalList(id);
-          }catch(e){
-            if(e.status!==409)throw e;
-            needsReview=conflict=true;
-            error(form,new Error('The guest list changed. Review the latest record before saving.'));
+            toast(intent ? (retrying?'The latest list shows an arrival record. RSVP response unchanged.':'Arrival recorded. RSVP response unchanged.')
+              : (retrying?'The latest list shows no arrival record. RSVP response unchanged.':'Arrival record cleared. RSVP response unchanged.'));
+          } catch(e) {
+            if(!live()||ticket!==loadTicket)return;
+            if(accessDenied(e))throw e;
+            const ambiguous=!e.status||[408,429].includes(e.status)||e.status>=500;
+            if(ambiguous||retrying){
+              uncertain=true;
+              canRetry=allowRetry&&ambiguous;
+              retry.hidden=!canRetry;
+              error(form,new Error('Could not confirm whether the original change saved. Review the latest record.'+
+                (canRetry?' You can also retry the same change.':'')));
+            } else if(e.status===409){
+              needsReview=true;
+              error(form,new Error('The guest list changed. Review the latest record before saving.'));
+            } else throw e;
           }
-        });
-        if(conflict&&document.getElementById('guestArrivalForm')===form){
+        }).finally(()=>{sending=false;});
+        if((needsReview||uncertain)&&live()){
           if(confirm)confirm.disabled=true;
           reload.focus();
         }
-      });
+      }
+      form.addEventListener('submit',event=>sendArrival(event));
+      retry.addEventListener('click',event=>sendArrival(event,true));
       reload.addEventListener('click', async () => {
-        if(form.dataset.saving||reloading)return;
+        if(!live()||sending||form.dataset.saving||reloading)return;
         reloading=true;
         reload.setAttribute('aria-disabled','true');
-        const target=host, ticket=++loadTicket;
-        const stillOpen=()=>host===target&&target?.isConnected&&document.getElementById('guestArrivalForm')===form;
+        const ticket=++loadTicket;
         try {
-          const next=await request();
-          if(!stillOpen()||ticket!==loadTicket||root.GatherAccessLost)return;
-          const identityChanged=JSON.stringify(next.identity)!==JSON.stringify(state.identity);
-          state=next;
-          render();
-          if(identityChanged||!state.guests.some(g=>g.id===id&&!g.archivedAt)){
-            closeDialog();
-            focusArrivalList(id);
-            toast(identityChanged?'Your project identity changed. Review the current guest list.':'This guest is no longer on the active guest list.');
-            return;
-          }
-          arrivalDialog(id,intent,true);
+          const next=await request(undefined,undefined,AbortSignal.timeout(12000));
+          if(!live()||ticket!==loadTicket)return;
+          const latest=inspect(next,Math.max(revision,state.revision));
+          showLatest(next,latest,uncertain
+            ? 'The latest record is shown below. This check cannot confirm whether the original change saved. No change was made by this check.'
+            : readOnly ? 'This review cannot make a new change. Close it and reopen the current guest record if a correction is needed.' : '');
         }catch(e){
-          if(!stillOpen()||ticket!==loadTicket||root.GatherAccessLost)return;
+          if(!live()||ticket!==loadTicket)return;
           if(accessDenied(e))loadError(e);
           else error(form,e);
         }finally{
           reloading=false;
-          if(stillOpen())reload.removeAttribute('aria-disabled');
+          if(live())reload.removeAttribute('aria-disabled');
         }
       });
     }

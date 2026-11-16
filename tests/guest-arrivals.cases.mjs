@@ -105,6 +105,68 @@ export function guestArrivalTests({ sqlite, owner, infoRead, infoWrite, env }) {
       owner();
     }
   });
+  test('exact arrival replays return the current opposite state without repeating the original write', async t=>{
+    const {id,query}=setup();
+    const initial=await added(query,'tentative'), guest=initial.guests.at(-1);
+    const volunteers=['A','B'].map(label=>{
+      const userId='arrival-replay-'+crypto.randomUUID();
+      return { userId, actorId:'u_'+userId, email:userId+'@example.com', displayName:'Fictional recorder '+label };
+    });
+    t.after(()=>{
+      owner();
+      sqlite.prepare('DELETE FROM project_info WHERE scope=?').run(id);
+      sqlite.prepare('DELETE FROM project_members WHERE project_id=?').run(id);
+      sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(id);
+      sqlite.prepare('DELETE FROM projects WHERE id=?').run(id);
+      for(const {userId} of volunteers)sqlite.prepare('DELETE FROM members WHERE user_id=?').run(userId);
+    });
+    for(const {userId,actorId,email,displayName} of volunteers){
+      sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)')
+        .run(userId,actorId,email,displayName,'member');
+      sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at) VALUES (?,?,?,?,?,?)')
+        .run(crypto.randomUUID(),id,userId,actorId,'fictional-arrival-replay-invite',new Date().toISOString());
+    }
+    const workspace=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+    const storedInfo=()=>sqlite.prepare('SELECT payload,revision FROM project_info WHERE scope=?').get(id);
+    const initialWorkspace=workspace();
+    const send=async(volunteer,input)=>{
+      globalThis.__gatherUser={userId:volunteer.userId,email:volunteer.email,displayName:volunteer.displayName};
+      const response=await infoWrite(input,query);
+      assert.equal(response.status,200,await response.clone().text());
+      const result=await response.json();
+      assert.equal(result.identity.actor,volunteer.actorId);
+      return result;
+    };
+    const input=(snapshot,arrived)=>({action:'arrival',id:guest.id,arrived,revision:snapshot.revision,requestId:crypto.randomUUID()});
+    const row=state=>state.guests.find(candidate=>candidate.id===guest.id);
+    const [a,b]=volunteers;
+    const recordRequest=input(initial,true);
+    const recorded=await send(a,recordRequest);
+    assert.equal(row(recorded).arrival.actor,a.actorId);
+    const clearedByB=await send(b,input(recorded,false));
+    assert.equal(row(clearedByB).arrival,null);
+    const clearRaw=storedInfo();
+    const recordReplay=await send(a,recordRequest);
+    assert.equal(recordReplay.revision,clearedByB.revision);
+    assert.deepEqual(row(recordReplay),row(clearedByB));
+    assert.deepEqual(storedInfo(),clearRaw,'retrying the earlier record request must not restore the cleared arrival or append a receipt');
+
+    const recordedByB=await send(b,input(clearedByB,true));
+    const clearRequest=input(recordedByB,false);
+    const clearedByA=await send(a,clearRequest);
+    assert.equal(row(clearedByA).arrival,null);
+    const newer=await send(b,input(clearedByA,true));
+    assert.equal(row(newer).arrival.actor,b.actorId);
+    assert.equal(row(newer).arrival.name,b.displayName);
+    assert.ok(Number.isFinite(Date.parse(row(newer).arrival.at)));
+    const newerRaw=storedInfo();
+    const clearReplay=await send(a,clearRequest);
+    assert.equal(clearReplay.revision,newer.revision);
+    assert.deepEqual(row(clearReplay),row(newer),'the replay returns the current recorder and time');
+    assert.deepEqual(storedInfo(),newerRaw,'retrying the earlier clear request must not clear the newer record or append a receipt');
+    assert.equal(row(clearReplay).attendance,guest.attendance);
+    assert.deepEqual(workspace(),initialWorkspace);
+  });
   test('project teammates record and undo arrivals with their identity, and revocation blocks writes and receipt replays',async()=>{
     const {id,query}=setup();let state=await added(query);
     sqlite.prepare('INSERT OR IGNORE INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)')
