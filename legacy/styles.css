@@ -704,6 +704,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .run-sheet-repeat-heading{display:none}
 #eventRunSheet [data-run-sheet-update-warning]{display:none}
 .run-sheet-live-action{display:inline-flex;min-height:44px;max-width:100%;align-items:center;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.run-sheet-timeline-back{justify-self:start;min-height:44px;max-width:100%;white-space:normal}
 #runSheetPrintBlocked{display:none}
 @media screen and (max-width:640px){
   .run-sheet-table{min-width:0}.run-sheet-table thead{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%)}

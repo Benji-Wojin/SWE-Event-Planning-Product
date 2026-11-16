@@ -54,20 +54,35 @@ test('the first missing-detail target follows date and owner scope and uses the 
 
 function fixture({hosted=true,date=today}={}){
   const ui={actor:'maya',view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:date,dialogKind:''};
-  const window={GatherMode:{projectId:'fictional-project'},print:()=>calls.push(['print'])},document={hidden:false};
+  const window={GatherMode:{projectId:'fictional-project'},print:()=>calls.push(['print'])},document={hidden:false,activeElement:null};
   const state=stateFixture(),calls=[],requests=[],frames=[],busyRunSheetRevisions=new Set();
-  let revision=hosted?21:undefined,known=0,body='',footer='';
+  let revision=hosted?21:undefined,known=0,body='',footer='',returnButton=null;
   function control(label){
     const attrs=new Map();
-    return {label,isConnected:true,hidden:false,dataset:{},textContent:'',
+    const node={label,isConnected:true,hidden:false,dataset:{},textContent:'',
       setAttribute:(key,value)=>attrs.set(key,value),getAttribute:key=>attrs.get(key),
       removeAttribute:key=>attrs.delete(key),toggleAttribute:(key,on)=>on?attrs.set(key,''):attrs.delete(key),
-      focus:()=>calls.push(['focus',label]),closest:()=>null,
+      focus(){document.activeElement=this;calls.push(['focus',label]);},closest:()=>null,
       getClientRects:()=>[{top:0,bottom:10}],
       classList:{contains:className=>className==='schedule-row'&&label.startsWith('row:')},
     };
+    node.insertAdjacentHTML=(position,markup)=>{
+      assert.equal(position,'afterend');
+      assert.match(markup,/id="runSheetTimelineBack"/);
+      assert.equal(returnButton,null,'only one return control is inserted');
+      const inserted=control('back to run sheet');
+      inserted.id='runSheetTimelineBack';inserted.tagName='BUTTON';inserted.localName='button';
+      inserted.dataset.action='return-to-run-sheet';inserted.anchor=node;
+      inserted.remove=()=>{inserted.isConnected=false;if(returnButton===inserted)returnButton=null;};
+      returnButton=inserted;
+    };
+    return node;
   }
-  function row(target,day){return {...control('row:'+target+':'+day),dataset:{id:target,scheduleDay:day,action:'task'}};}
+  function row(target,day){
+    const node=control('row:'+target+':'+day);
+    node.dataset={id:target,scheduleDay:day,action:'task'};
+    return node;
+  }
   const exact=row(id,today),previous=row(id,yesterday),other=row('fictional-next',today);
   let rows=[previous,other,exact];
   const backdrop={hidden:true},sync={hidden:true},view=control('view'),panel=control('panel'),heading=control('schedule heading');
@@ -95,7 +110,7 @@ function fixture({hosted=true,date=today}={}){
     }
   }
   const dialog={contains:node=>node===button||node===title||node===sheet||rowButtons.includes(node),querySelector:selector=>select(selector)};
-  panel.contains=node=>rows.includes(node)||node===heading;
+  panel.contains=node=>!!node&&(rows.includes(node)||node===heading||node===returnButton);
   view.contains=node=>panel.contains(node);
   function select(selector){
     if(selector.includes('data-run-sheet-row="')){
@@ -107,6 +122,7 @@ function fixture({hosted=true,date=today}={}){
       '#workspaceSyncNotice':sync,'#eventRunSheet':sheet,'#runSheetStale':stale,
       '#runSheetPrintBlocked':print,'#runSheetRefresh':refresh,'#runSheetCheckStatus':checkStatus,
       '#runSheetCopyText':copyText,
+      '#runSheetTimelineBack':returnButton,
       '#runSheetRefreshStatus':refreshStatus,'#runSheetReviewDetails':button,'#runSheetReviewDetailsStatus':handoffStatus,
       '[data-action="review-run-sheet-details"]':button,
       '.schedule-panel':panel,'#schedulePanelHeading':heading,
@@ -123,6 +139,7 @@ function fixture({hosted=true,date=today}={}){
     ui,window,document,store,schedule,GatherScheduleUI,h,busyRunSheetRevisions,runSheetCheckOutcome:null,
     $:select,$$:selector=>selector.includes('schedule-row')?rows:sheet?.querySelectorAll(selector)??[],
     focusable:()=>rows,focusScheduleTarget:target=>{target?.focus();return !!target;},
+    focusTaskDialogControl(target,container){assert.equal(container,dialog);target.focus();},
     requestAnimationFrame:fn=>frames.push(fn),
     workspaceUpdatesPending:()=>!sync.hidden,
     scheduleRevisionIsStale:value=>Number.isSafeInteger(value)&&value<known,
@@ -131,8 +148,13 @@ function fixture({hosted=true,date=today}={}){
       if(Number.isSafeInteger(value)){known=Math.max(known,value);if(snapshot&&snapshot.revision<value)snapshot.stale=true;}
     },
     showPendingUpdate(value){sync.hidden=false;calls.push(['pending',value]);},
-    openDialog(_title,markup,actions,_wide,kind){body=markup;footer=actions;backdrop.hidden=false;ui.dialogKind=kind;connectRunSheetRows(markup);},
-    closeDialog(target){calls.push(['close',target]);backdrop.hidden=true;ui.dialogKind='';ui.runSheet=null;},
+    openDialog(_title,markup,actions,_wide,kind,focusHeading){
+      body=markup;footer=actions;backdrop.hidden=false;ui.dialogKind=kind;
+      title.isConnected=false;title=control('dialog title');connectRunSheetRows(markup);
+      const openedTitle=title;
+      if(focusHeading)frames.push(()=>{if(title===openedTitle&&!backdrop.hidden)title.focus();});
+    },
+    closeDialog(target){calls.push(['close',target]);backdrop.hidden=true;ui.dialogKind='';ui.runSheet=null;target?.focus();},
     toast:message=>calls.push(['toast',message]),
   });
   vm.runInContext(slice('  function scheduleWorkspaceKey(','  function inOrganizerTimeline(')+
@@ -140,6 +162,7 @@ function fixture({hosted=true,date=today}={}){
   context.openRunSheet();
   return {ui,window,document,state,sync,backdrop,exact,previous,other,heading,calls,requests,busyRunSheetRevisions,
     get body(){return body;},get footer(){return footer;},get status(){return handoffStatus;},get button(){return button;},
+    get returnButton(){return returnButton;},get title(){return title;},
     copyText,checkStatus,get copyWarnings(){return copyWarnings;},
     get rowButtons(){return rowButtons;},row,
     rowButton(target,day){
@@ -148,6 +171,8 @@ function fixture({hosted=true,date=today}={}){
     },
     set known(value){known=value;},set revision(value){revision=value;},set rows(value){rows=value;},
     handoff(opener=button){return context.reviewRunSheetMissingDetails(opener);},
+    back(opener=returnButton){return context.returnToRunSheet(opener);},
+    repaintReturn(){returnButton?.remove();context.paintRunSheetReturn(view);},
     reopen(){
       backdrop.hidden=true;ui.dialogKind='';ui.runSheet=null;
       button.isConnected=false;
@@ -159,6 +184,7 @@ function fixture({hosted=true,date=today}={}){
     replaceTitle(){title=control('replacement title');},
     replaceButton(){button=control('replacement handoff');handoffStatus=control('replacement status');},
     flush(){for(const fn of frames.splice(0))fn();},
+    flushOne(){frames.shift()?.();},
   };
 }
 
@@ -237,6 +263,112 @@ test('an overnight Run sheet row in all dates keeps the date on the clicked occu
   f.flush();
   assert.deepEqual(closes(f),[['close',f.heading]],'a missing carryover row must not focus the start-day occurrence');
   assert.match(f.calls.find(([kind])=>kind==='toast')?.[1],/no longer visible/i);
+});
+
+test('Back to run sheet rebuilds the same scope and focuses the exact overnight occurrence, not its old position',async()=>{
+  const f=fixture({date:''}),original=f.ui.runSheet,opener=f.rowButton(id,today);
+  const oldKey=opener.dataset.runSheetRow;
+  const pending=f.handoff(opener);
+  assert.equal(f.requests.length,1);
+  f.requests[0].finish();
+  await pending;
+  assert.equal(f.returnButton?.anchor,f.exact,'the return button is beside the live carryover row');
+
+  // Apply an unrelated loaded update that changes the positional keys, while
+  // the selected activity and its exact schedule day remain in the same scope.
+  const oldActivity=f.state.tasks.find(task=>task.id===id);
+  oldActivity.title='Updated overnight activity';
+  const date='2026-11-19';
+  f.state.tasks.push({...structuredClone(oldActivity),id:'fictional-early',title:'Earlier added activity',
+    schedule:{start:date+'T04:00',end:date+'T05:00',location:'Hall'}});
+  f.revision=22;
+  f.repaintReturn();
+  assert.equal(f.returnButton?.anchor,f.exact,'a Timeline redraw restores the control next to the same row');
+  const before=structuredClone(f.state);
+  f.ui.syncing=true; // Closing the first sheet can start the existing background read.
+  f.back();
+  f.flush();
+  const replacement=f.ui.runSheet,target=f.rowButton(id,today);
+  assert.ok(replacement&&target,'the current scoped sheet contains the original occurrence');
+  assert.notEqual(replacement,original);
+  assert.equal(replacement.revision,22);
+  assert.deepEqual({...replacement.scope},{mine:true,actor:'maya',date:''});
+  assert.match(replacement.text,/Updated overnight activity/);
+  assert.match(replacement.text,/Earlier added activity/);
+  assert.doesNotMatch(replacement.text,/fictional-other/);
+  assert.notEqual(target.dataset.runSheetRow,oldKey);
+  assert.equal(f.document.activeElement,target);
+  assert.notEqual(f.document.activeElement,f.rowButton(id,yesterday));
+  assert.equal(f.returnButton,null,'the return control is consumed');
+  assert.equal(f.requests.length,1,'returning does not make another network read');
+  assert.deepEqual(f.state,before,'returning does not mutate the schedule');
+});
+
+test('Back to run sheet keeps heading focus if the row disappeared or the loaded copy is known stale',async()=>{
+  for(const reason of ['removed','known stale']){
+    const f=fixture(),pending=f.handoff();
+    f.requests[0].finish();
+    await pending;
+    assert.equal(f.returnButton?.anchor,f.exact,'first missing-details jump also offers the return');
+    if(reason==='removed'){
+      f.state.tasks.splice(f.state.tasks.findIndex(task=>task.id===id),1);
+      f.revision=22;
+      f.rows=[f.previous,f.other];
+      f.repaintReturn();
+      assert.equal(f.returnButton?.anchor,f.heading,'a redraw can keep the return next to the schedule heading');
+    }else f.known=22;
+    f.back();
+    f.flush();
+    assert.equal(f.document.activeElement,f.title,reason);
+    assert.deepEqual({...f.ui.runSheet.scope},mine,reason);
+    assert.equal(f.requests.length,1,reason);
+    if(reason==='known stale'){
+      assert.equal(f.current(),null,'reopening cannot release a known-stale sheet');
+      assert.equal(f.rowButton(id,today).getAttribute('aria-disabled'),'true');
+    }else assert.equal(f.rowButton(id,today),undefined);
+  }
+});
+
+test('the return control rejects copied, detached, or out-of-scope actions',async()=>{
+  for(const reason of ['copied','detached','other project','other actor','other activity scope','other date',
+    'other view','deadlines','access lost','hidden document','save pending','dialog open']){
+    const f=fixture({hosted:false});
+    await f.handoff();
+    assert.ok(f.returnButton,reason);
+    let opener=f.returnButton;
+    if(reason==='copied')opener={...opener,dataset:{...opener.dataset}};
+    if(reason==='detached')opener.isConnected=false;
+    if(reason==='other project')f.window.GatherMode.projectId='different-project';
+    if(reason==='other actor')f.ui.actor='dev';
+    if(reason==='other activity scope')f.ui.scheduleMine=false;
+    if(reason==='other date')f.ui.scheduleDate=tomorrow;
+    if(reason==='other view')f.ui.view='tasks';
+    if(reason==='deadlines')f.ui.timelineMode='deadlines';
+    if(reason==='access lost')f.window.GatherAccessLost=true;
+    if(reason==='hidden document')f.document.hidden=true;
+    if(reason==='save pending')f.ui.pendingSave=true;
+    if(reason==='dialog open'){f.ui.dialogKind='task';f.backdrop.hidden=false;}
+    f.back(opener);
+    f.flush();
+    assert.equal(f.ui.runSheet,null,reason);
+    assert.equal(f.requests.length,0,reason);
+  }
+});
+
+test('a scheduled return focus cannot steal focus or apply after the Timeline context changes',async()=>{
+  for(const reason of ['focus moved','date changed','scope changed']){
+    const f=fixture({hosted:false});
+    await f.handoff();
+    f.back();
+    f.flushOne();
+    assert.equal(f.document.activeElement,f.title,'the dialog starts on the heading');
+    const other=f.rowButton('fictional-next',today);
+    if(reason==='focus moved')other.focus();
+    if(reason==='date changed')f.ui.scheduleDate=tomorrow;
+    if(reason==='scope changed')f.ui.scheduleMine=false;
+    f.flush();
+    assert.equal(f.document.activeElement,reason==='focus moved'?other:f.title,reason);
+  }
 });
 
 test('forged Run sheet row controls and stale snapshots cannot trigger a confirmation',async()=>{

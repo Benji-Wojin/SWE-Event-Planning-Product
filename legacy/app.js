@@ -343,7 +343,7 @@
       if(restoreFocus(previous,root))return true;
       if(ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&!window.GatherAccessLost&&
         (['scheduleDate','applyScheduleDate'].includes(previous.id)||
-          ['clear-schedule-date','jump-schedule-date','copy-schedule-day','run-sheet','draft-guest-agenda','schedule-set-start','open-first-schedule-receipt'].includes(previous.dataset.action)))
+          ['clear-schedule-date','jump-schedule-date','copy-schedule-day','run-sheet','return-to-run-sheet','draft-guest-agenda','schedule-set-start','open-first-schedule-receipt'].includes(previous.dataset.action)))
         return focusScheduleTarget($('#schedulePanelHeading',root));
       return false;
     }
@@ -1454,6 +1454,7 @@
     if(oldWrap)restoreWrapReviewDisclosures(oldWrap,wrapOverrides,$('#viewRoot'));
     if(taskListScroll){const table=$('.task-table-wrap');if(table)table.scrollLeft=taskListScroll;}
     restoreScheduleDateDraft(scheduleDateDraft);
+    if(ui.runSheetReturn)paintRunSheetReturn();
     if(ui.view==='overview'&&window.GatherMode&&isOrganizer()){planSidebar.open('suggestions',true);planSidebar.refresh();}
     $$('[data-suggestion-count]').forEach(node=>{node.textContent=store.getSuggestions().length;});
     if(ui.view==='info')projectInfo?.mount($('#eventInfo'));
@@ -2621,8 +2622,9 @@
       if(button.isConnected)button.removeAttribute('aria-disabled');
     }
   }
-  function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false) {
+  function openRunSheet(scope={mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate},focusHeading=false,returnTarget=null) {
     if(window.GatherAccessLost||ui.view!=='timeline'||ui.timelineMode==='deadlines')return;
+    if(ui.runSheetReturn){ui.runSheetReturn=null;paintRunSheetReturn();}
     const liveTargets=new Map();
     const model=schedule.runSheetModel(store.getState(),Date.now(),scope,liveTargets);
     const hasRows=model.days.length>0;
@@ -2647,8 +2649,56 @@
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button>'+
       (store.confirmSnapshotRevision?'<button class="btn btn-secondary" data-action="check-run-sheet">Check for updates</button>':'')+
       (text?'<button class="btn btn-secondary" data-action="download-run-sheet">Download text (.txt)</button>':'')+
-      (hasRows?'<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>':''),true,'run-sheet',focusHeading||!hasRows);
+      (hasRows?'<button class="btn btn-primary" data-action="print-run-sheet">Print / save PDF</button>':''),true,'run-sheet',focusHeading||!hasRows||!!returnTarget);
     currentRunSheet();
+    if(returnTarget)restoreRunSheetReturnFocus(returnTarget,ui.runSheet);
+  }
+  function runSheetTimelineContextMatches(record) {
+    return record&&!window.GatherAccessLost&&ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&
+      record.key===scheduleWorkspaceKey()&&record.scope.actor===ui.actor&&record.scope.mine===ui.scheduleMine&&record.scope.date===ui.scheduleDate;
+  }
+  function activeRunSheetReturn() {
+    return runSheetTimelineContextMatches(ui.runSheetReturn)?ui.runSheetReturn:null;
+  }
+  function runSheetTimelineRow(target,root) {
+    if(!target||!root)return null;
+    // The run sheet makes the app shell inert; only reject inactive content
+    // inside Timeline, not the temporary inert shell itself.
+    return $$('.schedule-row',root).find(row=>row.isConnected&&row.dataset.id===target.id&&row.dataset.scheduleDay===target.day&&
+      row.getClientRects().length&&!root.contains(row.closest('[hidden],[inert]')));
+  }
+  function paintRunSheetReturn() {
+    const root=$('#viewRoot');
+    if(!root)return;
+    const existing=$('#runSheetTimelineBack',root),back=activeRunSheetReturn();
+    if(!back){ui.runSheetReturn=null;existing?.remove();return;}
+    if(existing)return;
+    const anchor=runSheetTimelineRow(back.target,root)||$('#schedulePanelHeading',root);
+    anchor?.insertAdjacentHTML('afterend','<button id="runSheetTimelineBack" type="button" class="btn btn-secondary run-sheet-timeline-back" data-action="return-to-run-sheet">← Back to run sheet</button>');
+  }
+  function returnToRunSheet(button) {
+    const back=activeRunSheetReturn(),root=$('#viewRoot');
+    if(!back||!root||!button?.isConnected||button!==$('#runSheetTimelineBack',root)||
+      button.dataset.action!=='return-to-run-sheet'||button.closest('[hidden],[inert]')||!button.getClientRects().length||
+      !$('#dialogBackdrop').hidden||ui.dialogKind||ui.pendingSave||document.hidden)return false;
+    // Use the Timeline row as the opener so closing the reopened sheet restores
+    // focus to the activity, not to the consumed return button.
+    (runSheetTimelineRow(back.target,root)||$('#schedulePanelHeading',root))?.focus({preventScroll:true});
+    openRunSheet(back.scope,true,back.target);
+    return true;
+  }
+  function restoreRunSheetReturnFocus(target,snapshot) {
+    const dialog=$('#dialog'),heading=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!heading||document.hidden||ui.runSheet!==snapshot||ui.dialogKind!=='run-sheet'||$('#dialogBackdrop').hidden||
+        !runSheetTimelineContextMatches(snapshot)||heading!==$('#dialogTitle',dialog)||document.activeElement!==heading)return;
+      const key=[...snapshot.liveTargets].find(([,row])=>row.id===target.id&&row.day===target.day)?.[0];
+      if(!currentRunSheet())return;
+      if(!key){toast('This activity is no longer on this run sheet.');return;}
+      const sheet=$('#eventRunSheet',dialog);
+      const row=sheet&&$(`[data-action="review-run-sheet-row"][data-run-sheet-row="${key}"]`,sheet);
+      if(row?.isConnected&&row.getClientRects().length&&!row.closest('[hidden],[inert]'))focusTaskDialogControl(row,dialog);
+    });
   }
   function runSheetCheckKind(snapshot) {
     return runSheetCheckOutcome&&runSheetCheckOutcome.revision===snapshot.revision?runSheetCheckOutcome.kind:null;
@@ -2759,11 +2809,12 @@
     if(!currentRunSheet()){status.textContent='Refresh the Run sheet before jumping to an activity.';return;}
     const target=firstMissing?schedule.firstMissingRunSheetDetail(store.getState(),snapshot.scope):targetForRow;
     const root=$('#viewRoot');
-    // The modal makes the entire app shell inert. Reject only hidden or inert
-    // ancestors inside the Timeline; closeDialog releases the shell before focus.
-    const row=target&&root&&$$('.schedule-row',root).find(el=>el.isConnected&&el.dataset.id===target.id&&el.dataset.scheduleDay===target.day&&
-      el.getClientRects().length&&!root.contains(el.closest('[hidden],[inert]')));
+    const row=runSheetTimelineRow(target,root);
     closeDialog(row||(root&&$('#schedulePanelHeading',root)));
+    if(row){
+      ui.runSheetReturn={key:snapshot.key,scope:{...snapshot.scope},target:{...target}};
+      paintRunSheetReturn();
+    }
     if(!row)toast(firstMissing?(target?'Check missing details in the schedule below.':'No activities in this view still need those details.'):'This activity is no longer visible in this Timeline view.');
   }
   function printRunSheet() {
@@ -4499,6 +4550,7 @@
         }
       }
       if(action==='run-sheet')openRunSheet();
+      if(action==='return-to-run-sheet')returnToRunSheet(el);
       if(action==='review-run-sheet-details'||action==='review-run-sheet-row')await reviewRunSheetMissingDetails(el);
       if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
