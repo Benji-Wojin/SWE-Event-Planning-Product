@@ -37,7 +37,7 @@ function fixture() {
   return { store, add, ask, request, resolve };
 }
 
-test('live Timeline shows the current plan request on clock and dated rows without changing or exporting it', () => {
+test('Timeline and the team Run sheet show current request status without changing the plan or exporting request details', () => {
   const { store, add, ask, resolve } = fixture();
   const mine = add('My fictional check-in');
   const other = add('Other fictional activity', 'jules');
@@ -82,7 +82,8 @@ test('live Timeline shows the current plan request on clock and dated rows witho
   assert.ok(button(unfilteredClock, other.id, 'schedule-focus-task').includes(help));
 
   for (const output of [ui.runSheet(state, now, scope), ui.runSheetText(ui.runSheetModel(state, now, scope))]) {
-    assert.doesNotMatch(output, requestCue);
+    assert.ok(output.includes(date));
+    assert.ok(!output.includes(help));
     assert.doesNotMatch(output, privateText);
   }
   const guest = GatherScheduleUI.guestAgendaSnapshot(state, scope);
@@ -95,6 +96,7 @@ test('live Timeline shows the current plan request on clock and dated rows witho
 
   resolve(mine);
   assertOwnLive('', date);
+  assert.doesNotMatch(ui.runSheet(store.getState(), now, scope), requestCue);
 });
 
 test('Before event scopes pending requests and opens the existing role-appropriate task review', () => {
