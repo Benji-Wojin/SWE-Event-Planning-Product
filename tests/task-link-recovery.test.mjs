@@ -32,6 +32,7 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     GatherScheduleUI,
     navigation:{initialScheduleDate:()=>date,takeInitialActivityLink:()=>activity,takeInitialTaskLink:()=>({id,review,...(fromPlanReceipt?{fromPlanReceipt:true}:{})}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
     window:{GatherMode:mode,GatherAccessLost:accessLost,dispatchEvent(){events.push('ready');}},Event,isLiveTeammate:()=>true,isOrganizer:()=>organizer,
+    syncTeammateWelcome(){},
     navigate(view,options){ui.view=view;if(options?.scheduleDay)ui.scheduleDate=options.scheduleDay;events.push(view);},loadInitialGuide(){},$:selector=>elements[selector],
     $$:selector=>selector==='.schedule-row'?rows:[],focusScheduleTarget(target){events.push(['focus',target?.label]);return !!target;},
     toast:message=>events.push(['toast',message]),

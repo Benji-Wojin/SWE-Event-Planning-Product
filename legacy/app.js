@@ -17,6 +17,7 @@
   let guideTaskId = '', guideTaskNeedsReveal = false, guideTaskRestoreSuppressed = false;
   let guideInitialLoading = false, guideTaskWait = null, guideInviteClickStarted = false;
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
+  let joinWelcomeScope = '', joinWelcomeLocal = false;
   const unconfirmedRelatedSaves=new Map();
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
@@ -912,6 +913,27 @@
   }
   function isLiveTeammate() {
     return !!(window.GatherMode&&!window.GatherMode.demo&&!window.GatherAccessLost&&window.GatherIdentity?.role==='member');
+  }
+  function syncTeammateWelcome(pending) {
+    const eligible=isLiveTeammate(), scope=eligible?store.getReminderScope?.():'';
+    const key=typeof scope==='string'&&/^[a-f0-9]{64}$/.test(scope)?'weft-teammate-welcome-v1:'+scope:'';
+    if(!eligible||key!==joinWelcomeScope){
+      joinWelcome=false;joinWelcomeScope=key;joinWelcomeLocal=false;
+    }
+    if(!eligible)return;
+    // The authenticated account/project scope is opaque. Keep only a marker
+    // in this tab; unavailable storage must not break orientation or dismissal.
+    if(typeof pending==='boolean'){
+      joinWelcome=pending;
+      if(!key)return;
+      try{
+        if(pending)window.sessionStorage.setItem(key,'pending');
+        else window.sessionStorage.removeItem(key);
+        joinWelcomeLocal=false;
+      }catch{joinWelcomeLocal=true;}
+    }else if(key&&!joinWelcomeLocal){
+      try{joinWelcome=window.sessionStorage.getItem(key)==='pending';}catch{}
+    }
   }
   function acceptanceHandoffInScope(receipt) {
     return !!receipt&&isLiveTeammate()&&ui.view==='tasks'&&ui.tab==='mine'&&
@@ -4916,8 +4938,11 @@
       }
       if(action==='toggle-task-reminders')toggleTaskReminders();
       if(action==='handoff-tasks')openHandoffTasks(id);
-      if(action==='dismiss-handoff'&&isLiveTeammate()&&joinWelcome){
-        joinWelcome=false;paintTeammateHandoff();
+      if(action==='dismiss-handoff'&&isLiveTeammate()&&joinWelcome&&ui.view==='overview'){
+        const host=$('#workspaceHandoff');
+        if(host&&!host.hidden&&el===$('[data-action="dismiss-handoff"]',host)){
+          syncTeammateWelcome(false);paintTeammateHandoff();
+        }
       }
       if(action==='review-organizer-item')openOrganizerReview(id,el.dataset.reviewKind,eventReviewGroup);
       if(action==='review-schedule-reconfirmation')openScheduleReconfirmation(id,el);
@@ -5597,7 +5622,13 @@
   };
   let unsubscribeNavigation=navigation.subscribe(routeChanged);
   window.addEventListener('pagehide',()=>{unsubscribeNavigation();});
-  window.addEventListener('pageshow',event=>{if(event.persisted){unsubscribeNavigation=navigation.subscribe(routeChanged);routeChanged(navigation.initial());}});
+  window.addEventListener('pageshow',event=>{
+    if(!event.persisted)return;
+    unsubscribeNavigation=navigation.subscribe(routeChanged);
+    syncTeammateWelcome();
+    routeChanged(navigation.initial());
+    paintTeammateHandoff();
+  });
   window.addEventListener('beforeunload',event=>{if(window.GatherAccessLost)return;if(ui.pendingSave||hasAcceptanceReturnDraft()||unsavedDialog()||unsavedReview()||planSidebar.unsaved()||agentPopup.unsaved()){event.preventDefault();event.returnValue='';}});
   let attentionDay=dateKey();
   function refreshScheduleClock() {
@@ -5654,11 +5685,12 @@
     ui.tab='all';
     taskLinkUnavailable=!store.getState().tasks.some(task=>task.id===initialTask);
   }
-  joinWelcome=welcomeHint&&!initialTask&&!initialActivity&&navigation.initial()==='overview'&&isLiveTeammate();
+  const freshTeammateWelcome=welcomeHint&&!initialTask&&!initialActivity&&navigation.initial()==='overview'&&isLiveTeammate();
+  syncTeammateWelcome(freshTeammateWelcome?true:undefined);
   const activityDay=initialActivity?GatherScheduleUI.scheduledTimelineDay(store.getState().tasks.find(task=>task.id===initialActivity)):'';
   if(initialActivity)navigate('timeline',{scheduleDay:activityDay});
   else navigate(initialTask?'tasks':navigation.initial());
-  if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
+  if(freshTeammateWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
   void loadInitialGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
