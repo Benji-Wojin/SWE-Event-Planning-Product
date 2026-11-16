@@ -686,60 +686,101 @@ test('a dated starter recheck asks about the current event and keeps even unchec
   } finally {app.dispose();}
 });
 
-test('starter recheck requires the same source, generation, revisions and returned edits before replacing local state',async()=>{
-  for(const change of ['opening revision','opening generation','opening source','ack revision','ack workspace','ack generation','ack source','ack edits','ack context']){
-    const initial=fixture();initial.contextChanged=true;initial.draft.source='starter';
+test('pasted recheck accepts the canonical private edit without applying work or requiring starter-only timing confirmation',async()=>{
+  const initial=fixture();initial.contextChanged=true;initial.configured=false;initial.draft.source='pasted';
+  initial.draft.items.push({...copy(item),id:'unchecked',title:'Keep a private date',included:false,dueDate:'2099-05-01'});
+  const dated='2099-05-02',title='Fictional revised checklist item',note='Fictional private note';
+  const app=harness(context=>{
+    const {input,saved}=context;
+    if(!input&&app.requests.length===2)context.value={...saved,workspaceRevision:initial.workspaceRevision+1};
+    if(input?.action==='recheck-pasted'){
+      assert.equal(input.revision,initial.revision);assert.equal(input.workspaceRevision,initial.workspaceRevision+1);
+      assert.equal(input.generation,initial.draft.generation);assert.equal(Object.hasOwn(input,'reviewTiming'),false);
+      assert.equal(input.items[0].title,`  ${title}  `);assert.equal(input.items[0].note,`  ${note}  `);
+      assert.equal(input.items[1].dueDate,dated);assert.equal(input.items[1].included,false);
+      const items=input.items.map(row=>({...row,title:row.title.trim(),note:row.note.trim()}));
+      context.value={...saved,revision:saved.revision+1,contextChanged:false,brief:input.brief,
+        draft:{...saved.draft,brief:input.brief,items}};
+    }
+  },initial,'project=p_example',false,true);
+  try {
+    window.confirm=()=>assert.fail('timing confirmation is starter-only');
+    await app.start();await app.edit('title-one',`  ${title}  `);await app.edit('note-one',`  ${note}  `);await app.edit('date-unchecked',dated);
+    await app.click('Recheck pasted draft');
+    assert.deepEqual(app.requests.map(input=>input.action),['get','get','recheck-pasted']);
+    assert.equal(app.find('title-one').props.value,title);assert.equal(app.find('note-one').props.value,note);
+    assert.equal(app.find('date-unchecked').props.value,dated);assert.equal(app.find('include-unchecked').props.checked,false);
+    assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,false);
+    assert.equal(app.find('plan-receipt-heading'),undefined);assert.equal(app.saved.receipt,null);
+    assert.match(text(app.tree),/checked against the current project/i);
+  } finally {app.dispose();}
+});
+
+test('starter and pasted recheck require exact saved source, generation, revisions and edits before adopting a reply',async()=>{
+  for(const [source,label] of [['starter','Recheck starter checklist'],['pasted','Recheck pasted draft']])
+  for(const change of ['opening newer revision','opening other generation','opening other source','opening applied','opening older workspace','opening malformed workspace',
+    'ack later same generation','ack newer workspace','ack other generation','ack other source','ack different item','ack different brief','ack stale context','ack applied','ack receipt only']){
+    const initial=fixture();initial.contextChanged=true;initial.draft.source=source;
     const title='Fictional private replacement title';
+    const detail=source+' '+change,otherSource=source==='starter'?'pasted':'starter';
+    const receipt={generation:initial.draft.generation,taskIds:['new-fictional-task']};
     const app=harness(context=>{
       const {input,saved}=context;
       if(!input&&app.requests.length===2){
         const candidate={...copy(saved),workspaceRevision:initial.workspaceRevision+1};
-        if(change==='opening revision')candidate.revision++;
-        if(change==='opening generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
-        if(change==='opening source')candidate.draft.source='pasted';
+        if(change==='opening newer revision')candidate.revision++;
+        if(change==='opening other generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
+        if(change==='opening other source')candidate.draft.source=otherSource;
+        if(change==='opening applied'){candidate.receipt=receipt;candidate.status='applied';}
+        if(change==='opening older workspace')candidate.workspaceRevision=initial.workspaceRevision-1;
+        if(change==='opening malformed workspace')candidate.workspaceRevision=String(candidate.workspaceRevision);
         context.value=candidate;
       }
-      if(input?.action==='recheck-starter'){
+      if(input?.action===`recheck-${source}`){
         const candidate={...copy(saved),revision:saved.revision+1,contextChanged:false};
         candidate.draft.items=copy(input.items);
-        if(change==='ack revision')candidate.revision++;
-        if(change==='ack workspace')candidate.workspaceRevision++;
-        if(change==='ack generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
-        if(change==='ack source')candidate.draft.source='pasted';
-        if(change==='ack edits')candidate.draft.items[0].title='Different private item';
-        if(change==='ack context')candidate.contextChanged=true;
+        if(change==='ack later same generation')candidate.revision++;
+        if(change==='ack newer workspace')candidate.workspaceRevision++;
+        if(change==='ack other generation')candidate.draft.generation='9c7c7554-db7e-44ab-a979-2808c6276186';
+        if(change==='ack other source')candidate.draft.source=otherSource;
+        if(change==='ack different item')candidate.draft.items[0].title='Different private item';
+        if(change==='ack different brief')candidate.brief.description='Different private brief';
+        if(change==='ack stale context')candidate.contextChanged=true;
+        if(change==='ack applied'){candidate.receipt=receipt;candidate.status='applied';}
+        if(change==='ack receipt only')candidate.receipt=receipt;
         context.value=candidate;
       }
     },initial);
     try {
       await app.start();await app.edit('title-one',title);
-      await app.click('Recheck starter checklist');
-      assert.deepEqual(app.requests.map(row=>row.action),change.startsWith('opening')?['get','get']:['get','get','recheck-starter'],change);
-      assert.equal(app.find('title-one').props.value,title,change);
-      assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,true,change);
-      assert.equal(app.find('plan-receipt-heading'),undefined,change);
-      assert.match(text(app.tree),/reload|saved draft changed|local edits/i,change);
+      await app.click(label);
+      assert.deepEqual(app.requests.map(row=>row.action),change.startsWith('opening')?['get','get']:['get','get',`recheck-${source}`],detail);
+      assert.equal(app.find('title-one').props.value,title,detail);
+      assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,true,detail);
+      assert.equal(app.find('plan-receipt-heading'),undefined,detail);
+      assert.match(text(app.tree),/reload|saved draft changed|local edits/i,detail);
     } finally {app.dispose();}
   }
 });
 
-test('an exact starter can be rechecked after failed or interrupted generation, but not during an active lease',async()=>{
+test('starter and pasted drafts can recheck after failed generation but not during an active lease',async()=>{
+  for(const [source,label] of [['starter','Recheck starter checklist'],['pasted','Recheck pasted draft']])
   for(const status of ['error','interrupted','generating']){
-    const initial=fixture();initial.contextChanged=true;initial.draft.source='starter';
+    const initial=fixture();initial.contextChanged=true;initial.draft.source=source;
     const note='Fictional checklist still worth keeping.';
     const app=harness(context=>{
       const {input,saved}=context;
       if(!input&&app.requests.length===2)context.value={...saved,status,workspaceRevision:initial.workspaceRevision+1};
-      if(input?.action==='recheck-starter'){
+      if(input?.action===`recheck-${source}`){
         assert.equal(input.items[0].note,note);
         context.value={...saved,revision:saved.revision+1,status:'ready',contextChanged:false,
           draft:{...saved.draft,items:input.items}};
       }
     },initial);
     try {
-      await app.start();await app.edit('note-one',note);await app.click('Recheck starter checklist');
+      await app.start();await app.edit('note-one',note);await app.click(label);
       const active=status==='generating';
-      assert.deepEqual(app.requests.map(row=>row.action),active?['get','get']:['get','get','recheck-starter'],status);
+      assert.deepEqual(app.requests.map(row=>row.action),active?['get','get']:['get','get',`recheck-${source}`],source+' '+status);
       assert.equal(app.find('note-one').props.value,note,status);
       assert.equal(planButton(app.tree,'Add 1 selected items to project').props.disabled,active,status);
       assert.equal(app.find('plan-receipt-heading'),undefined,status);

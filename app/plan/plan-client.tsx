@@ -567,41 +567,33 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           (completedPlan?' This import didn’t replace your handoff.':'')+' Edit the pasted text to try again.'));
     });
   }
-  async function recheckPasted() {
-    await run(async()=>{
-      const current=await api(query);
-      if(current.revision!==data.revision||current.draft?.source!=='pasted')
-        throw new Error('The saved draft changed. Reload it before rechecking. Your local edits have not been replaced.');
-      accept(await api(query,{action:'recheck-pasted',revision:current.revision,
-        workspaceRevision:current.workspaceRevision,generation:current.draft.generation,brief,items}));
-      setNotice('Draft kept and checked against the current project. Review any matching tasks or dates before adding items.');
-    });
-  }
-  async function recheckStarter() {
-    if(locked||applied||data?.draft?.source!=='starter'||!data.contextChanged)return;
+  async function recheckChecklist(source: 'pasted' | 'starter') {
+    if(locked||applied||data?.draft?.source!==source||!data.contextChanged)return;
     await run(async()=>{
       const signal=AbortSignal.timeout(approvalTimeout),generation=data.draft.generation;
       const current=await api(query,undefined,signal);
-      if(current.revision!==data.revision||current.draft?.source!=='starter'||current.draft.generation!==generation||
+      if(current.revision!==data.revision||current.draft?.source!==source||current.draft.generation!==generation||
         current.receipt||!['ready','error','interrupted'].includes(current.status)||
         !Number.isSafeInteger(current.workspaceRevision)||current.workspaceRevision<data.workspaceRevision)
         throw new Error('The saved draft changed or couldn’t be confirmed. Your edits are still here. Reload the saved draft to review it.');
       const expected=savedEditable(brief,items,current.event.date);
-      const timed=items.some(item=>item.dueDate||item.start||item.end);
-      if(timed&&!window.confirm(`Review the checklist’s dates and times against the current event (date: ${current.event.date||'not set'}, time zone: ${current.event.timeZone||'not set'}). Rechecking keeps the dates and times as written and saves the draft privately. Nothing will be added. Keep these proposals?`))return;
-      const result=await api(query,{action:'recheck-starter',revision:current.revision,workspaceRevision:current.workspaceRevision,
-        generation,brief,items,...(timed?{reviewTiming:true}:{})},AbortSignal.timeout(approvalTimeout));
+      const reviewTiming=source==='starter'&&items.some(item=>item.dueDate||item.start||item.end);
+      if(reviewTiming&&!window.confirm(`Review the checklist’s dates and times against the current event (date: ${current.event.date||'not set'}, time zone: ${current.event.timeZone||'not set'}). Rechecking keeps the dates and times as written and saves the draft privately. Nothing will be added. Keep these proposals?`))return;
+      const result=await api(query,{action:'recheck-'+source,revision:current.revision,workspaceRevision:current.workspaceRevision,
+        generation,brief,items,...(reviewTiming?{reviewTiming:true}:{})},AbortSignal.timeout(approvalTimeout));
       let confirmed=false;
+      // The response rereads the saved draft. Another tab might have changed,
+      // replaced or applied it after our private save; don't adopt that view.
       if(result.revision===current.revision+1&&result.workspaceRevision===current.workspaceRevision&&result.contextChanged===false&&
-        result.status==='ready'&&!result.receipt&&result.draft?.source==='starter'&&result.draft.generation===generation&&Array.isArray(result.draft.items)){
+        result.status==='ready'&&!result.receipt&&result.draft?.source===source&&result.draft.generation===generation&&Array.isArray(result.draft.items)){
         try{confirmed=savedEditable(result.brief,result.draft.items,result.event.date)===expected;}catch{/* Not proof of the private save. */}
       }
-      if(!confirmed)throw new Error('We couldn’t confirm the rechecked checklist. Your edits are still here; nothing was added. Use Reload saved draft to check what was saved.');
+      if(!confirmed)throw new Error('We couldn’t confirm the rechecked checklist. Your edits are still here. This check didn’t add any tasks. Use Reload saved draft to check what was saved.');
       accept(result,false);
       request.current=null;
       starterRequest.current=null;
       focusNotice.current=true;
-      setNotice('Starter checklist kept and checked against the current project. Review matching tasks, required links, and any dates or times before adding items. No shared tasks were added.');
+      setNotice((source==='starter'?'Starter checklist':'Pasted draft')+' kept and checked against the current project. Review matching tasks, required links, and any dates or times before adding items. No shared tasks were added.');
     });
   }
   async function useStarter() {
@@ -1096,13 +1088,13 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           {!applied && data.draft.source==='starter' && data.contextChanged && (
             <div className="space-y-2 rounded-lg border p-4 text-sm">
               <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Recheck to keep your edits and see matching tasks in the current project. Dates and times stay as written for you to review. Nothing is added.</p>
-              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckStarter()}>Recheck starter checklist</Button>
+              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckChecklist('starter')}>Recheck starter checklist</Button>
             </div>
           )}
           {!applied && data.draft.source==='pasted' && data.contextChanged && (
             <div className="space-y-2 rounded-lg border p-4 text-sm">
               <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
-              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckPasted()}>Recheck pasted draft</Button>
+              <Button type="button" variant="outline" className="min-h-11" disabled={locked} onClick={()=>void recheckChecklist('pasted')}>Recheck pasted draft</Button>
             </div>
           )}
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
