@@ -111,6 +111,7 @@
         if (!response.ok) {
           const error = new Error(next?.error || 'Budget request failed.');
           error.status = response.status;
+          error.code = next?.code;
           throw error;
         }
         return next;
@@ -157,6 +158,18 @@
         ...(historical ? [[saved, historicalLabel + ' (kept unless changed)']] : []),
         ...current.map(item => [item.id, linkLabel(key, item)]),
       ];
+    }
+    function replaceLinkOptions(field, choices, baseline, selected, unavailable) {
+      field.options.length = 0;
+      for (const [id,label] of choices) {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = label;
+        option.disabled = id === unavailable;
+        option.defaultSelected = id === baseline;
+        field.append(option);
+      }
+      field.value = selected;
     }
     function subtotal(value) {
       return (
@@ -330,6 +343,8 @@
     }
     function dialog(title, markup, action, fields, cost = null) {
       let revision = state.revision, opening = cost?.row, blocked = false, checked = null, checking = false, pending = null;
+      let staleLinkError = false, newLinkChoices = null;
+      const currency = state.budget.currency;
       const scope = scopeKey(), identity = state.identity.actor, allowReplay = !root.GatherMode?.demo;
       const demoGeneration = root.GatherMode?.demo ? getWorkspace().demoGeneration : undefined;
       openDialog(
@@ -422,6 +437,81 @@
         for (const selector of ['button[type="submit"]','[data-budget-archive]'])
           form.querySelector(selector)?.setAttribute('aria-disabled',String(value));
       }
+      const refreshChoices = () => refreshWorkspace((_revision,workspace) => live() && blocked && checking &&
+        !form.dataset.saving && Array.isArray(workspace?.members) && Array.isArray(workspace?.tasks) &&
+        (!root.GatherMode?.demo || workspace.demoGeneration === demoGeneration));
+      const validBudgetForReview = next => typeof identity === 'string' && !!identity &&
+        next?.identity?.actor === identity && next.identity.admin === true &&
+        next.budget?.enabled === true && next.budget.currency === currency && Array.isArray(next.budget.items) &&
+        Array.isArray(next.budget.history) && Number.isSafeInteger(next.revision) && next.revision >= revision;
+      function drawNewLinkRefresh(text) {
+        message(text);
+        recoveryButton('data-budget-refresh-links','Refresh project choices',reviewNewLinks);
+      }
+      function validateNewLinkChoices() {
+        const invalid = [];
+        for (const key of costLinkKeys) {
+          const field = form.elements.namedItem(key);
+          if (!field || !newLinkChoices[key].has(field.value)) {
+            field?.setAttribute('aria-invalid','true');
+            invalid.push(key);
+          } else field.removeAttribute('aria-invalid');
+        }
+        setBlocked(invalid.length > 0);
+        return invalid;
+      }
+      function showNewLinkStatus() {
+        const invalid = validateNewLinkChoices();
+        message(invalid.length
+          ? 'Choose a current option or explicitly choose none for: '+invalid.map(key=>labels[key]).join(', ')+'. Your other entries are unchanged.'
+          : 'Project choices refreshed. Review your draft, then choose Save.');
+        return invalid;
+      }
+      async function reviewNewLinks() {
+        if (!live() || !blocked || newLinkChoices || !refreshWorkspace || checking || form.dataset.saving) return;
+        checking = true;
+        message('Refreshing project choices. Nothing will be saved.');
+        try {
+          const next = await request();
+          if (!live()) return;
+          if (accessChanged(next)) { await hideUnavailableBudget(); return; }
+          if (!validBudgetForReview(next)) {
+            drawNewLinkRefresh('Could not confirm the current Budget settings. Your draft is unchanged. Check again or copy your entries before closing.');
+            return;
+          }
+          const result = await refreshChoices();
+          if (!live()) return;
+          if (!result?.verified) {
+            drawNewLinkRefresh('Could not confirm the latest project choices. Your draft is unchanged.');
+            return;
+          }
+          const workspace = getWorkspace();
+          const fields = costLinkKeys.map(key => [key, form.elements.namedItem(key)]);
+          if (fields.some(([,field])=>!field?.options)) {
+            drawNewLinkRefresh('Could not refresh the choices in this form. Your draft is unchanged.');
+            return;
+          }
+          const focus = document.activeElement === form.querySelector('.form-error');
+          newLinkChoices = {};
+          for (const [key,field] of fields) {
+            const selected = field.value;
+            const choices = linkChoices(key,'',workspace);
+            newLinkChoices[key] = new Set(choices.map(([id])=>id));
+            const unavailable = selected && !newLinkChoices[key].has(selected) ? selected : undefined;
+            if (unavailable) choices.splice(1,0,[unavailable,'Previous selection — no longer available']);
+            replaceLinkOptions(field,choices,'',selected,unavailable);
+          }
+          state = next;
+          revision = next.revision;
+          render();
+          const invalid = showNewLinkStatus();
+          if (focus && invalid.length) form.elements.namedItem(invalid[0])?.focus();
+        } catch (error) {
+          if (!live()) return;
+          if ([401,403,404].includes(error.status)) { await hideUnavailableBudget(); return; }
+          drawNewLinkRefresh('Could not refresh project choices. Your draft is unchanged.');
+        } finally { checking = false; }
+      }
       async function hideUnavailableBudget() {
         state = null;
         if (host?.isConnected)
@@ -431,7 +521,9 @@
       }
       function drawRecovery(draft, choicesReset=false) {
         if (!live()) return;
-        let text = 'The budget changed. Your draft is still here. Review the latest saved cost before saving again.';
+        let text = staleLinkError
+          ? 'A selected owner or task is no longer available. Your draft is still here. Review the latest cost and project choices before saving again.'
+          : 'The budget changed. Your draft is still here. Review the latest saved cost before saving again.';
         if (checked) {
           const {changed,conflicts,coupled,unavailable} = checked.comparison;
           text = unavailable.length
@@ -469,16 +561,13 @@
             await hideUnavailableBudget();
             return;
           }
-          const row = next.budget?.items?.find(item=>item.id===cost.row.id);
-          if (!next.identity?.admin || !next.budget?.enabled || next.budget.currency!==cost.currency ||
-            !row || row.archivedAt || !Number.isSafeInteger(next.revision) || next.revision<revision) {
+          const row = validBudgetForReview(next) && next.budget.items.find(item=>item.id===cost.row.id);
+          if (!row || row.archivedAt) {
             message('This cost cannot be safely refreshed here. Your draft is still here. Copy your edits before closing.');
             return;
           }
           if (refreshWorkspace) {
-            const result = await refreshWorkspace((_revision,workspace) => live() && blocked && checking &&
-              !form.dataset.saving && Array.isArray(workspace?.members) && Array.isArray(workspace?.tasks) &&
-              (!root.GatherMode?.demo || workspace.demoGeneration === demoGeneration));
+            const result = await refreshChoices();
             if (!live()) return;
             if (!result?.verified) {
               message('Could not confirm the latest project members and tasks. Your draft is unchanged.');
@@ -547,18 +636,13 @@
           const formatted = value => forecastKeys.includes(key)&&key!=='status'?B.inputAmount(value,cost.currency):value;
           const value=updates.has(key)?formatted(comparison.merged[key]):field.value;
           const baseline=formatted(checked.row[key]);
+          // Retain exactly the saved historical link; do not offer other
+          // former members or archived tasks as replacement choices.
+          if (isCostLink(key) && field.options) {
+            replaceLinkOptions(field,linkChoices(key,baseline,workspace),baseline,value);
+            continue;
+          }
           if (field.options) {
-            // Retain exactly the saved historical link; do not offer other
-            // former members or archived tasks as replacement choices.
-            if (isCostLink(key)) {
-              field.options.length = 0;
-              for (const [id,label] of linkChoices(key,baseline,workspace)) {
-                const option = document.createElement('option');
-                option.value = id;
-                option.textContent = label;
-                field.append(option);
-              }
-            }
             for (const option of field.options) option.defaultSelected=option.value===baseline;
           } else field.defaultValue=baseline;
           field.value=value;
@@ -657,7 +741,15 @@
       async function submit(event, build) {
         event.preventDefault();
         event.stopPropagation();
-        if (!live() || form.dataset.saving || checking || blocked) return;
+        if (!live() || form.dataset.saving || checking) return;
+        if (!pending && newLinkChoices) {
+          const invalid = validateNewLinkChoices();
+          if (invalid.length) {
+            form.elements.namedItem(invalid[0])?.focus();
+            return;
+          }
+        }
+        if (blocked) return;
         // Capture successful controls before saveLock disables them.
         const data = { ...build(), revision }, key = JSON.stringify(data), draft = draftSignature();
         if (pending) {
@@ -700,14 +792,28 @@
             form.querySelector('.form-error').focus();
             return;
           }
-          message(error.message);
-          if (error.status === 409) {
-            if (cost && attempt.data.action === 'budgetItem') {
+          const linkError = error.status === 400 && error.code === 'budget_link_unavailable';
+          if (attempt.data.action === 'budgetItem' && (linkError || error.status === 409)) {
+            if (cost) {
+              staleLinkError = linkError;
               setBlocked(true);
               checked = null;
               drawRecovery();
+              if (linkError) form.querySelector('.form-error').focus();
               return;
             }
+            if (refreshWorkspace) {
+              newLinkChoices = null;
+              setBlocked(true);
+              drawNewLinkRefresh(linkError
+                ? 'A selected owner or task is no longer available. Refresh the choices without losing your draft.'
+                : 'Budget changed. Refresh the choices without losing your draft.');
+              form.querySelector('.form-error').focus();
+              return;
+            }
+          }
+          message(error.message);
+          if (error.status === 409) {
             const reload = document.createElement('button');
             reload.type = 'button';
             reload.className = 'text-button';
@@ -726,6 +832,9 @@
       form.addEventListener('submit', (event) =>
         submit(event, () => action(cost ? costFields() : Object.fromEntries(new FormData(form)))),
       );
+      form.addEventListener('change', event => {
+        if (newLinkChoices && !pending && live() && isCostLink(event.target.name)) showNewLinkStatus();
+      });
       form
         .querySelector('[data-budget-archive]')
         ?.addEventListener('click', (event) =>

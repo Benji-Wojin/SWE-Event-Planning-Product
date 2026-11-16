@@ -201,7 +201,9 @@ export function budgetTests(deps) {
       displayName: 'Fictional teammate',
     };
     assert.equal((await (await infoRead(query)).json()).budget.items.length, 1);
-    assert.equal((await infoWrite(input, query)).status, 403);
+    const forbidden = await infoWrite(input, query);
+    assert.equal(forbidden.status, 403);
+    assert.equal(Object.hasOwn(await forbidden.json(), 'code'), false);
     sqlite
       .prepare(
         "UPDATE project_members SET revoked_at='now',revision=revision+1 WHERE id=?",
@@ -324,10 +326,12 @@ export function budgetTests(deps) {
     assert.equal(state.budget.items[0].owner, active);
     state = await saveCost(query, state, id, cost({ owner: 'jack' }));
     assert.equal(state.budget.items[0].owner, 'jack');
-    for (const owner of [former, example]) {
-      const rejected = await write(query, state.revision, { action: 'budgetItem', id, item: cost({ owner }) });
+    for (const [costId, owner] of [['', former], [id, former], [id, example]]) {
+      const rejected = await write(query, state.revision, { action: 'budgetItem', id: costId, item: cost({ owner }) });
       assert.equal(rejected.status, 400, await rejected.clone().text());
-      assert.match((await rejected.json()).error, /owner|member|teammate/i);
+      const body = await rejected.json();
+      assert.match(body.error, /owner|member|teammate/i);
+      assert.equal(body.code, 'budget_link_unavailable');
       assert.deepEqual(await budgetSnapshot(query), state, 'rejecting a new owner does not change the cost or history');
       assert.deepEqual(workspaceRow(), unchangedWorkspace);
     }
@@ -368,10 +372,12 @@ export function budgetTests(deps) {
     assert.deepEqual(savedLinks(), [oldMember.actorId, originalTask, 3525]);
     assert.deepEqual(state.budget.history.at(-1).after, state.budget.items.find(row => row.id === id));
 
-    for (const [costId, taskId] of [[other.id, originalTask], [id, anotherArchived]]) {
+    for (const [costId, taskId] of [['', originalTask], [other.id, originalTask], [id, anotherArchived]]) {
       const rejected = await write(query, state.revision, { action: 'budgetItem', id: costId, item: cost({ taskId }) });
       assert.equal(rejected.status, 400, await rejected.clone().text());
-      assert.match((await rejected.json()).error, /task/i);
+      const body = await rejected.json();
+      assert.match(body.error, /task/i);
+      assert.equal(body.code, 'budget_link_unavailable');
       assert.deepEqual(await budgetSnapshot(query), state, 'a historical link may stay only on its original cost');
       assert.deepEqual(workspaceRow(), unchangedWorkspace);
     }
@@ -381,6 +387,36 @@ export function budgetTests(deps) {
     assert.deepEqual(savedLinks(), [active, completedTask, 3525]);
     assert.deepEqual(await budgetSnapshot(query), state);
     assert.deepEqual(workspaceRow(), unchangedWorkspace);
+  });
+  test('budget link choices report unavailable references without distinguishing missing resources, and leave ordinary validation untagged', async t => {
+    const { query, workspaceRow, addMember, addTask, history } = await linkFixture(t);
+    const outsider = await linkFixture(t);
+    const outsideOwner = outsider.addMember('Fictional teammate from a different project').actorId;
+    const outsideTask = await outsider.addTask('Fictional task from a different project');
+    const former = addMember('Fictional departed teammate', true).actorId;
+    const archived = await addTask('Fictional archived cost-linked task');
+    history(state => { state.tasks.find(row => row.id === archived).archivedAt = '2026-10-20T16:00:00Z'; });
+    const unchangedWorkspace = workspaceRow();
+    const state = await enabled(query);
+    for (const [item, message, code] of [
+      [cost({ estimate: 'not an amount', owner: former }), /amount/i, ''],
+      [cost({ owner: outsideOwner }), /owner|member|teammate/i, 'budget_link_unavailable'],
+      [cost({ taskId: outsideTask }), /task/i, 'budget_link_unavailable'],
+    ]) {
+      const rejected = await write(query, state.revision, { action: 'budgetItem', id: '', item });
+      assert.equal(rejected.status, 400, await rejected.clone().text());
+      const body = await rejected.json();
+      assert.match(body.error, message);
+      if (code) {
+        assert.equal(body.code, code);
+        const stale = item.owner ? cost({ owner: former }) : cost({ taskId: archived });
+        const peer = await write(query, state.revision, { action: 'budgetItem', id: '', item: stale });
+        assert.equal(peer.status, 400);
+        assert.deepEqual(await peer.json(), body, 'the response does not identify a foreign reference as present elsewhere');
+      } else assert.equal(Object.hasOwn(body, 'code'), false);
+      assert.deepEqual(await budgetSnapshot(query), state, 'validation errors do not change the cost or history');
+      assert.deepEqual(workspaceRow(), unchangedWorkspace);
+    }
   });
   test('budget link choices still allow sample owners in the isolated demo', async t => {
     owner();

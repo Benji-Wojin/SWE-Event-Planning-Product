@@ -122,9 +122,11 @@ async function harness({ confirm = () => true, demo=false, openingCost=opening, 
       const method = options.method;
       requests.push({ method, payload: options.body ? JSON.parse(options.body) : undefined });
       if (method === 'GET' && releaseRead) await releaseRead;
-      const status = method === 'POST' ? nextPost : nextRead;
+      const configured = method === 'POST' ? nextPost : nextRead;
+      const { status, body } = typeof configured === 'object' ? configured : { status: configured };
       if (status === 'network') throw new TypeError('Fixture connection closed before response');
-      return { ok: status === 200, status, json: async () => status === 200 ? structuredClone(response) : { error: status === 409 ? 'Budget changed. Reload it.' : 'Fixture cannot read Budget.' } };
+      return { ok: status === 200, status, json: async () => status === 200 ? structuredClone(response) :
+        structuredClone(body ?? { error: status === 409 ? 'Budget changed. Reload it.' : 'Fixture cannot read Budget.' }) };
     },
   });
   const ui = window.GatherBudgetUI.create({ h, getActor: () => actor, isDialogOpen: () => !!form, getWorkspace: () => workspace,
@@ -191,6 +193,7 @@ const sample = { id: 'example-owner', name: 'Fictional sample actor', role: 'Log
 const newerArchived = { id: 'new-archived-task', title: 'Saved tent delivery', archivedAt: archiveAt };
 const teammate = { id: 'current-owner', name: 'Fictional teammate', role: 'Teammate', active: true };
 const completed = { id: 'completed-task', title: 'Confirm quote', status: 'done' };
+const staleLink = { status: 400, body: { error: 'Choose a current linked task.', code: 'budget_link_unavailable' } };
 
 test('disjoint cost recovery adopts the latest historical links without clearing the organizer’s amount or title', async () => {
   const initial = saved({ owner: former.id, taskId: archived.id });
@@ -280,6 +283,85 @@ test('a now-unavailable draft link needs an explicit current decision without lo
   await f.submit();
   assert.equal(f.posts.length, 2);
   assert.deepEqual(f.posts[1].item, { ...draft, owner: teammate.id, taskId: completed.id, estimate: '145.00' });
+});
+
+test('a typed stale-link rejection can review current choices without discarding or sending the draft', async () => {
+  const initiallyAvailable = { id: archived.id, title: archived.title };
+  const workspace = { members: [teammate], tasks: [initiallyAvailable, completed] };
+  const refreshed = { members: [teammate], tasks: [archived, completed] };
+  let workspaceReads = 0;
+  const f = await harness({ workspace, refreshWorkspace(guard, publish) {
+    workspaceReads++;
+    assert.equal(guard(12, refreshed), true);
+    publish(refreshed);
+    return { verified: true };
+  } });
+  f.nextPost = staleLink;
+  f.draft({ title: 'Keep this tent draft', paid: '34.75', taskId: initiallyAvailable.id });
+  const draft = f.values();
+  await f.submit();
+  const [rejected] = f.posts;
+  assert.deepEqual(rejected.item, draft);
+  assert.ok(f.control(check));
+  assert.equal(f.control(checkOriginal), undefined);
+  assert.equal(f.form.dataset.budgetUnconfirmed, undefined);
+  assert.equal(f.form.submit.getAttribute('aria-disabled'), 'true');
+  assert.equal(f.reads, 1, 'rejection waits for explicit review');
+  assert.equal(workspaceReads, 0);
+  assert.deepEqual(f.values(), draft);
+
+  await f.submit();
+  await f.click('[data-budget-archive]');
+  assert.deepEqual(f.posts, [rejected]);
+  f.update(opening, { revision: 7 }); // A task can change without the budget revision changing.
+  await f.click(check);
+  assert.equal(f.reads, 2);
+  assert.equal(workspaceReads, 1);
+  assert.match(f.form.error.textContent, /No longer available in your draft: Linked task/);
+  assert.deepEqual(f.values(), draft);
+  assert.deepEqual(f.choices('taskId').map(option => [option.value, option.disabled]), [['saved', false], ['draft', true]]);
+  f.choose('taskId', 'draft');
+  await f.click(apply);
+  assert.deepEqual(f.values(), draft, 'invalid draft link is never applied or silently removed');
+  assert.deepEqual(f.posts, [rejected]);
+  f.choose('taskId', 'saved');
+  await f.click(apply);
+  assert.deepEqual(f.values(), { ...draft, taskId: '' });
+  assert.equal(f.form.submit.getAttribute('aria-disabled'), 'false');
+  assert.deepEqual(f.posts, [rejected], 'review never sends the replacement without Save');
+
+  f.draft({ taskId: completed.id });
+  f.update(saved({ title: draft.title, paid: 3475, taskId: completed.id }));
+  f.nextPost = 200;
+  await f.submit();
+  assert.equal(f.posts.length, 2);
+  assert.equal(f.posts[1].revision, 7);
+  assert.notEqual(f.posts[1].requestId, rejected.requestId);
+  assert.deepEqual(f.posts[1].item, { ...draft, taskId: completed.id });
+  assert.equal(f.closed, 1);
+});
+
+test('an untyped or unrelated 400 stays a regular editable budget validation error', async () => {
+  for (const code of [undefined, 'unrelated_validation_error']) {
+    const f = await harness();
+    f.nextPost = { status: 400, body: { error: staleLink.body.error, ...(code ? { code } : {}) } };
+    f.draft({ title: 'Regular draft', estimate: '120.60' });
+    const before = f.values();
+    await f.submit();
+    assert.equal(f.form.error.textContent, staleLink.body.error, 'the exact message alone must not trigger link recovery');
+    assert.equal(f.control(check), undefined);
+    assert.equal(f.control(checkOriginal), undefined);
+    assert.deepEqual(f.values(), before);
+    assert.equal(f.reads, 1);
+    f.draft({ estimate: '130.00' });
+    f.update(saved({ title: before.title, estimate: 13000 }));
+    f.nextPost = 200;
+    await f.submit();
+    assert.equal(f.posts.length, 2);
+    assert.notEqual(f.posts[1].requestId, f.posts[0].requestId);
+    assert.equal(f.posts[1].item.estimate, '130.00');
+    assert.equal(f.closed, 1);
+  }
 });
 
 test('an unconfirmed workspace refresh preserves the link draft, stays blocked, and can be retried read-only', async () => {
@@ -713,6 +795,44 @@ test('a retry conflict after uncertainty does not prove that the original did no
   f.draft({ paid: '25.00' });
   await f.submit();
   assert.equal(f.posts.length, 2);
+});
+
+test('a typed stale-link error on retry never unlocks an earlier unconfirmed save', async () => {
+  let workspaceReads = 0;
+  const f = await harness({ workspace: { members: [], tasks: [completed] }, refreshWorkspace() {
+    workspaceReads++;
+    return { verified: true };
+  } });
+  f.draft({ title: 'Original tent request', paid: '12.00', taskId: completed.id });
+  f.nextPost = 503;
+  await f.submit();
+  const [original] = f.posts;
+  f.draft({ title: 'New draft title', paid: '25.00' });
+  const draft = f.values();
+
+  f.nextPost = staleLink;
+  await f.click(retryOriginal);
+  assert.deepEqual(f.posts, [original, original], 'retry must send the exact body and key of the uncertain original');
+  assert.equal(f.form.dataset.budgetUnconfirmed, 'true');
+  assert.ok(f.control(checkOriginal));
+  assert.equal(f.control(check), undefined);
+  assert.deepEqual(f.values(), draft);
+  assert.equal(f.reads, 1);
+  assert.equal(workspaceReads, 0);
+
+  f.update(opening); // A newer revision alone cannot confirm the uncertain receipt.
+  await f.click(checkOriginal);
+  assert.match(f.form.error.textContent, /No matching save was found.*original could still have saved/i);
+  assert.equal(f.form.dataset.budgetUnconfirmed, 'true');
+  assert.equal(f.control(check), undefined);
+  assert.equal(workspaceReads, 0);
+  assert.equal(f.reads, 2);
+  f.nextPost = 200;
+  await f.submit();
+  await f.click('[data-budget-archive]');
+  assert.equal(f.closed, 0);
+  assert.deepEqual(f.values(), draft);
+  assert.deepEqual(f.posts, [original, original]);
 });
 
 test('the demo can check an unconfirmed write but cannot replay it after a reset', async () => {

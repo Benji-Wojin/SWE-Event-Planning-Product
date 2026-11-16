@@ -9,7 +9,7 @@ const entities = { '&':'amp', '<':'lt', '>':'gt', '"':'quot', "'":'#39' };
 const decode = value => value.replace(/&(amp|lt|gt|quot|#39);/g, (_, entity) =>
   Object.keys(entities).find(character => entities[character] === entity));
 
-async function harness(admin = true, { demo = false } = {}) {
+async function harness(admin = true, { demo = false, refreshWorkspace } = {}) {
   const budget = GatherBudget.initial(),
     requests = [],
     methods = [],
@@ -18,7 +18,7 @@ async function harness(admin = true, { demo = false } = {}) {
     form,
     formMarkup,
     workspace = { tasks: [], members: [] },
-    fail = null, failRead = false, loads = 0,
+    fail = null, failRead = false, readReply, loads = 0,
     closed = 0,
     poll,
     renders = 0,
@@ -45,7 +45,8 @@ async function harness(admin = true, { demo = false } = {}) {
       super(
         Object.entries(form.values)
           .filter(
-            ([, control]) => !control.disabled && control.value !== undefined,
+            ([, control]) => !control.disabled && control.value !== undefined &&
+              (!control.options || control.options.some(option => option.value === control.value && !option.disabled)),
           )
           .map(([name, control]) => [name, control.value]),
       );
@@ -76,7 +77,7 @@ async function harness(admin = true, { demo = false } = {}) {
       methods.push(options.method);
       if (!options.body)
         return failRead ? {ok:false,status:503,json:async()=>({error:'Budget unavailable'})}
-          : { ok: true, json: async () => structuredClone(snapshot) };
+          : { ok: true, json: async () => structuredClone(readReply ?? snapshot) };
       const data = JSON.parse(options.body);
       requests.push(data);
       if (fail) {
@@ -84,8 +85,9 @@ async function harness(admin = true, { demo = false } = {}) {
         fail=null;
         return {
           ok: failure === 'bad-success',
-          status: failure === 'bad-success' ? 200 : failure,
-          json: async () => failure === 'bad-success' ? {revision: snapshot.revision + 1} : {error:'Request failed.'},
+          status: failure === 'bad-success' ? 200 : failure.status ?? failure,
+          json: async () => failure === 'bad-success' ? {revision: snapshot.revision + 1}
+            : {error:'Request failed.', ...(failure.code ? {code:failure.code} : {})},
         };
       }
       snapshot = { ...snapshot, revision: snapshot.revision + 1 };
@@ -96,6 +98,10 @@ async function harness(admin = true, { demo = false } = {}) {
     h: (value) => String(value).replace(/[&<>"']/g, character => `&${entities[character]};`),
     isDialogOpen: () => false,
     getWorkspace: () => workspace,
+    refreshWorkspace: refreshWorkspace && (guard => {
+      methods.push('WORKSPACE GET');
+      return refreshWorkspace(guard, next => { workspace = next; });
+    }),
     onLoaded() { loads++; },
     toast() {},
     closeDialog: () => {
@@ -109,7 +115,8 @@ async function harness(admin = true, { demo = false } = {}) {
         get textContent() { return this.message; },
         append(child) { this.children.push(child); },
         focus() {},
-      }, close = { addEventListener() {} };
+      }, close = { addEventListener(name, fn) { this[name]=fn; } };
+      const save = { setAttribute(name, value) { this[name]=value; } };
       const archive = {
         addEventListener(name, fn) { this[name]=fn; },
         setAttribute(name, value) { this[name]=value; },
@@ -123,7 +130,10 @@ async function harness(admin = true, { demo = false } = {}) {
             ? error
             : selector === '[data-budget-close]'
               ? close
-              : selector === '[data-budget-archive]' && markup.includes('data-budget-archive') ? archive : null,
+              : selector === 'button[type="submit"]'
+                ? save
+                : selector === '[data-budget-archive]' && markup.includes('data-budget-archive') ? archive : null,
+        elements: { namedItem: name => form.values[name] ?? null },
         error,
         closest: () => form,
         addEventListener(event, fn) {
@@ -166,6 +176,7 @@ async function harness(admin = true, { demo = false } = {}) {
       return button;
     },
     setFailRead(value) { failRead=value; },
+    setReadReply(value) { readReply=value; },
     get loads() { return loads; },
     get renders() {
       return renders;
@@ -178,8 +189,8 @@ async function harness(admin = true, { demo = false } = {}) {
       snapshot = { ...snapshot, budget: { ...budget, enabled: true } };
       ui.mount(host);
     },
-    setBudget(changes) {
-      snapshot = { ...snapshot, budget: { ...budget, enabled: true, ...changes } };
+    setBudget(changes, revision = snapshot.revision) {
+      snapshot = { ...snapshot, revision, budget: { ...budget, enabled: true, ...changes } };
     },
     setWorkspace(value) {
       workspace = value;
@@ -196,6 +207,21 @@ async function harness(admin = true, { demo = false } = {}) {
     get closed() {
       return closed;
     },
+    window,
+    control(attribute) {
+      return form.error.children.find(button=>button[attribute] === '');
+    },
+    async reviewLinks() {
+      const control = this.control('data-budget-refresh-links');
+      assert.ok(control, 'refresh choices control');
+      await control.click();
+    },
+    chooseLink(name, value) {
+      const field = form.values[name];
+      assert.ok(field.options.some(option => option.value === value && !option.disabled), 'current link or explicit None must be selectable');
+      field.value = value;
+      form.listeners.change({target:field});
+    },
     async retryOriginal() {
       await form.error.children.find(button=>button['data-budget-retry-original'] === '').click();
     },
@@ -204,12 +230,21 @@ async function harness(admin = true, { demo = false } = {}) {
       await control.click({preventDefault(){},stopPropagation(){},currentTarget:control});
     },
     async submit(values) {
-      form.values = Object.fromEntries(
-        Object.entries(values).map(([key, value]) => [
-          key,
-          { value, disabled: false },
-        ]),
-      );
+      if (values) {
+        form.values = Object.fromEntries(Object.entries(values).map(([name, value]) => {
+          const field = {name, value, disabled: false,
+            getAttribute(key) { return this[key] ?? null; },
+            setAttribute(key, input) { this[key]=input; },
+            removeAttribute(key) { delete this[key]; },
+            focus() {},
+          };
+          if (['owner','taskId','status'].includes(name)) {
+            field.options = optionsFor(formMarkup,name).map(option=>({...option,disabled:false,defaultSelected:option.selected}));
+            field.append = option => field.options.push(option);
+          }
+          return [name,field];
+        }));
+      }
       await form.listeners.submit({
         preventDefault() {},
         stopPropagation() {},
@@ -400,6 +435,157 @@ function optionsFor(markup, name) {
   return Array.from(select[1].matchAll(/<option\b[^>]*\bvalue="([^"]*)"([^>]*)>([^<]*)<\/option>/g),
     ([, value, attrs, label]) => ({ value, label, selected: /(?:^|\s)selected(?:\s|$)/.test(attrs) }));
 }
+
+const newCostDraft = {
+  title: 'Fictional lighting deposit', estimate: '120.50', committed: '100.00', paid: '0',
+  owner: 'actor-active', taskId: 'task-open', dueDate: '2026-11-24', status: 'cancelled',
+};
+const staleLinkFailure = { status: 400, code: 'budget_link_unavailable' };
+const draftValues = form => Object.fromEntries(Object.entries(form.values).map(([key,field])=>[key,field.value]));
+function archiveSelectedTask() {
+  return { ...projectChoices, tasks: projectChoices.tasks.map(task=>task.id==='task-open' ? {...task,archivedAt:archiveAt}:task) };
+}
+
+test('new cost recovery keeps both stale links visibly unresolved until each replacement or None is explicit', async () => {
+  const newer = archiveSelectedTask();
+  newer.members = newer.members.map(member=>member.id==='actor-active' ? {...member,active:false}:member);
+  const h = await harness(true,{refreshWorkspace(guard,publish) {
+    assert.equal(guard(10,newer),true);
+    publish(newer);
+    return {verified:true};
+  }});
+  h.setWorkspace(projectChoices);
+  h.setBudget({items:[]});
+  await h.poll();
+  h.click('data-budget-add');
+  h.failOnce(staleLinkFailure);
+  await h.submit(newCostDraft);
+  const original = h.requests[0];
+  assert.deepEqual(original.item,newCostDraft);
+  assert.match(h.form.error.textContent,/Refresh the choices without losing your draft/);
+  assert.equal(h.form.querySelector('button[type="submit"]')['aria-disabled'],'true');
+  h.setBudget({items:[]},4);
+  const beforeRefresh = h.methods.slice();
+  await h.reviewLinks();
+  assert.deepEqual(h.methods,[...beforeRefresh,'GET','WORKSPACE GET']);
+  assert.deepEqual(draftValues(h.form),newCostDraft);
+  for (const key of ['owner','taskId']) {
+    const field = h.form.values[key];
+    const selected = field.options.find(option=>option.value===field.value);
+    assert.ok(selected?.disabled);
+    assert.match(selected.textContent,/Previous selection.*no longer available/i);
+    assert.equal(field.getAttribute('aria-invalid'),'true');
+    assert.ok(field.options.some(option=>option.value===''&&!option.disabled),'None is a separate choice');
+  }
+  await h.submit();
+  h.chooseLink('owner','actor-organizer');
+  await h.submit();
+  assert.equal(h.requests.length,1,'a stale selection cannot be submitted as an empty field');
+  assert.equal(h.form.values.owner.getAttribute('aria-invalid'),null);
+  assert.equal(h.form.values.taskId.getAttribute('aria-invalid'),'true');
+  h.chooseLink('taskId','');
+  assert.equal(h.form.values.taskId.getAttribute('aria-invalid'),null);
+  assert.equal(h.form.querySelector('button[type="submit"]')['aria-disabled'],'false');
+  assert.equal(h.requests.length,1,'choosing None does not submit the draft');
+  assert.match(h.form.error.textContent,/choose Save/);
+  await h.submit();
+  assert.equal(h.requests.length,2);
+  assert.equal(h.requests[1].revision,4);
+  assert.notEqual(h.requests[1].requestId,original.requestId);
+  assert.deepEqual(h.requests[1].item,{...newCostDraft,owner:'actor-organizer',taskId:''});
+  assert.equal(h.closed,1);
+});
+
+test('new cost recovery preserves the full draft and choices through failed reads and keeps a still-current link', async () => {
+  const newer = archiveSelectedTask();
+  let workspaceAttempts = 0;
+  const h = await harness(true,{refreshWorkspace(guard,publish) {
+    if (++workspaceAttempts===1) return {pending:true,verified:false};
+    assert.equal(guard(10,newer),true);
+    publish(newer);
+    return {verified:true};
+  }});
+  h.setWorkspace(projectChoices);
+  h.setBudget({items:[]});
+  await h.poll();
+  h.click('data-budget-add');
+  h.failOnce(staleLinkFailure);
+  await h.submit(newCostDraft);
+  const openedOptions = ['owner','taskId'].map(key=>h.form.values[key].options.slice());
+  const assertDraftUnchanged = () => {
+    assert.deepEqual(draftValues(h.form),newCostDraft);
+    for (const [index,key] of ['owner','taskId'].entries()) {
+      const actual = h.form.values[key].options;
+      assert.equal(actual.length,openedOptions[index].length);
+      assert.ok(actual.every((option,i)=>option===openedOptions[index][i]));
+    }
+    assert.equal(h.requests.length,1);
+  };
+  h.setFailRead(true);
+  await h.reviewLinks();
+  assert.match(h.form.error.textContent,/Could not refresh project choices.*draft is unchanged/);
+  assert.equal(workspaceAttempts,0);
+  assertDraftUnchanged();
+  h.setFailRead(false);
+  for (const reply of [
+    {revision:2},
+    {revision:2,identity:{actor:'organizer',admin:true},budget:{enabled:true,currency:'USD'}},
+  ]) {
+    h.setReadReply(reply);
+    await h.reviewLinks();
+    assert.match(h.form.error.textContent,/draft is unchanged/i);
+    assert.equal(h.closed,0,'a malformed success is not a confirmed loss of project access');
+    assert.equal(workspaceAttempts,0);
+    assertDraftUnchanged();
+  }
+  h.setReadReply(undefined);
+  h.setBudget({items:[],currency:'EUR'},2);
+  await h.reviewLinks();
+  assert.match(h.form.error.textContent,/Could not confirm the current Budget settings.*draft is unchanged/);
+  assert.equal(workspaceAttempts,0);
+  assertDraftUnchanged();
+  h.setBudget({items:[]},3);
+  await h.reviewLinks();
+  assert.match(h.form.error.textContent,/Could not confirm the latest project choices.*draft is unchanged/);
+  assert.equal(workspaceAttempts,1);
+  await h.submit();
+  assertDraftUnchanged();
+  await h.reviewLinks();
+  assert.equal(workspaceAttempts,2);
+  assert.deepEqual(draftValues(h.form),newCostDraft);
+  assert.equal(h.form.values.owner.getAttribute('aria-invalid'),null);
+  assert.ok(h.form.values.owner.options.some(option=>option.value===newCostDraft.owner&&!option.disabled));
+  assert.equal(h.form.values.taskId.getAttribute('aria-invalid'),'true');
+  h.chooseLink('taskId','task-done');
+  await h.submit();
+  assert.equal(h.requests[1].revision,3);
+  assert.deepEqual(h.requests[1].item,{...newCostDraft,taskId:'task-done'});
+});
+
+test('a definitive new cost revision conflict safely refreshes and makes the original draft savable without an automatic write', async () => {
+  const h = await harness(true,{refreshWorkspace(guard,publish) {
+    assert.equal(guard(10,projectChoices),true);
+    publish(projectChoices);
+    return {verified:true};
+  }});
+  h.setWorkspace(projectChoices);
+  h.setBudget({items:[]});
+  await h.poll();
+  h.click('data-budget-add');
+  h.failOnce(409);
+  await h.submit(newCostDraft);
+  assert.match(h.form.error.textContent,/Budget changed.*without losing your draft/);
+  h.setBudget({items:[],target:22000},2);
+  await h.reviewLinks();
+  assert.deepEqual(draftValues(h.form),newCostDraft);
+  assert.equal(h.form.querySelector('button[type="submit"]')['aria-disabled'],'false');
+  assert.equal(h.requests.length,1);
+  await h.submit();
+  assert.equal(h.requests.length,2);
+  assert.equal(h.requests[1].revision,2);
+  assert.notEqual(h.requests[1].requestId,h.requests[0].requestId);
+  assert.deepEqual(h.requests[1].item,newCostDraft);
+});
 
 test('new costs link only to current people and non-archived tasks, keeping completed tasks eligible', async () => {
   for (const demo of [false, true]) {

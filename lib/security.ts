@@ -9,6 +9,7 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
@@ -33,6 +34,7 @@ export async function safe(fn: () => Promise<Response>) {
           e instanceof HttpError
             ? e.message
             : 'The request could not be completed. Please retry.',
+        ...(e instanceof HttpError && e.code ? { code: e.code } : {}),
       },
       e instanceof HttpError ? e.status : 500,
     );

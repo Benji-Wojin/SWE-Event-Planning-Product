@@ -334,10 +334,10 @@ export async function mutateInfo(context: Context, input: any) {
           const current = workspace.store.getState();
           if (normalized.taskId && normalized.taskId !== existing?.taskId &&
               budgetModel.taskAvailability(current.tasks.find((task: any) => task.id === normalized.taskId)) !== 'current')
-            throw new Error('Choose a task from this project that is not archived, or leave the task link blank.');
+            throw new HttpError(400, 'That task is not available for new Budget links. Choose a non-archived task or leave the link blank.', 'budget_link_unavailable');
           if (normalized.owner && normalized.owner !== existing?.owner &&
               budgetModel.ownerAvailability(current.members.find((member: any) => member.id === normalized.owner), !context.demoId) !== 'current')
-            throw new Error('Choose a current project member, or leave the owner blank.');
+            throw new HttpError(400, 'That owner is not available for new Budget links. Choose a current teammate or leave the owner blank.', 'budget_link_unavailable');
           context.budgetWorkspaceRevision = workspace.row.revision;
           if (existing) Object.assign(existing, normalized, audit);
           else budget.items.push({ id: crypto.randomUUID(), ...normalized, ...audit, archivedAt: '' });
