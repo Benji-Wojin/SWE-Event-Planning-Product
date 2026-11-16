@@ -10,6 +10,7 @@ import { duplicateItemIdentity, planSelection, selectNewPlanItems, type Existing
 import { pastedChecklistLimit } from '@/lib/pasted-checklist';
 import { groupPlanHandoff, handoffLabel, type PlanReceiptTask } from '@/lib/plan-receipt';
 import { planApprovalHash } from '@/lib/plan-approval-hash';
+import { planPrerequisiteDependents, planPrerequisiteLimit, planPrerequisiteLoopSources } from '@/lib/plan-prerequisites';
 import { planActivityHref, planTaskHref } from '@/lib/workspace-task-link';
 import { workspaceScheduleDate } from '@/lib/workspace-day';
 import {AskWeftPanel} from './ask-weft-panel';
@@ -257,6 +258,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     data?.draft?.duplicateSuggestions || [],
   );
   const itemNumbers = new Map(items.map((item, index) => [item.id, index + 1]));
+  const prerequisiteDependents = planPrerequisiteDependents(items);
   const scheduleIssues = new Map<string, { item: ReviewedItem; issue: PlanScheduleIssue }>();
   let invalidPrivateSchedule = false;
   if (!applied) {
@@ -377,12 +379,17 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     updateBrief('description', examplePlanBrief);
     briefInput.current?.focus();
   }
-  const updateItem = (id: string, patch: Partial<ReviewedItem>) => {
+  const updateItem = (
+    id: string,
+    edit: Partial<ReviewedItem> | ((item: ReviewedItem, current: readonly ReviewedItem[]) => Partial<ReviewedItem> | undefined),
+  ) => {
     request.current = null;
     starterRequest.current = null;
     setItems((current) =>
       current.map((item) => {
         if (item.id !== id) return item;
+        const patch = typeof edit === 'function' ? edit(item, current) : edit;
+        if (!patch) return item;
         const next = { ...item, ...patch };
         if (duplicateItemIdentity(next) !== duplicateItemIdentity(item)) {
           delete next.duplicateChoice;
@@ -397,6 +404,16 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       }),
     );
   };
+  function togglePrerequisite(itemId: string, prerequisiteId: string, checked: boolean) {
+    if (locked || applied || pending.current || itemId === prerequisiteId) return;
+    updateItem(itemId, (item, current) => {
+      if (checked === item.dependsOn.includes(prerequisiteId)) return;
+      if (!checked) return { dependsOn: item.dependsOn.filter(id => id !== prerequisiteId) };
+      if (item.dependsOn.length >= planPrerequisiteLimit || !current.some(row => row.id === prerequisiteId) ||
+          planPrerequisiteLoopSources(planPrerequisiteDependents(current), itemId).has(prerequisiteId)) return;
+      return { dependsOn: [...item.dependsOn, prerequisiteId] };
+    });
+  }
   function focusDraftScheduleField(itemId: string, name: 'start' | 'end') {
     if (locked || applied || pending.current) return;
     const issue = scheduleIssues.get(itemId)?.issue;
@@ -1039,6 +1056,9 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               <p className="text-sm text-muted-foreground">Changes only the selected private proposals, including any owners already chosen for them. Excluded and reused items, dates and prerequisites stay unchanged. Nothing is assigned in the shared project until you add the reviewed items.</p>
             </div>}
             {items.map((item, index) => {
+              const loopSources = planPrerequisiteLoopSources(prerequisiteDependents, item.id);
+              const prerequisiteLimitReached = item.dependsOn.length >= planPrerequisiteLimit;
+              const prerequisiteCountId = `required-count-${item.id}`;
               const scheduleIssue = scheduleIssues.get(item.id)?.issue;
               const startError = scheduleIssue?.field === 'start' ? `schedule-start-error-${item.id}` : undefined;
               const endError = scheduleIssue?.field === 'end' ? `schedule-end-error-${item.id}` : undefined;
@@ -1419,43 +1439,46 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                           </div>
                         </div>
                       )}
-                      <fieldset className="space-y-2">
+                      <fieldset className="space-y-2" aria-describedby={`required-help-${item.id} ${prerequisiteCountId}`}>
                         <legend className="mb-2 text-sm font-medium">
                           Required before completion
                         </legend>
-                        <p className="text-sm text-muted-foreground">Keep only links whose results are needed to complete this task. Related work can run in parallel without a required link. Nothing is linked in the shared project until you add the reviewed items.</p>
+                        <p id={`required-help-${item.id}`} className="text-sm text-muted-foreground">Keep only links whose results are needed to complete this task. Related work can run in parallel without a required link. Nothing is linked in the shared project until you add the reviewed items.</p>
+                        <p id={prerequisiteCountId} className="text-sm text-muted-foreground" role="status">
+                          {item.dependsOn.length} of {planPrerequisiteLimit} draft prerequisites selected.{prerequisiteLimitReached && ' Remove one before adding another.'}
+                        </p>
                         {items
                           .filter((other) => other.id !== item.id)
-                          .map((other) => (
-                            <label
-                              key={other.id}
-                              className="flex items-start gap-2 text-sm"
-                            >
-                              <input
-                                id={'required-'+item.id+':'+other.id}
-                                type="checkbox"
-                                className="mt-1 size-4 shrink-0 accent-primary"
-                                checked={item.dependsOn.includes(other.id)}
-                                onChange={(e) =>
-                                  updateItem(item.id, {
-                                    dependsOn: e.target.checked
-                                      ? [...item.dependsOn, other.id]
-                                      : item.dependsOn.filter(
-                                          (id) => id !== other.id,
-                                        ),
-                                  })
-                                }
-                              />
-                              <span className="break-words">
-                                {other.title}
-                                {reusable.has(other.id) && !invalidReuse.has(other.id)
-                                  ? ' (existing project task)'
-                                  : !other.included
-                                    ? ' (unchecked)'
-                                    : ''}
-                              </span>
-                            </label>
-                          ))}
+                          .map((other) => {
+                            const checked = item.dependsOn.includes(other.id);
+                            const circular = !checked && loopSources.has(other.id);
+                            const checkboxId = `required-${item.id}:${other.id}`;
+                            const labelId = `prerequisite-name:${item.id}:${other.id}`;
+                            const reasonId = `prerequisite-loop:${item.id}:${other.id}`;
+                            return (
+                              <label key={other.id} htmlFor={checkboxId} className="flex min-h-11 items-start gap-2 py-2 text-sm">
+                                <input
+                                  id={checkboxId}
+                                  type="checkbox"
+                                  className="mt-1 size-4 shrink-0 accent-primary"
+                                  checked={checked}
+                                  disabled={!checked && (circular || prerequisiteLimitReached)}
+                                  aria-labelledby={labelId}
+                                  aria-describedby={circular ? reasonId : !checked && prerequisiteLimitReached ? prerequisiteCountId : undefined}
+                                  onChange={e => togglePrerequisite(item.id, other.id, e.target.checked)}
+                                />
+                                <span className="wrap-anywhere">
+                                  <span id={labelId}>
+                                    {other.title.trim() || 'Untitled draft item'}
+                                    {reusable.has(other.id) && !invalidReuse.has(other.id)
+                                      ? ' (existing project task)'
+                                      : !other.included ? ' (unchecked)' : ''}
+                                  </span>
+                                  {circular && <span id={reasonId} className="block text-muted-foreground">Would create a loop. This item already depends on this task, directly or through other items.</span>}
+                                </span>
+                              </label>
+                            );
+                          })}
                       </fieldset>
                     </div>
                   </details>

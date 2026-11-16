@@ -2085,6 +2085,130 @@ test('unchecked prerequisites offer visible include or remove-link actions witho
     }
   }
 });
+
+test('draft prerequisite choices stop direct and indirect loops, including through unchecked and reused proposals', async () => {
+  const initial = fixture();
+  const reused = { ...copy(item), id: 'venue', title: 'Review the venue options', included: false,
+    duplicateChoice: 'reuse', dependsOn: ['contract'] };
+  const unchecked = { ...copy(item), id: 'contract', title: 'Inspect the draft contract', included: false, dependsOn: ['one'] };
+  initial.draft.items.push(reused, unchecked);
+  initial.existingTasks = [{ id: 'shared-venue', title: 'Finalize venue options', start: '' }];
+  initial.draft.duplicateSuggestions = [{ itemId: reused.id, taskId: 'shared-venue', taskIdentity: 'finalize venue options|',
+    itemIdentity: JSON.stringify([reused.title, reused.kind, reused.note, reused.dueDate, reused.start, reused.end, reused.location, reused.category]) }];
+  const app = harness(context => {
+    const { input, saved } = context;
+    if (input?.action === 'save') context.value = pausedPlanResult(input, saved);
+    if (input?.action === 'apply') context.value = { ...saved, status: 'applied', receipt: {
+      generation: input.generation, approvalHash: approvalHash(input), taskIds: ['added-program'],
+    } };
+  }, initial);
+  const checkbox = id => app.find('required-' + id);
+  const choiceText = id => {
+    const field = checkbox(id);
+    const label = nodes(app.tree).find(node => node.type === 'label' && (nodes(node).includes(field) || node.props.htmlFor === field.props.id));
+    const descriptions = (field.props['aria-describedby'] ?? '').split(/\s+/).filter(Boolean).map(id => text(app.find(id)));
+    return [text(label), ...descriptions].join(' ');
+  };
+  try {
+    await app.start();
+    assert.equal(app.find('include-venue').props.checked, false);
+    assert.equal(app.find('include-contract').props.checked, false);
+    for (const id of ['one:contract', 'one:venue']) {
+      assert.equal(checkbox(id).props.disabled, true, id);
+      assert.match(choiceText(id), /would create a loop/i);
+      assert.match(text(app.find(checkbox(id).props['aria-describedby'])), /would create a loop/i,
+        'the disabled option exposes its reason through an accessible description');
+      // The harness dispatches the handler directly; even that must not add a disabled choice.
+      await app.check('required-' + id, true);
+      assert.equal(checkbox(id).props.checked, false, id);
+    }
+    assert.equal(!!checkbox('contract:one').props.disabled, false, 'the existing edge can be removed');
+    await app.check('required-contract:one', false);
+    assert.equal(checkbox('contract:one').props.checked, false);
+    assert.equal(!!checkbox('one:venue').props.disabled, false, 'removing one edge reopens the indirect path');
+    assert.equal(!!checkbox('one:contract').props.disabled, false, 'removing one edge reopens the direct choice');
+    assert.doesNotMatch(choiceText('one:venue'), /would create a loop/i);
+    await app.check('required-one:venue', true);
+    assert.equal(checkbox('one:venue').props.checked, true);
+    assert.equal(checkbox('venue:contract').props.checked, true, 'the other private link was not changed');
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+    assert.deepEqual(app.saved, initial);
+
+    await app.click('Add 1 selected items to project');
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'save', 'apply']);
+    for (const request of app.requests.slice(1)) {
+      assert.deepEqual(request.items.map(row => [row.id, row.dependsOn]), [
+        ['one', ['venue']], ['venue', ['contract']], ['contract', []],
+      ]);
+      assert.equal(request.items.find(row => row.id === 'venue').duplicateChoice, 'reuse');
+    }
+    assert.ok(app.find('plan-receipt-heading'));
+  } finally { app.dispose(); }
+});
+
+test('the draft prerequisite limit allows an existing choice to be removed and replaced before saving', async () => {
+  const initial = fixture();
+  const candidates = Array.from({ length: 9 }, (_, index) => ({
+    ...copy(item), id: `candidate-${index + 1}`, title: `Check arrangement ${index + 1}`,
+  }));
+  initial.draft.items[0].dependsOn = candidates.slice(0, 7).map(row => row.id);
+  initial.draft.items.push(...candidates);
+  const app = harness(context => {
+    if (context.input?.action === 'save') context.value = pausedPlanResult(context.input, context.saved);
+  }, initial);
+  const checkbox = n => app.find(`required-one:candidate-${n}`);
+  const details = () => nodes(app.tree).find(node => node.type === 'details' && nodes(node).includes(checkbox(9)));
+  try {
+    await app.start();
+    assert.match(text(details()), /7 of 8 draft prerequisites selected/i);
+    assert.equal(!!checkbox(8).props.disabled, false);
+    const previouslyAllowedNinthChange = checkbox(9).props.onChange;
+    await app.check('required-one:candidate-8', true);
+    assert.match(text(details()), /8 of 8 draft prerequisites selected/i);
+    assert.match(text(details()), /remove .*first|remove .*before (?:adding|selecting)/i);
+    assert.equal(checkbox(9).props.disabled, true, 'a ninth reference cannot be added');
+    assert.match(text(app.find(checkbox(9).props['aria-describedby'])), /8 of 8 draft prerequisites selected/i);
+    await app.check('required-one:candidate-9', true);
+    assert.equal(checkbox(9).props.checked, false);
+    previouslyAllowedNinthChange({ target: { checked: true } });
+    await app.start();
+    assert.equal(checkbox(9).props.checked, false, 'an earlier render cannot bypass the current draft limit');
+    assert.equal(!!checkbox(1).props.disabled, false, 'a selected reference can be removed at the cap');
+    await app.check('required-one:candidate-1', false);
+    assert.match(text(details()), /7 of 8 draft prerequisites selected/i);
+    assert.equal(!!checkbox(9).props.disabled, false);
+    await app.check('required-one:candidate-9', true);
+    assert.equal(checkbox(9).props.checked, true);
+    assert.match(text(details()), /8 of 8 draft prerequisites selected/i);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+    assert.deepEqual(app.saved, initial);
+
+    await app.click('Save draft');
+    assert.deepEqual(app.requests.map(row => row.action), ['get', 'save']);
+    assert.deepEqual(app.requests[1].items[0].dependsOn, candidates.slice(1).map(row => row.id));
+    assert.deepEqual(app.saved.draft.items[0].dependsOn, candidates.slice(1).map(row => row.id));
+    assert.equal(app.saved.workspaceRevision, initial.workspaceRevision, 'private save does not update shared tasks');
+  } finally { app.dispose(); }
+});
+
+test('prerequisite option names and descriptions stay unique with similarly named draft IDs', async () => {
+  const initial = fixture();
+  initial.draft.items.push(
+    { ...copy(item), id: 'contract', title: 'Check the contract', dependsOn: ['one'] },
+    { ...copy(item), id: 'contract-label', title: 'Prepare the folder' },
+    { ...copy(item), id: 'loop-one', title: 'Open the room' },
+  );
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    const choice = app.find('required-one:contract');
+    const editorIds = nodes(app.tree).map(node => node.props?.id).filter(id => id?.includes(':') && /^(required-|prerequisite-)/.test(id));
+    assert.equal(new Set(editorIds).size, editorIds.length);
+    assert.equal(text(app.find(choice.props['aria-labelledby'])), 'Check the contract');
+    assert.match(text(app.find(choice.props['aria-describedby'])), /Would create a loop/);
+  } finally { app.dispose(); }
+});
+
 test('existing duplicate offers a one-click skip and edited titles invalidate matches', async () => {
   const initial = fixture();
   initial.existingTasks = [{ id: 'existing', title: item.title, start: '' }];

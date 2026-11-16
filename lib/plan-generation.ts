@@ -4,6 +4,7 @@ import {
   fitsGroqRequest,
   groqFailure,
 } from './groq';
+import { planPrerequisiteLimit } from './plan-prerequisites';
 import '@/legacy/calendar.js';
 
 export const eventKinds = [
@@ -214,7 +215,7 @@ export function parsePlanItems(
       ['preparation_schedule', () => item.kind !== 'preparation' || (!item.start && !item.end)],
       ['activity_deadline', () => item.kind !== 'activity' || !item.dueDate],
       ['location', () => text(item.location, 240)],
-      ['dependencies', () => Array.isArray(item.dependsOn) && item.dependsOn.length <= 8 &&
+      ['dependencies', () => Array.isArray(item.dependsOn) && item.dependsOn.length <= planPrerequisiteLimit &&
         item.dependsOn.every((id: any) => typeof id === 'string') && new Set(item.dependsOn).size === item.dependsOn.length],
       ['review_fields', () => !reviewed || (text(item.owner, 80) && typeof item.included === 'boolean')],
     ] as const;
@@ -295,7 +296,7 @@ const itemSchema = {
     start: { ...localTimeSchema, description: localTimeSchema.description + ' Must be empty for preparation tasks.' },
     end: { ...localTimeSchema, description: localTimeSchema.description + ' Must be empty for preparation tasks.' },
     location: { type: 'string', description: 'Supplied location only, at most 240 characters; otherwise empty.' },
-    dependsOn: { type: 'array', items: stringSchema, maxItems: 8 },
+    dependsOn: { type: 'array', items: stringSchema, maxItems: planPrerequisiteLimit },
     existingTaskIndex: { type: ['integer', 'null'], description: 'Zero-based index in supplied existingTasks only when this item has the SAME outcome and scope as that task, even with different wording. Otherwise null. Not a related task, prerequisite, subtask, different date/location, or a broader task.' },
   },
 };
