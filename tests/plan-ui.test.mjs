@@ -131,7 +131,7 @@ function assertExistingTaskLink(link, href) {
   assert.equal(link.props.rel, 'noopener noreferrer');
   assert.equal(link.props.onClick, undefined);
 }
-function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true, starterPreviews) {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true, starterPreviews, {captureNoticeFocus = false} = {}) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -225,9 +225,10 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
     index = 0;
     tree = PlanReview({ query, embedded, guided, receiptTask, receiptHandoff, starterPreviews });
     // The hook renderer has no real DOM; attach focus refs before effects.
-    for (const target of nodes(tree).filter(node => node.props?.ref && ['plan-receipt-heading', 'plan-receipt-return-status', 'plan-brief'].includes(node.props.id))) {
+    for (const target of nodes(tree).filter(node => node.props?.ref && (['plan-receipt-heading', 'plan-receipt-return-status', 'plan-brief'].includes(node.props.id) ||
+      (captureNoticeFocus && !node.props.id && node.props.role === 'status' && node.props.tabIndex === -1)))) {
       target.props.ref.current = {
-        focus: () => focused.push(target.props.id),
+        focus: () => focused.push(target.props.id ?? 'plan-status-notice'),
         closest: () => ({ querySelectorAll: () => nodes(tree).filter(node => node.type === 'a' && node.props['data-handoff-task']).map(node => ({
           dataset: { handoffTask: node.props['data-handoff-task'], handoffIntent: node.props['data-handoff-intent'] },
           focus: () => focused.push('task:' + node.props['data-handoff-task'] + (node.props['data-handoff-intent'] ? ':' + node.props['data-handoff-intent'] : '')),
@@ -1473,6 +1474,146 @@ test('a synthesized main-project query cannot opt in to a standalone receipt han
     assert.equal(app.find('plan-receipt-return-status'), undefined);
     assert.deepEqual(app.requests, [{ action: 'get' }]);
   } finally { app.dispose(); }
+});
+
+function appliedStarterFixture() {
+  const initial = fixture();
+  initial.status = 'applied';
+  initial.existingTaskCount = 2;
+  initial.draft.source = 'starter';
+  initial.draft.items[0].title = 'Original venue proposal';
+  initial.draft.items[0].scope = 'Proposed outcome from the private draft.';
+  initial.draft.items.push({ ...copy(item), id: 'not-added', title: 'Unselected draft idea', included: false });
+  initial.receipt = { generation: initial.draft.generation, taskIds: ['task-venue'], approvalHash: 'prior-approval' };
+  initial.receiptTasks = [{ id: 'task-venue', title: 'Current shared venue task', handoff: { state: 'needs-owner' } }];
+  return initial;
+}
+
+test('an applied standalone plan puts the live handoff before closed future-work and original-proposal disclosures', async () => {
+  for (const guided of [false, true]) {
+    const app = harness(undefined, appliedStarterFixture(), 'project=p_example', false, guided);
+    try {
+      await app.start();
+      const all = nodes(app.tree);
+      const receipt = all.find(node => node.props?.['aria-labelledby'] === 'plan-receipt-heading');
+      const draftAgain = app.find('plan-draft-again'), original = app.find('plan-original-proposals');
+      assert.ok(receipt && draftAgain && original);
+      assert.ok(all.indexOf(receipt) < all.indexOf(draftAgain));
+      assert.ok(all.indexOf(receipt) < all.indexOf(original));
+      for (const [disclosure, label] of [[draftAgain, 'Draft another plan'], [original, 'View original proposals']]) {
+        assert.equal(disclosure.type, 'details');
+        assert.ok(!disclosure.props.open, `${label} is closed by default`);
+        assert.equal(disclosure.props.onToggle, undefined, 'expansion is a native disclosure, not an app action');
+        assert.equal(disclosure.props.onClick, undefined);
+        assert.equal(text(nodes(disclosure).find(node => node.type === 'summary')), label);
+      }
+      assert.match(text(receipt), /1 task added to the project/);
+      assert.doesNotMatch(text(receipt), /Original venue proposal|Unselected draft idea/);
+      const archived = nodes(original);
+      assert.ok(archived.some(node => node.props?.value === 'Original venue proposal'));
+      assert.ok(archived.some(node => node.props?.value === 'Unselected draft idea'));
+      assert.match(text(original), /Read-only snapshot from before approval, including proposals you didn’t add/);
+      assert.match(text(original), /For current details or edits, use Shared tasks/);
+      assert.doesNotMatch(text(original), /Review proposed items|Review your saved checklist|Add \d+ selected|choose what to add/i);
+      assert.equal(app.find('plan-proposed-items'), undefined, 'historical proposals are not the editable review target');
+      assert.equal(all.some(node => node.type === 'a' && node.props.href === '#plan-proposed-items'), false);
+      const lockedHistory = new Set(archived.filter(node => node.type === 'fieldset' && node.props.disabled).flatMap(nodes));
+      assert.ok(archived.filter(node => ['button', 'input', 'textarea', 'select'].includes(node.type))
+        .every(control => lockedHistory.has(control) || control.props.disabled), 'history exposes no enabled editing controls');
+      const projectHref = `/project?project=p_example${guided ? '&guide=1' : ''}`;
+      assert.equal(planLink(receipt, 'Open Shared tasks')?.props.href, projectHref + '#tasks');
+      assert.equal(planLink(receipt, 'Open Timeline')?.props.href, projectHref + '#timeline');
+      assert.equal(planLink(receipt, 'Current shared venue task')?.props.href,
+        `/project?project=p_example&task=task-venue${guided ? '&guide=1' : ''}&review=owner&from=plan-receipt`);
+      assert.ok(planButton(draftAgain, 'Start a new checklist'));
+      assert.ok(planButton(draftAgain, 'Generate another draft'));
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+      await app.click('Refresh task handoff');
+      assert.deepEqual(app.requests, [{ action: 'get' }, { action: 'get' }]);
+      assert.equal(planLink(app.tree, 'Current shared venue task')?.props.href,
+        `/project?project=p_example&task=task-venue${guided ? '&guide=1' : ''}&review=owner&from=plan-receipt`);
+    } finally { app.dispose(); }
+  }
+});
+
+test('canceling either standalone replacement warns about losing the latest handoff but never writes or changes shared tasks', async () => {
+  for (const label of ['Start a new checklist', 'Generate another draft']) {
+    const initial = appliedStarterFixture(), app = harness(undefined, initial, 'project=p_example', false, false, 'task-venue');
+    const prompts = [];
+    try {
+      await app.start();
+      const beforeFocus = app.focused.slice();
+      const beforeLink = planLink(app.tree, 'Current shared venue task')?.props.href;
+      assert.deepEqual(beforeFocus, ['task:task-venue']);
+      globalThis.window.confirm = message => { prompts.push(message); return false; };
+      await app.click(label);
+      assert.equal(prompts.length, 1, label);
+      assert.match(prompts[0], /The current handoff will be replaced when the new draft is saved\. Tasks already added stay in the project\./);
+      assert.deepEqual(app.requests, [{ action: 'get' }]);
+      assert.deepEqual(app.saved.receipt, initial.receipt);
+      assert.equal(planLink(app.tree, 'Current shared venue task')?.props.href, beforeLink);
+      assert.deepEqual(app.focused, beforeFocus, 'cancel does not move focus in the live handoff');
+      assert.ok(app.find('plan-original-proposals'));
+    } finally { app.dispose(); }
+  }
+});
+
+test('a confirmed standalone AI replacement focuses the successful private-draft notice and links to the editable proposals', async () => {
+  for (const viaPoll of [false, true]) {
+    const initial = appliedStarterFixture(), prompts = [];
+    const ready = saved => ({ ...saved, status: 'ready', receipt: null, receiptTasks: [], revision: saved.revision + 1,
+      draft: { ...initial.draft, source: 'ai', generation: 'new-fictional-generation', items: [{...copy(item), title: 'New private proposal'}] } });
+    const app = harness(context => {
+      if (context.input?.action === 'generate') {
+        context.value = viaPoll ? {...context.saved, status:'generating', revision: context.saved.revision + 1} : ready(context.saved);
+      } else if (!context.input && context.saved.status === 'generating') context.value = ready(context.saved);
+    }, initial, 'project=p_example', false, false, undefined, true, undefined, {captureNoticeFocus: true});
+    try {
+      await app.start();
+      globalThis.window.confirm = message => { prompts.push(message); return true; };
+      await app.click('Generate another draft');
+      assert.equal(prompts.length, 1);
+      assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate']);
+      if (viaPoll) {
+        assert.ok(app.find('plan-receipt-heading'), 'the old handoff remains while generation is unfinished');
+        assert.equal(planLink(app.tree, 'Jump to proposed items'), undefined);
+        assert.equal(app.focused.includes('plan-status-notice'), false, 'the generating acknowledgment is not success');
+        await app.poll();
+        assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate', 'get']);
+        assert.equal(prompts.length, 1, 'polling requires no second confirmation and never generates again');
+      }
+      assert.equal(app.find('plan-receipt-heading'), undefined);
+      assert.equal(app.find('plan-original-proposals'), undefined);
+      assert.match(text(app.tree), /New private AI draft ready to review\. Tasks already added have not changed\./);
+      assert.equal(planLink(app.tree, 'Jump to proposed items')?.props.href, '#plan-proposed-items');
+      assert.equal(app.focused.at(-1), 'plan-status-notice');
+      assert.equal(app.find('title-one')?.props.value, 'New private proposal');
+    } finally { app.dispose(); }
+  }
+});
+
+test('applied Suggestions and Ask Weft retain their own view and generation path without the standalone replacement prompt', async () => {
+  for (const mode of ['suggestions', 'assistant']) {
+    const initial = appliedStarterFixture();
+    if (mode === 'assistant') initial.brief.description = JSON.stringify([{ role: 'user', content: 'Review lighting preparation.' }]);
+    const app = harness(context => {
+      if (context.input?.action === 'generate') context.value = { ...context.saved, status: 'ready', receipt: null, revision: initial.revision + 1 };
+    }, initial, `project=p_example&mode=${mode}`);
+    const prompts = [];
+    try {
+      await app.start();
+      globalThis.window.confirm = message => { prompts.push(message); return false; };
+      assert.equal(app.find('plan-draft-again'), undefined);
+      assert.equal(app.find('plan-original-proposals'), undefined);
+      assert.ok(app.find('plan-receipt-heading'));
+      if (mode === 'suggestions') {
+        assert.ok(app.find('plan-brief'));
+        await app.click('Refresh suggestions');
+      } else await app.chat('onSend', initial.brief);
+      assert.deepEqual(prompts, []);
+      assert.deepEqual(app.requests.map(row => row.action), ['get', 'generate']);
+    } finally { app.dispose(); }
+  }
 });
 
 test('the organizer handoff separates next actions and refresh moves the same tasks with a read only',async()=>{

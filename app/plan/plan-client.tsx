@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -64,6 +64,19 @@ function existingTaskLink(task: ExistingPlanTask, params: URLSearchParams, guide
 }
 const approvalTimeout = 15_000;
 const handoffRefreshTimeout = 15_000;
+const replaceHandoffImpact = 'The current handoff will be replaced when the new draft is saved. Tasks already added stay in the project.';
+function completedPlanDisclosure(content: ReactNode, disclosure?: {id: string; title: string; description?: string}) {
+  if (!disclosure) return content;
+  return (
+    <details id={disclosure.id} className="mt-4 rounded-lg border p-4">
+      <summary className="min-h-11 cursor-pointer content-center font-medium">{disclosure.title}</summary>
+      <div className="mt-3">
+        {disclosure.description && <p className="mb-4 text-sm text-muted-foreground">{disclosure.description}</p>}
+        {content}
+      </div>
+    </details>
+  );
+}
 type ApprovalCheck = {
   kind: 'uncertain' | 'conflict';
   generation: string;
@@ -175,6 +188,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     checkingLocked = busy || waiting || researchBusy,
     locked = checkingLocked || handoffRefreshing || !!approvalCheck,
     applied = !!data?.receipt && !chatStartingNew;
+  const completedPlan = applied && !embedded && !assistant && !suggestions;
   const guideStage: PlanGuideStage = applied ? 'added' : data?.draft ? 'review' :
     !data?.configured ? 'starter' : !request.current && (data.status === 'error' || data.status === 'interrupted') ? 'recover' :
     brief.description.trim() ? 'generate' : 'brief';
@@ -297,6 +311,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     }
     setInitial(editable(result.brief, result.draft?.items || []));
   }
+  function announceHandoffReplacement(result: any) {
+    if (!completedPlan || result.status !== 'ready' || !result.draft || result.receipt) return;
+    focusNotice.current = true;
+    setNotice('New private AI draft ready to review. Tasks already added have not changed.');
+  }
   function handlePlanError(e: unknown) {
     if (isAccessError((e as { status?: number } | null)?.status || 0)) {
       setData(null);
@@ -367,11 +386,15 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   useEffect(() => {
     if (!waiting || busy || error) return;
     const timer = window.setTimeout(
-      () => void run(async () => accept(await api(query))),
+      () => void run(async () => {
+        const result = await api(query);
+        accept(result);
+        announceHandoffReplacement(result);
+      }),
       2500,
     );
     return () => window.clearTimeout(timer);
-  }, [waiting, busy, data?.revision, error]);
+  }, [waiting, busy, data?.revision, error, query, completedPlan]);
   const updateBrief = <K extends keyof PlanBrief>(
     key: K,
     value: PlanBrief[K],
@@ -528,7 +551,10 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     });
   }
   async function useStarter() {
-    if (!starterRequest.current && data.draft && !window.confirm('Replace the saved private draft with a starter checklist? Your existing shared tasks will not change.')) return;
+    const message = completedPlan
+      ? 'Start a new private draft from a starter checklist? ' + replaceHandoffImpact
+      : 'Replace the saved private draft with a starter checklist? Your existing shared tasks will not change.';
+    if (!starterRequest.current && (data.draft || completedPlan) && !window.confirm(message)) return;
     await run(async () => {
       request.current = null;
       if (!starterRequest.current) {
@@ -549,6 +575,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     });
   }
   async function generate(nextBrief=brief) {
+    const freshRequest = !request.current || JSON.stringify(request.current.brief) !== JSON.stringify(nextBrief);
+    if (completedPlan && freshRequest && !window.confirm('Generate a new private AI draft? ' + replaceHandoffImpact)) return false;
     let accepted=false;
     await run(async () => {
       starterRequest.current = null;
@@ -570,6 +598,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       accept(result);
       accepted=result.status !== 'error' && result.status !== 'interrupted';
       request.current = null;
+      announceHandoffReplacement(result);
     });
     return accepted;
   }
@@ -761,6 +790,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     </details>
   );
   const starterPreview = starterPreviews?.[brief.kind];
+  const guideHint = guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck}
+    onUseExample={canUseGuideExample ? useGuideExample : undefined} />;
   return (
     <section aria-busy={checkingLocked} className={embedded ? 'plan-sidebar-review' : undefined}>
       {alert}
@@ -777,7 +808,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       {notice && (
         <div className="mb-4 text-sm">
           <p role="status" ref={noticeBox} tabIndex={-1}>{notice}</p>
-          {!assistant && !suggestions && data.draft?.source === 'starter' && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to proposed items</a>}
+          {!applied && !assistant && !suggestions && data.draft && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to proposed items</a>}
         </div>
       )}
       {approvalCheck && <section aria-labelledby="plan-approval-check-title" className="mb-5 space-y-3 rounded-lg border p-4 text-sm">
@@ -821,8 +852,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           again.
         </p>
       )}
-      {guideReturn && <PlanGuideHint stage={guideStage} locked={locked} draftNeedsRecheck={guideDraftNeedsRecheck}
-        onUseExample={canUseGuideExample ? useGuideExample : undefined} />}
+      {!completedPlan && guideHint}
       {receiptReturnMessage && <p id="plan-receipt-return-status" ref={receiptReturnNotice} tabIndex={-1} role="status"
         className="mb-4 rounded-lg border p-3 text-sm">{receiptReturnMessage}</p>}
       {applied && (
@@ -860,6 +890,8 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           ) : receiptTasks.length > 0 && <ol className="list-decimal space-y-1 ps-5 text-sm">{receiptTasks.map(receiptTaskRow)}</ol>}
         </section>
       )}
+      {completedPlan && guideHint}
+      {completedPlanDisclosure(<>
       {!assistant && !suggestions && (
         <section className="mb-4" aria-labelledby="plan-starter-title">
           <Card>
@@ -888,10 +920,10 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                   <span>Add event-day activities <span className="block text-muted-foreground">Give activities start times in the draft to put them on the run sheet, or add them now and set their times later in Timeline.</span></span>
                 </label>
                 <Button type="button" className="min-h-11" disabled={locked} onClick={()=>void useStarter()}>
-                  {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
+                  {starterRequest.current ? 'Retry checklist request' : completedPlan ? 'Start a new checklist' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
                 </Button>
                 <p className="text-sm text-muted-foreground">Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
-                {data.draft?.source === 'starter' && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline underline-offset-4">Review your saved checklist</a>}
+                {!applied && data.draft?.source === 'starter' && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline underline-offset-4">Review your saved checklist</a>}
               </fieldset>
             </CardContent>
           </Card>
@@ -974,6 +1006,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         </CardContent>
       </Card>
       </details>}
+      </>, completedPlan ? {id: 'plan-draft-again', title: 'Draft another plan', description: replaceHandoffImpact} : undefined)}
       {!applied && !suggestions && !assistant && <details className="mt-4 space-y-3 rounded-lg border p-4">
         <summary className="flex min-h-11 cursor-pointer items-center gap-2 font-medium">
           <span aria-hidden="true">+</span> Paste a checklist
@@ -998,10 +1031,10 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           automatically.
         </p>
       )}
-      {data.draft && !(assistant && (chatStartingNew || data.draft.work)) && (
-        <section className="mt-8 space-y-4" aria-label="Review draft">
-          {data.draft.source==='starter' && <p className="rounded-lg border p-4 text-sm">Product-authored starter checklist · No AI used. Not tailored to your brief; review every item, date and owner before adding it.</p>}
-          {data.draft.source==='pasted' && <p className="rounded-lg border p-4 text-sm">Pasted checklist · No AI used. Review the titles and select only the tasks you want to share.</p>}
+      {data.draft && !(assistant && (chatStartingNew || data.draft.work)) && completedPlanDisclosure(
+        <section className={completedPlan ? 'space-y-4' : 'mt-8 space-y-4'} aria-label={completedPlan ? 'Original draft' : 'Review draft'}>
+          {data.draft.source==='starter' && <p className="rounded-lg border p-4 text-sm">Product-authored starter checklist · No AI used.{!completedPlan && ' Not tailored to your brief; review every item, date and owner before adding it.'}</p>}
+          {data.draft.source==='pasted' && <p className="rounded-lg border p-4 text-sm">Pasted checklist · No AI used.{!completedPlan && ' Review the titles and select only the tasks you want to share.'}</p>}
           {!applied && data.draft.source==='pasted' && data.contextChanged && (
             <div className="space-y-2 rounded-lg border p-4 text-sm">
               <p id={guideReturn ? 'plan-recheck' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6">The project changed. Rechecking saves your private edits and checks them against the current project without adding shared tasks.</p>
@@ -1010,7 +1043,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           )}
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
-          <div>
+          {!completedPlan && <div>
             <h2 id="plan-proposed-items" tabIndex={-1} className="scroll-mt-6 text-xl font-semibold">Review proposed items</h2>
             {guideReturn && guideDraftNeedsRecheck && !locked && <p className="mt-2 rounded-lg border p-3 text-sm">
               The project has changed. <a className="inline-flex min-h-11 items-center font-medium text-primary underline" href={guideRecovery[0]}>{guideRecovery[1]}</a> before adding items.
@@ -1020,7 +1053,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               owners, and activities below are proposals.
             </p>
             <p className="mt-2 text-sm text-muted-foreground">{embedded ? 'Only true prerequisites block completion. Review links under Details.' : 'Required links mean one task needs another task’s output to be completed. Related work can run in parallel. Review and remove any unnecessary prerequisites below.'}</p>
-          </div>
+          </div>}
           {data.draft.scheduleWarnings?.length > 0 && (
             <details className="rounded-lg border p-4 text-sm">
               <summary className="cursor-pointer font-medium">
@@ -1647,8 +1680,9 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               </div>}
             </div>
           )}
-        </section>
-      )}
+        </section>,
+        completedPlan ? {id:'plan-original-proposals', title:'View original proposals',
+          description:'Read-only snapshot from before approval, including proposals you didn’t add. For current details or edits, use Shared tasks.'} : undefined)}
       <details open={!assistant} className="mt-6"><summary className={assistant?'cursor-pointer text-xs text-muted-foreground':'hidden'}>Conversation recovery</summary><nav
         aria-label="Draft navigation"
         className="mt-6 flex flex-wrap gap-4 text-sm"
