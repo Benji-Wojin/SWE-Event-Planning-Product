@@ -7,14 +7,16 @@ import '../legacy/store.js';
 
 const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s,');
-const overview=app.slice(start,app.indexOf('  function filteredTasks(s)',start));
+const overview=app.slice(app.indexOf('  const completed ='),app.indexOf('  const completionText ='))+
+  app.slice(start,app.indexOf('  function filteredTasks(s)',start));
 const linkedResults=app.slice(app.indexOf('  function personalLinkedResults('),app.indexOf('  function openLinkedResults('));
 function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){
   const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};
   const before=structuredClone(state),requests=[];
   const context=vm.createContext({
     window:{GatherMode:hosted?{}:undefined},ui:{actor},isOrganizer:()=>organizer,canCreateTasks:()=>canCreate,
-    store:{getState:()=>state,getSuggestions:()=>[]},attention:()=>[],completed:()=>[],pending:()=>[],
+    store:{getState:()=>state,getSuggestions:()=>[]},attention:()=>[],pending:()=>[],
+    avatar:()=>'',completionText:()=>'',timeLabel:()=> '',
     dateKey:()=> '2026-11-01',dayLabel:value=>value,h:value=>String(value),icon:()=>'',insightMarkup:()=>'',
     pageHeading:(_eyebrow,title,copy,actions)=>'<h1>'+title+'</h1><p>'+copy+'</p>'+actions,
     addButton:()=>canCreate?'<button data-action="add-task">Add task</button>':'',
@@ -70,6 +72,18 @@ test('adding work replaces the starting panel with the ordinary attention and re
   const html=render({tasks:[{id:'fictional-task',status:'todo'}]});
   assert.doesNotMatch(html,/emptyPlanHeading|No tasks have been added yet/);
   assert.match(html,/Needs attention/);assert.match(html,/Recently completed/);
+});
+
+test('archived work does not count toward active Overview progress or stop its empty state',()=>{
+  const archives=[{id:'retired',title:'Fictional retired work',status:'done',archivedAt:'2026-11-01'}];
+  const empty=render({tasks:archives});
+  assert.match(empty,/No active tasks in this plan/);
+  assert.match(empty,/0<span class="muted"> \/ 0<\/span>/);
+  const available=render({tasks:[...archives,{id:'live-done',title:'Current finished work',status:'done'},{id:'live-open',status:'todo'}]});
+  assert.match(available,/1<span class="muted"> \/ 2<\/span>/);
+  assert.match(available,/width:50%/);
+  assert.match(available,/Current finished work/);
+  assert.doesNotMatch(available,/Fictional retired work/);
 });
 
 test('populated Overview puts the signed-in planner’s personal next steps before project attention',()=>{

@@ -434,7 +434,7 @@
   const reason = (task,s=store.getState()) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone);
   const attention = s => GatherPriorities.rank(s.tasks,new Date(),false,s.event.timeZone);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
-  const completed = s => s.tasks.filter(t=>t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
+  const completed = s => s.tasks.filter(t=>!t.archivedAt&&t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => {
     const reporter=task.reportedBy||task.completionReportedBy;
     if(task.verifiedAt)return reporter?`${reporter} reported complete · verified by ${member(task.verifiedBy).name}`:`Verified by ${member(task.verifiedBy).name}`;
@@ -485,22 +485,23 @@
   function overview(s,showGuideTask=false) {
     const needs=attention(s), done=completed(s), emails=pending(s);
     const taskIds=new Set(s.tasks.map(task=>task.id));
-    const progress=Math.round(done.length/Math.max(s.tasks.length,1)*100);
+    const taskCount=s.tasks.filter(task=>!task.archivedAt).length;
+    const progress=Math.round(done.length/Math.max(taskCount,1)*100);
     const today=dateKey();
     // Calendar keys are already event-local. UTC midnight avoids viewer DST
     // turning one calendar day into 23 or 25 elapsed hours.
     const days=s.event.date?Math.max(0,(Date.parse(s.event.date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${s.tasks.length&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${s.tasks.length?addButton():''}`)+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+`
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${taskCount&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${taskCount?addButton():''}`)+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+`
       <section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
-        <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${s.tasks.length}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
+        <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${taskCount}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
         <button class="stat-card" data-view="inbox"><span class="stat-label">Email to review</span><strong class="stat-number">${emails.length}<span class="metric-icon">${icon('mail')}</span></strong></button>
         <button class="stat-card" data-view="team"><span class="stat-label">People</span><strong class="stat-number">${s.members.length}<span class="metric-icon">${icon('people')}</span></strong></button>
       </section></div>
       <div class="workspace-grid"><div class="stack" id="overviewMain">
-        ${s.tasks.length?`
+        ${taskCount?`
         ${isOrganizer()?recovery.organizerReviewPanel(s,{expanded:ui.organizerReviewsExpanded}):''}
         ${recovery.nextUpPanel(s,{overview:true})}
         ${linkedResultsPanel(s)}
@@ -508,7 +509,7 @@
           <div class="attention-list">${needs.slice(0,4).map(t=>{const r=reason(t);return `<article class="attention-item"><div class="attention-reason reason-${r.key}">${r.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note||r.action)}</p><div class="task-meta">${person(t.owner)}<span>·</span>${due(t)}<span>· Updated ${relative(t.updatedAt)}</span></div></div><div class="attention-actions"><button class="btn btn-small btn-secondary" data-action="${!t.owner?'claim':'task'}" data-id="${h(t.id)}">${!t.owner?'Claim task':'Review'}</button></div></article>`;}).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
-        `:GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode})}
+        `:GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode,hasArchived:s.tasks.length>0})}
       </div><aside class="stack">
         <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">SUGGESTIONS</span><h2>What’s next?</h2>${window.GatherMode&&isOrganizer()?'<div id="planningSidebarSlot"></div>':'<p class="muted">The organizer can enable automatic AI suggestions. Ask Weft is coming soon. You can still create tasks manually when teammate task creation is enabled.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
         <section class="panel email-preview" id="overviewEmail"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
@@ -517,7 +518,7 @@
   }
 
   function filteredTasks(s) {
-    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>!t.archivedAt&&(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   function setTaskFilters(filters) {
     Object.assign(ui,filters,{mapFocus:''});
@@ -525,7 +526,7 @@
   }
   function taskMapMarkup(state,tasks) {
     const focus=ui.mapFocus&&tasks.some(task=>task.id===ui.mapFocus)?ui.mapFocus:'';
-    return GatherPlanningUI.graphMarkup(state.tasks,tasks,focus,state.members);
+    return GatherPlanningUI.graphMarkup(state.tasks.filter(task=>!task.archivedAt),tasks,focus,state.members);
   }
   function openFocusedTaskMap(id) {
     if(!navigate('tasks',{beforeRender:()=>{
@@ -567,7 +568,7 @@
       ${ui.acceptanceHandoff ? acceptanceHandoffMarkup(s) : ''}
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${linkedResultsPanel(s)}
-      <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
+      <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.archivedAt&&!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
       <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount" role="status">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?taskMapMarkup(s,tasks):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
@@ -1054,7 +1055,8 @@
       <label class="field full-width">Progress note<textarea name="note" rows="3" maxlength="3000">${h(p.note||'')}</textarea></label>${older?'<label class="check-field full-width"><input name="confirmConflict" type="checkbox" required> I reviewed the newer update and intend to apply this older message.</label>':''}</div><div class="form-actions"><button type="button" class="text-button" data-action="ignore-message" data-id="${h(m.id)}">Set aside · no task change</button><button class="btn btn-primary" type="submit" ${stale?'disabled':''}>Apply reviewed change ${icon('arrow')}</button></div><p class="muted">Recorded by ${h(member(ui.actor).name)}. Completion reports do not imply independent verification.</p></form>`}${conversation.length?`<div class="thread-context"><h3>Same conversation</h3>${conversation.map(item=>`<button class="text-button" data-action="source" data-id="${h(item.id)}">${h(item.subject)} · ${item.appliedTaskId?'Applied':item.ignoredAt?'Set aside':'Needs review'} ${icon('arrow')}</button>`).join('')}</div>`:''}</section>`;
   }
   function teamView(s) {
-    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=s.tasks.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${s.tasks.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
+    const active=s.tasks.filter(task=>!task.archivedAt);
+    return pageHeading('','People','',isOrganizer()?`<button class="btn btn-secondary" data-action="invite">${icon('plus')} ${window.GatherMode&&!window.GatherMode.demo?'Team access':'Invitation draft'}</button>`:'')+`<div class="team-grid">${s.members.map(p=>{const tasks=active.filter(t=>t.owner===p.id),done=tasks.filter(t=>t.status==='done').length,blocked=tasks.filter(t=>t.status==='blocked').length;return `<article class="team-card"><div class="team-card-head">${avatar(p.id)}<div><h2>${h(p.name)}</h2><p>${h(p.role)}</p></div>${p.id===ui.actor?'<span class="chip">You</span>':''}</div><div class="team-stats"><div><strong>${tasks.filter(t=>t.status!=='done').length}</strong><span>Open</span></div><div><strong>${done}</strong><span>Done</span></div><div><strong>${blocked}</strong><span>Blocked</span></div></div><div class="workload-track"><div class="workload-fill" style="width:${Math.round(done/Math.max(tasks.length,1)*100)}%"></div></div><button class="btn btn-secondary" data-action="person-tasks" data-id="${h(p.id)}">View ${h(p.name.split(' ')[0])}’s tasks ${icon('arrow')}</button></article>`;}).join('')}</div><section class="panel section-gap"><div class="panel-heading"><div><h2 class="section-title">Unassigned tasks</h2></div></div><div class="mini-feed">${active.filter(t=>!t.owner&&t.status!=='done').map(t=>`<article class="feed-item">${avatar('')}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(t.note)}</p></div><button class="btn btn-secondary btn-small" data-action="claim" data-id="${h(t.id)}">Claim task</button></article>`).join('')||empty('No unassigned tasks.','')}</div></section>`;
   }
   function timelineScheduleScope() {
     return {mine:ui.scheduleMine,actor:ui.actor,date:ui.scheduleDate};
@@ -1423,7 +1425,7 @@
     document.body.classList.toggle('participant',!isOrganizer());
     $$('.project-setup-link').forEach(link=>{link.hidden=!isOrganizer();});
     $('.breadcrumb > span').textContent=s.event.name;
-    $('#taskNavCount').textContent=s.tasks.filter(t=>t.status!=='done').length;
+    $('#taskNavCount').textContent=s.tasks.filter(t=>!t.archivedAt&&t.status!=='done').length;
     $('#inboxNavCount').textContent=pending(s).length;
     $('#aiNavCount').textContent=store.getSuggestions().length;
     $('#storageWarning').hidden=s.persistence!=='unavailable';
@@ -3172,7 +3174,7 @@
     const otherDependents=dependents.filter(t=>!impact.shownIds.has(t.id));
     const owner=info.ready&&state.members.find(person=>person.id===task.owner&&person.active!==false);
     const linkCandidates=state.tasks.filter(t=>!t.archivedAt&&t.id!==task.id&&!info.links.some(l=>l.taskId===t.id));
-    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 tabindex="-1">Task relationships</h3><button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button></div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
+    return `<section class="task-dependencies section-gap" aria-label="Linked tasks"><div class="linked-work-header"><h3 tabindex="-1">Task relationships</h3>${task.archivedAt?'':`<button class="text-button" data-action="map-focus" data-id="${h(task.id)}">View link map ${icon('arrow')}</button>`}</div><p class="relationship-readiness">${h(GatherPlanningUI.readiness(task,state.tasks).label)}</p><p class="muted">Required work gates completion, not every step of progress. Related tasks can run in parallel.</p>
       ${info.open.length&&task.status!=='done'?info.unavailable.length?
         '<p class="notice">A required link points to a missing or archived task. Review the link with the organizer before completing this task.</p>':
         '<p class="notice">Finish required work before completing this task. Unlink anything no longer needed.</p>':''}
@@ -3386,10 +3388,11 @@
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
+      ${task.archivedAt?'<p class="notice">Archived task · Not included in active task views.</p>':''}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
       ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}${reconfirmationTimelineAction(task,taskState)}</section>`:''}
       ${teammateReconfirmation?'<p class="notice">The schedule changed after this teammate accepted. Ask the assigned owner to review the current plan and accept again.</p>':''}
-      ${!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
+      ${!task.archivedAt&&!task.owner&&task.status!=='done'?`<div class="claim-panel"><p>No owner yet.</p><button class="btn btn-primary" data-action="claim" data-id="${h(id)}">Claim task</button></div>`:''}
       ${taskOutcomeMarkup(task,organizer)}
       <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update yet.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
       ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}

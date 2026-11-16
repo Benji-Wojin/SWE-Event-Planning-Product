@@ -5,6 +5,7 @@
   function organizerReviews(tasks) {
     const time=value=>{const parsed=Date.parse(value||'');return Number.isFinite(parsed)?parsed:Number.MAX_SAFE_INTEGER;};
     return tasks.flatMap(task=>{
+      if(task.archivedAt)return [];
       if(task.status==='done'){
         if(task.verifiedAt&&task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt)
           return [{task,kind:'amendment',at:task.completionEvidence.at}];
@@ -42,7 +43,7 @@
     }
     function ownerLoad(owner) {
       if(!owner)return '';
-      const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
+      const tasks=state().tasks,next=P.nextUp(tasks,owner,new Date(),state().event.timeZone),others=tasks.filter(t=>!t.archivedAt&&t.owner===owner&&t.status!=='done'&&!next.some(n=>n.id===t.id));
       return '<div class="owner-load"><span>'+h(member(owner).name.split(' ')[0])+': '+next.length+'/3 next tasks · '+others.length+' other assignments</span>'+(next.length?'<details><summary>Current commitments</summary><ul>'+next.map(t=>'<li>'+h(t.title)+'</li>').join('')+'</ul></details>':'')+'</div>';
     }
     function nextUpPanel(s,{overview=false}={}) {
@@ -51,7 +52,7 @@
       const {active,returned,suggested,hasOwned}=P.personalNextUp(s.tasks,ui.actor,new Date(),s.event.timeZone,changeIds);
       const committed=new Set(active.map(t=>t.id));
       const alreadyShown=new Set([...active,...returned].map(task=>task.id));
-      const requests=new Map(s.tasks.filter(task=>task.owner===ui.actor&&task.status!=='done'&&!(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)).flatMap(task=>{
+      const requests=new Map(s.tasks.filter(task=>!task.archivedAt&&task.owner===ui.actor&&task.status!=='done'&&!(task.requiresVerification&&task.reportedAt&&!task.verifiedAt)).flatMap(task=>{
         const request=P.pendingRequest(task);
         return request?.createdBy===ui.actor?[[task.id,{task,request}]]:[];
       }));

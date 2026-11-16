@@ -229,6 +229,20 @@ function taskDialogHtml(actor,id='dietary',identity,store=create()) {
   return html;
 }
 
+test('archived task history remains visible without offering to claim it or focus it in the active map',()=>{
+  const source=create();
+  const task=source.addTask({title:'Historical welcome desk',note:'Saved historical update.',owner:''});
+  const snapshot=source.getState();
+  snapshot.tasks.find(row=>row.id===task.id).archivedAt='2026-11-01T12:00:00Z';
+  const store=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?JSON.stringify(snapshot):null,setItem(){}}});
+  const before=store.exportState();
+  const html=taskDialogHtml('maya',task.id,undefined,store);
+  assert.match(html,/Archived task · Not included in active task views/);
+  assert.match(html,/Saved historical update\./);
+  assert.doesNotMatch(html,/data-action="claim"|View link map/);
+  assert.equal(store.exportState(),before);
+});
+
 test('saving organizer details does not withdraw the organizer’s own pending completion', () => {
   const store=create();
   store.updateTask('dietary',{owner:'jack',requiresVerification:true},'jack');

@@ -17,14 +17,14 @@
     const seen=new Set([task.id]),queue=[task.id],result=[];
     while(queue.length) {
       const id=queue.shift();
-      for(const other of tasks) if(!seen.has(other.id)&&!resolved(other)&&(other.dependencies||[]).some(link=>link.kind!=='related'&&link.taskId===id)) {
+      for(const other of tasks) if(!other.archivedAt&&!seen.has(other.id)&&!resolved(other)&&(other.dependencies||[]).some(link=>link.kind!=='related'&&link.taskId===id)) {
         seen.add(other.id);result.push(other);queue.push(other.id);
       }
     }
     return result;
   }
   function decision(task,tasks,now=new Date(),zone='UTC') {
-    if(resolved(task)||awaiting(task))return null;
+    if(task.archivedAt||resolved(task)||awaiting(task))return null;
     const request=pendingRequest(task);
     if(request)return {key:'request',label:request.kind==='date'?'Date proposal':'Help requested',request};
     const today=dayNumber(dayKey(now,zone));
@@ -49,7 +49,7 @@
     return (task.hardDeadline?(days<=3?400:days<=7?160:0):0)+(task.essential?100:0);
   }
   function analyze(task,tasks=[],now=new Date(),zone='UTC') {
-    if(resolved(task))return null;
+    if(task.archivedAt||resolved(task))return null;
     const today=dayNumber(dayKey(now,zone)),days=daysLeft(task,now,zone),priority=Object.hasOwn(labels,task.priority)?task.priority:'auto';
     const factors=[];
     const add=(key,label,action,weight)=>factors.push({key,label,action,weight});
@@ -92,11 +92,11 @@
   const compareDatesAndIds=(a,b)=>(a.task.dueDate||'9999').localeCompare(b.task.dueDate||'9999')||String(a.task.id).localeCompare(String(b.task.id));
   const compareAttention=(a,b)=>(b.info?.score||0)-(a.info?.score||0)||compareDatesAndIds(a,b);
   function rank(tasks,now=new Date(),all=false,zone='UTC') {
-    return tasks.map(task=>rankRow(task,tasks,now,zone)).filter(({task,info})=>!resolved(task)&&(all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task)))).sort(compareAttention).map(item=>item.task);
+    return tasks.filter(task=>!task.archivedAt&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).filter(({task,info})=>all||info&&(!info.waiting||info.decision||awaiting(task)||changesRequested(task))).sort(compareAttention).map(item=>item.task);
   }
   const nextUp=(tasks,actor,now=new Date(),zone='UTC')=>rank(tasks,now,true,zone).filter(t=>t.owner===actor&&t.nextUpAt&&actionable(t,tasks));
   function personalNextUp(tasks,actor,now=new Date(),zone='UTC',separateReviews) {
-    const owned=tasks.filter(task=>task.owner===actor&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).sort(compareAttention);
+    const owned=tasks.filter(task=>!task.archivedAt&&task.owner===actor&&!resolved(task)).map(task=>rankRow(task,tasks,now,zone)).sort(compareAttention);
     const active=[],returned=[],candidates=[];
     for(const row of owned){
       const {task}=row;

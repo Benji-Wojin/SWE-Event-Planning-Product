@@ -154,7 +154,7 @@
       return value && value.version === 3 && strings(value.event, ["name", "date", "location"]) && validDate(value.event.date) &&
         list(value.tasks,task=>validNoteAttribution(task)&&validReview(task.completionReview)&&validEvidence(task.completionEvidence)&&(task.completionEvidenceReviewAt===undefined||task.completionEvidenceReviewAt===''||validTime(task.completionEvidenceReviewAt))&&(task.completionEvidenceHistory===undefined||Array.isArray(task.completionEvidenceHistory)&&task.completionEvidenceHistory.length<=10&&task.completionEvidenceHistory.every(validEvidence))) &&
         (value.event.timeZone === undefined || value.event.timeZone === '' || validZone(value.event.timeZone)) &&
-        list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || validZone(value.event.timeZone))) &&
+        list(value.tasks, task => task.schedule === undefined || validSchedule(task.schedule) && (!task.schedule || task.archivedAt || validZone(value.event.timeZone))) &&
         list(value.tasks, task => task.eventActivity === undefined || task.eventActivity === true) &&
         list(value.members, (member) => strings(member, ["id", "name", "initials", "role", "color"]) && member.id.length > 0) && uniqueIds(value.members) && value.members.some(member => member.id === 'jack') &&
         list(value.tasks, (task) => strings(task, ["id", "title", "category", "note", "owner", "updatedBy", "completedBy", "completedAt", "sourceMessageId"]) && ["completionReportedBy", "completionReportSourceId", "memoryId", "suggestionId"].every((field) => task[field] === undefined || typeof task[field] === "string") && STATUSES.includes(task.status) && validDate(task.dueDate) && validOwner(task.owner) && validOwner(task.updatedBy) && validTime(task.updatedAt) && (task.completedAt === "" || validTime(task.completedAt)) && list(task.comments, (comment) => strings(comment, ["id", "actor", "text"]) && validOwner(comment.actor) && validTime(comment.at))) && uniqueIds(value.tasks) &&
@@ -740,6 +740,7 @@
     }
     function claimTask(taskId, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
+      if (task.archivedAt) throw new Error('Archived tasks cannot be claimed.');
       if (task.owner) throw new Error('This task already has an owner. Refresh to see who claimed it.');
       if (task.status === 'done') throw new Error('Completed tasks cannot be claimed.');
       patchTask(task, { owner: actor }, actor);
@@ -751,6 +752,7 @@
     function acceptTask(taskId, actor = 'jack') {
       actorId(actor); const task = taskById(taskId);
       if (task.owner !== actor) throw new Error('Only the assigned owner can accept this commitment.');
+      if (task.archivedAt) throw new Error('Archived tasks cannot be accepted.');
       if (!task.acceptedAt) { task.acceptedAt = timestamp(); task.acceptedBy = actor; task.acceptedSourceId = ''; task.acceptedRecordedBy = ''; delete task.scheduleReconfirmation; task.revision++; entry(actor, `accepted responsibility for ${task.title}`, task.id, 'accepted'); save(); }
       return copy(task);
     }
@@ -764,6 +766,7 @@
       // Preflight the entire review before changing any task or history.
       for(const [index,task] of tasks.entries()){
         if(task.revision!==selections[index].revision)throw new Error('A selected task changed. Refresh and review the assignments again.');
+        if(task.archivedAt)throw new Error('A selected task is archived. Refresh and review the assignments again.');
         if(task.status==='done'||task.reportedAt||task.verifiedAt)throw new Error('Completed or reported work must be reviewed separately, not reassigned in a batch.');
         taskFields({owner:input.owner},task);
       }
@@ -783,6 +786,7 @@
       for(const [index,task] of tasks.entries()){
         if(task.owner!==actor)throw new Error('Only the assigned owner can accept these commitments.');
         if(task.revision!==selections[index].revision)throw new Error('A selected task changed. Refresh and review your assignments before accepting.');
+        if(task.archivedAt)throw new Error('A selected task is archived. Refresh and review your open assignments.');
         if(task.status==='done'||task.reportedAt||task.verifiedAt)throw new Error('A selected task has a completion report. Refresh and review your open assignments.');
       }
       const pending=tasks.filter(task=>!task.acceptedAt);

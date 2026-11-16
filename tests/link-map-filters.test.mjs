@@ -47,6 +47,38 @@ function fixture(){
   return {ui,state,map,count,render,change,click,focus,denyNavigation:()=>{permitNavigation=false;}};
 }
 
+test('active map preserves the unavailable warning without bringing an archived prerequisite back as a card',()=>{
+  const f=fixture();
+  f.state.tasks.find(task=>task.id==='venue').archivedAt='2026-11-01';
+  const before=structuredClone(f.state);
+  f.render();
+  assert.equal(f.count(),'2 tasks');
+  assert.match(f.map(),/Plan check-in\. Required work unavailable/);
+  assert.doesNotMatch(f.map(),/Book venue|map-task-focused/);
+  f.change('input','taskSearch','Book venue');
+  assert.equal(f.count(),'0 tasks');
+  assert.match(f.map(),/No tasks match/);
+  assert.deepEqual(f.state,before);
+});
+
+test('People counts only current assignments and never offers an archived task to claim',()=>{
+  const state={members:[{id:'dev',name:'Fictional teammate'}],tasks:[
+    task('active','Current assignment','dev'),task('free','Current unassigned',''),
+    {...task('arch-assigned','Historical assignment','dev','blocked'),archivedAt:'2026-11-01'},
+    {...task('arch-finished','Historical completed','dev','done'),archivedAt:'2026-11-01'},
+    {...task('arch-free','Historical unassigned',''),archivedAt:'2026-11-01'},
+  ]};
+  const before=structuredClone(state);
+  const context=vm.createContext({avatar:()=>'',icon:()=>'',h:String,ui:{actor:'dev'},empty:()=>'',pageHeading:()=>'',isOrganizer:()=>false,state});
+  const markup=vm.runInContext(block('  function teamView(s) {','  function timelineScheduleScope()')+'teamView(state);',context);
+  assert.match(markup,/<strong>1<\/strong><span>Open/);
+  assert.match(markup,/<strong>0<\/strong><span>Done/);
+  assert.match(markup,/<strong>0<\/strong><span>Blocked/);
+  assert.match(markup,/data-action="claim" data-id="free"/);
+  assert.doesNotMatch(markup,/Historical|arch-free/);
+  assert.deepEqual(state,before);
+});
+
 test('each task filter abandons a prior focused Link map and the map agrees with empty results',()=>{
   for(const [type,id,value] of [['change','ownerFilter','missing'],['change','statusFilter','blocked'],['input','taskSearch','not a task']]){
     const f=fixture(),before=structuredClone(f.state);
