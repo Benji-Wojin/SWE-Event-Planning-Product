@@ -70,13 +70,29 @@ test('owner actions leave valid teammate claims and completion review intact',()
   }
   for(const owner of ['','former'])for(const organizer of [true,false]){
     const pending=render(task({owner,requiresVerification:true,reportedAt:now.toISOString()}),{organizer});
-    assert.match(pending.overview,/Verify completion/);
+    assert.match(pending.overview,organizer?/Verify completion/:/Awaiting organizer verification/);
     assert.doesNotMatch(pending.overview+ownerCell(pending.row),/data-action="(?:claim|review-attention-owner)"/);
   }
   for(const owner of ['teammate','sample']){
     const available=render(task({owner}),{demo:owner==='sample'});
     assert.doesNotMatch(available.overview+ownerCell(available.row),/data-action="review-attention-owner"|Owner unavailable/i);
   }
+});
+
+test('a legacy Done report awaiting verification never offers Reopen or reveals the note on a teammate’s Overview card',()=>{
+  const current=task({owner:'teammate',status:'done',requiresVerification:true,reportedAt:now.toISOString(),note:'Private report details <fixture>'});
+  const completionCell=markup=>markup.match(/<td\b[^>]*class="task-cell-completion"[^>]*>[\s\S]*?<\/td>/)?.[0]||'';
+  const teammate=render(current,{organizer:false}),organizer=render(current);
+  for(const {overview,row} of [teammate,organizer]){
+    assert.match(completionCell(row),/data-action="task" data-id="task-current" data-task-focus="inspect"/);
+    assert.doesNotMatch(completionCell(row),/toggle-task|aria-label="Reopen|check-button/);
+    assert.doesNotMatch(overview,/Recently completed[\s\S]*data-id="task-current"/);
+  }
+  assert.match(teammate.overview,/Awaiting organizer verification[\s\S]*The report is saved\. The organizer will review it\./);
+  assert.match(teammate.overview,/data-action="task" data-id="task-current"[^>]*>View report<\/button>/);
+  assert.doesNotMatch(teammate.overview,/Verify completion|Private report details/);
+  assert.match(organizer.overview,/data-action="task" data-id="task-current"[^>]*>Review completion<\/button>/);
+  assert.match(organizer.overview,/Private report details &lt;fixture&gt;/);
 });
 
 test('pending help and date requests retain their own organizer review route ahead of any owner action',()=>{

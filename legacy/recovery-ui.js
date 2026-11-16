@@ -2,6 +2,11 @@
   'use strict';
   const reviewLabels={completion:'Verify completion',amendment:'Review amended evidence',help:'Respond to help request',date:'Review proposed date'};
   const requestDecisionLabels={date:'Due date changed',reassign:'Task reassigned',scope:'Outcome reviewed',checkin:'Current plan kept'};
+  function personalCompletionReviewKind(task,actor) {
+    if(!actor||task?.owner!==actor||task.archivedAt||root.GatherAccessLost||!task.reportedAt)return '';
+    if(task.status==='done'&&task.verifiedAt)return 'verified';
+    return task.requiresVerification&&!task.verifiedAt?'pending':'';
+  }
   function personalHandoffReply(task,actor) {
     if(!actor||!task||task.archivedAt||task.owner===actor||root.GatherAccessLost)return null;
     // Find the latest request belonging to this requester, not the task’s
@@ -64,6 +69,26 @@
       return `<section class="section-gap" aria-labelledby="requestHandoffRepliesHeading"><h3 id="requestHandoffRepliesHeading" tabindex="-1">Tasks handed off</h3><p class="muted">The organizer replied to your requests and reassigned these tasks. They’re no longer in My tasks.</p>
         ${rows(replies.slice(0,limit))}${older>0?`<details class="next-up-suggestions" data-next-up-older-handoffs><summary data-next-up-origin="handoff-summary">Show ${older} earlier ${older===1?'reply':'replies'}</summary>${rows(replies.slice(limit))}</details>`:''}</section>`;
     }
+    function personalCompletionReviews(s) {
+      const pending=[],verified=[];
+      for(const task of s.tasks){
+        const kind=personalCompletionReviewKind(task,ui.actor);
+        if(kind==='pending')pending.push(task);
+        else if(kind==='verified')verified.push(task);
+      }
+      const byId=(a,b)=>a.id.localeCompare(b.id);
+      pending.sort((a,b)=>a.reportedAt.localeCompare(b.reportedAt)||byId(a,b));
+      verified.sort((a,b)=>b.verifiedAt.localeCompare(a.verifiedAt)||byId(a,b));
+      const row=(task,kind)=>{
+        const label=kind==='pending'?'Report submitted':task.completionEvidence&&task.completionEvidenceReviewAt!==task.verifiedAt?
+          'Task verified · Evidence update not yet reviewed':'Verified by organizer';
+        return `<article><button type="button" class="text-button" data-action="review-personal-completion" data-next-up-origin="completion-review" data-id="${h(task.id)}" data-review-kind="${kind}" data-reported-at="${h(task.reportedAt)}" aria-label="${h('Open completion details for '+task.title)}">${h(task.title)}</button><span class="muted">${label}</span></article>`;
+      };
+      return {
+        pending:pending.length?`<section class="section-gap" aria-labelledby="personalCompletionPending"><h3 id="personalCompletionPending" tabindex="-1">Awaiting organizer verification <span class="muted">· ${pending.length}</span></h3><p class="muted">These reports are saved. The tasks are not verified yet.</p>${pending.map(task=>row(task,'pending')).join('')}</section>`:'',
+        verified:verified.length?`<section class="section-gap" aria-labelledby="personalCompletionVerified"><h3 id="personalCompletionVerified" tabindex="-1">Recently verified</h3><p class="muted">Latest verified completions for tasks assigned to you.</p>${verified.slice(0,3).map(task=>row(task,'verified')).join('')}</section>`:'',
+      };
+    }
     function nextUpPanel(s,{overview=false}={}) {
       const changed=s.tasks.filter(task=>root.GatherScheduleUI?.pendingReconfirmation(task,ui.actor));
       const changeIds=new Set(changed.map(task=>task.id));
@@ -103,12 +128,13 @@
       const separateChanges=changed.filter(task=>!alreadyShown.has(task.id)&&!requests.has(task.id));
       const scheduleChanges=separateChanges.length?'<section class="section-gap" aria-label="Schedule changes to review"><h3>Schedule changes to review</h3><p class="muted">Review the new plan before accepting again. These activities don’t take a commitment slot.</p>'+
         separateChanges.map(task=>personalRow(task,{detail:'Needs acceptance again',schedulePrimary:true})).join('')+'</section>':'';
+      const completion=personalCompletionReviews(s);
       const empty=suggested.length?'Choose up to three tasks to work on next.':hasOwned?(overview?'Nothing ready to start. Open My tasks to review blockers, reports or requests.':'Nothing ready to start. Review your open tasks below.'):'No open tasks assigned to you.';
       const heading=overview?'Your next steps':'Next up';
       const personalRoute=overview?'<button class="text-button" data-action="task-filter" data-filter="mine">View my tasks</button>':'';
       const help=overview?'<p class="muted">Your returned reports, commitments, and suggested tasks. Review a task to accept responsibility, share progress or report what’s done.</p>':'';
       const suggestions=suggested.length?'<details data-next-up-suggestions data-next-up-default="'+(active.length?'closed':'open')+'" class="next-up-suggestions"'+(active.length?'':' open')+'><summary data-next-up-origin="summary">Suggested next tasks</summary>'+suggested.map(t=>personalRow(t,{detail:t.acceptedAt?'Accepted · Not committed':'Review assignment'})).join('')+'</details>':'';
-      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+scheduleChanges+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,{showDeadline:true})).join('')+(active.length||(returned.length||waiting.length||separateChanges.length)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+handoffReplies(s)+'</div></section>';
+      return '<section class="panel next-up-panel section-gap" data-next-up-panel="'+(overview?'overview':'mine')+'" data-next-up-actor="'+h(ui.actor)+'"'+(overview?' aria-label="Your next steps"':'')+'><div class="panel-heading"><h2 class="section-title" data-next-up-heading tabindex="-1">'+heading+' <span class="muted">'+active.length+'/3'+(overview?' committed':'')+'</span></h2>'+personalRoute+'</div><div class="next-up-list">'+help+returnedMarkup+waitingMarkup+scheduleChanges+active.filter(t=>!P.changesRequested(t)).map(t=>personalRow(t,{showDeadline:true})).join('')+(active.length||(returned.length||waiting.length||separateChanges.length||completion.pending)&&!suggested.length?'':'<p class="muted">'+empty+'</p>')+suggestions+completion.pending+completion.verified+handoffReplies(s)+'</div></section>';
     }
     function nextUpControl(task) {
       const s=state();
@@ -185,5 +211,5 @@
     }
     return {nextUpPanel,organizerReviewPanel,responseMarkup,recoveryMarkup,recoveryReply,priorityMarkup,ownerLoad,syncResponse,prepareCompletion,syncDecision};
   }
-  root.GatherRecoveryUI={create,organizerReviews,personalHandoffReply};
+  root.GatherRecoveryUI={create,organizerReviews,personalHandoffReply,personalCompletionReviewKind};
 })(typeof window!=='undefined'?window:globalThis);

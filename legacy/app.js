@@ -246,15 +246,18 @@
     if(!sameNextUpPanel(oldPanel,panel)||panel.closest('[hidden],[inert]'))return false;
     const suggestions=$('[data-next-up-suggestions]',panel);
     const handoff=['handoff-reply','handoff-summary'].includes(previous.dataset.nextUpOrigin);
+    const completion=previous.dataset.nextUpOrigin==='completion-review';
     const olderHandoffs=handoff&&$('[data-next-up-older-handoffs]',panel);
     const exact=previous.dataset.id&&$$('[data-next-up-origin]',panel).find(el=>
       el.dataset.nextUpOrigin===previous.dataset.nextUpOrigin&&el.dataset.id===previous.dataset.id&&
       el.dataset.action===previous.dataset.action&&(!handoff||el.dataset.requestId===previous.dataset.requestId)&&
+      (!completion||el.dataset.reportedAt===previous.dataset.reportedAt)&&
       !el.matches(':disabled')&&!el.closest('[hidden],[inert]'));
     if(exact&&suggestions?.contains(exact))suggestions.open=true;
     if(exact&&olderHandoffs&&olderHandoffs.contains(exact))olderHandoffs.open=true;
     const fallback=handoff
       ? (previous.dataset.nextUpOrigin==='handoff-summary'&&olderHandoffs&&$('summary',olderHandoffs))||$('#requestHandoffRepliesHeading',panel)
+      : completion?$(previous.dataset.reviewKind==='pending'?'#personalCompletionPending':'#personalCompletionVerified',panel)
       : !['schedule-change','timeline'].includes(previous.dataset.nextUpOrigin)&&suggestions&&$('[data-next-up-origin="summary"]',suggestions);
     const target=[exact,fallback,$('[data-next-up-heading]',panel)]
       .find(el=>el&&el.getClientRects().length&&!el.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(el));
@@ -449,7 +452,7 @@
   const reason = (task,s=store.getState(),roster=attentionRoster(s)) => GatherPriorities.analyze(task,s.tasks,new Date(),s.event.timeZone,roster);
   const attention = (s,roster=attentionRoster(s)) => GatherPriorities.rank(s.tasks,new Date(),false,s.event.timeZone,roster);
   const pending = s => s.messages.filter(m=>!m.appliedTaskId&&!m.ignoredAt);
-  const completed = s => s.tasks.filter(t=>!t.archivedAt&&t.status==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
+  const completed = s => s.tasks.filter(t=>!t.archivedAt&&taskListStatus(t)==='done').sort((a,b)=>new Date(b.completedAt)-new Date(a.completedAt));
   const completionText = task => {
     const reporter=task.reportedBy||task.completionReportedBy;
     if(task.verifiedAt)return reporter?`${reporter} reported complete · verified by ${member(task.verifiedBy).name}`:`Verified by ${member(task.verifiedBy).name}`;
@@ -471,6 +474,8 @@
   const addButton = (id='') => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task"${id?` id="${h(id)}"`:''}>${icon('plus')} Add task</button>`:'';
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
   const completionNeedsReview = task => task.status!=='done'&&(task.requiresVerification||dependencyInfo(task).open.length>0);
+  const taskListStatus = task => task.requiresVerification&&task.reportedAt&&!task.verifiedAt?'awaiting-verification':task.status;
+  const taskListVerificationLabel = 'Awaiting organizer verification';
 
   function canClaimTask(task) {
     return !!task&&!task.archivedAt&&!task.owner&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
@@ -483,7 +488,8 @@
   }
 
   function taskRow(task) {
-    const done=task.status==='done',organizer=isOrganizer(),inspect=!organizer||completionNeedsReview(task);
+    const status=taskListStatus(task),done=status==='done',organizer=isOrganizer();
+    const inspect=!organizer||status==='awaiting-verification'||completionNeedsReview(task);
     const id=h(task.id),title=h(task.title),update=latestUpdateRecord(task);
     const ownerLabel=task.owner?member(task.owner).name:'Unassigned';
     const mobileLabel=label=>`<span class="task-card-label" aria-hidden="true">${label}</span>`;
@@ -499,7 +505,7 @@
       <td role="cell" class="task-cell-completion" headers="tasks-completion"><button type="button" class="${inspect?'icon-button task-inspect-button':done?'check-button checked':'check-button'}" data-action="${inspect?'task':'toggle-task'}" data-id="${id}" data-task-focus="${inspect?'inspect':done?'reopen':'complete'}" aria-label="${organizer?(done?'Reopen':inspect?'Review':'Complete'):'View'} ${title}">${inspect?icon('search'):done?icon('done'):''}</button></td>
       <td role="cell" class="task-cell-name" headers="tasks-name"><button type="button" class="task-name-button" data-action="task" data-id="${id}" data-task-focus="name">${title}</button><div class="category-label">${h(task.category)}${task.sourceMessageId?' · From email':''}</div>${done?`<div class="completion-note">${h(completionText(task))} · ${h(timeLabel(task.completedAt))}</div>`:''}</td>
       <td role="cell" class="task-cell-owner" headers="tasks-owner">${mobileLabel('Owner')}${ownerAction?`<button type="button" class="btn btn-secondary btn-small" data-action="review-attention-owner" data-id="${id}" data-task-focus="owner" aria-label="${ownerAction} for ${title}">${ownerAction}</button>`:!pendingRequest&&canClaimTask(task)?`<button type="button" class="btn btn-secondary btn-small" data-action="claim" data-id="${id}" data-task-focus="owner">Claim task</button>`:`<button type="button" class="btn-ghost table-owner" data-action="task" data-id="${id}" data-task-focus="owner" aria-label="Owner: ${h(ownerLabel)} · Open task: ${title}">${person(task.owner,true)}</button>`}<div class="commitment-note">${h(ownerAction==='Reassign owner'?'Owner unavailable':commitment(task))}</div></td>
-      <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${statusBadge(task.status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}" data-task-focus="links">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
+      <td role="cell" class="task-cell-status" headers="tasks-status">${mobileLabel('Status')}${status==='awaiting-verification'?'<span class="status-badge status-blocked">'+taskListVerificationLabel+'</span>':statusBadge(status)}${(task.dependencies||[]).length?`<button type="button" class="task-link-summary" data-action="map-focus" data-id="${id}" data-task-focus="links">${h(GatherPlanningUI.readiness(task,store.getState().tasks).label)}${(task.dependencies||[]).some(l=>l.kind==='related')?' · related work':''}</button>`:''}</td>
       <td role="cell" class="task-cell-due" headers="tasks-due">${mobileLabel('Due')}${due(task)}</td>
       <td role="cell" class="task-cell-update" headers="tasks-update">${mobileLabel('Latest update')}<div class="task-meta">${h(updateAttribution(update))}</div><div class="task-note-preview" title="${h(update.text)}">${h(update.text || 'No progress note yet')}</div></td>
       <td role="cell" class="task-cell-details" headers="tasks-details"><button type="button" class="${decision||reply?'btn btn-secondary btn-small':'icon-button'}" data-action="task" data-id="${id}" data-task-focus="details"${reply?' data-open-recovery-reply':pendingRequest&&organizer?' data-open-recovery':''} aria-label="${reply?'Review organizer response for':decision?'Review plan for':'Open task:'} ${title}">${reply?'Review organizer response':decision?'Review plan':icon('arrow')+'<span class="task-card-open" aria-hidden="true">Open task</span>'}</button></td></tr>`;
@@ -519,10 +525,13 @@
     const requestLabel=organizer&&(request?.kind==='date'?'Review date proposal':request?.kind==='help'?'Review help request':'');
     const ownerAction=attentionOwnerAction(task,state,organizer,roster),claim=!organizer&&!request&&canClaimTask(task);
     const action=ownerAction?'review-attention-owner':claim?'claim':'task';
-    const label=ownerAction||(claim?'Claim task':task.requiresVerification&&task.reportedAt&&!task.verifiedAt?'Review completion':requestLabel||'Review');
+    const awaiting=taskListStatus(task)==='awaiting-verification',waitingForOrganizer=awaiting&&!organizer;
+    const label=ownerAction||(claim?'Claim task':awaiting?(organizer?'Review completion':'View report'):requestLabel||'Review');
+    const reasonLabel=waitingForOrganizer?taskListVerificationLabel:info.label;
+    const summary=waitingForOrganizer?'The report is saved. The organizer will review it.':task.note||info.action;
     const title=h(task.title),id=h(task.id);
     const ownerUnavailable=task.owner&&roster&&!roster.has(task.owner);
-    return `<article class="attention-item"><div class="attention-reason reason-${info.key}">${info.label}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${id}">${title}</button><p>${h(task.note||info.action)}</p><div class="task-meta">${ownerUnavailable?'<span>Owner unavailable</span>':person(task.owner)}<span>·</span>${due(task)}<span>· Updated ${relative(task.updatedAt)}</span></div></div><div class="attention-actions"><button type="button" class="btn btn-small btn-secondary" data-action="${action}" data-id="${id}"${requestLabel&&label===requestLabel?' data-open-recovery':''} aria-label="${label}: ${title}">${label}</button></div></article>`;
+    return `<article class="attention-item"><div class="attention-reason reason-${info.key}">${reasonLabel}</div><div class="task-summary"><button class="task-title" data-action="task" data-id="${id}">${title}</button><p>${h(summary)}</p><div class="task-meta">${ownerUnavailable?'<span>Owner unavailable</span>':person(task.owner)}<span>·</span>${due(task)}<span>· Updated ${relative(task.updatedAt)}</span></div></div><div class="attention-actions"><button type="button" class="btn btn-small btn-secondary" data-action="${action}" data-id="${id}"${requestLabel&&label===requestLabel?' data-open-recovery':''} aria-label="${label}: ${title}">${label}</button></div></article>`;
   }
   function overview(s,showGuideTask=false) {
     const roster=attentionRoster(s),needs=attention(s,roster), done=completed(s), emails=pending(s);
@@ -562,7 +571,7 @@
   }
 
   function filteredTasks(s) {
-    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>!t.archivedAt&&(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||canClaimTask(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
+    return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>!t.archivedAt&&(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||canClaimTask(t))&&(ui.tab!=='done'||taskListStatus(t)==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||taskListStatus(t)===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
   function setTaskFilters(filters) {
     Object.assign(ui,filters,{mapFocus:''});
@@ -625,7 +634,7 @@
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${linkedResultsPanel(s)}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.archivedAt&&!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
-      <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount" role="status">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
+      <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses),['awaiting-verification',taskListVerificationLabel]],ui.status)}</select></div><span class="muted" id="taskResultCount" role="status">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?taskMapMarkup(s,tasks):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
   function guideTaskPanel(s,away=false) {
@@ -1768,6 +1777,37 @@
       `<button type="button" class="btn btn-secondary" data-action="close-dialog">Back to replies</button><button type="button" class="btn btn-primary" data-action="task" data-id="${h(id)}">Open task</button>`,
       false,'request-handoff-reply',true);
     ui.lastFocus=opener;
+    return true;
+  }
+  function openPersonalCompletionReview(id,opener) {
+    const view=ui.view,route=view==='overview'?'overview':view==='tasks'&&ui.tab==='mine'?'mine':'';
+    if(!route||window.GatherAccessLost||document.hidden||ui.pendingSave||!$('#dialogBackdrop').hidden||
+      !id||!opener?.isConnected||opener.dataset.action!=='review-personal-completion'||opener.dataset.id!==id||
+      opener.dataset.nextUpOrigin!=='completion-review'||!opener.getClientRects().length||
+      opener.closest('[hidden],[inert]')||hiddenByClosedDisclosure(opener))return false;
+    const actor=ui.actor,project=window.GatherMode?.projectId;
+    const panel=currentNextUpPanel($('#viewRoot'));
+    if(panel?.dataset.nextUpPanel!==route||panel.dataset.nextUpActor!==actor||!panel.contains(opener))return false;
+    const kind=opener.dataset.reviewKind,reportedAt=opener.dataset.reportedAt;
+    const pending=()=>workspaceUpdatesPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.());
+    const current=()=>{
+      const task=store.getState().tasks.find(item=>item.id===id);
+      return task?.reportedAt===reportedAt&&GatherRecoveryUI.personalCompletionReviewKind(task,actor)===kind;
+    };
+    if(pending()){toast('Check for project updates before opening this report.');return false;}
+    if(!reportedAt||!['pending','verified'].includes(kind)||!current()){
+      render();toast('The completion status changed. Use the updated task list.');return false;
+    }
+    taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
+    if(ui.dialogKind!=='task'||ui.detailId!==id)return false;
+    ui.lastFocus=opener;
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(!title||window.GatherAccessLost||document.hidden||ui.actor!==actor||window.GatherMode?.projectId!==project||
+        ui.view!==view||(route==='mine'&&ui.tab!=='mine')||ui.dialogKind!=='task'||ui.detailId!==id||
+        $('#dialogBackdrop').hidden||$('#dialogTitle',dialog)!==title||document.activeElement!==title)return;
+      if(!pending()&&current())focusTaskDialogControl($('.completion-evidence h3',dialog),dialog);
+    });
     return true;
   }
   function focusTaskDialogControl(target,dialog) {
@@ -4697,6 +4737,7 @@
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
     if(action==='review-request-handoff-reply'){openRequestHandoffReply(id,el);return;}
+    if(action==='review-personal-completion'){openPersonalCompletionReview(id,el);return;}
     if(action==='show-reconfirmed-activity-day'){showReconfirmedActivityDay(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
     if(action==='check-event-review-schedule'){await checkEventReviewSchedule(el);return;}

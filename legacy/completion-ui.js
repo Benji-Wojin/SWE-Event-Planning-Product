@@ -197,6 +197,8 @@
       : '';
     return (
       '<section class="completion-evidence section-gap"><h3 tabindex="-1">Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
+      (!historyOnly&&task.reportedAt?(task.status==='done'&&task.verifiedAt?'<p><strong>Completion verified by the organizer.</strong></p>':
+        task.requiresVerification&&!task.verifiedAt?'<p><strong>Awaiting organizer verification.</strong> The report is saved, but the task is not verified yet.</p>':''):'') +
       source +
       (review?'<section class="notice" aria-label="Completion changes requested"><h4 tabindex="-1">Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. '+(historyOnly?'This is a saved review; the task is archived.':'The owner can update the work and submit again.')+' Nothing was verified; earlier submissions remain below.</p>'+
         (canPrepareRevision?(completionBlocked?'<p>Finish required work before preparing a revised report.</p>':'<button type="button" class="btn btn-secondary" data-action="prepare-revised-completion" data-id="'+h(task.id)+'">Prepare revised report</button>'):'')+'</section>':'')+

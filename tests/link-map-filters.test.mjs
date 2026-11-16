@@ -35,7 +35,8 @@ function fixture(){
       return true;
     },
   });
-  vm.runInContext(block('  function filteredTasks(', '  const options =')+
+  vm.runInContext(block('  const taskListStatus =', '  function canClaimTask(')+
+    block('  function filteredTasks(', '  const options =')+
     block("  document.addEventListener('change',event=>", "  $('#dialogBackdrop').addEventListener('click'"),context);
   const change=(type,id,value)=>events[type]({target:{id,value,closest:()=>null,matches:()=>false}});
   const click=(action,fields={})=>vm.runInContext('(function(action,el,id){'+dispatch(action)+'})',
@@ -44,7 +45,7 @@ function fixture(){
   const count=()=>nodes['#taskResultCount'].textContent;
   const render=()=>context.renderTaskRows();
   render();
-  return {ui,state,map,count,render,change,click,focus,denyNavigation:()=>{permitNavigation=false;}};
+  return {ui,state,map,count,render,change,click,focus,rows:()=>nodes['#taskRows'].innerHTML,denyNavigation:()=>{permitNavigation=false;}};
 }
 
 test('active map preserves the unavailable warning without bringing an archived prerequisite back as a card',()=>{
@@ -118,6 +119,29 @@ test('task tabs and People shortcuts use only their new focus scope after naviga
   blocked.click('person-tasks',{id:'dev'});
   assert.equal(blocked.ui.mapFocus,'venue');
   assert.equal(blocked.ui.owner,'');
+});
+
+test('the Status filter identifies saved review separately from work in progress or verified Done',()=>{
+  const f=fixture(),reportedAt='2026-11-20T16:00:00.000Z';
+  f.state.tasks.push(
+    {...task('pending','Fictional pending report','maya','progress'),requiresVerification:true,reportedAt},
+    {...task('legacy-pending','Fictional unverified Done','maya','done'),requiresVerification:true,reportedAt},
+    {...task('ordinary','Fictional regular progress','maya','progress'),requiresVerification:true},
+    {...task('verified','Fictional verified report','maya','done'),requiresVerification:true,reportedAt,verifiedAt:'2026-11-20T17:00:00.000Z'},
+  );
+  const before=structuredClone(f.state);
+  f.change('change','statusFilter','awaiting-verification');
+  assert.equal(f.count(),'2 tasks');
+  assert.match(f.rows(),/Fictional pending report[\s\S]*Fictional unverified Done/);
+  assert.doesNotMatch(f.rows(),/regular progress|verified report|Share photos/);
+  f.change('change','statusFilter','progress');
+  assert.equal(f.count(),'1 task');
+  assert.equal(f.rows(),'Fictional regular progress');
+  f.click('task-filter',{filter:'done'});
+  assert.equal(f.count(),'2 tasks');
+  assert.match(f.rows(),/Share photos[\s\S]*Fictional verified report/);
+  assert.doesNotMatch(f.rows(),/unverified Done/);
+  assert.deepEqual(f.state,before,'filtering does not alter either stored workflow status');
 });
 
 test('a removed focus falls back to current task seeds, and clearing an existing focus keeps keyboard focus in the map',()=>{

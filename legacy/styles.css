@@ -648,6 +648,7 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .next-up-list [data-next-up-origin="handoff-reply"],.next-up-list [data-next-up-origin="handoff-summary"]{min-height:44px}
 .next-up-list [data-next-up-origin="handoff-summary"]{padding:12px 0;line-height:1.4}
 .request-handoff-note{white-space:pre-wrap;overflow-wrap:anywhere}
+.next-up-list [data-next-up-origin="completion-review"]{min-height:44px}
 .next-up-control{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:0 0 18px;font-size:14px}
 .next-up-control .field{width:100%;margin:0}.next-up-control .btn{white-space:normal}
 .next-up-accept-note{flex:0 0 100%;margin:0}

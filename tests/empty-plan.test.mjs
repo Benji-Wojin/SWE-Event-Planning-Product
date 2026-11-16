@@ -9,6 +9,7 @@ const app=readFileSync('legacy/app.js','utf8');
 const start=app.indexOf('  function overview(s,');
 const overview=app.slice(app.indexOf('  function assignableTaskOwner('),app.indexOf('  const ownerOptions ='))+
   app.slice(app.indexOf('  const attentionRoster ='),app.indexOf('  const reason ='))+
+  app.slice(app.indexOf('  const taskListStatus ='),app.indexOf('  function canClaimTask('))+
   app.slice(app.indexOf('  const completed ='),app.indexOf('  const completionText ='))+
   app.slice(app.indexOf('  const addButton ='),app.indexOf('  const sourceButton ='))+
   app.slice(app.indexOf('  function activityItem('),app.indexOf('  function attentionItemMarkup('))+
@@ -136,6 +137,22 @@ test('adding work replaces the starting panel with the ordinary attention and re
   assert.doesNotMatch(tag(html,'overviewMain'),/\bhidden\b/);
 });
 
+test('Overview counts only completed work even when older unverified reports have stored Done status',()=>{
+  const report='2026-10-31T19:00:00.000Z',verified='2026-10-31T20:00:00.000Z';
+  const html=render({tasks:[
+    {id:'legacy-pending',title:'Fictional old unverified report',status:'done',requiresVerification:true,reportedAt:report,completedAt:report},
+    {id:'verified',title:'Fictional verified work',status:'done',requiresVerification:true,reportedAt:report,verifiedAt:verified,completedAt:verified},
+    {id:'ordinary',title:'Fictional active task',status:'progress'},
+    {id:'archived',title:'Fictional old archived task',status:'done',archivedAt:verified},
+  ]});
+  assert.match(html,/data-filter="done"[^>]*><span class="stat-label">Completed<\/span><strong class="stat-number">1<span class="muted"> \/ 3<\/span>/);
+  assert.match(html,/class="progress-fill" style="width:33%"/);
+  const recent=html.slice(html.indexOf('Recently completed'),html.indexOf('id="thoughtPartner"'));
+  assert.match(recent,/Fictional verified work/);
+  assert.doesNotMatch(recent,/Fictional old unverified report|Fictional old archived task/);
+  assert.match(html,/data-action="review-organizer-item" data-id="legacy-pending" data-review-kind="completion"/);
+});
+
 test('Add task keeps a single Overview focus target across the first save, only for allowed planners',()=>{
   const tasks=[{id:'first-task',status:'todo'}];
   for(const [organizer,canCreate] of [[true,true],[false,true],[false,false]])for(const visibleTasks of [[],tasks]){
@@ -210,7 +227,10 @@ test('personal Overview routes only your returned reports, even when blocked, un
     assert.doesNotMatch(view,/Another teammate’s returned report|FICTIONAL_REVIEW_REASON_/);
   }
   store.reportCompletion(mine,'Revised fictional submission.','maya');
-  assert.doesNotMatch(html(),/Completion changes requested|review-returned-completion|My returned report/);
+  const pending=html();
+  assert.doesNotMatch(pending,/Completion changes requested|review-returned-completion|Revised fictional submission/);
+  assert.match(pending,/Awaiting organizer verification/);
+  assert.match(pending,new RegExp(`data-action="review-personal-completion"[^>]*data-id="${mine}" data-review-kind="pending"`));
 });
 
 test('only organizers see pending reviews on Overview',()=>{

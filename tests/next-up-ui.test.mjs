@@ -164,10 +164,185 @@ test('empty guidance distinguishes no assignments from blocked, dependent, and v
     const html=panel(state(tasks));assert.match(html,/No open tasks assigned to you/);assert.doesNotMatch(html,/Choose up to|Suggested next/);
   }
   for(const item of [task('blocked',{status:'blocked'}),task('dependent',{dependencies:[{taskId:'missing'}]}),
-    task('reported',{requiresVerification:true,reportedAt:'2026-10-01T12:00:00Z'}),
     task('help',{recoveryRequests:[{kind:'help',status:'pending'}]})]){
     const html=panel(state([item]));assert.match(html,/Nothing ready to start/);assert.doesNotMatch(html,/Choose up to|Suggested next/);
   }
+  const reporting=panel(state([task('reported',{status:'progress',requiresVerification:true,reportedAt:'2026-10-01T12:00:00Z'})]));
+  assert.match(reporting,/Awaiting organizer verification/);
+  assert.doesNotMatch(reporting,/Nothing ready to start|No open tasks assigned|Choose up to|Suggested next/);
+});
+
+const completionLinks=markup=>[...markup.matchAll(/<button\b[^>]*data-action="review-personal-completion"[^>]*>/g)].map(([button])=>{
+  assert.match(button,/data-next-up-origin="completion-review"/);
+  const field=key=>button.match(new RegExp(`data-${key}="([^"]+)"`))?.[1];
+  return {id:field('id'),kind:field('review-kind'),at:field('reported-at')};
+});
+
+test('personal panels track the saved report through verification, return, revision and reopening without changing commitments',()=>{
+  let clock=Date.parse('2026-11-20T16:00:00Z');
+  const store=GatherStore.createStore({storage:null,now:()=>clock});
+  const {id}=store.addTask({title:'Inspect <fictional entrance> & signs',owner:'maya',requiresVerification:true});
+  const other=store.addTask({title:'Other owner progress',owner:'dev',requiresVerification:true});
+  store.reportCompletion(other.id,'PRIVATE-OTHER-REPORT','dev');
+  const status=GatherRecoveryUI.personalCompletionReviewKind;
+  const get=()=>store.getState().tasks.find(task=>task.id===id);
+  const names={pending:'Awaiting organizer verification',verified:'Recently verified',returned:'Completion changes requested'};
+  function check(stage,reportedAt){
+    const before=store.exportState(),current=store.getState();
+    current.tasks=current.tasks.filter(task=>task.id===id||task.id===other.id);
+    const personal=['pending','verified'].includes(stage);
+    assert.equal(status(get(),'maya'),personal?stage:'');
+    assert.equal(status(get(),'dev'),'');assert.equal(status(get(),'jack'),'');
+    for(const overview of [false,true]){
+      const html=panel(current,'maya',overview);
+      for(const [kind,heading] of Object.entries(names))assert.equal(html.includes(heading),kind===stage,`${stage}; ${heading}; ${overview}`);
+      assert.deepEqual(completionLinks(html),personal?[{id,kind:stage,at:reportedAt}]:[]);
+      if(personal){
+        assert.match(html,/Inspect &lt;fictional entrance&gt; &amp; signs/);
+        assert.equal((html.match(new RegExp(`data-id="${id}"`,'g'))||[]).length,1);
+        if(stage==='pending')assert.doesNotMatch(html,/Nothing ready to start|No open tasks assigned to you/);
+      }
+      assert.doesNotMatch(html,/PRIVATE-|nasa\.gov|<fictional entrance>|Other owner progress|data-action="verify-task"|<form/);
+      for(const actor of ['dev','jack','jules'])assert.ok(!completionLinks(panel(current,actor,overview)).some(link=>link.id===id));
+    }
+    assert.equal(store.exportState(),before,'rendering either personal panel performs no store mutation');
+  }
+  store.setNextUp(id,{enabled:true},'maya');check('committed');
+  clock+=60_000;
+  store.reportCompletion(id,{note:'PRIVATE-ORIGINAL-NOTE',links:['https://www.nasa.gov/'],fileIds:['PRIVATE-FILE']},'maya');
+  const originalAt=get().reportedAt;
+  assert.equal(get().nextUpAt,'');assert.equal(get().status,'progress');
+  check('pending',originalAt);
+  clock+=60_000;
+  store.returnCompletion(id,'PRIVATE-RETURN-REASON','jack');check('returned');
+  assert.equal(get().reportedAt,'');
+  clock+=60_000;
+  store.reportCompletion(id,'PRIVATE-REVISED-NOTE','maya');
+  const revised=get().reportedAt;
+  assert.notEqual(originalAt,revised);
+  check('pending',revised);
+  clock+=60_000;
+  store.verifyTask(id,'jack');check('verified',revised);
+  assert.equal(get().status,'done');assert.equal(get().nextUpAt,'');
+  store.setCompletionEvidence(id,{note:'PRIVATE-AMENDMENT'},'maya');check('verified',revised);
+  assert.match(panel({...store.getState(),tasks:[get()]}),/Task verified · Evidence update not yet reviewed/);
+  store.reviewCompletionEvidence(id,get().revision,'jack');check('verified',revised);
+  assert.doesNotMatch(panel({...store.getState(),tasks:[get()]}),/Evidence update not yet reviewed/);
+  clock+=60_000;
+  store.updateTask(id,{status:'progress'},'jack');check('reopened');
+  assert.equal(get().verifiedAt,'');assert.equal(get().reportedAt,'');
+});
+
+function completionReviewNavigation({view='tasks',kind='pending'}={}){
+  const reportedAt='2026-11-20T16:00:00.000Z',id='fictional-report';
+  const item=task(id,{status:kind==='pending'?'progress':'done',requiresVerification:true,reportedAt,verifiedAt:kind==='pending'?'':'2026-11-20T17:00:00.000Z'});
+  const ui={actor:'maya',view,tab:'mine'},window={GatherMode:{projectId:'fictional-project'}},document={hidden:false,activeElement:null};
+  const root={},backdrop={hidden:true},dialog={},heading={},events=[],frames=[];
+  const controls=[];
+  const panel={dataset:{nextUpPanel:view==='overview'?'overview':'mine',nextUpActor:'maya'},contains:el=>controls.includes(el),closest:()=>null,parentElement:root};
+  const marker=(patch={})=>({isConnected:true,hidden:false,inert:false,dataset:{action:'review-personal-completion',nextUpOrigin:'completion-review',id,reviewKind:kind,reportedAt,...patch},
+    closest(selector){if(selector==='[data-next-up-panel]')return panel;return this.hidden||this.inert?this:null;},
+    getClientRects(){return [{}];},matches:()=>false,focus(){events.push(['focus card',this.dataset.reportedAt,this.dataset.reviewKind]);},
+  });
+  const opener=marker();controls.push(opener);
+  const fallback={getClientRects:()=>[{}],closest:()=>null,focus:()=>events.push(['focus panel heading'])};
+  const flags={pending:false,stale:false};
+  let title={};
+  const context=vm.createContext({ui,window,document,GatherRecoveryUI,store:{getState:()=>state([item]),getSnapshotRevision:()=>5},
+    $$:(selector,parent)=>selector==='[data-next-up-panel]'&&parent===root?[panel]:parent===panel?controls:[],
+    $:(selector)=>({ '#viewRoot':root,'#dialogBackdrop':backdrop,'#dialog':dialog,'#dialogTitle':title,'.completion-evidence h3':heading,
+      '#personalCompletionPending':fallback,'#personalCompletionVerified':fallback,'[data-next-up-heading]':fallback })[selector]??null,
+    hiddenByClosedDisclosure:el=>!!el.closedDisclosure,workspaceUpdatesPending:()=>flags.pending,scheduleRevisionIsStale:()=>flags.stale,
+    render:()=>events.push(['render']),toast:message=>events.push(['toast',message]),requestAnimationFrame:fn=>frames.push(fn),
+    taskDialog(...args){events.push(['dialog',...args]);ui.detailId=args[0];ui.dialogKind='task';backdrop.hidden=false;document.activeElement=title;},
+    focusTaskDialogControl(el,container){assert.equal(el,heading);assert.equal(container,dialog);document.activeElement=heading;events.push(['focus completion']);},
+  });
+  const app=readFileSync('legacy/app.js','utf8');
+  const slice=(start,end)=>{const from=app.indexOf(start),to=app.indexOf(end,from+start.length);assert.ok(from>=0&&to>from);return app.slice(from,to);};
+  vm.runInContext(slice('  function sameNextUpPanel(','  function sameWrapReview(')+slice('  function openPersonalCompletionReview(','  function focusTaskDialogControl('),context);
+  return {id,opener,item,ui,window,document,backdrop,panel,flags,events,controls,marker,
+    start(control=opener){return context.openPersonalCompletionReview(id,control);},
+    restore(){return context.restoreNextUpFocus(opener,root);},
+    replaceTitle(){title={};document.activeElement=title;},flush(){for(const frame of frames.splice(0))frame();},
+  };
+}
+
+test('an exact pending or verified card opens existing completion details read-only and preserves its opener',()=>{
+  for(const [view,kind] of [['tasks','pending'],['overview','verified']]){
+    const f=completionReviewNavigation({view,kind});
+    assert.equal(f.start(),true);
+    assert.equal(f.events[0][1],f.id);assert.equal(f.events[0].at(-1).readOnly,true);
+    assert.equal(f.ui.lastFocus,f.opener);
+    assert.equal(f.events.length,1,'heading jump waits until the task dialog is mounted');
+    f.flush();assert.deepEqual(f.events.at(-1),['focus completion']);
+  }
+});
+
+test('wrong or retired completion controls cannot open the report; delayed focus is scoped to the same report and editor',()=>{
+  for(const [label,alter] of [
+    ['away from Mine',f=>{f.ui.tab='all';}],['different panel actor',f=>{f.panel.dataset.nextUpActor='dev';}],
+    ['foreign card',f=>f.marker()],['pending snapshot',f=>{f.flags.pending=true;}],
+    ['already reviewed',f=>{f.item.status='done';f.item.verifiedAt='2026-11-20T17:00:00.000Z';}],
+    ['new report',f=>{f.item.reportedAt='2026-11-20T18:00:00.000Z';}],['wrong task owner',f=>{f.item.owner='dev';}],
+    ['archived',f=>{f.item.archivedAt='2026-11-21';}],['hidden card',f=>{f.opener.hidden=true;}],
+    ['inert card',f=>{f.opener.inert=true;}],['disconnected card',f=>{f.opener.isConnected=false;}],
+  ]){
+    const f=completionReviewNavigation();
+    assert.equal(f.start(alter(f)||f.opener),false,label);f.flush();
+    assert.ok(!f.events.some(([event])=>event==='dialog'||event==='focus completion'),label);
+  }
+  for(const [label,alter] of [
+    ['another report',f=>{f.item.reportedAt='2026-11-20T18:00:00.000Z';}],['another owner',f=>{f.item.owner='dev';}],
+    ['new project',f=>{f.window.GatherMode.projectId='other-project';}],['another actor',f=>{f.ui.actor='dev';}],
+    ['different view',f=>{f.ui.view='timeline';}],['lost access',f=>{f.window.GatherAccessLost=true;}],
+    ['moved focus',f=>{f.document.activeElement={};}],['closed dialog',f=>{f.backdrop.hidden=true;}],
+    ['updated snapshot',f=>{f.flags.pending=true;}],['new dialog title',f=>f.replaceTitle()],
+  ]){
+    const f=completionReviewNavigation();assert.equal(f.start(),true,label);
+    alter(f);f.flush();assert.ok(!f.events.some(([event])=>event==='focus completion'),label);
+  }
+});
+
+test('return focus follows the same submission from pending to verified, but does not jump to a replacement report',()=>{
+  for(const sameReport of [true,false]){
+    const f=completionReviewNavigation();f.opener.isConnected=false;
+    f.controls.splice(0,1,f.marker({reviewKind:'verified',...(sameReport?{}:{reportedAt:'2026-11-20T18:00:00.000Z'})}));
+    assert.equal(f.restore(),true);
+    assert.deepEqual(f.events,sameReport?[['focus card',f.item.reportedAt,'verified']]:[['focus panel heading']]);
+  }
+});
+
+test('Recently verified shows the three newest current confirmations only, excluding other and archived records',t=>{
+  let clock=Date.parse('2026-11-20T16:00:00Z');
+  const store=GatherStore.createStore({storage:null,now:()=>clock});
+  const started=Array.from({length:6},(_,index)=>{
+    const {id}=store.addTask({title:`Fictional review ${index}`,owner:index===5?'dev':'maya',requiresVerification:true});
+    clock+=60_000;
+    store.reportCompletion(id,'PRIVATE-REVIEW-NOTE',index===5?'dev':'maya');return id;
+  });
+  for(const index of [1,4,2,0,3,5]){clock+=60_000;store.verifyTask(started[index],'jack');}
+  const snapshot=store.getState();snapshot.tasks=snapshot.tasks.filter(task=>started.includes(task.id));
+  snapshot.tasks.find(task=>task.id===started[3]).archivedAt='2026-11-21';
+  // Stale/legacy fields must not pretend to represent a current owner report.
+  snapshot.tasks.push(task('legacy-without-report',{status:'done',requiresVerification:true,verifiedAt:new Date(clock+60000).toISOString()}),
+    task('legacy-without-verification',{status:'done',requiresVerification:true}),
+    task('manual-done',{status:'done'}),
+    task('done-without-required-review',{status:'done',reportedAt:'2026-11-20T16:00:00.000Z'}));
+  const before=structuredClone(snapshot),byId=id=>snapshot.tasks.find(task=>task.id===id);
+  const expected=[0,2,4].map(i=>({id:started[i],kind:'verified',at:byId(started[i]).reportedAt}));
+  for(const overview of [false,true]){
+    const html=panel(snapshot,'maya',overview);
+    assert.match(html,/Recently verified/);
+    assert.match(html,/0\/3/);
+    assert.deepEqual(completionLinks(html),expected);
+    assert.doesNotMatch(html,/PRIVATE-|legacy-without|manual-done|done-without-required-review|Fictional review [135]/);
+  }
+  const oldFlag=globalThis.GatherAccessLost,hadFlag=Object.hasOwn(globalThis,'GatherAccessLost');
+  t.after(()=>{if(hadFlag)globalThis.GatherAccessLost=oldFlag;else delete globalThis.GatherAccessLost;});
+  globalThis.GatherAccessLost=true;
+  assert.equal(GatherRecoveryUI.personalCompletionReviewKind(byId(started[0]),'maya'),'');
+  assert.deepEqual(completionLinks(panel(snapshot,'maya')),[]);
+  assert.deepEqual(snapshot,before);
 });
 
 test('pending help and date requests stay visible without taking commitment slots or duplicating tasks',()=>{

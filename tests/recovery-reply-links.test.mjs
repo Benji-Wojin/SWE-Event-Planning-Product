@@ -7,6 +7,7 @@ import '../legacy/store.js';
 import '../legacy/priorities.js';
 import '../legacy/planning-ui.js';
 import '../legacy/recovery-ui.js';
+import '../legacy/completion-ui.js';
 
 const source = readFileSync('legacy/app.js', 'utf8');
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -41,6 +42,30 @@ function fixture() {
 const details = row => row.match(/<td\b[^>]*class="task-cell-details"[^>]*>\s*(<button\b[\s\S]*?<\/button>)\s*<\/td>/)?.[1] || '';
 const identity = button => Object.fromEntries(['action', 'id', 'task-focus'].map(key => [key, button.match(new RegExp('data-' + key + '="([^"]+)"'))?.[1]]));
 const hasReply = /\bdata-open-recovery-reply\b|Review organizer response/;
+
+test('shared task Status and completion details distinguish pending review from verified or returned work',()=>{
+  const {store,render,advance}=fixture(),{id}=store.addTask({title:'Fictional welcome task',owner:'maya',requiresVerification:true});
+  const status=()=>render(id).match(/<td\b[^>]*class="task-cell-status"[^>]*>[\s\S]*?<\/td>/)?.[0]||'';
+  const section=()=>GatherCompletionUI.section(get(store,id),false,false);
+  store.reportCompletion(id,'Fictional initial results.','maya');
+  assert.match(status(),/Awaiting organizer verification/);
+  assert.doesNotMatch(status(),/>progress<\/span>/);
+  assert.match(section(),/Awaiting organizer verification\.<\/strong> The report is saved, but the task is not verified yet/);
+  assert.doesNotMatch(section(),/Completion verified by the organizer|data-action="verify-task"|id="returnCompletionForm"/);
+  advance();store.returnCompletion(id,'Add a confirmation.','jack');
+  assert.match(status(),/>progress<\/span>/);
+  assert.doesNotMatch(status(),/Awaiting organizer verification/);
+  assert.match(section(),/Changes requested/);
+  assert.doesNotMatch(section(),/Awaiting organizer verification\.|Completion verified by the organizer/);
+  advance();store.reportCompletion(id,'Fictional added confirmation.','maya');
+  advance();store.verifyTask(id,'jack');
+  const before=store.exportState();
+  assert.match(status(),/>done<\/span>/);
+  assert.doesNotMatch(status(),/Awaiting organizer verification/);
+  assert.match(section(),/Completion verified by the organizer\./);
+  assert.doesNotMatch(section(),/Awaiting organizer verification|data-action="verify-task"/);
+  assert.equal(store.exportState(),before);
+});
 
 test('My tasks keeps a review link for a blocked request after its reply is no longer the latest comment', () => {
   const { store, render, advance } = fixture();
