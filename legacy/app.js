@@ -1812,16 +1812,26 @@
       !form&&details&&allowZoneSetup?$('[data-action="event-context"]',details):null;
     if(target){details.open=true;focusTaskDialogControl(target,dialog);}
   }
-  function setPlanReceiptReturn(id) {
+  function setPlanReceiptReturn(id,intent) {
     const mode=window.GatherMode;
     if(!mode?.projectId||mode.demo||!isOrganizer()||window.GatherAccessLost||
       !store.getState().tasks.some(task=>task.id===id&&!task.archivedAt))return;
-    ui.planReceiptReturn={id,actor:ui.actor,view:ui.view,project:mode.projectId};
+    ui.planReceiptReturn={id,intent,actor:ui.actor,view:ui.view,project:mode.projectId};
   }
   function activePlanReceiptReturn(id) {
     const link=ui.planReceiptReturn,mode=window.GatherMode;
     return link&&link.id===id&&link.actor===ui.actor&&link.view===ui.view&&link.project===mode?.projectId&&
       !mode.demo&&isOrganizer()&&!window.GatherAccessLost?link:null;
+  }
+  function focusPlanReceiptAfterSchedule(link) {
+    const dialog=$('#dialog'),back=$('#planReceiptBack',dialog),title=$('#dialogTitle',dialog);
+    requestAnimationFrame(()=>{
+      if(document.hidden||ui.pendingSave||ui.dialogKind!=='task'||$('#dialogBackdrop').hidden||
+        ui.detailId!==link.id||activePlanReceiptReturn(link.id)!==link||!back?.isConnected||
+        back!==$('#planReceiptBack',dialog)||!title||title!==$('#dialogTitle',dialog)||document.activeElement!==title)return;
+      dialog.scrollTop=0;
+      back.focus({preventScroll:true});
+    });
   }
   function returnToPlanReceipt(opener) {
     const link=activePlanReceiptReturn(ui.detailId),dialog=$('#dialog');
@@ -3496,7 +3506,7 @@
     const canReview=organizer&&!window.GatherAccessLost;
     return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>${sample?'This sample teammate cannot accept tasks in a real project.':'The assigned owner is missing or inactive in this project.'} Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
-  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false,eventRequiredWork}={}) {
+  function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false,eventRequiredWork,scheduleReceiptReturn}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
     if(!task){toast('That task is no longer available.');return;}
     if(ui.planReceiptReturn&&!activePlanReceiptReturn(id))ui.planReceiptReturn=null;
@@ -3614,8 +3624,9 @@
       }
       for(const form of $$('.handoff-form',$('#dialog')))syncHandoffForm(form);
       for(const detail of $$('#dialog details'))if(expanded.includes(detail.className))detail.open=true;
-      requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
+      if(!scheduleReceiptReturn)requestAnimationFrame(()=>{restoreFocus(previousFocus,$('#dialog'));$('#dialog').scrollTop=scroll;});
     }
+    if(scheduleReceiptReturn)focusPlanReceiptAfterSchedule(scheduleReceiptReturn);
     syncRecoveryForms();
     window.GatherCompletionUI?.mount($('#dialog'));
     for(const {id:formId} of completionDraftContext){
@@ -4952,8 +4963,30 @@
         const returnNotice=form.id==='scheduleForm'&&ui.view==='timeline'&&ui.timelineMode!=='deadlines'&&
           ui.lastFocus?.dataset.id===taskId&&isScheduleControl(ui.lastFocus)&&!ui.overlapComparison&&!ui.eventTaskReview&&!ui.acceptanceReturn&&
           {key:scheduleWorkspaceKey(),zone:state.event.timeZone,scope:timelineScheduleScope()};
+        const receiptLink=form.id==='scheduleForm'&&!remove&&ui.planReceiptReturn&&activePlanReceiptReturn(taskId);
+        const receiptSchedule=receiptLink?.intent==='schedule'&&schedule.firstTimeTask(state,taskId,{})?receiptLink:null;
+        const receiptRevision=receiptSchedule?store.getSnapshotRevision?.():null;
+        const sameReceiptEditor=()=>ui.dialogKind==='task'&&ui.detailId===taskId&&!$('#dialogBackdrop').hidden&&
+          form.isConnected&&form===$('#scheduleForm',$('#dialog'))&&activePlanReceiptReturn(taskId)===receiptSchedule;
+        if(receiptSchedule){
+          if(!sameReceiptEditor())return;
+          if(workspaceUpdatesPending()||scheduleRevisionIsStale(receiptRevision)){
+            showPendingUpdate();
+            throw new Error('Check the latest plan before saving. Your activity time is still here.');
+          }
+        }
         const saved=store.setTaskSchedule(taskId,slot,ui.actor);
         const reconfirm=(before?.acceptedAt||before?.nextUpAt)&&saved&&!saved.acceptedAt&&!saved.nextUpAt;
+        if(receiptSchedule){
+          if(!sameReceiptEditor())return;
+          const current=store.getState(),activity=current.tasks.find(task=>task.id===taskId),revision=store.getSnapshotRevision?.();
+          const requested=eventScheduleSlotKey({...slot,location:slot.location.trim()});
+          if(current.event.timeZone!==state.event.timeZone||!activity||activity.archivedAt||saved?.id!==taskId||
+            !Number.isSafeInteger(activity.revision)||activity.revision!==saved.revision||activity.revision<=before.revision||
+            !Number.isSafeInteger(receiptRevision)||!Number.isSafeInteger(revision)||revision<=receiptRevision||
+            eventScheduleSlotKey(saved.schedule)!==requested||eventScheduleSlotKey(activity.schedule)!==requested)
+            throw new Error('We couldn’t confirm this start time. Your edits are still here. Check the latest schedule before trying again.');
+        }
         if(returnNotice){
           if(!form.isConnected||form!==$('#scheduleForm',$('#dialog'))||ui.dialogKind!=='task'||ui.detailId!==taskId||
             !inOrganizerTimeline()||returnNotice.key!==scheduleWorkspaceKey()||returnNotice.scope.date!==ui.scheduleDate||
@@ -4967,7 +5000,14 @@
           if(confirmed.revision>before?.revision&&(remove||GatherScheduleUI.activityVisibility(confirmed,returnNotice.scope).outsideDate))
             ui.firstScheduleReceipt={id:taskId,key:returnNotice.key,zone:returnNotice.zone,revision:confirmed.revision,reconfirm,removed:remove,edited:true};
         }
-        render();taskDialog(taskId,form.id);toast((remove?'Removed from schedule. The task was kept.':'Schedule saved.')+(reconfirm?' The owner needs to accept again.':''));
+        const otherDrafts=receiptSchedule?taskDrafts(form.id):[];
+        const focusReceipt=receiptSchedule&&!document.hidden&&
+          (document.activeElement===document.body||form.contains(document.activeElement))&&
+          !otherDrafts.length&&!taskCompletionDraftContext(otherDrafts,form.id).length;
+        render();
+        if(focusReceipt)taskDialog(taskId,form.id,false,true,'',undefined,'',{scheduleReceiptReturn:receiptSchedule});
+        else taskDialog(taskId,form.id);
+        toast((remove?'Removed from schedule. The task was kept.':'Schedule saved.')+(reconfirm?' The owner needs to accept again.':''));
       }
       if(form.id==='reviewScheduleForm')await saveEventReviewSchedule(form,data);
       if(form.id==='taskDetailForm'){
@@ -5290,7 +5330,7 @@
       opener?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
       opener?.focus({preventScroll:true});
       if(initialTaskReview==='owner'||initialTaskReview==='schedule'){
-        if(fromPlanReceipt)setPlanReceiptReturn(initialTask);
+        if(fromPlanReceipt)setPlanReceiptReturn(initialTask,initialTaskReview);
         openTaskHandoffLink(initialTask,initialTaskReview);
       }
       else if(!(initialTaskReview&&window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&openOrganizerReview(initialTask,initialTaskReview,'',true)))
