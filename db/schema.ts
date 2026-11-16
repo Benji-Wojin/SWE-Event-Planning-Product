@@ -41,6 +41,8 @@ export const guidedTutorialEvents = sqliteTable('guided_tutorial_events', {
   occurredAt: text('occurred_at').notNull(),
   // Only the project-created checkpoint carries the internal project binding.
   projectId: text('project_id'),
+  // Only new, verified task commits have a receipt for the guided walkthrough.
+  taskId: text('task_id'),
 }, table => [
   primaryKey({ columns: [table.userId, table.version, table.checkpoint] }),
   index('guided_tutorial_funnel').on(table.version, table.checkpoint, table.occurredAt),

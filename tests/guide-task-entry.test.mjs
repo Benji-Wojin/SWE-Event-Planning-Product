@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const app=readFileSync('legacy/app.js','utf8');
 const project='fictional-project',actor='fictional-organizer';
-const progress=(steps=['started','project_created'],projectId=project)=>({projectId,events:steps.map(checkpoint=>({checkpoint}))});
+const progress=(steps=['started','project_created'],projectId=project,firstTaskId=null)=>({projectId,firstTaskId,events:steps.map(checkpoint=>({checkpoint}))});
 
 function fragment(start,end){
   const from=app.indexOf(start),to=app.indexOf(end,from+start.length);
@@ -13,12 +13,13 @@ function fragment(start,end){
   return app.slice(from,to);
 }
 
-function fixture({guided=true,tasks=[],organizer=true,allowed=true}={}){
+function fixture({guided=true,tasks=[],organizer=true,allowed=true,view='overview'}={}){
   const state={tasks},calls=[],requests=[],frames=[];
   const window={GatherMode:{projectId:project,demo:false,projectUrl:path=>path+'?project='+project}};
   const document={hidden:false,body:{},activeElement:null};
-  const ui={view:'overview',actor,dialogKind:'',pendingSave:false,lastFocus:null};
+  const ui={view,actor,dialogKind:'',pendingSave:false,lastFocus:null};
   const backdrop={hidden:true},dialog={},panel={hidden:true,dataset:{},contains:()=>false};
+  const viewRoot={},receipt={hidden:true,innerHTML:''},highlights=[];
   let title,marker,skip,form;
   function node(name){
     return {name,id:name,isConnected:true,hidden:false,dataset:{},
@@ -43,14 +44,21 @@ function fixture({guided=true,tasks=[],organizer=true,allowed=true}={}){
     if(selector==='#guideTaskWaiting')return marker;
     if(selector==='#dialogBackdrop')return backdrop;
     if(selector==='#workspaceGuide')return panel;
+    if(selector==='#viewRoot')return viewRoot;
+    if(selector==='#guideTaskReceipt')return receipt;
     if(selector==='#overviewAddTask')return opener;
     if(selector==='#newTaskForm')return form;
     if(selector.includes('guide-task-without-step'))return skip;
     return null;
   }
-  const context=vm.createContext({ui,window,document,AbortSignal,guidedWorkspace:guided,$:select,
+  const context=vm.createContext({ui,window,document,AbortSignal,guidedWorkspace:guided,
+    $(selector,root){if(selector==='#guideTaskReceipt')assert.equal(root,viewRoot);return select(selector);},
+    $$(selector){assert.equal(selector,'#taskRows .task-name-button');return tasks.map(({id})=>({dataset:{id},
+      closest(query){assert.equal(query,'tr');return {classList:{add:mark=>highlights.push([id,mark])}};}}));},
     store:{getState:()=>state,addTask(){assert.fail('opening either editor must not create work');}},
     canCreateTasks:()=>allowed,isOrganizer:()=>organizer,h:String,icon:()=>'',ownerOptions:()=>'',options:()=>'',statusOptions:()=>'',
+    statusBadge:()=>'',render(){assert.fail('restoring the task card must not rerender the view');},
+    navigate(){assert.fail('restoring the task card must not navigate');},
     requestAnimationFrame:fn=>frames.push(fn),queueMicrotask,openDialog(heading,body,footer='',wide=false,kind='',focusHeading=false){
       const previous=backdrop.hidden?document.activeElement:undefined;
       if(previous)ui.lastFocus=previous;
@@ -72,10 +80,11 @@ function fixture({guided=true,tasks=[],organizer=true,allowed=true}={}){
   });
   vm.runInContext(fragment('  let guideProgress =','  let joinWelcome =')+
     fragment('  const guideSteps =','  const planSidebar=')+
+    fragment('  function guideTaskPanel(','  function assignmentCandidates(')+
     fragment('  function newTaskDialog(','  function followupDialog('),context);
   document.activeElement=opener;
   const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));for(const fn of frames.splice(0))fn();};
-  return {state,ui,window,document,backdrop,calls,requests,opener,flush,
+  return {state,ui,window,document,backdrop,calls,requests,opener,receipt,panel,highlights,flush,
     get title(){return title;},get marker(){return marker;},get skip(){return skip;},get form(){return form;},
     boot(){return context.loadInitialGuide();},
     open(){return context.openGuideAwareTask(opener);},
@@ -222,4 +231,59 @@ test('guide settlement waits until the document is visible and does not replace 
     await ackObservation(f);
     assert.equal(dialogs(f).length,2);
   }
+});
+
+const completedTaskSteps=['started','project_created','task_created'];
+const savedFirst={id:'saved-first-task',title:'Fictional duplicate title',status:'todo'};
+const similarTask={...savedFirst,id:'different-task-same-title'};
+
+test('resuming on Shared tasks shows only the recorded task without navigating, refocusing or replacing a draft',async()=>{
+  const f=fixture({view:'tasks',tasks:[similarTask,savedFirst]}),loading=f.boot();
+  f.editOther();const draft=f.form,focused=f.document.activeElement;
+  assert.equal(f.receipt.hidden,true);
+  await f.flush();assert.deepEqual(requests(f),['GET']);
+  f.requests[0].reply(progress(completedTaskSteps,project,savedFirst.id));await loading;
+  assert.equal(f.receipt.hidden,false);
+  assert.match(f.receipt.innerHTML,/data-action="task" data-id="saved-first-task">Open task details/);
+  assert.match(f.receipt.innerHTML,/Fictional duplicate title/);
+  assert.doesNotMatch(f.receipt.innerHTML,/data-id="different-task-same-title"/);
+  assert.deepEqual(f.highlights,[[savedFirst.id,'guide-first-task-row']]);
+  assert.equal(f.form,draft);assert.equal(draft.elements.title.value,'Fictional in-progress draft');
+  assert.equal(f.document.activeElement,focused);assert.equal(f.ui.view,'tasks');
+  assert.deepEqual(f.calls,[]);assert.deepEqual(requests(f),['GET']);
+});
+
+test('resuming outside Shared tasks offers a deliberate review without opening the task or taking focus',async()=>{
+  const f=fixture({view:'budget',tasks:[savedFirst]}),loading=f.boot();
+  await f.flush();f.requests[0].reply(progress(completedTaskSteps,project,savedFirst.id));await loading;
+  assert.match(f.panel.innerHTML,/data-action="guide-task-reveal">Review your first task/);
+  assert.equal(f.receipt.hidden,true);assert.deepEqual(f.highlights,[]);
+  assert.equal(f.document.activeElement,f.opener);assert.equal(f.ui.view,'budget');
+  assert.deepEqual(f.calls,[]);assert.deepEqual(requests(f),['GET']);
+});
+
+test('an absent, archived, malformed or wrong-scope first-task ID never falls back to another task',async()=>{
+  for(const reason of ['old event','archived','removed','malformed id','wrong project','uncommitted','other actor','access lost','ordinary workspace']){
+    const f=fixture({view:'tasks',guided:reason!=='ordinary workspace',tasks:[similarTask,
+      ...(reason==='removed'?[]:[reason==='archived'?{...savedFirst,archivedAt:'2026-01-02'}:savedFirst])]}),loading=f.boot();
+    await f.flush();
+    if(reason==='other actor')f.ui.actor='different-fictional-actor';
+    if(reason==='access lost')f.window.GatherAccessLost=true;
+    const id=reason==='old event'?null:reason==='malformed id'?{id:savedFirst.id}:savedFirst.id;
+    const steps=reason==='uncommitted'?['started','project_created','add_task_clicked']:completedTaskSteps;
+    if(reason==='ordinary workspace')assert.deepEqual(requests(f),[]);
+    else f.requests[0].reply(progress(steps,reason==='wrong project'?'other-project':project,id));
+    await loading;
+    assert.equal(f.receipt.hidden,true,reason);assert.equal(f.receipt.innerHTML,'',reason);assert.deepEqual(f.highlights,[],reason);
+    assert.doesNotMatch(f.panel.innerHTML||'',/Review your first task/,reason);
+  }
+});
+
+test('choosing the ordinary form suppresses a late saved-task walkthrough in this session',async()=>{
+  const f=fixture({view:'tasks'}),loading=f.boot();f.open();
+  assert.equal(f.withoutStep(),true);const form=ordinary(f);
+  form.elements.title.value='Fictional ordinary draft';f.state.tasks.push(savedFirst);
+  await f.flush();f.requests[0].reply(progress([...completedTaskSteps,'add_task_clicked'],project,savedFirst.id));await loading;
+  assert.equal(f.form,form);assert.equal(form.elements.title.value,'Fictional ordinary draft');
+  assert.equal(f.receipt.hidden,true);assert.deepEqual(f.highlights,[]);assert.deepEqual(requests(f),['GET']);
 });

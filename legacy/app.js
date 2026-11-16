@@ -14,7 +14,7 @@
   const guidedWorkspace = !!window.GatherMode && !window.GatherMode.demo &&
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
-  let guideTaskId = '', guideTaskNeedsReveal = false;
+  let guideTaskId = '', guideTaskNeedsReveal = false, guideTaskRestoreSuppressed = false;
   let guideInitialLoading = false, guideTaskWait = null;
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
   const unconfirmedRelatedSaves=new Map();
@@ -31,9 +31,13 @@
       return `<li data-guide-state="${state}"${state==='current'?' aria-current="step"':''}><span class="workspace-guide-marker" aria-hidden="true">${state==='done'?'✓':state==='skipped'?'–':n}</span><span>${label}</span><span class="sr-only"> — ${state==='done'?'complete':state}</span></li>`;
     }).join('')}</ol>`;
   }
+  function currentGuideTask(s) {
+    return guidedWorkspace&&isOrganizer()&&!window.GatherAccessLost&&!!guideTaskId&&
+      guideProgress?.projectId===window.GatherMode?.projectId
+      ? s.tasks.find(task=>task.id===guideTaskId&&!task.archivedAt) : null;
+  }
   function guidePlannerAtSavedTask(s) {
-    return guidedWorkspace&&isOrganizer()&&!window.GatherAccessLost&&ui.view==='tasks'&&
-      guideProgress?.projectId===window.GatherMode.projectId&&!!guideTaskId&&s.tasks.some(task=>task.id===guideTaskId);
+    return ui.view==='tasks'&&!!currentGuideTask(s);
   }
   function paintGuide(s=store.getState()) {
     const host = $('#workspaceGuide');
@@ -47,21 +51,24 @@
     const next = bound ? guideSteps.find(([id]) => !reached.has(id) && (id!=='invite_created'||!reached.has('invite_skipped'))) : null;
     const finished=bound&&reached.has('event_details_viewed')&&(reached.has('invite_created')||reached.has('invite_skipped'));
     const showPlanTip=bound&&reached.has('task_created')&&!!next&&!guidePlannerAtSavedTask(s);
+    const showTaskReview=ui.view!=='tasks'&&reached.has('task_created')&&!!currentGuideTask(s);
     host.hidden = !next && !guideError && !finished;
     if (host.hidden) return;
     const wasFocused=host.contains(document.activeElement);
     const waitingForTask=next?.[0]==='task_created'&&!!guideTaskId;
-    const mode=guideError?'error':finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):waitingForTask?'task-saved-pending':next[0]+(showPlanTip?':with-plan':'');
+    const mode=guideError?'error':(finished?(reached.has('invite_skipped')?'complete-solo':'complete-team'):waitingForTask?'task-saved-pending':next[0]+(showPlanTip?':with-plan':''))+
+      (showTaskReview?':with-task':'');
     if(host.dataset.guideState===mode)return;
     const projectHref=h(window.GatherMode.projectUrl('/project'));
+    const taskReview=showTaskReview?'<button type="button" class="btn btn-secondary" data-action="guide-task-reveal">Review your first task</button>':'';
     host.dataset.guideState=mode;
     host.innerHTML=guideError
       ? '<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started</p><h2 id="workspaceGuideTitle" tabindex="-1">Guide progress unavailable</h2><p>Keep working, or retry loading the guide.</p><div class="workspace-guide-actions"><button type="button" class="btn btn-secondary" data-action="guide-retry">Retry guide</button><a href="/guide" target="_top">Back to guide</a></div></div>'
       : finished
-        ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a></div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
+        ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started · Complete</p><h2 id="workspaceGuideTitle" tabindex="-1">You’re ready to keep planning</h2><p>${reached.has('invite_skipped')?'You can invite a teammate later from People.':'Your invitation is ready. Your teammate still needs to accept it.'}</p><div class="workspace-guide-actions"><a class="btn btn-primary" href="${projectHref}" target="_top">Back to planning</a>${taskReview}</div></div>${guideTrack(5,true,reached.has('invite_skipped'))}`
         : waitingForTask
           ? `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step 2 of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">Your first task is saved</h2><p role="status">Loading the next guide step…</p><div class="workspace-guide-actions"><a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div></div>${guideTrack(2,false,false)}`
-          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${showPlanTip?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
+          : `<div class="workspace-guide-main"><p class="workspace-guide-kicker">Getting started <span>Step ${next[1]} of 5</span></p><h2 id="workspaceGuideTitle" tabindex="-1">${next[2]}</h2><p>${next[3]}</p><p class="workspace-guide-tip">${next[6]}</p><div class="workspace-guide-actions"><button class="btn btn-primary" type="button" data-action="${next[4]}">${next[5]}</button>${next[0]==='invite_created'?'<button class="btn btn-secondary" type="button" data-action="guide-skip-invite">Finish without inviting</button>':''}${taskReview}<a class="workspace-guide-pause" href="${projectHref}" target="_top">Finish later</a></div>${showPlanTip?guidePlanTip():''}</div>${guideTrack(next[1],false,false)}`;
     if(wasFocused) $('#workspaceGuideTitle')?.focus({preventScroll:true});
   }
   function guidePlanTip(titleId='workspaceGuidePlanTitle') {
@@ -102,6 +109,7 @@
         if(!inScope())return;
         guideProgress = progress;
         guideError = false;
+        restoreGuideTaskFromProgress(progress);
       } catch {
         if(!inScope())return;
         guideError = true;
@@ -109,6 +117,22 @@
       paintGuide();
     });
     return guideQueue;
+  }
+  function restoreGuideTaskFromProgress(progress) {
+    if(guideTaskId||guideTaskRestoreSuppressed||!guidedWorkspace||!isOrganizer()||window.GatherAccessLost||
+      !progress||progress.projectId!==window.GatherMode?.projectId||typeof progress.firstTaskId!=='string'||!progress.firstTaskId||
+      !Array.isArray(progress.events)||!progress.events.some(item=>item?.checkpoint==='task_created'))return false;
+    guideTaskId=progress.firstTaskId;
+    // Paint only the initially empty receipt slot; never redraw drafts or move focus on resume.
+    if(ui.view!=='tasks')return true;
+    const slot=$('#guideTaskReceipt',$('#viewRoot')),state=store.getState();
+    if(slot?.hidden&&currentGuideTask(state)){
+      slot.innerHTML=guideTaskPanel(state);
+      slot.hidden=false;
+      $$('#taskRows .task-name-button').find(button=>button.dataset.id===guideTaskId)
+        ?.closest('tr')?.classList.add('guide-first-task-row');
+    }
+    return true;
   }
   function recordGuideViewClick(view) {
     if(view==='budget'||view==='info')void syncGuide(view==='budget'?'budget_clicked':'event_details_clicked');
@@ -158,6 +182,7 @@
     if(document.hidden||ui.pendingSave)return false;
     if(opener?opener!==$('[data-action="guide-task-without-step"]',dialog)||opener.disabled:guideInitialLoading)return false;
     guideTaskWait=null;
+    if(opener)guideTaskRestoreSuppressed=true;
     newTaskDialog(!opener&&guideExpectsTask()&&store.getState().tasks.length===0);
     if(!opener&&guideError)toast('The guide couldn’t load. You can still add your task.');
     return true;
@@ -675,9 +700,10 @@
   }
   function tasksView(s) {
     const tasks=filteredTasks(s);
+    const guideReceipt=guideTaskPanel(s);
     return pageHeading('','Tasks','',`${isOrganizer()?'<button class="btn btn-secondary" data-action="review-assignments">Assign tasks</button>':''}${addButton()}`)+`
       ${taskLinkNotice()}
-      ${guideTaskPanel(s)}
+      <div id="guideTaskReceipt"${guideReceipt?'':' hidden'}>${guideReceipt}</div>
       ${ui.acceptanceHandoff ? acceptanceHandoffMarkup(s) : ''}
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${linkedResultsPanel(s)}
@@ -686,8 +712,8 @@
       <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?taskMapMarkup(s,tasks):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
   function guideTaskPanel(s,away=false) {
-    const task=guideTaskId&&s.tasks.find(item=>item.id===guideTaskId);
-    if(!task||window.GatherAccessLost)return '';
+    const task=currentGuideTask(s);
+    if(!task)return '';
     if(away)return `<section class="guide-task-result" aria-labelledby="guideTaskRevealHeading"><h2 id="guideTaskRevealHeading" tabindex="-1">Your task is saved</h2><p>Find ${h(task.title)} under Shared tasks → All tasks.</p><button class="btn btn-secondary" type="button" data-action="guide-task-reveal">Show in Shared tasks</button></section>`;
     const done=task.status==='done';
     return `<section class="guide-task-result" aria-labelledby="guideTaskSaved">
@@ -701,7 +727,7 @@
     </section>`;
   }
   function revealGuideTask(focusCompletion=false) {
-    if(!guideTaskId||!store.getState().tasks.some(task=>task.id===guideTaskId)||window.GatherAccessLost)return;
+    if(!currentGuideTask(store.getState()))return;
     const prior={tab:ui.tab,taskView:ui.taskView,mapFocus:ui.mapFocus,owner:ui.owner,status:ui.status,search:ui.search};
     Object.assign(ui,{tab:'all',taskView:'list',mapFocus:'',owner:'',status:'',search:''});
     if(!navigate('tasks')){
@@ -715,7 +741,7 @@
     target?.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
   }
   function showGuideTaskLinks(id) {
-    if(id!==guideTaskId||window.GatherAccessLost)return;
+    if(!id||id!==currentGuideTask(store.getState())?.id)return;
     taskDialog(id);
     requestAnimationFrame(()=>{
       if(ui.dialogKind!=='task'||ui.detailId!==id)return;
@@ -4836,7 +4862,7 @@
     replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-from-event-review-schedule','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
-    const reviewForm=replacesReview.includes(action)?$('#emailReviewForm'):null;
+    const reviewForm=replacesReview.includes(action)||action==='guide-task-reveal'&&ui.view==='inbox'?$('#emailReviewForm'):null;
     if(action==='close-dialog'||exitsAssignment||action==='return-to-event-task-review'&&ui.eventTaskReview?.snapshot){
       if(!confirmCloseDialog()||!confirmDiscard(reviewForm))return;
     }else if(!confirmDiscard(replacesDialog.includes(action)?$('#dialog'):null,reviewForm))return;

@@ -88,10 +88,12 @@ test('the saved first task shows the optional planner inline before progress set
   const beforeNavigation=guide.changes();
   guide.ui.view='budget';guide.paint();
   assert.match(guide.html(),/Step 3 of 5[\s\S]*aria-labelledby="workspaceGuidePlanTitle"/);
+  assert.match(guide.html(),/data-action="guide-task-reveal">Review your first task/);
   assert.equal(guide.changes(),beforeNavigation+1,'a view change can repaint the placement without a new checkpoint');
   assert.doesNotMatch(guide.task(true),/guideTaskPlanTitle/);
   guide.ui.view='tasks';guide.paint();
   assert.doesNotMatch(guide.html(),/workspaceGuidePlanTitle/);
+  assert.doesNotMatch(guide.html(),/data-action="guide-task-reveal"/);
   assert.match(guide.task(),/guideTaskPlanTitle/);
 });
 
@@ -125,7 +127,7 @@ test('missing saved-task context falls back to the top guide; unrelated accounts
   assert.doesNotMatch(unavailable.task(),/guideTaskPlanTitle/);
 });
 
-test('only the in-session saved task retains the optional planner after guide completion',()=>{
+test('a known exact saved task retains the optional planner after guide completion',()=>{
   const first={id:'task_saved',title:'Confirm venue',status:'todo'};
   const steps=['started','project_created','task_created','budget_viewed','event_details_viewed','invite_created'];
   const guide=fixture(steps,{view:'tasks',tasks:[first]});
@@ -176,10 +178,11 @@ test('first-task walkthrough targets the returned task and offers optional real 
   const heading={focus:()=>focus.push('heading'),scrollIntoView(){}};
   const control={dataset:{id:'first'},focus:()=>focus.push('completion'),scrollIntoView(){}};
   const ui={tab:'mine',taskView:'map',owner:'someone',search:'else',view:'overview'};
-  const context=vm.createContext({guideTaskId:'first',guideTaskNeedsReveal:false,ui,window:{},
+  const context=vm.createContext({guideTaskId:'first',guideTaskNeedsReveal:false,ui,
+    guideProgress:{projectId:'p_fictional'},window:{GatherMode:{projectId:'p_fictional',projectUrl:path=>path+'?project=p_fictional'}},
     store:{getState:()=>({tasks:[other,first]})},navigate:view=>{ui.view=view;return true;},render(){},
     $:()=>heading,$$:()=>[{dataset:{id:'other'}},control],h:value=>value.replaceAll('<','&lt;').replaceAll('>','&gt;'),
-    icon:()=>'',statusBadge:value=>value,guidedWorkspace:false,
+    icon:()=>'',statusBadge:value=>value,guidedWorkspace:true,isOrganizer:()=>true,
   });
   vm.runInContext(renderer+taskRenderer,context);
   const html=vm.runInContext('guideTaskPanel(store.getState())',context);
@@ -192,4 +195,26 @@ test('first-task walkthrough targets the returned task and offers optional real 
   vm.runInContext('revealGuideTask();revealGuideTask(true);',context);
   assert.deepEqual(focus,['heading','completion']);
   assert.equal(ui.view,'tasks');assert.equal(ui.tab,'all');assert.equal(ui.taskView,'list');assert.equal(ui.search,'');
+});
+
+test('Review your first task protects unsaved Inbox work before leaving for Shared tasks',async()=>{
+  const start=source.indexOf("  document.addEventListener('click',async event=>{");
+  const end=source.indexOf("      if(action==='guide-task-links')",start);
+  const protectionStart=source.indexOf('  function hasUnsavedFields(');
+  const protectionEnd=source.indexOf('  function confirmCloseDialog(',protectionStart);
+  assert.ok(start>=0&&end>start&&protectionStart>=0&&protectionEnd>protectionStart);
+  const input={type:'text',value:'Fictional edited proposal',defaultValue:'Fictional original proposal'};
+  const form={};let allow=false,click;const calls=[];
+  const ui={view:'inbox',pendingSave:false},button={dataset:{action:'guide-task-reveal'},closest:()=>null};
+  vm.runInNewContext(source.slice(protectionStart,protectionEnd)+source.slice(start,end)+'}finally{release();}});',{
+    ui,$:selector=>selector==='#emailReviewForm'?form:null,
+    $$(selector,root){assert.equal(selector,'input,textarea,select');assert.equal(root,form);return [input];},
+    document:{addEventListener(type,fn){assert.equal(type,'click');click=fn;}},
+    window:{confirm(message){assert.match(message,/Discard your unsaved changes/);calls.push('confirm');return allow;}},
+    revealGuideTask(focusCompletion){assert.equal(focusCompletion,false);calls.push('reveal');ui.view='tasks';},
+  });
+  const review=()=>click({target:{closest:()=>button}});
+  await review();assert.deepEqual(calls,['confirm']);assert.equal(ui.view,'inbox');assert.equal(input.value,'Fictional edited proposal');
+  allow=true;
+  await review();assert.deepEqual(calls,['confirm','confirm','reveal']);assert.equal(ui.view,'tasks');
 });

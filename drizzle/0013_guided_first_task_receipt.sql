@@ -1,0 +1,1 @@
+ALTER TABLE `guided_tutorial_events` ADD `task_id` text;
