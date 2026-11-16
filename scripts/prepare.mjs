@@ -22,6 +22,7 @@ html = html
   .replace('recovery-ui.js?v=coordination-1', '/gather-assets/recovery-ui.js')
   .replace('schedule-ui.js?v=coordination-1', '/gather-assets/schedule-ui.js')
   .replace('src="planning-ui.js"', 'src="/gather-assets/planning-ui.js"')
+  .replace('src="workspace-tools.js"', 'src="/gather-assets/workspace-tools.js"')
   .replace('src="completion-ui.js"', 'src="/gather-assets/completion-ui.js"')
   .replace('src="wrap-up.js"', 'src="/gather-assets/wrap-up.js"')
   .replace('<script src="store.js?v=coordination-1"></script>', '')
@@ -36,8 +37,8 @@ html = html
     '<label class="actor-control" hidden>',
   );
 html = html.replace(
-  '<div class="top-actions">',
-  '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/account" target="_top">Account</a>',
+  '<div class="workspace-tools" id="workspaceTools">',
+  '<div class="workspace-tools" id="workspaceTools"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a><a class="btn btn-secondary btn-small" href="/demo" target="_top">4-person demo</a><a class="btn btn-secondary btn-small" href="/account" target="_top">Account</a>',
 );
 html = html.replace('<div class="nav-label">Review</div>', '<a class="nav-item project-setup-link" href="/setup" target="_top"><span class="nav-icon" data-icon="calendar"></span>Project settings</a><a class="nav-item" href="/" target="_top"><span class="nav-icon" data-icon="arrow"></span>All projects</a><div class="nav-label">Review</div>');
 html = html.replace(
@@ -45,7 +46,6 @@ html = html.replace(
   'Connection interrupted. Your last saved plan is still on the server. Reload to reconnect.',
 );
 html=html.replace('<script src="/gather-assets/hosted-store.js"></script>','<script src="/gather-assets/inbox.js"></script><script src="/gather-assets/resources-ui.js"></script><script src="/gather-assets/guests.js"></script><script src="/gather-assets/info-ui.js"></script><script src="/gather-assets/budget.js"></script><script src="/gather-assets/budget-ui.js"></script><script src="/gather-assets/notifications.js"></script><script src="/gather-assets/hosted-store.js"></script>');
-html = html.replace('<div class="top-actions">', '<div class="top-actions"><a class="btn btn-secondary btn-small" href="/feedback" target="_top">Feedback</a>');
 // The hosted shell has no project identity until the authenticated snapshot loads.
 html = html.replaceAll('Field Day 2026', 'Project')
   .replace('<span class="event-symbol">FD</span>', '<span class="event-symbol" aria-hidden="true">…</span>')
@@ -60,6 +60,7 @@ writeFileSync('public/gather-assets/recovery-ui.js',readFileSync('legacy/recover
 writeFileSync('public/gather-assets/schedule-ui.js',readFileSync('legacy/schedule-ui.js','utf8'));
 writeFileSync('public/gather-assets/wrap-up.js',readFileSync('legacy/wrap-up.js','utf8'));
 writeFileSync('public/gather-assets/planning-ui.js',readFileSync('legacy/planning-ui.js','utf8'));
+writeFileSync('public/gather-assets/workspace-tools.js',readFileSync('legacy/workspace-tools.js','utf8'));
 writeFileSync('public/gather-assets/notifications.js',readFileSync('legacy/notifications.cjs','utf8'));
 writeFileSync('public/gather-assets/notifications.css',readFileSync('legacy/notifications.css','utf8'));
 writeFileSync('public/gather-assets/completion-ui.js',readFileSync('legacy/completion-ui.js','utf8'));

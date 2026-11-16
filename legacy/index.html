@@ -44,15 +44,18 @@
     </aside>
     <main class="main-content" id="mainContent">
       <header class="topbar">
-        <button class="icon-button mobile-menu" id="mobileMenu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu"></span></button>
+        <button type="button" class="icon-button mobile-menu" id="mobileMenu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><span data-icon="menu"></span></button>
         <div class="breadcrumb"><span>Field Day 2026</span><span aria-hidden="true">/</span><strong id="breadcrumbCurrent">Overview</strong></div>
         <div class="top-actions">
-          <button type="button" class="btn btn-secondary btn-small" id="notificationButton" data-action="notifications" aria-haspopup="dialog" hidden><span data-icon="bell"></span><span>Notifications</span><span class="notification-count" data-notification-count aria-hidden="true" hidden></span></button>
-          <button class="btn btn-secondary btn-small" id="askWeftButton" disabled aria-disabled="true" title="Ask Weft is coming soon" hidden><span data-icon="spark"></span>Ask Weft · Coming soon</button>
-          <button class="btn btn-secondary btn-small" data-action="quick-tour">Quick tour</button>
-          <button class="demo-pill" data-action="demo-info">Local demo</button>
-          <label class="actor-control"><span class="sr-only">Demo member</span><select id="actorSelect" class="select-input" aria-label="Demo member"></select></label>
-          <button class="btn btn-secondary btn-small" data-action="invite"><span data-icon="plus"></span><span data-invite-label>Invitation draft</span></button>
+          <button type="button" class="btn btn-secondary btn-small" id="notificationButton" data-action="notifications" aria-label="Notifications" aria-haspopup="dialog" hidden><span data-icon="bell"></span><span class="notification-label">Notifications</span><span class="notification-count" data-notification-count aria-hidden="true" hidden></span></button>
+          <button type="button" class="btn btn-secondary btn-small" id="workspaceToolsToggle" aria-label="More workspace actions" aria-controls="workspaceTools" aria-expanded="false" hidden>More</button>
+          <div class="workspace-tools" id="workspaceTools">
+            <button class="btn btn-secondary btn-small" id="askWeftButton" disabled aria-disabled="true" title="Ask Weft is coming soon" hidden><span data-icon="spark"></span>Ask Weft · Coming soon</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="quick-tour">Quick tour</button>
+            <button type="button" class="demo-pill" data-action="demo-info">Local demo</button>
+            <label class="actor-control"><span class="sr-only">Demo member</span><select id="actorSelect" class="select-input" aria-label="Demo member"></select></label>
+            <button type="button" class="btn btn-secondary btn-small" data-action="invite"><span data-icon="plus"></span><span data-invite-label>Invitation draft</span></button>
+          </div>
         </div>
       </header>
       <div class="storage-warning" id="storageWarning" role="status" hidden>Browser storage is unavailable. Changes will last for this visit only. You can export a backup from Local demo.</div>
@@ -77,6 +80,7 @@
   <script src="schedule-ui.js?v=coordination-1"></script>
   <script src="wrap-up.js"></script>
   <script src="planning-ui.js"></script>
+  <script src="workspace-tools.js"></script>
   <script src="app.js?v=coordination-1"></script>
 </body>
 </html>

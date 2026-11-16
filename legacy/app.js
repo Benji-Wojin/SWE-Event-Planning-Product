@@ -4544,7 +4544,10 @@
         ui.lastFocus=el;
       }
       if(action==='continue-task-search')continueFromTaskLinkNotice();
-      if(action==='notifications')showNotifications();
+      if(action==='notifications'){
+        if(el===$('#notificationButton'))el.focus({preventScroll:true});
+        showNotifications();
+      }
       if(action==='toggle-task-reminders')toggleTaskReminders();
       if(action==='handoff-tasks')openHandoffTasks(id);
       if(action==='dismiss-handoff'&&isLiveTeammate()&&joinWelcome){
@@ -5240,6 +5243,11 @@
   document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
+  window.GatherWorkspaceTools?.create({
+    header:$('.topbar'),media:matchMedia('(max-width:800px)'),
+    canOpen:()=>!ui.pendingSave&&!window.GatherAccessLost&&$('#dialogBackdrop').hidden&&!$('#sidebar').classList.contains('open'),
+    onOpen:()=>tour.close({restoreFocus:false}),
+  });
   setDrawer(false);
   ui.scheduleDate=navigation.initialScheduleDate();
   const activityHint=navigation.takeInitialActivityLink();

@@ -27,7 +27,7 @@ test('workspace preloads code in parallel with fresh data, using matching conten
   execFileSync(process.execPath,['scripts/prepare.mjs']);
   const html=readFileSync('public/workspace.html','utf8');
   const urls=[...new Set(html.match(/\/gather-assets\/versioned\/[a-f0-9]{20}-[a-z-]+\.(?:js|css)/g))];
-  assert.equal(urls.length,22);
+  assert.equal(urls.length,23);
   assert.ok(urls.some(url=>url.endsWith('-wrap-up.js')));
   assert.ok(urls.some(url=>url.endsWith('-reschedule.js')));
   assert.ok(urls.some(url=>url.endsWith('-completion-ui.js')));
@@ -37,7 +37,10 @@ test('workspace preloads code in parallel with fresh data, using matching conten
   assert.ok(urls.some(url=>url.endsWith('-notifications.css')));
   const notifications=urls.find(url=>url.endsWith('-notifications.js'));
   const hostedStore=urls.find(url=>url.endsWith('-hosted-store.js'));
+  const tools=urls.find(url=>url.endsWith('-workspace-tools.js'));
   assert.ok(notifications);
+  assert.ok(tools);
+  assert.ok(html.indexOf(`src="${tools}"`)<html.indexOf(`src="${hostedStore}"`),'toolbar disclosure loads before hosted workspace code');
   assert.ok(html.indexOf(`src="${notifications}"`)<html.indexOf(`src="${hostedStore}"`),'reminder helper executes before hosted workspace code');
   for(const url of urls){
     const hash=createHash('sha256').update(readFileSync('public'+url)).digest('hex').slice(0,20);
