@@ -25,6 +25,7 @@ h1,h2,h3,h4{font-family:'Manrope','DM Sans',sans-serif;color:var(--ink)}
 
 /* Quiet navigation stays separate from the active work. */
 .sidebar{position:fixed;inset:0 auto 0 0;width:230px;z-index:40;display:flex;flex-direction:column;padding:29px 18px 17px;background:#f0f2e9;border-right:1px solid #e1e5d9;overflow-y:auto}
+.sidebar-close{display:none}
 .brand{display:flex;align-items:center;gap:11px;padding:0 12px 32px;text-decoration:none;color:var(--ink)}
 /* This programmatic dialog focus target is not an interactive control. */
 .sidebar[tabindex="-1"]:focus{outline:none}
@@ -514,7 +515,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 }
 @media(max-width:800px){
   html{scrollbar-gutter:auto}
-  .sidebar{transform:translateX(-100%);transition:transform .22s ease;box-shadow:10px 0 35px rgba(33,52,27,.07);width:250px;z-index:60}.sidebar.open{transform:translateX(0)}
+  .sidebar{transform:translateX(-100%);transition:transform .22s ease;box-shadow:10px 0 35px rgba(33,52,27,.07);width:250px;z-index:60;scroll-padding-top:64px}.sidebar.open{transform:translateX(0)}
+  .sidebar-header{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;flex:none;gap:8px;padding:0 0 10px;background:var(--rail,var(--warm))}
+  .sidebar-header>.brand{min-height:44px;padding:8px 4px}
+  .sidebar.open .sidebar-close{display:inline-flex;min-width:44px;min-height:44px}
   .mobile-overlay{position:fixed;inset:0;z-index:50;display:block;background:rgba(33,47,26,.3);opacity:0;visibility:hidden;transition:opacity .2s,visibility .2s;backdrop-filter:blur(2px)}.mobile-overlay.open{opacity:1;visibility:visible}
   .main-content{margin-left:0}.topbar{min-height:62px;padding:10px 20px;gap:10px}.mobile-menu{display:inline-flex}
   .breadcrumb{gap:7px}.top-actions{gap:8px}.top-actions .btn{min-height:36px;padding:8px 10px}.top-actions .demo-pill{display:none}

@@ -1527,7 +1527,7 @@
     fillIcons(document);
     restoreViewFocus(previousFocus,$('#viewRoot'));
   }
-  function navigate(view,{scheduleDay='',beforeRender}={}) {
+  function navigate(view,{scheduleDay='',beforeRender,fromDrawer=false}={}) {
     if(ui.pendingSave){navigation.replace(ui.view);return false;}
     if(!Object.hasOwn(labels,view)) view='overview';
     if(view!==ui.view&&!planSidebar.canLeave()){navigation.replace(ui.view);return false;}
@@ -1541,7 +1541,7 @@
     ui.view=view;
     if(view!=='details'){privateEpoch++;ui.privateRecords=[];}
     navigation.replace(view);
-    setDrawer(false);
+    setDrawer(false,{restoreFocus:!fromDrawer});
     render();
     if(view==='details')loadPrivate();
     window.scrollTo({top:0,behavior:'instant'});
@@ -1556,21 +1556,33 @@
     data.confirmPendingReportReassignment=true;
     return true;
   }
-  function setDrawer(open) {
+  function setDrawer(open,{restoreFocus=true}={}) {
     const mobile=matchMedia('(max-width:800px)').matches;
-    if(open&&mobile)tour.close({restoreFocus:false});
-    const wasOpen=$('#sidebar').classList.contains('open');
-    const focusInDrawer=$('#sidebar').contains(document.activeElement)||document.activeElement===$('#mobileOverlay');
-    $('#sidebar').classList.toggle('open',open);
-    $('#mobileOverlay').classList.toggle('open',open&&mobile);
-    $('#mobileMenu').setAttribute('aria-expanded',String(open));
-    $('#sidebar').inert=mobile&&!open;
-    $('#mainContent').inert=mobile&&open;
-    $('#sidebar').toggleAttribute('aria-modal',mobile&&open);
+    const sidebar=$('#sidebar'),overlay=$('#mobileOverlay'),menu=$('#mobileMenu'),close=$('#mobileDrawerClose');
+    const opening=mobile&&open,wasOpen=sidebar.classList.contains('open'),active=document.activeElement;
+    const focusInDrawer=sidebar.contains(active)||active===overlay;
+    if(opening)tour.close({restoreFocus:false});
+    sidebar.classList.toggle('open',opening);
+    overlay.classList.toggle('open',opening);
+    close.hidden=!opening;
+    menu.setAttribute('aria-expanded',String(opening));
+    sidebar.inert=mobile&&!opening;
+    $('#mainContent').inert=opening;
+    $('.workspace-skip-link').inert=opening;
     // Announce the drawer without presenting its brand link as the selected action.
     // Tab still reaches the first link and retains its normal visible focus ring.
-    if(mobile&&open){$('#sidebar').setAttribute('role','dialog');$('#sidebar').setAttribute('aria-modal','true');document.body.style.overflow='hidden';$('#sidebar').focus({preventScroll:true});}
-    else{$('#sidebar').removeAttribute('role');if($('#dialogBackdrop').hidden)document.body.style.overflow='';if(mobile&&wasOpen&&focusInDrawer)$('#mobileMenu').focus();}
+    if(opening){
+      sidebar.setAttribute('role','dialog');sidebar.setAttribute('aria-modal','true');
+      document.body.style.overflow='hidden';sidebar.focus({preventScroll:true});
+    }else{
+      sidebar.removeAttribute('role');sidebar.removeAttribute('aria-modal');
+      if($('#dialogBackdrop').hidden)document.body.style.overflow='';
+      if(restoreFocus&&(focusInDrawer||wasOpen&&active===document.body)){
+        if(mobile)menu.focus({preventScroll:true});
+        else if(wasOpen&&(active===close||active===overlay||active===sidebar||active===document.body))
+          ($('[data-view][aria-current="page"]',sidebar)||$('.brand',sidebar))?.focus({preventScroll:true});
+      }
+    }
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
     if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
@@ -4724,8 +4736,9 @@
     if(!confirmCloseDialog()||!confirmDiscard(view!==ui.view?$('#emailReviewForm'):null))return;
     if(!$('#dialogBackdrop').hidden)closeDialog();
     const fromHandoff=el.closest('#workspaceHandoff')!==null;
+    const fromDrawer=el.closest('#sidebar.open')===$('#sidebar');
     recordGuideViewClick(view);
-    if(navigate(view)&&fromHandoff)skipToContent();
+    if(navigate(view,fromDrawer?{fromDrawer:true}:undefined)&&(fromHandoff||fromDrawer))skipToContent();
   }
   document.addEventListener('click',async event=>{
     if(ui.pendingSave){event.preventDefault();return;}
@@ -5480,6 +5493,7 @@
     }
   });
   $('#mobileMenu').addEventListener('click',()=>setDrawer(!$('#sidebar').classList.contains('open')));
+  $('#mobileDrawerClose').addEventListener('click',()=>setDrawer(false));
   $('#mobileOverlay').addEventListener('click',()=>setDrawer(false));
   matchMedia('(max-width:800px)').addEventListener('change',()=>setDrawer(false));
   const routeChanged=view=>{

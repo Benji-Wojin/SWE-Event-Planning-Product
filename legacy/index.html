@@ -15,9 +15,12 @@
 <body>
   <div class="app-shell" id="appShell">
     <a class="workspace-skip-link" href="#viewRoot" data-action="skip-content">Skip to content</a>
-    <button class="mobile-overlay" id="mobileOverlay" aria-label="Close navigation" tabindex="-1"></button>
+    <div class="mobile-overlay" id="mobileOverlay" aria-hidden="true"></div>
     <aside class="sidebar" id="sidebar" aria-label="Main navigation" tabindex="-1">
-      <a class="brand" href="#overview" data-view="overview" aria-label="Weft home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-name">weft</span></a>
+      <div class="sidebar-header">
+        <a class="brand" href="#overview" data-view="overview" aria-label="Weft home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-name">weft</span></a>
+        <button type="button" class="btn btn-secondary btn-small sidebar-close" id="mobileDrawerClose" aria-label="Close navigation" hidden><span data-icon="close"></span>Close</button>
+      </div>
       <button class="event-switcher" data-action="event-info"><span class="event-symbol">FD</span><span class="event-switcher-copy"><small>EVENT</small><strong>Field Day 2026</strong></span><span aria-hidden="true">⌄</span></button>
       <div class="nav-label">Plan</div>
       <nav class="nav-list" id="mainNav">

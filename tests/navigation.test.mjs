@@ -257,38 +257,154 @@ test('the hosted owner form retains the planner return only after a successful s
   assert.equal(failed.calls.length,1);assert.equal(failed.frames.length,0);
 });
 
-test('mobile drawer focuses its container, traps Tab, and restores the opener without removing link focus styles',()=>{
+function drawerFixture(){
   const app=readFileSync('legacy/app.js','utf8');
   const source=app.slice(app.indexOf('  function setDrawer('),app.indexOf('  function openDialog('));
   let active, mobile=true;
-  const elements={};
-  for(const id of ['sidebar','mobileOverlay','mobileMenu','mainContent','dialogBackdrop']) {
+  const elements={},focus=[],listeners={};
+  function element(id,options={}) {
     const classes=new Set();
-    elements['#'+id]={id,hidden:id==='dialogBackdrop',attributes:{},
+    return {id,hidden:false,attributes:{},
       classList:{contains:value=>classes.has(value),toggle(value,on){on?classes.add(value):classes.delete(value);}},
       setAttribute(key,value){this.attributes[key]=value;},removeAttribute(key){delete this.attributes[key];},
       toggleAttribute(key,on){on?this.attributes[key]='':delete this.attributes[key];},
       contains:el=>el===elements['#sidebar']||el?.inDrawer,
-      focus(){active=this;},
+      closest(){return this.hidden||this.inert?this:null;},matches:()=>false,getClientRects(){return this.hidden?[]:[{}];},
+      querySelector:()=>elements['#currentNav'],
+      addEventListener(type,callback){listeners[`${id}:${type}`]=callback;},
+      focus(){active=this;focus.push(this.id);},...options,
     };
   }
-  const document={body:{style:{}},get activeElement(){return active;}};
+  for(const id of ['sidebar','mobileOverlay','mobileMenu','mobileDrawerClose','mainContent','dialogBackdrop','currentNav','otherNav','workspaceSkipLink']) {
+    elements['#'+id]=element(id,{hidden:id==='dialogBackdrop',inDrawer:['mobileDrawerClose','currentNav','otherNav'].includes(id)});
+  }
+  const document={body:{style:{}},get activeElement(){return active;},addEventListener(type,callback){listeners[`document:${type}`]=callback;}};
   let tourClosed=0;
-  const setDrawer=vm.runInNewContext(source+'\nsetDrawer;',{document,$:id=>elements[id],matchMedia:()=>({matches:mobile}),tour:{close(options){assert.equal(options.restoreFocus,false);tourClosed++;}}});
-  active=elements['#mobileMenu'];setDrawer(true);
-  assert.equal(tourClosed,1);
-  assert.equal(active,elements['#sidebar']);assert.equal(elements['#sidebar'].attributes.role,'dialog');
+  const bindingStart=app.indexOf("  document.addEventListener('keydown',event=>{"),bindingEnd=app.indexOf('  const routeChanged=',bindingStart);
+  assert.ok(bindingStart>=0&&bindingEnd>bindingStart);
+  const bound=app.slice(bindingStart,bindingEnd);
+  const setDrawer=vm.runInNewContext(source+'\n'+bound+'\nsetDrawer;',{document,ui:{view:'tasks'},
+    $:id=>elements[id]??(id.includes('skip')?elements['#workspaceSkipLink']:id.includes('data-view')||id.includes('aria-current')?elements['#currentNav']:null),
+    $$:()=>[elements['#currentNav'],elements['#otherNav']],matchMedia:()=>({matches:mobile,addEventListener(type,callback){listeners[`viewport:${type}`]=callback;}}),
+    tour:{close(options){assert.equal(options.restoreFocus,false);tourClosed++;}}});
+  return {app,document,elements,setDrawer,focus,listeners,get tourClosed(){return tourClosed;},
+    set mobile(value){mobile=value;},set active(value){active=elements['#'+value]??document.body;},get active(){return active;},
+  };
+}
+
+test('mobile drawer focuses its container and keeps the Close control inside the active focus boundary',()=>{
+  const f=drawerFixture(),{app,document,elements,setDrawer}=f;
+  f.active='mobileMenu';setDrawer(true);
+  assert.equal(f.tourClosed,1);
+  assert.equal(f.active,elements['#sidebar']);assert.equal(elements['#sidebar'].attributes.role,'dialog');
+  assert.equal(elements['#sidebar'].attributes['aria-modal'],'true');
+  assert.equal(elements['#mobileMenu'].attributes['aria-expanded'],'true');
   assert.equal(elements['#mainContent'].inert,true);assert.equal(elements['#sidebar'].inert,false);
-  setDrawer(false);assert.equal(active,elements['#mobileMenu']);assert.equal(elements['#sidebar'].inert,true);
-  assert.equal(elements['#mainContent'].inert,false);assert.equal(document.body.style.overflow,'');
-  mobile=false;setDrawer(false);assert.equal(elements['#sidebar'].inert,false);
-  assert.equal(tourClosed,1,'closing or desktop resize does not dismiss an unrelated tour');
+  assert.equal(elements['#workspaceSkipLink'].inert,true);
+  assert.equal(elements['#mobileDrawerClose'].hidden,false);
+  f.active='mobileDrawerClose';setDrawer(false);
+  assert.equal(f.active,elements['#mobileMenu']);assert.equal(elements['#sidebar'].inert,true);
+  assert.equal(elements['#mainContent'].inert,false);assert.equal(elements['#workspaceSkipLink'].inert,false);
+  assert.equal(elements['#mobileDrawerClose'].hidden,true);assert.equal(document.body.style.overflow,'');
+  assert.equal(elements['#mobileMenu'].attributes['aria-expanded'],'false');
+  f.mobile=false;setDrawer(false);assert.equal(elements['#sidebar'].inert,false);
+  assert.equal(f.tourClosed,1,'closing or desktop resize does not dismiss an unrelated tour');
   assert.match(readFileSync('legacy/index.html','utf8'),/id="sidebar"[^>]+tabindex="-1"/);
   const css=readFileSync('legacy/styles.css','utf8');
   assert.match(css,/:focus-visible\{outline:3px solid/);
   assert.match(css,/\.sidebar\[tabindex="-1"\]:focus\{outline:none\}/);
   assert.match(app,/event.shiftKey&&document.activeElement===first/);
   assert.match(app,/!event.shiftKey&&document.activeElement===last/);
+});
+
+test('resize never leaves focus in navigation controls hidden by the new viewport',()=>{
+  for(const origin of ['mobileDrawerClose','mobileOverlay','sidebar','body','otherNav']){
+    const f=drawerFixture(),{document,elements,setDrawer}=f;
+    f.active='mobileMenu';setDrawer(true);
+    f.active=origin;f.focus.length=0;f.mobile=false;f.listeners['viewport:change']();
+    assert.equal(f.active,elements[origin==='otherNav'?'#otherNav':'#currentNav'],origin);
+    assert.deepEqual(f.focus,origin==='otherNav'?[]:['currentNav'],origin);
+    assert.equal(elements['#sidebar'].inert,false);assert.equal(elements['#mainContent'].inert,false);
+    assert.equal(elements['#workspaceSkipLink'].inert,false);assert.equal(elements['#mobileDrawerClose'].hidden,true);
+    assert.equal(elements['#sidebar'].attributes.role,undefined);assert.equal(elements['#sidebar'].attributes['aria-modal'],undefined);
+    assert.equal(document.body.style.overflow,'');
+  }
+  const f=drawerFixture();
+  f.mobile=false;f.setDrawer(false);
+  f.active='otherNav';f.focus.length=0;f.mobile=true;f.listeners['viewport:change']();
+  assert.equal(f.active,f.elements['#mobileMenu']);
+  assert.deepEqual(f.focus,['mobileMenu']);
+  assert.equal(f.elements['#sidebar'].inert,true);
+  assert.equal(f.elements['#mobileDrawerClose'].hidden,true);
+});
+
+test('Close, overlay click, and Escape dismiss the mobile navigation and all restore the menu',()=>{
+  for(const [origin,close] of [['mobileDrawerClose',f=>f.listeners['mobileDrawerClose:click']()],
+    ['mobileOverlay',f=>f.listeners['mobileOverlay:click']()],
+    ['currentNav',f=>f.listeners['document:keydown']({key:'Escape',preventDefault(){}})]]){
+    const f=drawerFixture();
+    f.active='mobileMenu';f.listeners['mobileMenu:click']();
+    assert.equal(f.active,f.elements['#sidebar']);
+    f.active=origin;f.focus.length=0;close(f);
+    assert.deepEqual(f.focus,['mobileMenu'],origin);
+    assert.equal(f.elements['#sidebar'].classList.contains('open'),false);
+    assert.equal(f.elements['#mobileOverlay'].classList.contains('open'),false);
+    assert.equal(f.elements['#mobileDrawerClose'].hidden,true);
+  }
+});
+
+test('both local and hosted markup expose a native drawer Close while the overlay stays pointer-only',()=>{
+  for(const filename of ['legacy/index.html','public/workspace.html']){
+    const html=readFileSync(filename,'utf8');
+    const sidebar=html.match(/<aside\b[^>]*id="sidebar"[^>]*>[\s\S]*?<\/aside>/)?.[0]||'';
+    const close=sidebar.match(/<button\b[^>]*id="mobileDrawerClose"[^>]*>[\s\S]*?<\/button>/)?.[0]||'';
+    assert.match(close,/type="button"/);
+    assert.match(close,/hidden/);
+    assert.match(close,/aria-label="Close navigation"|>Close(?: navigation)?</);
+    const overlay=html.match(/<div\b[^>]*id="mobileOverlay"[^>]*>/)?.[0]||'';
+    assert.match(overlay,/aria-hidden="true"/);
+    assert.doesNotMatch(overlay,/tabindex|role=/i);
+    assert.equal((html.match(/\bid="mobileDrawerClose"/g)||[]).length,1);
+  }
+  const css=readFileSync('legacy/styles.css','utf8');
+  assert.match(css,/\.sidebar-close\{display:none\}/);
+  const closeRule=css.match(/\.sidebar\.open \.sidebar-close\{[^}]*44px[^}]*\}/)?.[0]||'';
+  assert.match(closeRule,/(?:min-)?width:\s*44px/);
+  assert.match(closeRule,/(?:min-)?height:\s*44px/);
+});
+
+test('drawer view activation focuses the new content only after successful navigation and retains dismissal behavior',()=>{
+  const app=readFileSync('legacy/app.js','utf8');
+  const segment=(start,end)=>{const a=app.indexOf(start),b=app.indexOf(end,a+start.length);assert.ok(a>=0&&b>a);return app.slice(a,b);};
+  const source=segment('  function navigate(', '  function confirmTaskOwnerChange(')+
+    segment('  function navigateFromViewControl(', "  document.addEventListener('click'");
+  for(const variant of ['drawer','desktop','same view','denied by draft','sidebar veto','hosted save pending']){
+    const events=[],drawerOpen=variant!=='desktop';
+    let open=drawerOpen;
+    const sidebar={classList:{contains:name=>name==='open'&&open},contains:el=>el===control&&drawerOpen};
+    const view=variant==='same view'?'overview':'tasks';
+    const control={dataset:{view},closest:selector=>selector==='#sidebar.open'&&open?sidebar:null};
+    const ui={view:'overview',pendingSave:variant==='hosted save pending'};
+    const context=vm.createContext({ui,labels:{overview:'Overview',tasks:'Tasks'},control,taskLinkUnavailable:false,privateEpoch:0,guideViewReady:'',
+      $:selector=>selector==='#dialogBackdrop'?{hidden:true}:selector==='#sidebar'?sidebar:null,
+      matchMedia:()=>({matches:drawerOpen}),planSidebar:{canLeave:()=>variant!=='sidebar veto'},
+      confirmCloseDialog:()=>true,confirmDiscard:()=>variant!=='denied by draft',
+      recordGuideViewClick:value=>events.push(['record',value]),navigation:{replace:value=>events.push(['replace',value])},
+      setDrawer(next,{restoreFocus=true}={}){open=next;events.push(['drawer',next,restoreFocus]);},
+      render:()=>events.push(['render',ui.view]),window:{scrollTo:()=>events.push(['scroll'])},
+      skipToContent(){assert.equal(open,false);assert.equal(ui.view,'tasks');events.push(['focus content']);},
+    });
+    vm.runInContext(source+'\nnavigateFromViewControl(control);',context);
+    const expected={
+      drawer:[['record','tasks'],['replace','tasks'],['drawer',false,false],['render','tasks'],['scroll'],['focus content']],
+      desktop:[['record','tasks'],['replace','tasks'],['drawer',false,true],['render','tasks'],['scroll']],
+      'same view':[['drawer',false,true]],'denied by draft':[],
+      'sidebar veto':[['record','tasks'],['replace','overview']],
+      'hosted save pending':[['record','tasks'],['replace','overview']],
+    }[variant];
+    assert.deepEqual(events,expected,variant);
+    if(['denied by draft','sidebar veto','hosted save pending'].includes(variant))assert.equal(open,true,'declined navigation keeps the drawer and its focused control');
+  }
 });
 test('restored pages keep dirty dialogs and in-flight saves never close the form',()=>{
   const app=readFileSync('legacy/app.js','utf8');

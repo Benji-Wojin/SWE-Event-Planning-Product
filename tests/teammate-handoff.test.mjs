@@ -177,9 +177,10 @@ test('orienting from the welcome moves focus to the destination only after navig
     [true,true,false,[]],
   ]){
     const actions=[];
-    const ctx=vm.createContext({ui:{view:'overview'},$:()=>({hidden:true}),confirmCloseDialog:()=>consent,confirmDiscard:()=>consent,
+    const ctx=vm.createContext({ui:{view:'overview'},$:selector=>selector==='#sidebar'?{classList:{contains:()=>false}}:{hidden:true},
+      confirmCloseDialog:()=>consent,confirmDiscard:()=>consent,matchMedia:()=>({matches:false}),
       recordGuideViewClick:()=>{},navigate:view=>{actions.push('navigate:'+view);return valid;},
-      skipToContent:()=>actions.push('focus'),control:{dataset:{view:'timeline'},closest:()=>fromHandoff?{}:null}});
+      skipToContent:()=>actions.push('focus'),control:{dataset:{view:'timeline'},closest:selector=>selector==='#workspaceHandoff'&&fromHandoff?{}:null}});
     vm.runInContext(source.slice(a,b)+'navigateFromViewControl(control);',ctx);
     assert.deepEqual(actions,expected);
   }
