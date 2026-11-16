@@ -1418,19 +1418,19 @@
       entry(actor, `reviewed the results and resumed ${task.title}`, task.id, 'dependency-resumed');
       save(true, false); return copy(task);
     }
-    function suggestionCandidates() {
+    function suggestionCandidates(activeTasks = state.tasks.filter(task => !task.archivedAt)) {
       const rules = [
         { id: "rain", title: "Add a rain plan", body: "The venue is outdoors. Choose a backup location, an owner, and a weather decision deadline.", source: "Outdoor venue · no rain plan in tasks", category: "Venue", reason: "missing-weather-plan", match: /\brain\b|weather|wet.weather/, task: { title: "Create a rain plan and decision deadline", category: "Venue", owner: "jack", dueDate: day(7), note: "Confirm a backup location, choose when to make the weather call, and prepare a guest update." } },
         { id: "accessibility", title: "Check transport accessibility", body: "Transport is being booked. Check lift access, drop-off distance, and who guests can contact if they need help.", source: "Transport tasks · no accessibility check", category: "Transport", reason: "missing-accessibility-check", match: /accessib|mobility|lift access|wheelchair/, task: { title: "Confirm accessible buses and drop-off", category: "Transport", owner: "jules", dueDate: day(3), note: "Ask about lift access, the route from drop-off to the venue, and a named contact for guests who need assistance." } },
         { id: "quiet", title: "Add a quiet rest area", body: "Last year’s feedback asked for a calm space. Make sure it appears in both the venue layout and guest directions.", source: "Event feedback · quiet space", category: "Guest care", reason: "missing-quiet-space", match: /quiet|calm space|rest area/, task: { title: "Set up a quiet rest area", category: "Guest care", owner: "", dueDate: day(7), note: "Choose a shaded location away from activities. Add signs and include it on the guest map." } },
       ];
-      const candidates = rules.filter(rule => (rule.id !== 'rain' || state.event.outdoor) && (rule.id !== 'accessibility' || state.event.transportNeeded) && (rule.id !== 'quiet' || state.memories.some(memory => memory.id === 'memory-quiet' && memoryApplies(memory))) && !state.tasks.some(task => rule.match.test(task.title))).map(({ match, ...rule }) => rule);
-      if (state.event.dietaryOutstanding > 0 && state.event.cateringDeadline && state.event.cateringDeadline <= day(2) && !state.tasks.some(task => task.suggestionId === 'dietary-cutoff' && task.status !== 'done')) candidates.unshift({ id: 'dietary-cutoff', title: `${state.event.dietaryOutstanding} dietary responses before the catering cutoff`, body: `The catering cutoff is ${state.event.cateringDeadline}. Your event context still records ${state.event.dietaryOutstanding} missing responses. Confirm the count and contact those guests before approving food.`, source: 'Event context · recorded count, not live RSVP data', task: {title: 'Resolve outstanding dietary responses before catering cutoff',owner:'maya',category:'Food & drink',dueDate:state.event.cateringDeadline,note:'Check the outstanding dietary count, contact missing guests, and update the event context.'} });
+      const candidates = rules.filter(rule => (rule.id !== 'rain' || state.event.outdoor) && (rule.id !== 'accessibility' || state.event.transportNeeded) && (rule.id !== 'quiet' || state.memories.some(memory => memory.id === 'memory-quiet' && memoryApplies(memory))) && !activeTasks.some(task => rule.match.test(task.title))).map(({ match, ...rule }) => rule);
+      if (state.event.dietaryOutstanding > 0 && state.event.cateringDeadline && state.event.cateringDeadline <= day(2) && !activeTasks.some(task => task.suggestionId === 'dietary-cutoff' && task.status !== 'done')) candidates.unshift({ id: 'dietary-cutoff', title: `${state.event.dietaryOutstanding} dietary responses before the catering cutoff`, body: `The catering cutoff is ${state.event.cateringDeadline}. Your event context still records ${state.event.dietaryOutstanding} missing responses. Confirm the count and contact those guests before approving food.`, source: 'Event context · recorded count, not live RSVP data', task: {title: 'Resolve outstanding dietary responses before catering cutoff',owner:'maya',category:'Food & drink',dueDate:state.event.cateringDeadline,note:'Check the outstanding dietary count, contact missing guests, and update the event context.'} });
       state.memories.forEach((memory) => {
         if (memory.id === "memory-quiet") return;
         if (!memoryApplies(memory)) return;
         const title = `Apply lesson: ${clean(memory.change, 150)}`;
-        if (state.tasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title))) return;
+        if (activeTasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title))) return;
         candidates.push({ id: `lesson-${memory.id}`, title: "Event feedback", body: memory.change, source: `Event feedback · ${memory.scope === 'outdoor' ? 'outdoor event' : memory.scope === 'transport' ? 'transport planned' : memory.scope === 'same-venue' ? 'same venue' : 'all events'}${memory.outcome === 'helped' ? ' · previously helped' : ''}`, category: memory.category || "Guest care", reason: "team-feedback", task: { title, category: memory.category || "Guest care", owner: "", dueDate: "", note: `From event feedback: ${memory.change}${memory.context ? `\nApplies when: ${memory.context}` : ''}${memory.wentWell ? `\nKeep what worked: ${memory.wentWell}` : ""}` } });
       });
       return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner && member.active !== false) ? suggestion.task.owner : ''}}));
@@ -1438,13 +1438,14 @@
     function getSuggestions() { return copy(suggestionCandidates().filter((suggestion) => !state.dismissed.includes(suggestion.id))); }
     function acceptSuggestion(suggestionId, actor = "jack") {
       actorId(actor);
-      const suggestion = suggestionCandidates().find((item) => item.id === suggestionId);
+      const activeTasks = state.tasks.filter(task => !task.archivedAt);
+      const suggestion = suggestionCandidates(activeTasks).find((item) => item.id === suggestionId);
       if (!suggestion) {
         const known = { rain: /\brain\b|weather/, accessibility: /accessib|mobility|lift access|wheelchair/, quiet: /quiet|calm space|rest area/ };
-        const task = state.tasks.find((item) => known[suggestionId]?.test(`${item.title} ${item.note}`) || item.suggestionId === suggestionId || (suggestionId.startsWith("lesson-") && item.memoryId === suggestionId.slice(7)));
+        const task = activeTasks.find((item) => known[suggestionId]?.test(`${item.title} ${item.note}`) || item.suggestionId === suggestionId || (suggestionId.startsWith("lesson-") && item.memoryId === suggestionId.slice(7)));
         return task ? copy(task) : null;
       }
-      const existing = state.tasks.find((task) => normalize(task.title) === normalize(suggestion.task.title));
+      const existing = activeTasks.find((task) => normalize(task.title) === normalize(suggestion.task.title));
       if (existing) return copy(existing);
       const task = createTask(suggestion.task, actor);
       task.suggestionId = suggestionId;

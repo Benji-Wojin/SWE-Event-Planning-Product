@@ -291,6 +291,7 @@
     const panel=$('[data-wrap-review]',root);
     if(!panel||panel.closest('[hidden],[inert]')||!sameWrapReview(previous.closest('[data-wrap-review]'),panel))return false;
     const rows=$$('[data-action="wrap-review-task"]',panel).filter(button=>button.dataset.id===previous.dataset.id&&
+      (button.dataset.wrapReviewKind==='archived')===(previous.dataset.wrapReviewKind==='archived')&&
       !button.matches(':disabled')&&!button.closest('[hidden],[inert]'));
     const attention=previous.dataset.wrapAttention;
     for(const row of new Set([rows.find(button=>button.dataset.wrapAttention===attention),
@@ -1190,7 +1191,7 @@
     const receipt=ui.wrapFollowUpReceipt,receiptMarkup=receipt?wrapFollowUpReceiptMarkup(s):'';
     const lessonHasReceipt=receiptMarkup&&s.memories.some(lesson=>lesson.id===receipt.lessonId);
     const mayDraft=canCreateTasks()&&!window.GatherAccessLost;
-    const reuse=isOrganizer()&&s.tasks.some(task=>!ui.wrapMine||task.owner===ui.actor)
+    const reuse=isOrganizer()&&s.tasks.some(task=>!task.archivedAt&&(!ui.wrapMine||task.owner===ui.actor))
       ?'<button class="btn btn-secondary" data-action="reuse-checklist">Reuse tasks for another event</button>':'';
     const linked=new Map();
     if(!window.GatherAccessLost)for(const task of s.tasks){
@@ -1634,8 +1635,8 @@
     const panel=$('[data-wrap-review]',$('#viewRoot'));
     if(!panel?.contains(opener)||panel.dataset.wrapActor!==ui.actor||panel.dataset.wrapScope!==(ui.wrapMine?'mine':'all'))return false;
     const task=store.getState().tasks.find(item=>item.id===id&&(!ui.wrapMine||item.owner===ui.actor));
-    if(!task){render();toast('This task is no longer in this review.');return false;}
     const kind=opener.dataset.wrapReviewKind;
+    if(!task||!!task.archivedAt!==(kind==='archived')){render();toast('This task is no longer in this part of the review.');return false;}
     const organizer=isOrganizer();
     const openWork=kind==='owner-gap'||kind==='linked-results';
     const reviewed=organizer&&['completion','amendment'].includes(kind)&&openOrganizerReview(id,kind,'',true);
@@ -3380,6 +3381,26 @@
       historyById.set(message.id,message);
     const completionHistorySources=[...historyById.values()].filter(Boolean);
     const evidenceRecorders=new Map((taskState.members||[]).map(person=>[person.id,person.name]));
+    if(task.archivedAt){
+      const linked=dependencyInfo(task,taskState);
+      const status=task.requiresVerification&&!task.verifiedAt&&(task.reportedAt||task.status==='done')
+        ? '<span class="status-badge status-blocked">Verification was not recorded</span>':statusBadge(task.status);
+      openDialog(task.title,`<p class="notice">Archived task · Not included in active task views.</p>
+        <div class="inline">${status}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
+        <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
+        ${schedule.details(task,false,taskState.event,taskState.tasks)}
+        <section class="agreed-scope section-gap" aria-label="Task outcome"><h3>Saved outcome</h3><p>${h(task.scope||'No separate outcome recorded.')}</p></section>
+        <section class="task-context"><h3>Latest update</h3><p>${h(task.note||'No update recorded.')}</p><span class="muted">${h(updateAttribution(noteUpdate(task)))}</span></section>
+        ${task.completedAt?`<p class="completion-note">${h(completionText(task))} · ${timeLabel(task.completedAt)}</p>`:''}
+        ${window.GatherCompletionUI?.section(task,false,false,{historyOnly:true,completionSource,completionHistorySources,memberName:actor=>evidenceRecorders.get(actor)})||''}
+        ${linked.links.length?`<section class="task-dependencies section-gap" aria-label="Linked tasks"><h3>Saved task relationships</h3>${linked.links.map(link=>relationshipCard(task,link,linked,false)).join('')}</section>`:''}
+        ${window.GatherResourcesUI?.markup()||''}
+        <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments recorded.</p>'}</section>
+        ${priorityMarkup(task,false)}`,'',true,'task',true);
+      window.GatherCompletionUI?.mount($('#dialog'));
+      window.GatherResourcesUI?.mount(id,$('#dialog'),{historyOnly:true});
+      return;
+    }
     const scheduleChange=schedule.reconfirmation?.(task,taskState.event,ui.actor);
     const teammateReconfirmation=organizer&&!own&&schedule.awaitingScheduleAcceptance?.(task,taskState.members||[]);
     openDialog(task.title,`<div class="inline">${awaiting?'<span class="status-badge status-blocked">Awaiting organizer verification</span>':statusBadge(task.status)}<span class="category-label">${h(task.category)}</span>${sourceButton(task)}</div>
@@ -3388,7 +3409,6 @@
       ${batch?.parentId===id?relatedReceiptMarkup(task,taskState,batch.ids):''}
       <dl class="task-facts"><div><dt>Assigned to</dt><dd>${h(ownerInfo.name)}</dd></div><div><dt>Due</dt><dd>${dayLabel(task.dueDate)}</dd></div></dl>
       ${ownerInfo.notice}
-      ${task.archivedAt?'<p class="notice">Archived task · Not included in active task views.</p>':''}
       ${schedule.details(task,organizer,taskState.event,taskState.tasks,ui.overlapReviewDay)}
       ${scheduleChange?`<section aria-labelledby="taskScheduleReconfirmation"><h3 id="taskScheduleReconfirmation" tabindex="-1">Schedule change</h3>${scheduleChange}${reconfirmationTimelineAction(task,taskState)}</section>`:''}
       ${teammateReconfirmation?'<p class="notice">The schedule changed after this teammate accepted. Ask the assigned owner to review the current plan and accept again.</p>':''}

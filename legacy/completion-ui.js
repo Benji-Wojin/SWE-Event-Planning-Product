@@ -171,7 +171,7 @@
         : '')
     );
   }
-  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false,workspaceRevision,completionSource,
+  function section(task, canEdit, organizer=false, {canPrepareRevision=false,completionBlocked=false,workspaceRevision,completionSource,historyOnly=false,
     completionHistorySources=[],memberName}={}) {
     const review=task.status!=='done'&&!task.reportedAt?task.completionReview:null;
     const earlierSources=new Map(completionHistorySources.filter(message=>message?.appliedTaskId===task.id).map(message=>[message.id,message]));
@@ -198,7 +198,7 @@
     return (
       '<section class="completion-evidence section-gap"><h3 tabindex="-1">Completion details</h3><p class="muted">Shared context, not independent verification.</p>' +
       source +
-      (review?'<section class="notice" aria-label="Completion changes requested"><h4 tabindex="-1">Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. The owner can update the work and submit again. Nothing was verified; earlier submissions remain below.</p>'+
+      (review?'<section class="notice" aria-label="Completion changes requested"><h4 tabindex="-1">Changes requested</h4><p>'+h(review.note)+'</p><p class="muted">Organizer review · '+h(new Date(review.at).toLocaleString())+'. '+(historyOnly?'This is a saved review; the task is archived.':'The owner can update the work and submit again.')+' Nothing was verified; earlier submissions remain below.</p>'+
         (canPrepareRevision?(completionBlocked?'<p>Finish required work before preparing a revised report.</p>':'<button type="button" class="btn btn-secondary" data-action="prepare-revised-completion" data-id="'+h(task.id)+'">Prepare revised report</button>'):'')+'</section>':'')+
       (value && task.verifiedAt && task.completionEvidenceReviewAt!==task.verifiedAt
         ? '<p class="completion-amendment">This submission was amended after task verification. The amendment has not been reviewed; task verification is unchanged.</p>'

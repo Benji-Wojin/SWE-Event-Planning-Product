@@ -195,3 +195,19 @@ test('Wrap up cannot open an activity from another scope or after project access
     assert.ok(f.calls.every(([type]) => type !== 'task' && type !== 'review'));
   }
 });
+
+test('an archived Wrap up row cannot launch an active task or restore focus into an active group',()=>{
+  const f=fixture(),opener=f.reviewTask('report','archived');
+  f.mount(f.panel().append(f.group('archived',true).append(opener)));
+  assert.equal(f.context.openWrapReviewTask('report',opener),false);
+  assert.ok(!f.calls.some(([type])=>type==='task'||type==='review'));
+  f.snapshot=input(row('report',{archivedAt:now}));
+  assert.equal(f.context.openWrapReviewTask('report',opener),true);
+  assert.equal(f.ui.lastFocus,opener);
+  const live=f.reviewTask('report'),active=f.group('open').append(live);
+  f.mount(f.panel().append(active,f.scopeButton(),f.heading()));
+  f.calls.length=0;
+  assert.equal(f.context.restoreWrapReviewFocus(opener,f.root),true);
+  assert.deepEqual(f.calls,[['focus','selected scope']]);
+  assert.equal(active.open,false);
+});

@@ -29,21 +29,37 @@
     }finally{clearTimeout(timer);}
   }
   function markup(){return '<section class="task-resources section-gap" aria-label="Helpful links"><h3>Helpful links</h3><div data-resource-results aria-live="polite"><p class="muted">Loading links…</p></div></section>';}
+  function linkList(links){
+    return '<ul class="resource-links">'+links.map(link=>'<li><a href="'+escape(link.url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">'+escape(link.title)+'</a><span class="resource-host">'+escape(link.host)+'</span><p>'+escape(link.description)+'</p></li>').join('')+'</ul>';
+  }
   function render(node,data){
     const disabled=data.status==='unconfigured',busy=data.status==='loading'||data.recovering;
     const links=Array.isArray(data.links)?data.links:[];
     const message=disabled?'New link searches are unavailable while the Groq connection is being verified.':busy?'Finding helpful links…':data.status==='cooldown'?'Please wait a minute before searching again.':data.status==='error'?'The last search couldn’t finish. Try again.':links.length?'':data.status==='empty'?'No saved links yet. Open Search details to look for sources.':'No useful sources found. Try adding a city or region.';
-    node.innerHTML=(links.length?'<ul class="resource-links">'+links.map(link=>'<li><a href="'+escape(link.url)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">'+escape(link.title)+'</a><span class="resource-host">'+escape(link.host)+'</span><p>'+escape(link.description)+'</p></li>').join('')+'</ul>':'<p class="muted">'+message+'</p>')+
+    node.innerHTML=(links.length?linkList(links):'<p class="muted">'+message+'</p>')+
       (disabled&&links.length?'<p class="muted">'+message+'</p>':'')+'<details class="resource-details"><summary>Search details</summary><p>Groq searches using this task’s name, category and optional city. Emails, comments and private bookings are excluded.</p>'+
       (disabled?'':'<form id="resourceForm" class="resource-form"><label class="field">City or region (optional)<input name="location" maxlength="80" autocomplete="off" value="'+escape(data.location||'')+'" placeholder="e.g. Portland, Oregon"></label><button class="btn btn-secondary btn-small" type="submit" '+(busy?'disabled':'')+'>Find links</button></form>')+
       '<p class="muted">'+(data.generatedAt?'Searched '+escape(new Date(data.generatedAt).toLocaleDateString())+'. ':'')+'Suggestions, not endorsements. Confirm availability and suitability.</p></details>'+
       (data.recoveryError?'<p class="resource-error warning-note" role="alert">'+escape(data.recoveryError)+'</p><button type="button" class="btn btn-secondary btn-small" data-resource-retry>Reload links</button>':'');
   }
-  async function mount(taskId,container,{readOnly=false}={}){
+  async function mount(taskId,container,{readOnly=false,historyOnly=false}={}){
     if(!container)return;
     const node=container.querySelector('[data-resource-results]');
     if(!node)return;
     const url=endpoint(taskId);
+    if(historyOnly){
+      // History reads the saved snapshot without joining or reconciling active searches.
+      try{
+        const data=await request(url,taskId);
+        const links=Array.isArray(data?.links)?data.links:[];
+        if(node.isConnected)node.innerHTML=links.length
+          ?linkList(links)+'<p class="muted">Previously saved suggestions. Confirm they are still available and suitable.</p>'
+          :'<p class="muted">No saved links are available for this task.</p>';
+      }catch{
+        if(node.isConnected)node.innerHTML='<p class="muted">Saved links could not be loaded.</p>';
+      }
+      return;
+    }
     let started=Date.now(),pollTimer,lastData={status:'error',links:[],location:''},showing=false;
     let draft=container.dataset.resourceDraft;
     delete container.dataset.resourceDraft;

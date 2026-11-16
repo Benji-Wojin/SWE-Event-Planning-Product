@@ -8,6 +8,7 @@ import '../legacy/priorities.js';
 import '../legacy/recovery-ui.js';
 import '../legacy/schedule-ui.js';
 import '../legacy/planning-ui.js';
+import '../legacy/completion-ui.js';
 
 const create = () => GatherStore.createStore({ storage: null });
 const getTask = store => store.getState().tasks.find(t => t.id === 'dietary');
@@ -207,11 +208,11 @@ test('a blocker or fresh progress replaces a pending report; comments preserve a
   }
 });
 
-function taskDialogHtml(actor,id='dietary',identity,store=create()) {
+function taskDialogHtml(actor,id='dietary',identity,store=create(),modules={}) {
   const source=readFileSync('legacy/app.js','utf8');
   let html='';
   const context=vm.createContext({
-    store,ui:{actor},window:identity?{GatherIdentity:identity}:{},
+    store,ui:{actor},window:{...modules,GatherIdentity:identity},
     openDialog:(_title,body)=>{html=body;},toast:()=>{},
     GatherPriorities,GatherPlanningUI,icon:()=>'',reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),
@@ -229,17 +230,33 @@ function taskDialogHtml(actor,id='dietary',identity,store=create()) {
   return html;
 }
 
-test('archived task history remains visible without offering to claim it or focus it in the active map',()=>{
+test('archived task details preserve saved evidence, notes and comments without offering active task edits',()=>{
   const source=create();
   const task=source.addTask({title:'Historical welcome desk',note:'Saved historical update.',owner:''});
+  const report=source.addTask({title:'Historical submission',owner:'maya',requiresVerification:true});
+  source.reportCompletion(report.id,{note:'Saved completion note.'},'maya');
+  source.returnCompletion(report.id,'Saved organizer feedback.','jack');
+  source.addComment(report.id,'Saved historical comment.','maya');
   const snapshot=source.getState();
-  snapshot.tasks.find(row=>row.id===task.id).archivedAt='2026-11-01T12:00:00Z';
+  for(const row of snapshot.tasks.filter(row=>[task.id,report.id].includes(row.id)))row.archivedAt='2026-11-01T12:00:00Z';
   const store=GatherStore.createStore({storage:{getItem:key=>key===GatherStore.STORAGE_KEY?JSON.stringify(snapshot):null,setItem(){}}});
   const before=store.exportState();
   const html=taskDialogHtml('maya',task.id,undefined,store);
   assert.match(html,/Archived task · Not included in active task views/);
   assert.match(html,/Saved historical update\./);
   assert.doesNotMatch(html,/data-action="claim"|View link map/);
+  let resourceMounts=0;
+  const modules={GatherCompletionUI:{section:GatherCompletionUI.section,mount(){}},
+    GatherResourcesUI:{markup:()=>'',mount(id,_host,mode){assert.equal(id,report.id);assert.equal(mode.historyOnly,true);resourceMounts++;}}};
+  const owner=taskDialogHtml('maya',report.id,undefined,store,modules);
+  const organizer=taskDialogHtml('jack',report.id,undefined,store,modules);
+  for(const markup of [owner,organizer]){
+    assert.match(markup,/Saved organizer feedback/);
+    assert.match(markup,/Saved completion note/);
+    assert.match(markup,/Saved historical comment/);
+    assert.doesNotMatch(markup,/<form|submit again|data-action="(?:claim|map-focus|verify-task|prepare-revised-completion)"/);
+  }
+  assert.equal(resourceMounts,2);
   assert.equal(store.exportState(),before);
 });
 

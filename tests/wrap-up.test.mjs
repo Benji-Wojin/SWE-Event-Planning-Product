@@ -20,6 +20,24 @@ test('wrap-up partitions all saved tasks once, distinguishing pending verificati
   assert.deepEqual(ids(groups),{open:['todo','blocked','progress'],verification:['reported','legacy-done'],completed:['verified','done']});
   assert.equal(new Set(groups.flatMap(g=>g.tasks.map(t=>t.id))).size,7);assert.deepEqual(s,before);
 });
+test('archived task records stay in scoped history, out of active totals and reusable checklists',()=>{
+  const archive='2026-11-06T21:00:00Z';
+  const s=state([row('live'),row('retired-open',{archivedAt:archive,completionReview:{note:'PRIVATE_REVISION'}}),
+    row('retired-awaiting',{archivedAt:archive,status:'done',requiresVerification:true,note:'PRIVATE_NOTE'}),
+    row('retired-verified',{archivedAt:archive,status:'done',requiresVerification:true,verifiedAt:archive,verifiedBy:'jack',completionEvidence:{note:'PRIVATE_AMENDMENT'}}),
+    row('retired-other',{archivedAt:archive,owner:'jack'}),row('retired-unassigned',{archivedAt:archive,owner:''})]);
+  const scope={mine:true,actor:'maya'},before=structuredClone(s),html=GatherWrapUp.markup(s,{h,scope,organizer:true});
+  assert.deepEqual(ids(GatherWrapUp.groups(s,scope)),{open:['live'],verification:[],completed:[]});
+  assert.match(html,/1 task in the active review/);
+  const history=html.match(/<details[^>]*data-wrap-group="archived"[^>]*>([\s\S]*?)<\/details>/);
+  assert.match(history[0],/data-wrap-default="closed"><summary>Archived task records · 3/);
+  assert.match(history[1],/retired-open[\s\S]*Last status: To do[\s\S]*retired-awaiting[\s\S]*Verification was not recorded[\s\S]*retired-verified[\s\S]*Verified by Jack/);
+  assert.doesNotMatch(html,/retired-other|retired-unassigned|PRIVATE_|data-wrap-attention|data-wrap-review-kind="(?:completion|amendment|returned)"/);
+  assert.match(GatherWrapUp.markup(s,{h}),/Archived task records · 5/);
+  assert.deepEqual(GatherWrapUp.reusableTitles(s,scope,{withIdentity:true}),[{title:'live',group:'Still open',id:'live'}]);
+  assert.deepEqual(GatherWrapUp.reusableTitles({ ...s,tasks:s.tasks.slice(1) }),[]);
+  assert.deepEqual(s,before);
+});
 test('My tasks never includes other owners or unassigned work; empty personal scope is not an event all-clear',()=>{
   const s=state([row('mine'),row('other',{owner:'jack'}),row('unassigned',{owner:''}),row('done',{owner:'maya',status:'done'})]);
   assert.deepEqual(ids(GatherWrapUp.groups(s,{mine:true,actor:'maya'})),{open:['mine'],verification:[],completed:['done']});

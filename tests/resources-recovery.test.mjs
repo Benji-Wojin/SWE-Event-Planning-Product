@@ -38,7 +38,7 @@ function fixture(fetcher) {
         }
       },
     };
-    return { dataset: draft === undefined ? {} : { resourceDraft: draft }, querySelector: () => node, node, elements,
+    return { dataset: draft === undefined ? {} : { resourceDraft: draft }, querySelector: () => node, node, elements, listeners,
       submit() { listeners.submit({ target: elements.form, preventDefault() {}, stopPropagation() {} }); },
       reload() { listeners.click({ target: { closest: selector => selector === '[data-resource-retry]' ? {} : null }, preventDefault() {} }); },
     };
@@ -124,6 +124,66 @@ test('read-only activity redraw checks cached links without generating an empty 
   assert.match(c.node.html,/No saved links yet/);
   c.submit(); await flush();
   assert.deepEqual(f.calls.map(c => c.method),['GET','POST'],'a later explicit search is still available');
+});
+
+test('archived history renders saved links with one scoped GET and no search controls', async () => {
+  const link={url:'https://www.usa.gov/?topic=a&format=b',title:'Saved <title>',host:'www.usa.gov',description:'Saved & checked'};
+  const f=fixture(()=>response({status:'unconfigured',links:[link]}));
+  const c=f.container();
+  await f.mount(c,'qa & task',{historyOnly:true});
+  assert.equal(f.calls.length,1);
+  const [call]=f.calls;
+  const query=new URLSearchParams(call.url.split('?')[1]);
+  assert.equal(query.get('taskId'),'qa & task');
+  assert.equal(query.get('project'),'qa-project');
+  assert.equal(call.method,'GET');
+  assert.equal(call.body,undefined);
+  assert.equal(call.credentials,'same-origin');
+  assert.match(c.node.html,/https:\/\/www\.usa\.gov\/\?topic=a&amp;format=b/);
+  assert.match(c.node.html,/Saved &lt;title&gt;/);
+  assert.match(c.node.html,/Saved &amp; checked/);
+  assert.doesNotMatch(c.node.html,/<form|<details|Find links|Reload links|Groq/);
+  assert.deepEqual(c.listeners,{});
+});
+
+test('archived history does not poll or retry an empty, running, or failed search', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  for(const status of ['empty','loading','unconfigured','error']){
+    const f=fixture(()=>response({status,links:[]}));
+    const c=f.container();
+    await f.mount(c,'qa-task',{historyOnly:true});
+    t.mock.timers.tick(65000);
+    await flush();
+    assert.deepEqual(f.calls.map(call=>call.method),['GET'],status);
+    assert.match(c.node.html,/No saved links are available/);
+    assert.doesNotMatch(c.node.html,/<form|<button|Search details/);
+  }
+  const f=fixture(()=>response({error:'Provider diagnostics'},false));
+  const c=f.container();
+  await f.mount(c,'qa-task',{historyOnly:true});
+  assert.match(c.node.html,/Saved links could not be loaded/);
+  assert.doesNotMatch(c.node.html,/Provider diagnostics|<form|<button/);
+  assert.deepEqual(f.calls.map(call=>call.method),['GET']);
+});
+
+test('archived history only uses its own GET while an active search for the same task is running', async () => {
+  const pending=deferred();
+  let getCount=0;
+  const f=fixture((_,options)=>options.method==='POST'?pending.promise:response(++getCount===1?ready():{
+    status:'loading',links:[],
+  }));
+  const active=f.container();
+  await f.mount(active);
+  active.submit();
+  await flush();
+  const history=f.container();
+  await f.mount(history,'qa-task',{historyOnly:true});
+  assert.match(history.node.html,/No saved links are available/);
+  assert.deepEqual(f.calls.map(call=>call.method),['GET','POST','GET']);
+  pending.resolve(response(ready('current')));
+  await flush();
+  assert.deepEqual(f.calls.map(call=>call.method),['GET','POST','GET']);
+  assert.doesNotMatch(history.node.html,/<form|<button/);
 });
 
 test('pending requests for equal task IDs in different projects remain separate', async () => {
