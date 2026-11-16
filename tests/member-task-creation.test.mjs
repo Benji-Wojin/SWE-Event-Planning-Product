@@ -39,6 +39,6 @@ test('UI exposes the organizer toggle and limits the teammate task form',()=>{
   assert.match(setup,/Let teammates create tasks/);
   assert.match(setup,/membersCanCreateTasks: event.membersCanCreateTasks === true/);
   assert.match(setup,/aria-describedby="task-creation-help"/);
-  assert.match(app,/const addButton = \(\) => canCreateTasks\(\)/);
+  assert.match(app,/const addButton = \([^\n]*?\) => canCreateTasks\(\)\?/);
   assert.match(app,/\[ui.actor,'Me · '\+member\(ui.actor\).name\]/);
 });
