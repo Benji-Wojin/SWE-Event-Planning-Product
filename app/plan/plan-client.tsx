@@ -486,48 +486,45 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
     setError('');
     setNotice('Private draft updated. Review the items before adding them; shared tasks have not changed.');
   }
-  async function save(forApproval = false) {
+  async function save() {
+    const draft=data.draft, generation=draft?.generation, revision=data.revision+1;
     const result = await api(query, {
       action: 'save',
       revision: data.revision,
       brief,
       items,
-      generation: data.draft?.generation,
-    });
+      generation,
+    }, AbortSignal.timeout(approvalTimeout));
     // The save response is a fresh read. Another tab can change the draft after
     // our save commits but before that read. Keep this tab's inputs in that case.
-    if (forApproval && (
-      result.revision !== data.revision + 1 ||
-      !result.draft ||
-      result.draft.generation !== data.draft?.generation ||
-      result.receipt
-    )) {
-      throw new Error('The private draft changed while saving. This action did not add any tasks. Your edits are still visible here. Copy what you want to keep, then use Reload saved draft to review the latest version.');
+    let confirmed=false;
+    if(result.revision===revision&&!result.receipt&&result.status===(draft?'ready':'empty')&&
+      Number.isSafeInteger(result.workspaceRevision)&&result.workspaceRevision>=data.workspaceRevision&&
+      (draft?typeof generation==='string'&&!!generation&&result.draft?.generation===generation&&
+        result.draft.source===draft.source&&Array.isArray(result.draft.items):result.draft===null)){
+      try{
+        // The server validated the brief against the event date in this response.
+        const eventDate=result.event.date;
+        confirmed=savedEditable(result.brief,result.draft?.items||[],eventDate)===savedEditable(brief,items,eventDate);
+      }catch{/* An unexpected response cannot confirm this save. */}
     }
+    if(!confirmed)throw new Error('We couldn’t confirm this version was saved. Your edits are still here. This save didn’t add any tasks or start a new draft. Copy anything you want to keep before using Reload saved draft.');
     accept(result, false);
     request.current = null;
     starterRequest.current = null;
     return result;
   }
+  function canStartFromSavedContext(latest: any) {
+    if(latest.workspaceRevision===data.workspaceRevision)return true;
+    focusNotice.current=true;
+    setNotice('Your private edits were saved. The project changed, so no new draft was started and nothing was sent to AI. Review the current project details, then choose to start a new draft again.');
+    return false;
+  }
   async function saveAndReturnToGuide() {
     if (!canPauseGuide || pending.current) return;
     await run(async () => {
-      const revision = data.revision + 1;
-      const generation = data.draft?.generation;
-      const expected = savedEditable(brief, items, data.event.date);
-      const result = await api(query, {action:'save', revision:data.revision, brief, items, generation},
-        AbortSignal.timeout(approvalTimeout));
-      let confirmed = false;
-      if (result.revision === revision && !result.receipt && result.status === (data.draft ? 'ready' : 'empty') &&
-        (data.draft ? result.draft?.generation === generation && Array.isArray(result.draft.items) : !result.draft)) {
-        try { confirmed = savedEditable(result.brief, result.draft?.items || [], data.event.date) === expected; }
-        catch { /* An unexpected response cannot confirm this save. */ }
-      }
-      if (!confirmed) throw new Error('We couldn’t confirm this version was saved. Your edits are still here. Copy anything you want to keep before reloading the saved draft.');
-      accept(result, false);
-      request.current = null;
-      starterRequest.current = null;
-      setGuidePause({query, href:projectUrl, revision});
+      const result=await save();
+      setGuidePause({query, href:projectUrl, revision:result.revision});
     });
   }
   async function importChecklist() {
@@ -606,6 +603,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       if (!starterRequest.current) {
         // Save edited work first; a failed replacement must leave the old draft recoverable.
         const latest = draftDirty && data.draft && !applied ? await save() : data;
+        if(!canStartFromSavedContext(latest))return;
         starterRequest.current = {
           action:'starter', revision:latest.revision, workspaceRevision:latest.workspaceRevision,
           requestId:crypto.randomUUID(), replace:!!latest.draft,
@@ -630,6 +628,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       if (!request.current) {
         // Preserve edited drafts before regeneration so a provider failure cannot discard them.
         const latest = draftDirty && !applied ? await save() : data;
+        if(!canStartFromSavedContext(latest))return;
         request.current = {
           action: 'generate',
           revision: latest.revision,
@@ -1677,7 +1676,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                 onClick={() =>
                   run(async () => {
                     const reviewedWorkspaceRevision = data.workspaceRevision;
-                    const latest = draftDirty ? await save(true) : data;
+                    const latest = draftDirty ? await save() : data;
                     // Saving a private draft also reads the current project. Do not
                     // use that newer revision as approval the organizer never gave.
                     if (latest.workspaceRevision !== reviewedWorkspaceRevision || latest.contextChanged) {

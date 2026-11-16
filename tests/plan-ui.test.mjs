@@ -431,6 +431,130 @@ test('guided pause cannot navigate after an unconfirmed or mismatched private sa
   }
 });
 
+test('ordinary private save accepts normalized edits and a newer project view without adding or generating anything',async()=>{
+  for(const withDraft of [false,true]){
+    const initial=withDraft?fixture():{...fixture(),revision:0,brief:{...brief,description:''},status:'empty',draft:null};
+    if(withDraft)initial.draft.source='pasted';
+    const revisedBrief='Fictional brief to pick up later.',revisedItem='Fictional edited task title';
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(input?.action!=='save')return;
+      assert.equal(input.revision,initial.revision);assert.equal(input.generation,initial.draft?.generation);
+      if(!withDraft)assert.deepEqual(input.items,[]);
+      const latest=pausedPlanResult(input,saved);
+      context.value={...latest,workspaceRevision:initial.workspaceRevision+1,contextChanged:withDraft,
+        event:{...saved.event,name:'Fictional newly renamed project'}};
+    },initial);
+    try {
+      await app.start();await app.edit('plan-brief',`  ${revisedBrief}  `);
+      if(withDraft){await app.edit('title-one',`  ${revisedItem}  `);await app.check('include-one',false);}
+      await app.click(withDraft?'Save draft':'Save brief');
+      assert.deepEqual(app.requests.map(row=>row.action),['get','save']);
+      assert.equal(app.find('plan-brief').props.value,revisedBrief);assert.equal(app.saved.workspaceRevision,initial.workspaceRevision+1);
+      assert.equal(app.saved.status,withDraft?'ready':'empty');assert.equal(app.saved.receipt,null);
+      if(withDraft){
+        assert.equal(app.find('title-one').props.value,revisedItem);assert.equal(app.find('include-one').props.checked,false);
+        assert.ok(planButton(app.tree,'Recheck pasted draft'),'the exact save may learn the project context is stale');
+      }else assert.equal(app.saved.draft,null);
+      assert.match(text(app.tree),/draft saved/i);
+      assert.equal(app.find('plan-receipt-heading'),undefined);
+    } finally {app.dispose();}
+  }
+});
+
+test('a later or mismatched save response retains local edits and blocks staged replacement or generation',async()=>{
+  for(const action of ['Save draft','Replace with starter checklist','Generate another draft','Add 1 selected items to project'])
+  for(const change of ['same generation later revision','other generation','other source','wrong status','missing draft',
+    'different brief','different proposal','different selection','concurrent receipt']){
+    const initial=fixture();initial.draft.source='pasted';
+    const localBrief='Fictional private edits in this tab',localTitle='Fictional room check',localNote='Fictional private note to retain';
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(input?.action!=='save')return;
+      const reply=pausedPlanResult(input,saved);
+      if(change==='same generation later revision')reply.revision++;
+      if(change==='other generation')reply.draft.generation='different-fictional-generation';
+      if(change==='other source')reply.draft.source='starter';
+      if(change==='wrong status')reply.status='interrupted';
+      if(change==='missing draft')reply.draft=null;
+      if(change==='different brief')reply.brief.description='Different fictional brief';
+      if(change==='different proposal')reply.draft.items[0].note='Different fictional note';
+      if(change==='different selection')reply.draft.items[0].included=!reply.draft.items[0].included;
+      if(change==='concurrent receipt')reply.receipt={generation:saved.draft.generation,taskIds:['different-fictional-task']};
+      return Response.json(reply);
+    },initial);
+    const variant=`${action}: ${change}`;
+    try {
+      await app.start();await app.edit('plan-brief',localBrief);await app.edit('title-one',localTitle);await app.edit('note-one',localNote);
+      await app.click(action);
+      assert.deepEqual(app.requests.map(row=>row.action),['get','save'],variant);
+      assert.equal(app.find('plan-brief').props.value,localBrief,variant);assert.equal(app.find('title-one').props.value,localTitle,variant);
+      assert.equal(app.find('note-one').props.value,localNote,variant);assert.equal(app.find('include-one').props.checked,true,variant);
+      assert.equal(app.find('plan-receipt-heading'),undefined,variant);
+      assert.deepEqual(app.navigations,[],variant);
+      assert.match(text(nodes(app.tree).find(node=>node.props.role==='alert')),/reload|edits are still|couldn’t confirm|changed while saving/i,variant);
+    } finally {app.dispose();}
+  }
+});
+
+test('an unconfirmed first brief save stops before the staged AI request',async()=>{
+  for(const change of ['later empty save','another draft arrived','different brief']){
+    const initial={...fixture(),revision:0,brief:{...brief,description:''},status:'empty',draft:null};
+    const local='Fictional new brief that should stay in the editor';
+    const app=harness(context=>{
+      if(context.input?.action!=='save')return;
+      const reply=pausedPlanResult(context.input,context.saved);
+      if(change==='later empty save')reply.revision++;
+      if(change==='another draft arrived'){reply.draft=fixture().draft;reply.status='ready';}
+      if(change==='different brief')reply.brief.description='Different saved brief';
+      return Response.json(reply);
+    },initial);
+    try {
+      await app.start();await app.edit('plan-brief',local);await app.click('Generate draft');
+      assert.deepEqual(app.requests.map(row=>row.action),['get','save'],change);
+      assert.equal(app.find('plan-brief').props.value,local,change);
+      assert.equal(app.find('include-one'),undefined,change);
+      assert.match(text(nodes(app.tree).find(node=>node.props.role==='alert')),/edits are still|couldn’t confirm|changed while saving/i,change);
+    } finally {app.dispose();}
+  }
+});
+
+test('a verified private save that learns of newer project changes pauses staged generation and replacement',async()=>{
+  for(const [label,method,firstBrief] of [
+    ['Replace with starter checklist','starter',false],
+    ['Generate another draft','generate',false],
+    ['Generate draft','generate',true],
+  ]){
+    const initial=firstBrief?{...fixture(),revision:0,brief:{...brief,description:''},status:'empty',draft:null}:fixture();
+    const edited='Fictional revision remains saved before proposing new work.';
+    const app=harness(context=>{
+      const {input,saved}=context;
+      if(input?.action==='save')context.value={...pausedPlanResult(input,saved),workspaceRevision:initial.workspaceRevision+1,
+        event:{...saved.event,name:'Updated fictional project'}};
+      if(input?.action===method){
+        assert.equal(input.revision,initial.revision+1,label);
+        assert.equal(input.workspaceRevision,initial.workspaceRevision+1,label);
+        assert.equal(saved.brief.description,edited,label);
+        context.value={...saved,status:'ready',revision:saved.revision+1,draft:{...fixture().draft,
+          ...(method==='starter'?{source:'starter'}:{}),generation:'separate-fictional-generation'}};
+      }
+    },initial);
+    try {
+      await app.start();await app.edit('plan-brief',`  ${edited}  `);
+      if(!firstBrief)await app.edit('note-one','Fictional proposal edit');
+      await app.click(label);
+      assert.deepEqual(app.requests.map(row=>row.action),['get','save'],label);
+      assert.equal(app.find('plan-brief').props.value,edited,label);
+      if(!firstBrief)assert.equal(app.find('note-one').props.value,'Fictional proposal edit',label);
+      assert.match(text(app.tree),/private edits were saved.*project changed.*no new draft was started.*nothing was sent to AI/i,label);
+      assert.equal(app.find('plan-receipt-heading'),undefined,label);
+      await app.click(label);
+      assert.deepEqual(app.requests.map(row=>row.action),['get','save',method],label);
+      assert.equal(app.find('plan-receipt-heading'),undefined,label);
+    } finally {app.dispose();}
+  }
+});
+
 test('unimported checklist text or a blank brief cannot be lost through the guided save and return shortcuts', async () => {
   for (const [field, value, editDraft, help] of [
     ['plan-pasted-checklist', '- Fictional item not yet imported', false, /Import or clear your pasted checklist/],
@@ -1347,7 +1471,7 @@ test('a newer private draft from another tab does not replace local review or ge
     assert.equal(active.find('title-one').props.value, 'Task reviewed in this tab');
     assert.equal(active.find('include-one').props.checked, true);
     const alert = nodes(active.tree).find(node => node.props.role === 'alert');
-    assert.match(text(alert), /draft changed while saving.*did not add any tasks.*Reload saved draft/);
+    assert.match(text(alert), /couldn’t confirm this version was saved.*didn’t add any tasks.*Reload saved draft/i);
   } finally {
     active.dispose();
   }
