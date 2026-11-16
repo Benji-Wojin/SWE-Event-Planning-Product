@@ -215,6 +215,7 @@ function taskDialogHtml(actor,id='dietary',identity,store=create(),modules={}) {
   let html='';
   const context=vm.createContext({
     store,ui:{actor},window:{...modules,GatherIdentity:identity},
+    organizerDecisionConflicts:new WeakMap(),paintRetainedOrganizerDecision:()=>{},
     openDialog:(_title,body)=>{html=body;},toast:()=>{},
     GatherPriorities,GatherPlanningUI,icon:()=>'',reason:task=>GatherPriorities.analyze(task,[]),
     h:value=>String(value??'').replaceAll('<','&lt;'),

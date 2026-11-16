@@ -68,7 +68,7 @@ function fixture({owner='maya',editing=false,initial='completed',withDraft=true}
   }
   const context=vm.createContext({
     ui,window,document,$:find,$$:(_selector,root)=>root===completionForm?Object.values(fields).filter(item=>typeof item==='object'):[],
-    teammateUpdateConflicts:new WeakMap(),
+    teammateUpdateConflicts:new WeakMap(),organizerDecisionConflicts:new WeakMap(),
     recovery:{syncResponse(form){form.dataset.responseMode=form.elements.response.value;calls.push(['sync',form.elements.response.value]);}},
     store:{
       getState:()=>({tasks:[task],demoGeneration:1}),getSnapshotRevision:()=>21,

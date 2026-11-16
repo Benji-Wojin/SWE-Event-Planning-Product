@@ -20,6 +20,7 @@
   let joinWelcomeScope = '', joinWelcomeLocal = false;
   const unconfirmedRelatedSaves=new Map();
   const teammateUpdateConflicts=new WeakMap();
+  const organizerDecisionConflicts=new WeakMap();
   const guideSteps = [
     ['task_created', 2, 'Add your first task', 'Name one real thing that needs doing. After saving, we’ll show you where it lives and how to work with it.', 'guide-add-task', 'Add a task', 'Try “Confirm the venue” or “Draft the event agenda.”'],
     ['budget_viewed', 3, 'Explore Budget', 'Get familiar with where your team can track estimates, committed costs, and payments already made.', 'guide-budget', 'Open Budget', 'Just open the page. No amounts are required and no money moves.'],
@@ -489,6 +490,7 @@
   }
   function hasUnsavedFields(root,exclude=[],skipForm=null) {
     return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||
+      !!root.querySelector?.('#previousOrganizerDecisionDraft')||
       root.dataset?.budgetUnconfirmed==='true'||root.dataset?.budgetRecoveryDraft==='true'||
       !!root.dataset?.completionAttachmentRecovery||root.dataset?.completionSaveUnconfirmed==='true'||
       !!root.dataset?.completionModeUnavailable||
@@ -2922,7 +2924,7 @@
     }
     if(ui.dialogKind==='task'){
       paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();
-      if($('#responseForm [data-teammate-update-conflict]'))return;
+      if($('#responseForm [data-teammate-update-conflict]')||$('#recoveryDecisionForm [data-organizer-decision-conflict]'))return;
     }
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications')return;
     const ownerChoices=ui.dialogKind==='task'&&$('#receiptOwnerChoicesStatus',$('#dialog'));
@@ -3888,6 +3890,12 @@
     const updateConflict=sameTask&&!discardDrafts&&submittedForm!=='responseForm'?
       teammateUpdateConflicts.get($('#responseForm',$('#dialog'))):null;
     const expanded=sameTask?$$('#dialog details[open]').map(el=>el.className):[];
+    const keepDecisionDraft=sameTask&&!discardDrafts&&isOrganizer()&&!window.GatherAccessLost;
+    const previousDecision=keepDecisionDraft&&submittedForm!=='recoveryDecisionForm'?$('#recoveryDecisionForm',$('#dialog')):null;
+    const previousRequest=previousDecision?.elements.requestId.defaultValue;
+    const requestChanged=!!previousDecision&&previousRequest!==(GatherPriorities.pendingRequest(task)?.id||'');
+    const retainedDecision=[keepDecisionDraft?$('#previousOrganizerDecisionDraft textarea',$('#dialog'))?.value:'',
+      requestChanged&&hasUnsavedFields(previousDecision)?organizerDecisionDraftText(previousDecision):''].filter(Boolean).join('\n\n——\n\n');
     const previousFocus=sameTask?document.activeElement:null;
     const scroll=sameTask?$('#dialog').scrollTop:0;
     ui.detailId=id;
@@ -3924,6 +3932,7 @@
         ${window.GatherResourcesUI?.markup()||''}
         <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments recorded.</p>'}</section>
         ${priorityMarkup(task,false)}`,'',true,'task',true);
+      paintRetainedOrganizerDecision(retainedDecision);
       window.GatherCompletionUI?.mount($('#dialog'));
       window.GatherResourcesUI?.mount(id,$('#dialog'),{historyOnly:true});
       return;
@@ -3947,7 +3956,7 @@
       ${awaiting?`<div class="notice section-gap">${h(task.reportedBy)} reported this complete. The organizer needs to confirm it.
         ${completionBlocked?`<p id="verificationRequiredWork">Verification is waiting on required work. See Task relationships below.${organizer?' You can still request changes to this report.':''}</p>`:''}
         ${organizer?`<button type="button" class="btn btn-primary btn-small" data-action="verify-task" ${completionReviewAttributes} ${completionBlocked?'disabled aria-describedby="verificationRequiredWork"':''}>Verify completion</button><details class="completion-return"><summary>Request changes</summary><form id="returnCompletionForm" ${completionReviewAttributes} class="section-gap"><label class="field">What needs changing?<textarea name="note" required rows="3" maxlength="3000" placeholder="Explain which agreed result is missing or what needs another check."></textarea></label><p class="muted">Shared with the team. Returning the report keeps the task incomplete and retains its earlier note and attachments. The owner can revise and resubmit. No email is sent.</p><button class="btn btn-secondary btn-small" type="submit">Return completion for changes</button></form></details>`:''}</div>`:''}
-      ${recovery.recoveryMarkup(task,organizer)}
+      ${recovery.recoveryMarkup(task,organizer,reviewedWorkspace)}
       ${dependencyMarkup(task)}
       ${handoffMarkup(task)}
       ${own&&task.status!=='done'?recovery.responseMarkup(task,awaiting,completionBlocked,store.getSnapshotRevision?.()):!own&&!organizer&&task.owner?`<p class="notice section-gap">${h(member(task.owner).name)} reports progress on this task. You can join the conversation below.</p>`:''}
@@ -3963,6 +3972,7 @@
       restoreTaskCompletionDraftContext(completionDraftContext);
       const uploadedFiles=[];
       for(const draft of drafts){
+        if(draft.form==='recoveryDecisionForm'&&(requestChanged||draft.name==='requestId'))continue;
         const form=document.getElementById(draft.form),input=form?.elements.namedItem(draft.name);
         if(!input)continue;
         if(draft.files){
@@ -3997,6 +4007,11 @@
     if(updateConflict&&teammateUpdateInScope(responseForm,updateConflict)){
       teammateUpdateConflicts.set(responseForm,updateConflict);paintTeammateUpdateConflict(responseForm);
     }
+    const decisionForm=$('#recoveryDecisionForm',$('#dialog')),decisionConflict=organizerDecisionConflicts.get(previousDecision);
+    if(decisionConflict&&organizerDecisionInScope(decisionForm,decisionConflict)){
+      organizerDecisionConflicts.set(decisionForm,decisionConflict);paintOrganizerDecisionConflict(decisionForm);
+    }
+    paintRetainedOrganizerDecision(retainedDecision);
     window.GatherCompletionUI?.mount($('#dialog'));
     for(const {id:formId} of completionDraftContext){
       const form=$('#'+formId,$('#dialog'));
@@ -4647,6 +4662,135 @@
     $('[data-completion-attachment-recovery]',form)?.remove();
     $('.form-error',form)?.remove();
   }
+  const organizerDecisionActions={date:'Agree a new date',reassign:'Reassign the task',scope:'Reduce the scope',checkin:'Keep the plan and set a check-in'};
+  function paintRetainedOrganizerDecision(text) {
+    if(!text)return;
+    const notice=document.createElement('section');notice.id='previousOrganizerDecisionDraft';notice.className='notice section-gap';
+    notice.innerHTML='<p role="status">The request changed. This draft belongs to the previous request; copy it if you need it.</p><label class="field">Previous unsent decision<textarea rows="4" readonly>'+h(text)+'</textarea></label>';
+    $('.dialog-body',$('#dialog'))?.prepend(notice);
+  }
+  function organizerDecisionInScope(form,review) {
+    return !!form?.isConnected&&!!review&&!window.GatherAccessLost&&isOrganizer()&&window.GatherMode&&!window.GatherMode.demo&&
+      ui.dialogKind==='task'&&ui.detailId===review.id&&ui.actor===review.actor&&ui.view===review.view&&window.GatherMode.projectId===review.project&&
+      !$('#dialogBackdrop').hidden&&form.dataset.id===review.id&&form===$('#recoveryDecisionForm',$('#dialog'))&&
+      form.elements.requestId.defaultValue===review.requestId&&form.elements.requestId.value===review.requestId;
+  }
+  function organizerDecisionReview(form) {
+    if(!store.refresh||!window.GatherMode||window.GatherMode.demo||!isOrganizer())return null;
+    const {id,requestKind,requestAuthor,decisionZone}=form.dataset,requestId=form.elements.requestId?.defaultValue;
+    const taskRevision=Number(form.dataset.revision),workspaceRevision=Number(form.dataset.workspaceRevision);
+    const review={id,actor:ui.actor,view:ui.view,project:window.GatherMode.projectId,taskRevision,workspaceRevision,
+      requestId,requestKind,requestAuthor,zone:decisionZone};
+    return requestId&&['date','help'].includes(requestKind)&&requestAuthor&&Number.isSafeInteger(taskRevision)&&
+      Number.isSafeInteger(workspaceRevision)&&organizerDecisionInScope(form,review)?review:null;
+  }
+  function organizerDecisionDraftText(form) {
+    const {action,dueDate,owner,scope,note,reviewAfter,confirmHardDeadline}=form.elements,mode=action.value;
+    const detail=mode==='date'&&dueDate.value?'New due date: '+dueDate.value+(confirmHardDeadline?.checked?' (external deadline change confirmed)':''):
+      mode==='reassign'&&owner.value?'New owner: '+(owner.selectedOptions[0]?.textContent||owner.value):
+      mode==='scope'&&scope.value?'Smaller outcome: '+scope.value:'';
+    return [Object.hasOwn(organizerDecisionActions,mode)?organizerDecisionActions[mode]:'Plan decision',detail,note.value,
+      reviewAfter.value?'Next check-in: '+reviewAfter.value:''].filter(Boolean).join('\n');
+  }
+  function paintOrganizerDecisionConflict(form) {
+    const review=organizerDecisionConflicts.get(form);
+    if(!organizerDecisionInScope(form,review))return;
+    let panel=$('[data-organizer-decision-conflict]',form);
+    if(!panel){
+      panel=document.createElement('div');panel.className='notice section-gap';panel.dataset.organizerDecisionConflict='true';
+      panel.innerHTML='<p role="status" data-organizer-decision-status></p><div class="inline"><button type="button" class="btn btn-secondary" data-action="refresh-organizer-decision">Check latest request</button><button type="button" class="btn btn-secondary" data-action="copy-organizer-decision">Copy draft</button></div>';
+      form.prepend(panel);
+    }
+    $('[data-organizer-decision-status]',panel).textContent=review.message;
+    $('button[type="submit"]',form)?.setAttribute('aria-disabled','true');
+  }
+  function markOrganizerDecisionConflict(form,review) {
+    if(!organizerDecisionInScope(form,review))return false;
+    review.message='This decision wasn’t saved because the project changed. Your draft is still here. Check the latest request before confirming it.';
+    organizerDecisionConflicts.set(form,review);
+    $('#dialogStaleNotice',$('#dialog'))?.remove();
+    paintOrganizerDecisionConflict(form);showRecoveryWriteConflict(review.workspaceRevision);
+    return true;
+  }
+  async function copyOrganizerDecision(button) {
+    const form=button.closest('form'),review=organizerDecisionConflicts.get(form);
+    const current=()=>organizerDecisionInScope(form,review)&&!document.hidden&&button===$('[data-action="copy-organizer-decision"]',form);
+    if(!current())return;
+    const copied=await copyText(organizerDecisionDraftText(form));
+    if(!current())return;
+    toast(copied?'Draft copied. Nothing was sent.':'Couldn’t copy automatically. Copy the note and other decision fields from the form.');
+    if(!copied){form.elements.note.focus();form.elements.note.select();}
+  }
+  function organizerDecisionCandidateReason(revision,state,review,form,action) {
+    if(!Number.isSafeInteger(revision)||revision<=review.workspaceRevision||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision))
+      return 'The latest project revision couldn’t be confirmed. Try checking again.';
+    const task=state.tasks?.find(item=>item.id===review.id);
+    if(!task||task.archivedAt)return 'This task is no longer available.';
+    const request=GatherPriorities.pendingRequest(task);
+    if(!request||request.id!==review.requestId||request.kind!==review.requestKind||request.createdBy!==review.requestAuthor)
+      return 'This request was already handled or replaced. This draft won’t be applied to a different request.';
+    if(task.status==='done'||task.reportedAt&&task.requiresVerification&&!task.verifiedAt)
+      return 'The task now has a completion to review or is already complete.';
+    if(task.revision!==review.taskRevision||request.originalOwner!==task.owner||request.originalDueDate!==task.dueDate)
+      return 'The task or its plan changed after you opened this decision.';
+    const {reviewAfter,dueDate,owner}=form.elements,zone=state.event.timeZone||'';
+    if(zone!==review.zone)return 'The event time zone changed. Review the decision dates again.';
+    if(reviewAfter.value&&reviewAfter.value<GatherCalendar.dayKey(new Date(),zone,1))
+      return 'The next check-in is now too early. Choose a later date, then check again.';
+    if(action==='date'&&dueDate.value&&(dueDate.value===task.dueDate||dueDate.value<GatherCalendar.dayKey(new Date(),zone)))
+      return 'The proposed due date needs a fresh review. Adjust the date, then check again.';
+    if(action==='reassign'&&owner.value&&(owner.value===task.owner||!state.members?.some(person=>person.id===owner.value&&assignableTaskOwner(person))))
+      return 'The selected teammate is no longer available for reassignment.';
+    return '';
+  }
+  async function refreshOrganizerDecision(button) {
+    const form=button.closest('form'),review=organizerDecisionConflicts.get(form),dialog=$('#dialog');
+    const current=()=>organizerDecisionInScope(form,review)&&organizerDecisionConflicts.get(form)===review&&
+      button===$('[data-action="refresh-organizer-decision"]',form);
+    if(!current()||ui.syncing||ui.pendingSave||document.hidden)return;
+    const {action,dueDate,reviewAfter}=form.elements,mode=action.value;
+    const siblingDirty=()=>$$('form',dialog).some(other=>other!==form&&hasUnsavedFields(other));
+    const canKeepFields=()=>Object.hasOwn(organizerDecisionActions,mode)&&mode===action.value&&
+      !reviewAfter.validity.badInput&&(mode!=='date'||!dueDate.validity.badInput);
+    const pauseMessage=()=>siblingDirty()?'Your other task edits are still here. Finish or clear them before checking this decision.':
+      'Check paused. Finish editing the decision dates or check again for the current action.';
+    const say=message=>{review.message=message;paintOrganizerDecisionConflict(form);};
+    if(siblingDirty()||!canKeepFields()){say(pauseMessage());return;}
+    const ready=()=>current()&&!ui.pendingSave&&!document.hidden&&!siblingDirty()&&canKeepFields();
+    ui.syncing=true;button.setAttribute('aria-disabled','true');say('Checking the latest request…');
+    let reason='';
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready())return false;
+        reason=organizerDecisionCandidateReason(revision,state,review,form,mode);return !reason;
+      },{requireFresh:true});
+      if(!current())return;
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()){say(pauseMessage());return;}
+      if(reason){say(reason+' Your draft is still here. You can copy it before reopening the task.');return;}
+      if(!result.verified||result.pending||organizerDecisionCandidateReason(store.getSnapshotRevision(),store.getState(),review,form,mode))
+        throw new Error('Latest request unavailable');
+      // Preserve even the old default check-in date; rebuilding can change it at midnight.
+      const checkIn=reviewAfter.value;
+      organizerDecisionConflicts.delete(form);
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      ui.toolUpdatePending=false;
+      render();taskDialog(review.id,'',false,true,'',undefined,'',{readOnly:true});
+      const updated=$('#recoveryDecisionForm',dialog);
+      if(!organizerDecisionInScope(updated,review)||updated===form)return;
+      updated.elements.reviewAfter.value=checkIn;
+      const notice=document.createElement('p');notice.className='notice';notice.setAttribute('role','status');notice.tabIndex=-1;
+      notice.textContent='Latest request checked. Your decision hasn’t been sent. Review it, then confirm when you’re ready.';updated.prepend(notice);
+      requestAnimationFrame(()=>{
+        if(organizerDecisionInScope(updated,review)&&notice.isConnected&&
+          [document.body,$('#dialogTitle',dialog)].includes(document.activeElement))focusTaskDialogControl(notice,dialog);
+      });
+    }catch{
+      if(current())say('Couldn’t check the latest request. Your draft is still here. Try again.');
+    }finally{
+      ui.syncing=false;if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
   const teammateUpdateTypes={progress:'Share progress',blocked:'Report blocked',date:'Propose a new date',help:'Ask for help'};
   function teammateUpdateInScope(form,review) {
     return !!form?.isConnected&&!!review&&isLiveTeammate()&&ui.dialogKind==='task'&&ui.detailId===review.id&&
@@ -4989,6 +5133,8 @@
     if(action==='refresh-completion-draft'){await refreshCompletionDraft(el);return;}
     if(action==='refresh-teammate-update'){await refreshTeammateUpdate(el);return;}
     if(action==='copy-teammate-update'){await copyTeammateUpdate(el);return;}
+    if(action==='refresh-organizer-decision'){await refreshOrganizerDecision(el);return;}
+    if(action==='copy-organizer-decision'){await copyOrganizerDecision(el);return;}
     if(action==='return-to-completion-linked-impact'){returnToCompletionLinkedImpact(el);return;}
     if(action==='return-to-plan-receipt'){returnToPlanReceipt(el);return;}
     if(action==='review-event-required-work'){openEventRequiredWork(id,el);return;}
@@ -5338,6 +5484,9 @@
     if(form.id==='responseForm'&&teammateUpdateConflicts.has(form)){
       $('[data-action="refresh-teammate-update"]',form)?.focus();return;
     }
+    if(form.id==='recoveryDecisionForm'&&organizerDecisionConflicts.has(form)){
+      $('[data-action="refresh-organizer-decision"]',form)?.focus();return;
+    }
     if(form.id==='responseForm'&&form.querySelector('[data-proposed-date]')&&!syncTaskResponseMode(form))return;
     const data=Object.fromEntries(new FormData(form));
     let taskAcceptance,taskAcceptanceRevision;
@@ -5374,6 +5523,12 @@
     const lessonSave=form.id==='newTaskForm'&&ui.dialogKind==='lesson-follow-up'&&store.refresh&&lessonDraftContext(form)?{revision:store.getSnapshotRevision(),actor:ui.actor,
       project:window.GatherMode?.projectId,generation:store.getState().demoGeneration}:null;
     const teammateUpdate=form.id==='responseForm'?teammateUpdateReview(form,event.submitter?.value||data.response):null;
+    const organizerDecision=form.id==='recoveryDecisionForm'?organizerDecisionReview(form):null;
+    if(organizerDecision&&(workspaceUpdatesPending()||store.getSnapshotRevision?.()!==organizerDecision.workspaceRevision||
+      store.getState().tasks.find(task=>task.id===organizerDecision.id)?.revision!==organizerDecision.taskRevision)&&
+      markOrganizerDecisionConflict(form,organizerDecision)){
+      focusTaskDialogControl($('[data-action="refresh-organizer-decision"]',form),$('#dialog'));return;
+    }
     if(teammateUpdate?.needsReview&&markTeammateUpdateConflict(form,teammateUpdate)){
       focusTaskDialogControl($('[data-action="refresh-teammate-update"]',form),$('#dialog'));return;
     }
@@ -5649,6 +5804,13 @@
         queueMicrotask(()=>{
           if(teammateUpdateInScope(form,teammateUpdate)&&[document.body,event.submitter].includes(document.activeElement))
             focusTaskDialogControl($('[data-action="refresh-teammate-update"]',form),$('#dialog'));
+        });
+        return;
+      }
+      if(error.status===409&&organizerDecision&&markOrganizerDecisionConflict(form,organizerDecision)){
+        queueMicrotask(()=>{
+          if(organizerDecisionInScope(form,organizerDecision)&&[document.body,event.submitter].includes(document.activeElement))
+            focusTaskDialogControl($('[data-action="refresh-organizer-decision"]',form),$('#dialog'));
         });
         return;
       }
