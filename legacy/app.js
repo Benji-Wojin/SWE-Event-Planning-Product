@@ -317,6 +317,8 @@
       previous.dataset.budgetReviewIncomplete||previous.dataset.budgetShowAll||previous.dataset.budgetEdit||
       previous.hasAttribute('data-budget-archived')||previous.id==='budgetCostsHeading'))
       return !!projectBudget?.restoreLinkedTaskFocus(previous);
+    if(ui.view==='info'&&(previous.dataset.infoGuest||previous.dataset.infoArrival))
+      return !!projectInfo?.restoreGuestFocus(previous);
     if(previous.dataset.action==='wrap-review-task')
       return restoreWrapReviewFocus(previous,root);
     if(previous.dataset.action==='draft-lesson-follow-up')
@@ -1626,6 +1628,7 @@
     const linkedLessonOpener=ui.lastFocus?.dataset?.action==='open-lesson-linked-task';
     const receiptOpener=ui.lastFocus?.id==='wrapFollowUpOpen';
     const budgetOpener=ui.view==='budget'&&(ui.lastFocus?.dataset?.action==='budget-linked-task'||ui.lastFocus?.dataset?.budgetEdit);
+    const guestOpener=ui.view==='info'&&(ui.lastFocus?.dataset?.infoGuest||ui.lastFocus?.dataset?.infoArrival);
     const linkedResultsOpener=ui.lastFocus?.dataset?.action==='review-linked-results';
     const savedNotice=scheduleOpener&&ui.firstScheduleReceipt?.edited&&ui.lastFocus.dataset.id===ui.firstScheduleReceipt.id&&
       currentFirstScheduleReceipt(store.getState())&&$('#scheduleFirstReceiptTitle',view);
@@ -1635,6 +1638,7 @@
       lessonOpener?restoreLessonFollowUpFocus(ui.lastFocus,view):linkedLessonOpener?restoreLessonLinkedTaskFocus(ui.lastFocus,view):
       receiptOpener?focusWrapFollowUpReceipt(ui.lastFocus.dataset.id,view,ui.lastFocus.dataset.action):
       budgetOpener?projectBudget?.restoreLinkedTaskFocus(ui.lastFocus):
+      guestOpener?projectInfo?.restoreGuestFocus(ui.lastFocus):
       linkedResultsOpener?restoreLinkedResultsFocus(ui.lastFocus,view):
       restoreFocus(ui.lastFocus)||restoreViewFocus(ui.lastFocus,view)))
       view.querySelector('button')?.focus();

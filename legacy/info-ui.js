@@ -159,6 +159,25 @@
       const clear=host.querySelector('[data-info-clear-filters]');
       if(clear)clear.hidden=!hasGuestFilters();
     }
+    const guestNameKey = guest => String(guest.name??'').trim().toLocaleLowerCase();
+    const guestDetails = guest => [guest.type,guest.group,guest.email||guest.phone].filter(Boolean);
+    const guestTableLabel = label => `<span class="guest-table-label" aria-hidden="true">${label}</span>`;
+    function guestTable(guests) {
+      const names=new Map(), scope=h(endpoint());
+      for(const guest of state.guests) {
+        if(Boolean(guest.archivedAt)!==archived)continue;
+        const key=guestNameKey(guest);
+        names.set(key,(names.get(key)||0)+1);
+      }
+      const label=archived?'Archived guest list':'Active guest list';
+      return `<div class="info-table-wrap guest-roster"><table class="info-table guest-table" role="table" aria-labelledby="guestTableCaption"><caption class="sr-only" id="guestTableCaption">${label}</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader" class="guest-col-name">Guest / contact</th><th scope="col" role="columnheader" class="guest-col-arrival">Arrival record</th><th scope="col" role="columnheader" class="guest-col-rsvp">RSVP response</th><th scope="col" role="columnheader" class="guest-col-type">Type</th><th scope="col" role="columnheader" class="guest-col-group">Group</th><th scope="col" role="columnheader" class="guest-col-actions"><span class="sr-only">Actions</span></th></tr></thead><tbody role="rowgroup">${guests.map(g=>{
+        const key=h(g.id), multiple=names.get(guestNameKey(g))>1;
+        const title=h([g.name,...(multiple?guestDetails(g):[])].join(' · '));
+        const arrived=!!g.arrival?.at, arrivalAction=arrived?'Review arrival':'Record arrival', editAction=archived?'View guest':'Edit guest';
+        const stateText=arrived?`<strong>Arrival recorded</strong><span>${h(new Date(g.arrival.at).toLocaleString())} · ${h(g.arrival.name)}</span>`:'No arrival recorded';
+        return `<tr role="row"><th class="guest-identity" scope="row" role="rowheader"><strong>${h(g.name)}</strong><span>${h(g.email||g.phone||'No contact details')}</span></th><td role="cell" class="guest-arrival-cell"><div class="guest-arrival-state">${stateText}</div>${!archived?`<button type="button" class="btn ${arrived?'btn-secondary':'btn-primary'} btn-small" data-info-arrival="${key}" data-info-guest-scope="${scope}" aria-label="${arrivalAction} for ${title}">${arrivalAction}</button>`:''}</td><td role="cell">${guestTableLabel('RSVP')}${h(g.attendance==='unknown'?'Not recorded':g.attendance)}</td><td role="cell">${guestTableLabel('Type')}${h(g.type)}</td><td role="cell">${guestTableLabel('Group')}${h(g.group||'—')}</td><td role="cell" class="guest-row-actions"><button class="text-button" type="button" data-info-guest="${key}" data-info-guest-scope="${scope}" aria-label="${editAction} for ${title}">${editAction}</button></td></tr>`;
+      }).join('')}</tbody></table></div>`;
+    }
     function list(guests) {
       if (tab === 'files') {
         const files = state.files.filter(
@@ -178,7 +197,7 @@
               '</p>';
       }
       return (guests.length
-          ? `<div class="info-table-wrap"><table class="info-table"><thead><tr><th>Name / contact</th><th>Type</th><th>Group</th><th>RSVP response</th><th>Arrival record</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>${guests.map((g) => `<tr><td><strong>${h(g.name)}</strong><span>${h(g.email || g.phone || 'No contact details')}</span></td><td>${h(g.type)}</td><td>${h(g.group || '—')}</td><td>${h(g.attendance === 'unknown' ? 'Not recorded' : g.attendance)}</td><td>${g.arrival?.at ? `<strong>Arrival recorded</strong><span>${h(new Date(g.arrival.at).toLocaleString())} · ${h(g.arrival.name)}</span>` : 'No arrival recorded'}${!archived ? `<button class="text-button" data-info-arrival="${h(g.id)}" aria-label="${g.arrival?.at ? 'Review arrival for ' : 'Record arrival for '}${h(g.name)}">${g.arrival?.at ? 'Review / undo' : 'Record arrival'}</button>` : ''}</td><td><button class="text-button" data-info-guest="${h(g.id)}">${archived ? 'View' : 'Edit'}</button></td></tr>`).join('')}</tbody></table></div>`
+          ? guestTable(guests)
           : '<p class="notice">' +
             (hasGuestFilters()
               ? 'No guests match these filters.'
@@ -506,6 +525,17 @@
       const row=[...host.querySelectorAll('[data-info-arrival]')].find(button=>button.dataset.infoArrival===id);
       (row||host.querySelector('[data-info-search]'))?.focus();
     }
+    function restoreGuestFocus(opener) {
+      if (opener?.dataset?.infoGuestScope!==endpoint()||root.GatherAccessLost||tab!=='guests'||!host?.isConnected||isDialogOpen())return false;
+      const key=opener.dataset.infoArrival?'infoArrival':'infoGuest', id=opener.dataset[key];
+      if(!id)return false;
+      const action=key==='infoArrival'?'[data-info-arrival]':'[data-info-guest]';
+      const row=[...host.querySelectorAll(action)].find(button=>button.dataset[key]===id);
+      const target=row||host.querySelector('[data-info-search]');
+      if(!target)return false;
+      target.focus();
+      return true;
+    }
     const arrivalIdentity = identity => typeof identity?.actor==='string' && !!identity.actor && typeof identity.admin==='boolean';
     const sameArrivalIdentity = (a,b) => arrivalIdentity(a) && a.actor===b?.actor && a.admin===b?.admin;
     function arrivalDialog(id,reviewedIntent,review={}) {
@@ -525,14 +555,16 @@
         requestId = crypto.randomUUID(),
         input = {action:'arrival',id,arrived:intent,revision,requestId};
       let sending=false, reloading=false, needsReview=false, uncertain=false, canRetry=false;
-      const details = [guest.type,guest.group,guest.email||guest.phone].filter(Boolean).map(h).join(' · ');
+      const details = guestDetails(guest).map(h).join(' · ');
+      const sameDetails=state.guests.some(other=>other.id!==id&&!other.archivedAt&&guestNameKey(other)===guestNameKey(guest)&&
+        other.type===guest.type&&other.group===guest.group&&(other.email||other.phone)===(guest.email||guest.phone));
       const note = review.reason || (alreadyDone
         ? 'The latest record already matches the change you were reviewing. Nothing was changed by this refresh.'
         : replaced ? 'The arrival record you reviewed was replaced. Close this review and open the current record before deciding whether to clear it.'
         : 'Latest guest record loaded. Review it before confirming.');
       openDialog(
         arrived ? 'Review guest arrival' : 'Record guest arrival',
-        `<form id="guestArrivalForm">${refreshed?'<p class="notice" role="status">'+h(note)+'</p>':''}<h3>${h(guest.name)}</h3>${details?`<p class="muted">${details}</p>`:''}<p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>No arrival recorded. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${readOnly ? 'This review is read-only.' : arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'Only record an arrival you have confirmed. This uses your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit"${readOnly?' hidden':''}>${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Review latest record</button><button class="btn btn-secondary" type="button" data-arrival-retry hidden>Retry same change</button></div></form>`,
+        `<form id="guestArrivalForm">${refreshed?'<p class="notice" role="status">'+h(note)+'</p>':''}<h3>${h(guest.name)}</h3>${details?`<p class="muted">${details}</p>`:''}${sameDetails?'<p class="notice">More than one guest has these same details. Check with the organizer if you can’t tell the records apart.</p>':''}<p class="muted">RSVP response: ${h(guest.attendance === 'unknown' ? 'Not recorded' : guest.attendance)}</p>${arrived ? `<p>Arrival recorded by ${h(guest.arrival.name)} · ${h(new Date(guest.arrival.at).toLocaleString())}</p>` : '<p>No arrival recorded. No arrival time is inferred from an RSVP.</p>'}<p class="notice">${readOnly ? 'This review is read-only.' : arrived ? 'Clear this record if the arrival was recorded by mistake. This does not record a departure.' : 'Only record an arrival you have confirmed. This uses your signed-in project identity.'} RSVP response, task status and project access stay unchanged. Visible to the project team.</p><div class="form-actions"><button class="btn ${arrived ? 'btn-secondary' : 'btn-primary'}" type="submit"${readOnly?' hidden':''}>${arrived ? 'Clear arrival record' : 'Confirm arrival'}</button><button class="text-button" type="button" data-arrival-reload>Review latest record</button><button class="btn btn-secondary" type="button" data-arrival-retry hidden>Retry same change</button></div></form>`,
         '', false, 'info',refreshed,
       );
       const form = document.getElementById('guestArrivalForm');
@@ -845,8 +877,13 @@
           render();
         }
         if (el.hasAttribute('data-info-add')) guestDialog();
-        if (el.dataset.infoGuest) guestDialog(el.dataset.infoGuest);
-        if (el.dataset.infoArrival) arrivalDialog(el.dataset.infoArrival);
+        if (el.dataset.infoGuest || el.dataset.infoArrival) {
+          // Pointer clicks do not focus buttons in every browser. Give the
+          // dialog the exact opener, even for two guests with the same name.
+          el.focus?.({preventScroll:true});
+          if(el.dataset.infoGuest)guestDialog(el.dataset.infoGuest);
+          else arrivalDialog(el.dataset.infoArrival);
+        }
         if (el.hasAttribute('data-info-import')) importDialog();
         if (el.hasAttribute('data-info-upload')) uploadDialog();
         if (el.dataset.infoArchiveFile) fileArchive(el.dataset.infoArchiveFile);
@@ -882,7 +919,7 @@
         if (!document.hidden && !isDialogOpen()) load(true);
       }, 10000);
     }
-    return { markup, mount };
+    return { markup, mount, restoreGuestFocus };
   }
   root.GatherInfoUI = { create };
 })(window);

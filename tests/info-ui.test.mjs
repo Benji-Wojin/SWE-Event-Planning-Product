@@ -12,7 +12,7 @@ async function harness(uploadsAvailable,extra={}){
   let loads=0;
   const host={isConnected:true,innerHTML:'',listeners:{},contains:()=>false,addEventListener(event,fn){this.listeners[event]=fn;},querySelector:()=>({innerHTML:'',focus(){focused++;}})};
   const window={GatherGuests,GatherMode:{projectId:'fictional-project'}};
-  vm.runInNewContext(source.replace('return { markup, mount };','return { markup, mount, submit };'),{window,document:{hidden:false,activeElement:null},URLSearchParams,FormData,
+  vm.runInNewContext(source.replace('return { markup, mount, restoreGuestFocus };','return { markup, mount, restoreGuestFocus, submit };'),{window,document:{hidden:false,activeElement:null},URLSearchParams,FormData,
     setInterval:fn=>{poll=fn;return 1;},clearInterval(){},
     fetch:async(url,options)=>{
       requests.push({url,options});
