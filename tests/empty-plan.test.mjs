@@ -135,7 +135,10 @@ test('plan-builder navigation still requires an explicit organizer action and pr
 
 test('View my tasks uses the existing explicit local filter navigation and clears stale filters',()=>{
   const handler=app.split('\n').find(line=>line.includes("if(action==='task-filter')"));assert.ok(handler);
-  let navigations=0;const ui={tab:'attention',owner:'jack',status:'done',search:'old search'};
-  vm.runInNewContext(handler,{action:'task-filter',el:{dataset:{filter:'mine'}},ui,navigate:view=>{assert.equal(view,'tasks');navigations++;}});
-  assert.deepEqual(ui,{tab:'mine',owner:'',status:'',search:''});assert.equal(navigations,1);
+  const setFilters=app.slice(app.indexOf('  function setTaskFilters('),app.indexOf('  function taskMapMarkup('));
+  let navigations=0;const ui={tab:'attention',owner:'jack',status:'done',search:'old search',mapFocus:'old-task'};
+  vm.runInNewContext(setFilters+handler,{action:'task-filter',el:{dataset:{filter:'mine'}},ui,navigate:(view,{beforeRender})=>{
+    assert.equal(view,'tasks');assert.equal(beforeRender(),true);navigations++;
+  }});
+  assert.deepEqual(ui,{tab:'mine',owner:'',status:'',search:'',mapFocus:''});assert.equal(navigations,1);
 });

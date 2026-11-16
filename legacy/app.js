@@ -519,6 +519,21 @@
   function filteredTasks(s) {
     return (ui.tab==='attention'?attention(s):s.tasks).filter(t=>(ui.tab!=='mine'||t.owner===ui.actor)&&(ui.tab!=='available'||(!t.owner&&t.status!=='done'))&&(ui.tab!=='attention'||reason(t))&&(ui.tab!=='done'||t.status==='done')&&(!ui.owner||t.owner===ui.owner||(ui.owner==='unassigned'&&!t.owner))&&(!ui.status||t.status===ui.status)&&(!ui.search||`${t.title} ${t.note} ${member(t.owner).name} ${t.category}`.toLowerCase().includes(ui.search.toLowerCase())));
   }
+  function setTaskFilters(filters) {
+    Object.assign(ui,filters,{mapFocus:''});
+    return true;
+  }
+  function taskMapMarkup(state,tasks) {
+    const focus=ui.mapFocus&&tasks.some(task=>task.id===ui.mapFocus)?ui.mapFocus:'';
+    return GatherPlanningUI.graphMarkup(state.tasks,tasks,focus,state.members);
+  }
+  function openFocusedTaskMap(id) {
+    if(!navigate('tasks',{beforeRender:()=>{
+      Object.assign(ui,{taskView:'map',mapFocus:id,search:'',owner:'',status:'',tab:'all'});
+      return true;
+    }}))return;
+    ($('#taskMap .map-task-focused')||$('#taskSearch'))?.focus();
+  }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
   const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
   const statusOptions = value => options(Object.entries(statuses),value);
@@ -553,8 +568,8 @@
       ${ui.tab==='mine'?recovery.nextUpPanel(s)+`<div class="inline section-gap"><button class="btn btn-secondary" data-action="review-acceptance" ${acceptanceCandidates(tasks).length?'':'hidden'}>Review task acceptance (${acceptanceCandidates(tasks).length})</button></div>`:''}
       ${linkedResultsPanel(s)}
       <section class="panel"><div class="task-discovery"><label class="search-input task-search-prominent">${icon('search')}<input id="taskSearch" type="search" value="${h(ui.search)}" placeholder="Search tasks, people, notes…" aria-label="Search tasks"></label><div class="task-view-switch" role="group" aria-label="Task layout"><button class="btn btn-small ${ui.taskView==='list'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="list" aria-pressed="${ui.taskView==='list'}">List</button><button class="btn btn-small ${ui.taskView==='map'?'btn-primary':'btn-secondary'}" data-action="task-layout" data-id="map" aria-pressed="${ui.taskView==='map'}">Link map</button></div></div><div class="toolbar"><div class="filter-tabs" role="group" aria-label="Task views">${[['all','All tasks'],['mine','My tasks'],['available','Unassigned · '+s.tasks.filter(t=>!t.owner&&t.status!=='done').length],['attention','Needs attention'],['done','Completed']].map(([id,label])=>`<button class="filter-tab ${ui.tab===id?'active':''}" data-action="task-filter" data-filter="${id}" aria-pressed="${ui.tab===id}">${label}</button>`).join('')}</div></div>
-      <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
-      <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
+      <div class="toolbar task-filter-toolbar"><div class="inline"><select id="ownerFilter" class="select-input" aria-label="Filter by owner">${ownerOptions(ui.owner,true)}</select><select id="statusFilter" class="select-input" aria-label="Filter by status">${options([['','All statuses'],...Object.entries(statuses)],ui.status)}</select></div><span class="muted" id="taskResultCount" role="status">${tasks.length} ${tasks.length===1?'task':'tasks'}</span></div>
+      <div id="taskMap" ${ui.taskView==='map'?'':'hidden'}>${ui.taskView==='map'?taskMapMarkup(s,tasks):''}</div><div class="task-table-wrap" ${ui.taskView==='map'?'hidden':''}><table class="task-table" role="table" aria-label="Task list"><thead role="rowgroup"><tr role="row"><th id="tasks-completion" role="columnheader" scope="col"><span class="sr-only">Completion</span></th><th id="tasks-name" role="columnheader" scope="col">TASK</th><th id="tasks-owner" role="columnheader" scope="col">OWNER</th><th id="tasks-status" role="columnheader" scope="col">STATUS</th><th id="tasks-due" role="columnheader" scope="col">DUE</th><th id="tasks-update" role="columnheader" scope="col">LATEST UPDATE</th><th id="tasks-details" role="columnheader" scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="taskRows" role="rowgroup">${tasks.map(taskRow).join('')}</tbody></table><div id="taskEmpty" ${tasks.length?'hidden':''}>${empty('No tasks match this view.','Try another filter or search.')}</div></div></section>`;
   }
   function guideTaskPanel(s,away=false) {
     const task=guideTaskId&&s.tasks.find(item=>item.id===guideTaskId);
@@ -4468,11 +4483,11 @@
       if(action==='review-overlap-schedule')focusTaskScheduleEditor(id);
       if(action==='quick-tour'){if(confirmCloseDialog()&&confirmDiscard($('#emailReviewForm'))){if(!$('#dialogBackdrop').hidden)closeDialog();tour.start();}return;}
       if(action==='task-layout'){ui.taskView=id==='map'?'map':'list';ui.mapFocus='';render();return;}
-      if(action==='map-clear'){ui.mapFocus='';renderTaskRows();return;}
-      if(action==='map-focus'){if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();ui.taskView='map';ui.mapFocus=id;ui.search='';ui.owner='';ui.status='';ui.tab='all';navigate('tasks');return;}
+      if(action==='map-clear'){ui.mapFocus='';renderTaskRows();($('#taskMap .task-map-scroll')||$('#taskSearch'))?.focus({preventScroll:true});return;}
+      if(action==='map-focus'){if(!confirmCloseDialog()||!confirmDiscard($('#emailReviewForm')))return;if(!$('#dialogBackdrop').hidden)closeDialog();openFocusedTaskMap(id);return;}
       if(action==='toggle-task'){const t=store.getState().tasks.find(t=>t.id===id);if(!t||!isOrganizer()||completionNeedsReview(t)){taskDialog(id);return;}store.updateTask(id,{status:t.status==='done'?'todo':'done'},ui.actor);render();if(t.status==='done')toast('Task reopened. Its history is preserved.');else window.GatherCompletionUI?.celebrate(store.getState().tasks.find(task=>task.id===id),store.getState());}
-      if(action==='task-filter'){ui.tab=el.dataset.filter;ui.owner='';ui.status='';ui.search='';navigate('tasks');}
-      if(action==='person-tasks'){ui.owner=id;ui.tab='all';ui.status='';ui.search='';navigate('tasks');}
+      if(action==='task-filter')navigate('tasks',{beforeRender:()=>setTaskFilters({tab:el.dataset.filter,owner:'',status:'',search:''})});
+      if(action==='person-tasks')navigate('tasks',{beforeRender:()=>setTaskFilters({owner:id,tab:'all',status:'',search:''})});
       if(action==='claim'){store.claimTask(id,ui.actor);render();if(ui.dialogKind==='task')taskDialog(id);toast(`Task claimed by ${member(ui.actor).name}.`);}
       if(action==='reload-workspace')location.reload();
       if(action==='demo-email')openDialog('Demo email', '<p>This demo uses sample email updates. It does not connect to Gmail or read your mailbox.</p><p>Open Email briefing to review suggested changes.</p>', '<button class="btn btn-primary" data-view="inbox">Open email briefing</button>');
@@ -4943,8 +4958,8 @@
     if(el.name==='owner'&&el.closest('form')?.querySelector('[data-owner-load]'))el.closest('form').querySelector('[data-owner-load]').innerHTML=recovery.ownerLoad(el.value);
     if(el.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(el.id==='actorSelect'){if(window.GatherMode?.demo){window.top.location.href='/demo?as='+encodeURIComponent(el.value);return;}lockPrivate();ui.actor=el.value;render();toast(`Now trying ${member(ui.actor).name.split(' ')[0]}’s perspective. Private details locked.`);}
-    if(el.id==='ownerFilter'){ui.owner=el.value;renderTaskRows();}
-    if(el.id==='statusFilter'){ui.status=el.value;renderTaskRows();}
+    if(el.id==='ownerFilter'){setTaskFilters({owner:el.value});renderTaskRows();}
+    if(el.id==='statusFilter'){setTaskFilters({status:el.value});renderTaskRows();}
     if(el.id==='emailMode'){
       const update=el.value==='update';
       $('#existingTaskField').hidden=!update;
@@ -4964,7 +4979,7 @@
     $('#taskRows').innerHTML=tasks.map(taskRow).join('');
     $('#taskEmpty').hidden=!!tasks.length;
     $('#taskResultCount').textContent=`${tasks.length} ${tasks.length===1?'task':'tasks'}`;
-    if(ui.taskView==='map')$('#taskMap').innerHTML=GatherPlanningUI.graphMarkup(s.tasks,tasks,ui.mapFocus,s.members);
+    if(ui.taskView==='map')$('#taskMap').innerHTML=taskMapMarkup(s,tasks);
   }
   document.addEventListener('input',event=>{
     if(event.target.id==='reuseChecklistSearch')filterReuseChecklist();
@@ -4972,8 +4987,7 @@
     if(event.target.closest('#guestAgendaForm'))syncGuestAgenda(event.target.closest('#guestAgendaForm'));
     if(event.target.closest('#emailReviewForm')){ui.reviewDirty=true;updateChangePreview();}
     if(event.target.id==='taskSearch'){
-      ui.search=event.target.value;
-      ui.mapFocus='';
+      setTaskFilters({search:event.target.value});
       renderTaskRows();
     }
   });
