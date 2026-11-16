@@ -121,6 +121,14 @@
       status: value.status,
     };
   }
+  function ownerAvailability(member, realProject) {
+    if (!member) return 'missing';
+    if (member.active === false || member.role?.startsWith('Former')) return 'former';
+    return realProject && member.role?.includes('· example') ? 'example' : 'current';
+  }
+  function taskAvailability(task) {
+    return !task ? 'missing' : task.archivedAt ? 'archived' : 'current';
+  }
   function forecastAmount(row) {
     const cancelled = row.status === 'cancelled';
     const planned = cancelled ? row.paid : (row.committed ?? row.estimate);
@@ -175,6 +183,8 @@
     initial,
     settings,
     item,
+    ownerAvailability,
+    taskAvailability,
     amount,
     inputAmount,
     format,

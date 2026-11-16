@@ -9,6 +9,7 @@
     confirmClose = () => true,
     isDialogOpen,
     getWorkspace,
+    refreshWorkspace,
     getActor = () => '',
     focusControl = (target) => { if (!target) return false; target.focus({preventScroll:true}); return true; },
     onLoaded,
@@ -124,8 +125,39 @@
       }
     }
     const money = (value) => h(B.format(value, state.budget.currency));
-    const activeBudgetMember = (member) =>
-      member.active !== false && !member.role.startsWith('Former');
+    const ownerAvailability = member => B.ownerAvailability(member, !!root.GatherMode && !root.GatherMode.demo);
+    const isOwnerLink = key => key === 'owner';
+    const costLinkKeys = ['owner','taskId'];
+    const isCostLink = key => costLinkKeys.includes(key);
+    const linkCandidates = (key, workspace) => isOwnerLink(key) ? workspace.members : workspace.tasks;
+    const linkAvailability = (key, item) => isOwnerLink(key) ? ownerAvailability(item) : B.taskAvailability(item);
+    const linkIsCurrent = (key, id, workspace) =>
+      linkAvailability(key, linkCandidates(key, workspace).find(item => item.id === id)) === 'current';
+    function linkLabel(key, item) {
+      const availability = linkAvailability(key, item);
+      if (isOwnerLink(key)) {
+        if (availability === 'missing') return 'Unavailable owner';
+        if (availability === 'former') return item.name + ' (former teammate)';
+        if (availability === 'example') return item.name + ' (example only)';
+        return item.name;
+      }
+      return availability === 'missing' ? 'Unavailable task' :
+        availability === 'archived' ? 'Archived task: ' + item.title : item.title;
+    }
+    function linkChoices(key, saved, workspace) {
+      const candidates = linkCandidates(key, workspace);
+      const current = candidates.filter(item => linkAvailability(key, item) === 'current');
+      const historical = saved && !current.some(item => item.id === saved);
+      const existing = historical && candidates.find(item => item.id === saved);
+      const historicalLabel = existing && linkAvailability(key, existing) !== 'former'
+        ? linkLabel(key, existing)
+        : isOwnerLink(key) ? 'Unavailable owner' : 'Unavailable task';
+      return [
+        ['', isOwnerLink(key) ? 'No owner' : 'No task'],
+        ...(historical ? [[saved, historicalLabel + ' (kept unless changed)']] : []),
+        ...current.map(item => [item.id, linkLabel(key, item)]),
+      ];
+    }
     function subtotal(value) {
       return (
         money(value.known) +
@@ -230,9 +262,8 @@
                         owner = workspace.members.find(
                           (member) => member.id === row.owner,
                         );
-                      const ownerLabel = owner
-                        ? owner.name + (activeBudgetMember(owner) ? '' : ' (former teammate)')
-                        : row.owner ? 'Unavailable owner' : '';
+                      const ownerLabel = row.owner ? linkLabel('owner',owner) : '';
+                      const taskLabel = task ? (task.archivedAt ? linkLabel('taskId',task) : 'Task: '+task.title) : '';
                       const metadata=[ownerLabel,row.dueDate ? 'Due '+row.dueDate : ''].filter(Boolean);
                       return `<li><div class="budget-item-heading"><h3 tabindex="-1" data-budget-cost-heading="${h(row.id)}"${B.forecastAmount(row).missing?` aria-describedby="${h(incompleteCostId(row.id))}"`:''} ${costScope}>${h(row.title)}</h3>${row.status === 'cancelled' ? '<span class="chip">Cancelled</span>' : ''}${admin ? `<button class="text-button" data-budget-edit="${h(row.id)}" ${costScope}>${archived ? 'View / restore' : 'Edit'}<span class="sr-only"> ${h(row.title)}</span></button>` : ''}</div><dl class="budget-amounts">${[
                         ['estimate', 'Estimate'],
@@ -243,7 +274,7 @@
                           ([key, label]) =>
                             `<div><dt>${label}</dt><dd>${money(row[key])}</dd></div>`,
                         )
-                        .join('')}</dl>${incompleteCostMarkup(row)}${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button type="button" class="text-button" data-action="budget-linked-task" data-id="${h(task.id)}" data-budget-task="${h(row.id)}" aria-label="${h('Task: '+task.title+' · Cost: '+row.title)}" ${costScope}>Task: ${h(task.title)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
+                        .join('')}</dl>${incompleteCostMarkup(row)}${metadata.length ? `<p class="muted">${h(metadata.join(' · '))}</p>` : ''}${task ? `<button type="button" class="text-button" data-action="budget-linked-task" data-id="${h(task.id)}" data-budget-task="${h(row.id)}" aria-label="${h(taskLabel+' · Cost: '+row.title)}" ${costScope}>${h(taskLabel)}</button>` : row.taskId ? '<p class="muted">Linked task is no longer available.</p>' : ''}</li>`;
                     })
                     .join('')}</ul>`
                 : reviewingIncomplete ? '' : `<p class="notice">${archived ? 'No archived costs.' : 'No costs yet. Add a quote, deposit or other expected expense.'}</p>`
@@ -300,6 +331,7 @@
     function dialog(title, markup, action, fields, cost = null) {
       let revision = state.revision, opening = cost?.row, blocked = false, checked = null, checking = false, pending = null;
       const scope = scopeKey(), identity = state.identity.actor, allowReplay = !root.GatherMode?.demo;
+      const demoGeneration = root.GatherMode?.demo ? getWorkspace().demoGeneration : undefined;
       openDialog(
         title,
         `<form id="budgetForm">${markup}<p class="muted">Shared with project members. Saving only records information; it never moves money.</p><div class="form-error" role="alert" tabindex="-1"></div><div class="form-actions">${fields ? '<button class="btn btn-primary" type="submit">Save</button>' : ''}<button class="btn btn-secondary" type="button" data-budget-close>Cancel</button></div></form>`,
@@ -340,20 +372,22 @@
         return B.item(costFields(),cost.currency);
       }
       function compare(draft = readDraft()) {
-        return B.compareCostEdits(opening, checked.row, draft);
+        const comparison = B.compareCostEdits(opening, checked.row, draft);
+        const workspace = getWorkspace();
+        const unavailable = costLinkKeys.filter(key=>draft[key] && draft[key] !== opening[key] && draft[key] !== checked.row[key] &&
+          !linkIsCurrent(key,draft[key],workspace));
+        return {...comparison,unavailable,conflicts:[...new Set([...comparison.conflicts,...unavailable])]};
       }
       function displayValue(row, key) {
         const value = row[key];
         if (['estimate','committed','paid'].includes(key)) return B.format(value,cost.currency);
-        if (key==='owner'||key==='taskId') {
+        if (isCostLink(key)) {
           if (!value) return 'None';
-          const workspace=getWorkspace();
-          return (key==='owner'?workspace.members.find(member=>member.id===value)?.name:
-            workspace.tasks.find(task=>task.id===value)?.title) || 'Unavailable selection';
+          return linkLabel(key,linkCandidates(key,getWorkspace()).find(item=>item.id===value));
         }
         return value||'Not recorded';
       }
-      function choiceMarkup(draft, {conflicts,coupled}) {
+      function choiceMarkup(draft, {conflicts,coupled,unavailable}) {
         const groups = conflicts.filter(key=>!coupled||!forecastKeys.includes(key)).map(key=>({key,keys:[key]}));
         if (coupled) groups.unshift({key:'forecast',keys:forecastKeys});
         const controls = [];
@@ -368,10 +402,11 @@
             input.type = 'radio';
             input.name = 'budget-resolution-'+key;
             input.value = value;
+            input.disabled = value==='draft' && unavailable.includes(key);
             option.className = 'check-field';
             const facts = keys.map(field=>labels[field]+': '+displayValue(row,field)).join(' · ');
             const forecast = key==='forecast'?B.forecastAmount(row):null;
-            copy.textContent = label+' — '+facts+(forecast?' · Expected contribution: '+
+            copy.textContent = (input.disabled ? 'Draft selection no longer available' : label)+' — '+facts+(forecast?' · Expected contribution: '+
               (forecast.missing?'at least ':'')+B.format(forecast.minimum,cost.currency)+(forecast.missing?' (incomplete)':''):'');
             option.append(input,copy);
             fieldset.append(option);
@@ -398,12 +433,14 @@
         if (!live()) return;
         let text = 'The budget changed. Your draft is still here. Review the latest saved cost before saving again.';
         if (checked) {
-          const {changed,conflicts,coupled} = checked.comparison;
-          text = conflicts.length
+          const {changed,conflicts,coupled,unavailable} = checked.comparison;
+          text = unavailable.length
+            ? 'No longer available in your draft: '+unavailable.map(key=>labels[key]).join(', ')+'. Use the latest saved link or choose a different current option in the form.'
+            : conflicts.length
             ? 'You and the saved budget changed the same fields: '+conflicts.map(key=>labels[key]).join(', ')+'. Choose which values to keep. Your draft is unchanged until you apply your choices.'
             : changed.length ? 'Use the latest values for fields you did not edit, then review and save.'
             : 'The saved cost fields are unchanged. Keep your draft, review it, then save again.';
-          if (coupled) text = 'Status and amount changes affect the forecast together. Choose one set of status and amounts to keep.';
+          if (coupled) text += ' Status and amount changes affect the forecast together. Choose one set of status and amounts to keep.';
           if (changed.length) text += ' Saved now: '+changed.map(key=>labels[key]+': '+displayValue(checked.row,key)).join(' · ')+'.';
         }
         message((choicesReset?'Your draft changed. Review the updated comparison before applying. ':'')+text);
@@ -437,6 +474,17 @@
             !row || row.archivedAt || !Number.isSafeInteger(next.revision) || next.revision<revision) {
             message('This cost cannot be safely refreshed here. Your draft is still here. Copy your edits before closing.');
             return;
+          }
+          if (refreshWorkspace) {
+            const result = await refreshWorkspace((_revision,workspace) => live() && blocked && checking &&
+              !form.dataset.saving && Array.isArray(workspace?.members) && Array.isArray(workspace?.tasks) &&
+              (!root.GatherMode?.demo || workspace.demoGeneration === demoGeneration));
+            if (!live()) return;
+            if (!result?.verified) {
+              message('Could not confirm the latest project members and tasks. Your draft is unchanged.');
+              recoveryButton('data-budget-check-current','Try reviewing latest cost again',checkCurrent);
+              return;
+            }
           }
           checked = {next,row};
           let draft;
@@ -472,7 +520,7 @@
         }
         const updates = new Set(comparison.changed);
         if (resolution) {
-          const choices=resolution.controls.map(({keys,options})=>({keys,choice:options.filter(option=>option.checked)}));
+          const choices=resolution.controls.map(({keys,options})=>({keys,choice:options.filter(option=>option.checked&&!option.disabled)}));
           if (choices.some(({choice})=>choice.length!==1)) {
             resolution.hint.textContent='Choose one option for each group before applying.';
             return;
@@ -483,7 +531,14 @@
           }
         }
         const fields = Object.keys(labels).map(key=>[key,form.elements.namedItem(key)]);
-        if (fields.some(([key,field])=>!field || (field.options &&
+        const workspace = getWorkspace();
+        if (costLinkKeys.some(key=>comparison.merged[key] && comparison.merged[key] !== checked.row[key] &&
+          !linkIsCurrent(key,comparison.merged[key],workspace))) {
+          checked.comparison = comparison;
+          drawRecovery(draft,true);
+          return;
+        }
+        if (fields.some(([key,field])=>!field || (field.options && !isCostLink(key) &&
           ![...field.options].some(option=>!option.disabled&&option.value===comparison.merged[key])))) {
           message('A saved selection is not available in this form. Your draft is unchanged. Copy your edits before closing.');
           return;
@@ -493,14 +548,16 @@
           const value=updates.has(key)?formatted(comparison.merged[key]):field.value;
           const baseline=formatted(checked.row[key]);
           if (field.options) {
-            // The latest saved choice may no longer be offered, but can still
-            // be the dirty-check baseline for a valid replacement selection.
-            if (![...field.options].some(option=>option.value===baseline)) {
-              const option=document.createElement('option');
-              option.value=baseline;
-              option.textContent='Unavailable saved selection';
-              option.disabled=true;
-              field.append(option);
+            // Retain exactly the saved historical link; do not offer other
+            // former members or archived tasks as replacement choices.
+            if (isCostLink(key)) {
+              field.options.length = 0;
+              for (const [id,label] of linkChoices(key,baseline,workspace)) {
+                const option = document.createElement('option');
+                option.value = id;
+                option.textContent = label;
+                field.append(option);
+              }
             }
             for (const option of field.options) option.defaultSelected=option.value===baseline;
           } else field.defaultValue=baseline;
@@ -724,20 +781,10 @@
         workspace = getWorkspace();
       const option = (id, label, selected) =>
         `<option value="${h(id)}" ${selected ? 'selected' : ''}>${h(label)}</option>`;
-      const owners = workspace.members.filter(activeBudgetMember);
-      const unavailableOwner = !!value.owner && !owners.some((owner) => owner.id === value.owner);
-      const unavailableTask = !!value.taskId && !workspace.tasks.some((task) => task.id === value.taskId);
-      const ownerOptions = [
-        option('', 'No owner', !value.owner),
-        ...(unavailableOwner ? [option(value.owner, 'Unavailable owner (kept unless changed)', true)] : []),
-        ...owners.map((owner) => option(owner.id, owner.name, owner.id === value.owner)),
-      ].join('');
-      const taskOptions = [
-        option('', 'No task', !value.taskId),
-        ...(unavailableTask ? [option(value.taskId, 'Unavailable task (kept unless changed)', true)] : []),
-        ...workspace.tasks.map((task) => option(task.id, task.title, task.id === value.taskId)),
-      ].join('');
-      const historicalNote = !inactive && (unavailableOwner || unavailableTask)
+      const optionsFor = key => linkChoices(key, value[key], workspace)
+        .map(([id,label])=>option(id,label,id===value[key])).join('');
+      const ownerOptions = optionsFor('owner'), taskOptions = optionsFor('taskId');
+      const historicalNote = !inactive && costLinkKeys.some(key=>value[key] && !linkIsCurrent(key,value[key],workspace))
         ? '<p class="muted">Unavailable links can stay on this cost for reference. You can save other changes, or clear or replace the links here.</p>'
         : '';
       const form = dialog(

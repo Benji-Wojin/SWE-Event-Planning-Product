@@ -4,9 +4,16 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { setImmediate } from 'node:timers/promises';
 import '../legacy/budget.js';
-async function harness(admin = true) {
+
+const entities = { '&':'amp', '<':'lt', '>':'gt', '"':'quot', "'":'#39' };
+const decode = value => value.replace(/&(amp|lt|gt|quot|#39);/g, (_, entity) =>
+  Object.keys(entities).find(character => entities[character] === entity));
+
+async function harness(admin = true, { demo = false } = {}) {
   const budget = GatherBudget.initial(),
-    requests = [];
+    requests = [],
+    methods = [],
+    renderedLinks = new WeakMap();
   let snapshot = { revision: 1, identity: { admin, actor: 'organizer' }, budget },
     form,
     formMarkup,
@@ -20,11 +27,12 @@ async function harness(admin = true) {
     isConnected: true,
     innerHTML: '',
     listeners: {},
+    contains(element) { return renderedLinks.get(element) === renders; },
     addEventListener(event, fn) {
       this.listeners[event] = fn;
     },
   };
-  const window = { GatherBudget, GatherMode: { projectId: 'main' } };
+  const window = { GatherBudget, GatherMode: { projectId: 'main', ...(demo ? { demo: true, actor: 'organizer' } : {}) } };
   Object.defineProperty(host, 'innerHTML', {
     get: () => markup,
     set(value) {
@@ -65,6 +73,7 @@ async function harness(admin = true) {
     crypto,
     FormData: SuccessfulFormData,
     fetch: async (url, options) => {
+      methods.push(options.method);
       if (!options.body)
         return failRead ? {ok:false,status:503,json:async()=>({error:'Budget unavailable'})}
           : { ok: true, json: async () => structuredClone(snapshot) };
@@ -84,7 +93,7 @@ async function harness(admin = true) {
     },
   });
   const ui = window.GatherBudgetUI.create({
-    h: (value) => String(value),
+    h: (value) => String(value).replace(/[&<>"']/g, character => `&${entities[character]};`),
     isDialogOpen: () => false,
     getWorkspace: () => workspace,
     onLoaded() { loads++; },
@@ -143,8 +152,19 @@ async function harness(admin = true) {
   return {
     host,
     requests,
+    methods,
     click,
     ui,
+    link(costId) {
+      const markup = [...host.innerHTML.matchAll(/<button\b[^>]*>/g)].map(match => match[0])
+        .find(markup => markup.includes(`data-budget-task="${costId}"`));
+      if (!markup) return null;
+      const dataset = Object.fromEntries(Array.from(markup.matchAll(/\bdata-([\w-]+)="([^"]*)"/g),
+        ([, key, value]) => [key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), decode(value)]));
+      const button = { dataset, isConnected: true, closest: () => null };
+      renderedLinks.set(button, renders);
+      return button;
+    },
     setFailRead(value) { failRead=value; },
     get loads() { return loads; },
     get renders() {
@@ -356,4 +376,90 @@ test('cost details explain historical links and keep them selected and editable'
   await h.submit(values);
   assert.deepEqual(h.requests[0].item, values);
   assert.equal(h.requests[0].id, stale.id);
+});
+
+const archiveAt = '2026-11-19T19:00:00Z';
+const projectChoices = {
+  members: [
+    { id: 'actor-organizer', name: 'Fictional organizer', role: 'Organizer' },
+    { id: 'actor-active', name: 'Current teammate', role: 'Teammate', active: true },
+    { id: 'actor-inactive', name: 'Inactive teammate', role: 'Teammate', active: false },
+    { id: 'actor-former', name: 'Former teammate', role: 'Former teammate', active: true },
+    { id: 'actor-sample', name: 'Example assistant', role: 'Teammate · example', active: true },
+  ],
+  tasks: [
+    { id: 'task-open', title: 'Open task', status: 'todo' },
+    { id: 'task-done', title: 'Completed task', status: 'done' },
+    { id: 'task-archive', title: 'Teardown checklist', status: 'done', archivedAt: archiveAt },
+  ],
+};
+
+function optionsFor(markup, name) {
+  const select = markup.match(new RegExp(`<select\\b[^>]*\\bname="${name}"[^>]*>([\\s\\S]*?)<\\/select>`));
+  assert.ok(select, `${name} selector is present`);
+  return Array.from(select[1].matchAll(/<option\b[^>]*\bvalue="([^"]*)"([^>]*)>([^<]*)<\/option>/g),
+    ([, value, attrs, label]) => ({ value, label, selected: /(?:^|\s)selected(?:\s|$)/.test(attrs) }));
+}
+
+test('new costs link only to current people and non-archived tasks, keeping completed tasks eligible', async () => {
+  for (const demo of [false, true]) {
+    const h = await harness(true, { demo });
+    h.setWorkspace(projectChoices);
+    h.setBudget({ items: [] });
+    await h.poll();
+    const before = h.methods.slice();
+    h.click('data-budget-add');
+    const expected = ['', 'actor-organizer', 'actor-active', ...(demo ? ['actor-sample'] : [])];
+    assert.deepEqual(optionsFor(h.formMarkup, 'owner').map(option => option.value), expected);
+    assert.deepEqual(optionsFor(h.formMarkup, 'taskId').map(option => option.value), ['', 'task-open', 'task-done']);
+    assert.deepEqual(h.methods, before, 'opening the draft does not request or mutate anything');
+  }
+});
+
+test('previously saved sample owner and archived task remain selected but are not offered on other costs', async () => {
+  const h = await harness();
+  const historical = { id: 'cost-archive-link', title: 'Fictional stage deposit', paid: 2000, estimate: null,
+    committed: null, status: 'active', owner: 'actor-sample', taskId: 'task-archive', dueDate: '' };
+  const other = { ...historical, id: 'cost-current-link', owner: 'actor-active', taskId: 'task-done' };
+  h.setWorkspace(projectChoices);
+  h.setBudget({ items: [historical, other] });
+  await h.poll();
+  const before = h.methods.slice();
+
+  assert.match(h.host.innerHTML, /Example assistant[^<]*(?:example|not assignable)/i);
+  assert.match(h.host.innerHTML, /data-budget-task="cost-archive-link"[^>]*>[^<]*(?:Archived task|archived)/i);
+  const archivedTaskOpener = h.link(historical.id);
+  assert.ok(archivedTaskOpener);
+  assert.equal(h.ui.resolveLinkedTask(archivedTaskOpener), historical.taskId);
+  const app = readFileSync('legacy/app.js', 'utf8');
+  const from = app.indexOf('  function openBudgetLinkedTask('), to = app.indexOf('  function focusTaskRecovery(', from);
+  assert.ok(from >= 0 && to > from);
+  const ui = { view: 'budget' }, dialogCalls = [];
+  const dialog = vm.runInNewContext(`${app.slice(from, to)}\nopenBudgetLinkedTask;`, {
+    window: {}, $: () => ({ hidden: true }), ui, projectBudget: h.ui,
+    taskDialog(id, ...args) { dialogCalls.push([id, args.at(-1).readOnly]); ui.dialogKind = 'task'; ui.detailId = id; },
+  });
+  assert.equal(dialog(historical.taskId, archivedTaskOpener), true);
+  assert.deepEqual(dialogCalls, [[historical.taskId, true]]);
+  assert.equal(ui.lastFocus, archivedTaskOpener);
+  assert.deepEqual(h.methods, before, 'the archived link resolves locally without a request');
+
+  h.click('data-budget-edit', other.id);
+  assert.ok(!optionsFor(h.formMarkup, 'owner').some(option => option.value === historical.owner));
+  assert.ok(!optionsFor(h.formMarkup, 'taskId').some(option => option.value === historical.taskId));
+  h.click('data-budget-edit', historical.id);
+  const retainedOwner = optionsFor(h.formMarkup, 'owner').find(option => option.value === historical.owner);
+  const retainedTask = optionsFor(h.formMarkup, 'taskId').find(option => option.value === historical.taskId);
+  assert.ok(retainedOwner?.selected);
+  assert.match(retainedOwner.label, /(?:example|sample|unavailable)\b.*(?:not assignable|kept unless changed|reference only)/i);
+  assert.ok(retainedTask?.selected);
+  assert.match(retainedTask.label, /archived/i);
+  assert.notEqual(retainedTask.label, projectChoices.tasks.at(-1).title, 'the form marks the old task as a historical selection');
+  assert.match(h.formMarkup, /clear or replace/i);
+
+  const values = { title: 'Edited stage deposit', estimate: '', committed: '', paid: '20.00',
+    owner: retainedOwner.value, taskId: retainedTask.value, dueDate: '', status: 'active' };
+  await h.submit(values);
+  assert.deepEqual(h.requests.map(row => [row.action, row.id, row.item]), [['budgetItem', historical.id, values]]);
+  assert.deepEqual(h.methods, [...before, 'POST']);
 });

@@ -40,6 +40,61 @@ export function budgetTests(deps) {
     assert.equal(response.status, 200);
     return response.json();
   };
+  const workspaceSnapshot = async (query = '') => {
+    const response = await deps.workspace.GET(new Request('https://gather.example/api/workspace' + query));
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const budgetSnapshot = async query => {
+    const response = await infoRead(query);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const saveCost = async (query, state, id, item) => {
+    const response = await write(query, state.revision, { action: 'budgetItem', id, item });
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  async function linkFixture(t) {
+    owner();
+    await workspaceSnapshot();
+    const query = setup(), project = query.slice(9);
+    const workspaceRow = () => sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(project);
+    const members = [];
+    t.after(() => {
+      owner();
+      sqlite.prepare('DELETE FROM project_info WHERE scope=?').run(project);
+      sqlite.prepare('DELETE FROM project_members WHERE project_id=?').run(project);
+      sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(project);
+      sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+      for (const user of members) sqlite.prepare('DELETE FROM members WHERE user_id=?').run(user);
+    });
+    const addMember = (name, revoked = false) => {
+      const userId = 'budget-link-' + crypto.randomUUID(), actorId = 'u_' + userId;
+      members.push(userId);
+      sqlite.prepare('INSERT INTO members (user_id,actor_id,email,name,role) VALUES (?,?,?,?,?)')
+        .run(userId, actorId, userId + '@example.com', name, 'member');
+      sqlite.prepare('INSERT INTO project_members (id,project_id,user_id,actor_id,invite_id,joined_at,revoked_at) VALUES (?,?,?,?,?,?,?)')
+        .run(userId, project, userId, actorId, 'fictional', '2026-10-01T00:00:00Z', revoked ? '2026-10-02T00:00:00Z' : '');
+      return { userId, actorId };
+    };
+    const addTask = async (title, status = 'todo') => {
+      const response = await deps.workspace.POST(new Request('https://gather.example/api/workspace' + query, {
+        method: 'POST',
+        headers: { Origin: 'https://gather.example', 'X-Gather-Request': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revision: workspaceRow().revision, method: 'addTask', args: [{ title, status, owner: 'jack' }] }),
+      }));
+      assert.equal(response.status, 200, await response.clone().text());
+      return (await response.json()).result.id;
+    };
+    const history = (edit) => {
+      const state = JSON.parse(workspaceRow().data);
+      edit(state);
+      // Seed historical records; there is no organizer RPC for task archiving.
+      sqlite.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=?').run(JSON.stringify(state), project);
+    };
+    return { query, project, workspaceRow, addMember, addTask, history };
+  }
   test('manual budget starts optional, encrypts costs, links tasks without changing them and stays out of AI/workspace export', async () => {
     const query = setup(),
       id = query.slice(9),
@@ -250,6 +305,103 @@ export function budgetTests(deps) {
       ).status,
       400,
     );
+  });
+  test('budget link choices allow real and organizer owners, not former or example teammates', async t => {
+    const { query, workspaceRow, addMember, history } = await linkFixture(t);
+    const active = addMember('Fictional current teammate').actorId;
+    const former = addMember('Fictional former teammate', true).actorId;
+    const example = 'fictional-budget-example';
+    history(state => state.members.push({ id: example, name: 'Fictional legacy volunteer', initials: 'FV', role: 'Volunteer', color: 'mint' }));
+    const workspace = await workspaceSnapshot(query);
+    assert.equal(workspace.state.members.find(row => row.id === active).active, true);
+    assert.equal(workspace.state.members.find(row => row.id === former).active, false);
+    assert.match(workspace.state.members.find(row => row.id === example).role, /· example/);
+
+    const unchangedWorkspace = workspaceRow();
+    let state = await enabled(query);
+    state = await saveCost(query, state, '', cost({ owner: active }));
+    const id = state.budget.items[0].id;
+    assert.equal(state.budget.items[0].owner, active);
+    state = await saveCost(query, state, id, cost({ owner: 'jack' }));
+    assert.equal(state.budget.items[0].owner, 'jack');
+    for (const owner of [former, example]) {
+      const rejected = await write(query, state.revision, { action: 'budgetItem', id, item: cost({ owner }) });
+      assert.equal(rejected.status, 400, await rejected.clone().text());
+      assert.match((await rejected.json()).error, /owner|member|teammate/i);
+      assert.deepEqual(await budgetSnapshot(query), state, 'rejecting a new owner does not change the cost or history');
+      assert.deepEqual(workspaceRow(), unchangedWorkspace);
+    }
+  });
+  test('budget link choices preserve original historical links, but only current tasks are new choices', async t => {
+    const { query, project, workspaceRow, addMember, addTask, history } = await linkFixture(t);
+    const oldMember = addMember('Fictional original volunteer');
+    const active = addMember('Fictional replacement teammate').actorId;
+    const originalTask = await addTask('Fictional original production task');
+    const currentTask = await addTask('Fictional current production task');
+    const completedTask = await addTask('Fictional completed production task', 'done');
+    const anotherArchived = await addTask('Fictional different archived task');
+    let state = await enabled(query);
+    const original = cost({ owner: oldMember.actorId, taskId: originalTask });
+    state = await saveCost(query, state, '', original);
+    const id = state.budget.items[0].id;
+    state = await saveCost(query, state, '', cost({ title: 'Fictional other budget cost', owner: active, taskId: currentTask }));
+    const other = state.budget.items.find(row => row.id !== id);
+    assert.equal(other.taskId, currentTask);
+    state = await saveCost(query, state, other.id, cost({ title: other.title, owner: active, taskId: completedTask }));
+    assert.equal(state.budget.items.find(row => row.id === other.id).taskId, completedTask);
+    assert.ok(JSON.parse(workspaceRow().data).members.some(row => row.id === oldMember.actorId));
+    sqlite.prepare('DELETE FROM project_members WHERE id=? AND project_id=?').run(oldMember.userId, project);
+    history(saved => {
+      for (const task of saved.tasks.filter(row => [originalTask, anotherArchived].includes(row.id))) task.archivedAt = '2026-10-20T16:00:00Z';
+    });
+    const workspace = await workspaceSnapshot(query);
+    assert.match(workspace.state.members.find(row => row.id === oldMember.actorId).role, /· example/);
+    assert.ok(workspace.state.tasks.find(row => row.id === originalTask).archivedAt);
+    assert.equal(workspace.state.tasks.find(row => row.id === completedTask).status, 'done');
+    const unchangedWorkspace = workspaceRow();
+    const payment = { ...original, paid: '35.25' };
+    state = await saveCost(query, state, id, payment);
+    const savedLinks = () => {
+      const row = state.budget.items.find(row => row.id === id);
+      return [row.owner, row.taskId, row.paid];
+    };
+    assert.deepEqual(savedLinks(), [oldMember.actorId, originalTask, 3525]);
+    assert.deepEqual(state.budget.history.at(-1).after, state.budget.items.find(row => row.id === id));
+
+    for (const [costId, taskId] of [[other.id, originalTask], [id, anotherArchived]]) {
+      const rejected = await write(query, state.revision, { action: 'budgetItem', id: costId, item: cost({ taskId }) });
+      assert.equal(rejected.status, 400, await rejected.clone().text());
+      assert.match((await rejected.json()).error, /task/i);
+      assert.deepEqual(await budgetSnapshot(query), state, 'a historical link may stay only on its original cost');
+      assert.deepEqual(workspaceRow(), unchangedWorkspace);
+    }
+    state = await saveCost(query, state, id, { ...payment, owner: '', taskId: '' });
+    assert.deepEqual(savedLinks(), ['', '', 3525]);
+    state = await saveCost(query, state, id, { ...payment, owner: active, taskId: completedTask });
+    assert.deepEqual(savedLinks(), [active, completedTask, 3525]);
+    assert.deepEqual(await budgetSnapshot(query), state);
+    assert.deepEqual(workspaceRow(), unchangedWorkspace);
+  });
+  test('budget link choices still allow sample owners in the isolated demo', async t => {
+    owner();
+    const demo = 'demo:owner-1', query = '?demo=1&as=jack';
+    const before = sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(demo);
+    const context = await deps.infoCore.infoContext(new Request('https://gather.example/api/info' + query));
+    const infoBefore = sqlite.prepare('SELECT payload,revision FROM project_info WHERE scope=?').get(context.scope);
+    t.after(() => {
+      if (infoBefore) sqlite.prepare('UPDATE project_info SET payload=?,revision=? WHERE scope=?').run(infoBefore.payload, infoBefore.revision, context.scope);
+      else sqlite.prepare('DELETE FROM project_info WHERE scope=?').run(context.scope);
+      if (!before) sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(demo);
+    });
+    const savedBefore = sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(demo);
+    const state = JSON.parse(savedBefore.data);
+    assert.ok(state.members.some(row => row.id === 'maya'));
+    const demoTask = state.tasks.find(row => !row.archivedAt).id;
+    const ready = await enabled(query);
+    const result = await saveCost(query, ready, '', cost({ title: 'Fictional demo sample cost', owner: 'maya', taskId: demoTask }));
+    const row = result.budget.items.find(row => row.title === 'Fictional demo sample cost');
+    assert.deepEqual([row.owner, row.taskId], ['maya', demoTask]);
+    assert.deepEqual(sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(demo), savedBefore);
   });
   test('write-time organizer and workspace-revision guards reject changes made during an in-flight save', async () => {
     for (const race of ['ownership', 'task']) {

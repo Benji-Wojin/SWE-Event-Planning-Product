@@ -68,10 +68,10 @@ function element(attrs = {}) {
   };
 }
 
-async function harness({ confirm = () => true, demo=false } = {}) {
+async function harness({ confirm = () => true, demo=false, openingCost=opening, workspace={ tasks: [], members: [] }, refreshWorkspace } = {}) {
   const requests = [], notices = [];
   const host = element({ innerHTML: '', contains: () => false, querySelector: () => null, querySelectorAll: () => [] });
-  const initialBudget = { ...B.initial(), enabled: true, items: [opening] };
+  const initialBudget = { ...B.initial(), enabled: true, items: [openingCost] };
   let response = { revision: 7, identity: { admin: true, actor }, budget: initialBudget };
   let form, poll, nextPost = 409, nextRead = 200, closed = 0, releaseRead;
   const window = { GatherBudget: B, GatherMode: { projectId: 'fictional-event', demo, actor } };
@@ -82,15 +82,19 @@ async function harness({ confirm = () => true, demo=false } = {}) {
   }
   class SuccessfulFormData extends Map {
     constructor(form) {
-      super([...Object.entries(form.values).filter(([, control]) => !control.disabled).map(([key, control]) => [key, control.value]),
-        ...form.error.querySelectorAll('input[type="radio"]:checked').filter(control => !control.disabled).map(control => [control.name, control.value])]);
+      super([...Object.entries(form.values).filter(([, control]) => !control.disabled &&
+        (!control.options || control.options.some(option => option.value === control.value && !option.disabled)))
+        .map(([key, control]) => [key, control.value]),
+      ...form.error.querySelectorAll('input[type="radio"]:checked').filter(control => !control.disabled).map(control => [control.name, control.value])]);
     }
   }
   function makeForm(markup) {
-    const values = Object.fromEntries(Object.entries(payload(opening)).map(([key, value]) => [key, element({ name: key, value, defaultValue: value, tagName: 'INPUT' })]));
+    const values = Object.fromEntries(Object.entries(payload(openingCost)).map(([key, value]) => [key, element({ name: key, value, defaultValue: value, tagName: 'INPUT' })]));
     for (const key of ['taskId', 'owner', 'status']) {
       values[key].tagName = 'SELECT';
-      values[key].options = (key === 'status' ? ['active', 'cancelled'] : ['']).map(value => element({ value, defaultSelected: value === values[key].value }));
+      const selectMarkup = markup.match(new RegExp(`<select name="${key}">([\\s\\S]*?)<\\/select>`))?.[1] ?? '';
+      values[key].options = [...selectMarkup.matchAll(/<option value="([^"]*)"([^>]*)>([^<]*)<\/option>/g)]
+        .map(([, value, attrs, textContent]) => element({ value, textContent, defaultSelected: attrs.includes('selected'), disabled: attrs.includes('disabled') }));
       values[key].append = function (option) { this.options.push(option); };
     }
     const controls = new Map();
@@ -123,7 +127,8 @@ async function harness({ confirm = () => true, demo=false } = {}) {
       return { ok: status === 200, status, json: async () => status === 200 ? structuredClone(response) : { error: status === 409 ? 'Budget changed. Reload it.' : 'Fixture cannot read Budget.' } };
     },
   });
-  const ui = window.GatherBudgetUI.create({ h, getActor: () => actor, isDialogOpen: () => !!form, getWorkspace: () => ({ tasks: [], members: [] }),
+  const ui = window.GatherBudgetUI.create({ h, getActor: () => actor, isDialogOpen: () => !!form, getWorkspace: () => workspace,
+    refreshWorkspace: refreshWorkspace && (guard => refreshWorkspace(guard, next => { workspace = next; })),
     toast: notice => notices.push(notice),
     confirmClose: () => confirm(form),
     openDialog: (_title, markup) => { form = makeForm(markup); },
@@ -178,6 +183,165 @@ const retryOriginal = '[data-budget-retry-original]';
 const checkOriginal = '[data-budget-check-original]';
 const receiptFor = (attempt, after, changes = {}) => ({ id: attempt.requestId, action: attempt.action, actor, name: 'Fictional organizer',
   at: '2026-11-22T16:00:00Z', before: opening, after, ...changes });
+
+const archiveAt = '2026-11-21T16:00:00Z';
+const former = { id: 'former-owner', name: 'Former organizer aide', role: 'Former teammate', active: false };
+const archived = { id: 'old-archived-task', title: 'Old tent delivery', archivedAt: archiveAt };
+const sample = { id: 'example-owner', name: 'Fictional sample actor', role: 'Logistics · example' };
+const newerArchived = { id: 'new-archived-task', title: 'Saved tent delivery', archivedAt: archiveAt };
+const teammate = { id: 'current-owner', name: 'Fictional teammate', role: 'Teammate', active: true };
+const completed = { id: 'completed-task', title: 'Confirm quote', status: 'done' };
+
+test('disjoint cost recovery adopts the latest historical links without clearing the organizer’s amount or title', async () => {
+  const initial = saved({ owner: former.id, taskId: archived.id });
+  const workspace = { members: [former, teammate], tasks: [archived, completed] };
+  const refreshed = { members: [former, sample, teammate], tasks: [archived, newerArchived, completed] };
+  const workspaceReads = [];
+  const f = await harness({ openingCost: initial, workspace, refreshWorkspace(guard, publish) {
+    workspaceReads.push('GET');
+    assert.equal(guard(12, refreshed), true);
+    publish(refreshed);
+    return { verified: true };
+  } });
+  f.draft({ title: 'Updated tent cost', paid: '42.50' });
+  const draft = f.values();
+  await f.submit();
+  assert.deepEqual(f.posts[0].item, draft);
+  const latest = saved({ owner: sample.id, taskId: newerArchived.id });
+  f.update(latest);
+  await f.click(check);
+  assert.deepEqual(workspaceReads, ['GET']);
+  assert.equal(f.reads, 2);
+  assert.equal(f.posts.length, 1);
+  assert.deepEqual(f.values(), draft);
+  assert.match(f.form.error.textContent, /Fictional sample actor \(example only\).*Archived task: Saved tent delivery/);
+  assert.ok(f.control(adopt), 'an untouched historical link changed elsewhere is not an overlapping edit');
+
+  await f.click(adopt);
+  assert.equal(f.posts.length, 1);
+  assert.deepEqual(f.values(), { ...draft, owner: sample.id, taskId: newerArchived.id });
+  for (const [key, prior, savedId, current] of [['owner',former.id,sample.id,teammate.id],['taskId',archived.id,newerArchived.id,completed.id]]) {
+    const options = f.form.values[key].options;
+    assert.deepEqual(options.map(option => option.value), ['', savedId, current]);
+    assert.ok(!options.some(option => option.value === prior));
+    const historical = options.find(option => option.value === savedId);
+    assert.equal(historical.disabled, false, 'the saved reference must serialize through FormData');
+    assert.equal(historical.defaultSelected, true);
+    assert.match(historical.textContent, /kept unless changed/);
+  }
+
+  f.update({ ...latest, title: draft.title, paid: 4250 }, { revision: 9 });
+  f.nextPost = 200;
+  await f.submit();
+  assert.equal(f.posts.length, 2);
+  assert.notEqual(f.posts[0].requestId, f.posts[1].requestId);
+  assert.equal(f.posts[1].revision, 8);
+  assert.deepEqual(f.posts[1].item, { ...draft, owner: sample.id, taskId: newerArchived.id });
+  assert.equal(f.closed, 1);
+});
+
+test('a now-unavailable draft link needs an explicit current decision without losing unrelated edits', async () => {
+  const localOwner = { id: former.id, name: former.name, role: 'Teammate', active: true };
+  const localTask = { id: archived.id, title: archived.title };
+  const workspace = { members: [localOwner, teammate], tasks: [localTask, completed] };
+  const refreshed = { members: [former, teammate], tasks: [archived, completed] };
+  const f = await harness({ workspace, refreshWorkspace(guard, publish) {
+    assert.equal(guard(12, refreshed), true);
+    publish(refreshed);
+    return { verified: true };
+  } });
+  f.draft({ owner: localOwner.id, taskId: localTask.id, title: 'Keep this draft title', paid: '34.75' });
+  const draft = f.values();
+  await f.submit();
+  f.update(saved({ estimate: 14500 }));
+  await f.click(check);
+  assert.match(f.form.error.textContent, /No longer available in your draft: Owner, Linked task/);
+  assert.deepEqual(f.values(), draft);
+  assert.equal(f.control(adopt), undefined);
+  for (const key of ['owner', 'taskId']) {
+    const options = f.choices(key);
+    assert.deepEqual(options.map(option => [option.value,option.disabled]), [['saved',false],['draft',true]]);
+  }
+  assert.equal(f.posts.length, 1);
+  await f.click(apply);
+  assert.deepEqual(f.values(), draft, 'no link is silently cleared');
+  await f.submit();
+  assert.equal(f.posts.length, 1);
+  f.choose('owner', 'saved');
+  f.choose('taskId', 'saved');
+  await f.click(apply);
+  assert.equal(f.posts.length, 1);
+  assert.deepEqual(f.values(), { ...draft, owner: '', taskId: '', estimate: '145.00' });
+  assert.deepEqual(f.form.values.owner.options.map(option => option.value), ['',teammate.id]);
+  assert.deepEqual(f.form.values.taskId.options.map(option => option.value), ['',completed.id]);
+  f.draft({ owner: teammate.id, taskId: completed.id });
+  f.update(saved({ title: draft.title, paid: 3475, estimate: 14500, owner: teammate.id, taskId: completed.id }), { revision: 9 });
+  f.nextPost = 200;
+  await f.submit();
+  assert.equal(f.posts.length, 2);
+  assert.deepEqual(f.posts[1].item, { ...draft, owner: teammate.id, taskId: completed.id, estimate: '145.00' });
+});
+
+test('an unconfirmed workspace refresh preserves the link draft, stays blocked, and can be retried read-only', async () => {
+  const workspace = { members: [teammate], tasks: [completed] };
+  let attempts = 0;
+  const f = await harness({ workspace, refreshWorkspace(guard, publish) {
+    if (++attempts === 1) return { verified: false, pending: true };
+    assert.equal(guard(12, workspace), true);
+    publish(workspace);
+    return { verified: true };
+  } });
+  f.draft({ title: 'Keep this title', owner: teammate.id, taskId: completed.id });
+  const draft = f.values();
+  await f.submit();
+  f.update(saved({ estimate: 15000 }));
+  await f.click(check);
+  assert.match(f.form.error.textContent, /Could not confirm the latest project members and tasks.*draft is unchanged/);
+  assert.equal(f.control(adopt), undefined);
+  assert.deepEqual(f.values(), draft);
+  await f.submit();
+  assert.equal(f.posts.length, 1);
+  await f.click(check);
+  assert.ok(f.control(adopt));
+  assert.equal(attempts, 2);
+  assert.equal(f.reads, 3);
+  assert.equal(f.posts.length, 1);
+  assert.deepEqual(f.values(), draft);
+});
+
+test('a delayed workspace refresh cannot publish or adopt Budget choices after Cancel or project change', async () => {
+  for (const interrupt of ['cancel', 'project']) {
+    const workspace = { members: [teammate], tasks: [completed] };
+    let finish, verified, started;
+    const waiting = new Promise(resolve => { finish = resolve; });
+    const requested = new Promise(resolve => { started = resolve; });
+    const f = await harness({ workspace, async refreshWorkspace(guard, publish) {
+      started();
+      await waiting;
+      verified = guard(12, workspace);
+      if (verified) publish(workspace);
+      return { verified };
+    } });
+    f.draft({ title: 'Keep this title', owner: teammate.id, taskId: completed.id });
+    const draft = f.values();
+    await f.submit();
+    f.update(saved({ estimate: 15000 }));
+    const outstanding = f.click(check);
+    await requested;
+    if (interrupt === 'cancel') await f.click('[data-budget-close]');
+    else f.window.GatherMode.projectId = 'another-fictional-project';
+    finish();
+    await outstanding;
+    assert.equal(verified, false);
+    assert.equal(f.posts.length, 1);
+    assert.equal(f.reads, 2);
+    if (interrupt === 'cancel') assert.equal(f.closed, 1);
+    else {
+      assert.equal(f.control(adopt), undefined);
+      assert.deepEqual(f.values(), draft);
+    }
+  }
+});
 
 test('a definitive conflict blocks repeat POST; a disjoint review and explicit adoption preserve draft until explicit Save', async () => {
   const f = await harness();

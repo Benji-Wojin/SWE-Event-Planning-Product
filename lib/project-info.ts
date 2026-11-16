@@ -333,10 +333,10 @@ export async function mutateInfo(context: Context, input: any) {
             throw new HttpError(409, 'The demo restarted. Reload the budget.');
           const current = workspace.store.getState();
           if (normalized.taskId && normalized.taskId !== existing?.taskId &&
-              !current.tasks.some((task: any) => task.id === normalized.taskId))
-            throw new Error('Choose a task from this project, or leave the task link blank.');
+              budgetModel.taskAvailability(current.tasks.find((task: any) => task.id === normalized.taskId)) !== 'current')
+            throw new Error('Choose a task from this project that is not archived, or leave the task link blank.');
           if (normalized.owner && normalized.owner !== existing?.owner &&
-              !current.members.some((member: any) => member.id === normalized.owner && member.active !== false && !member.role.startsWith('Former')))
+              budgetModel.ownerAvailability(current.members.find((member: any) => member.id === normalized.owner), !context.demoId) !== 'current')
             throw new Error('Choose a current project member, or leave the owner blank.');
           context.budgetWorkspaceRevision = workspace.row.revision;
           if (existing) Object.assign(existing, normalized, audit);
