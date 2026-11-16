@@ -168,9 +168,9 @@ test('Add task keeps a single Overview focus target across the first save, only 
     const calls=[],view={},control={id:'overviewAddTask',focus(){calls.push('focus');}};
     vm.runInNewContext(app.slice(start,end),{action:'add-task',el:control,
       $(selector,root){if(selector==='#viewRoot')return view;assert.equal(root,view);return sameControl?control:{};},
-      guideExpectsTask:()=>true,newTaskDialog:()=>calls.push('dialog'),syncGuide:()=>calls.push('guide'),
+      openGuideAwareTask(opener){assert.equal(opener,control);calls.push('dialog');},
     });
-    assert.deepEqual(calls,sameControl?['focus','dialog','guide']:['dialog','guide']);
+    assert.deepEqual(calls,sameControl?['focus','dialog']:['dialog']);
   }
 });
 

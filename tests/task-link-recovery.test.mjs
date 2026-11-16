@@ -32,7 +32,7 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     GatherScheduleUI,
     navigation:{initialScheduleDate:()=>date,takeInitialActivityLink:()=>activity,takeInitialTaskLink:()=>({id,review,...(fromPlanReceipt?{fromPlanReceipt:true}:{})}),takeJoinWelcome:()=>welcome,initial:()=>'overview'},
     window:{GatherMode:mode,GatherAccessLost:accessLost,dispatchEvent(){events.push('ready');}},Event,isLiveTeammate:()=>true,isOrganizer:()=>organizer,
-    navigate(view,options){ui.view=view;if(options?.scheduleDay)ui.scheduleDate=options.scheduleDay;events.push(view);},syncGuide(){},$:selector=>elements[selector],
+    navigate(view,options){ui.view=view;if(options?.scheduleDay)ui.scheduleDate=options.scheduleDay;events.push(view);},loadInitialGuide(){},$:selector=>elements[selector],
     $$:selector=>selector==='.schedule-row'?rows:[],focusScheduleTarget(target){events.push(['focus',target?.label]);return !!target;},
     toast:message=>events.push(['toast',message]),
     taskDialog(...args){if(args[7])args[7]={...args[7]};if(ui.planReceiptReturn)events.push(['capture plan receipt return',ui.planReceiptReturn.id]);events.push(args);},

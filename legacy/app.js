@@ -15,6 +15,7 @@
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   let guideTaskId = '', guideTaskNeedsReveal = false;
+  let guideInitialLoading = false, guideTaskWait = null;
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
   const unconfirmedRelatedSaves=new Map();
   const guideSteps = [
@@ -83,18 +84,26 @@
   }
   function syncGuide(checkpoint) {
     if (!guidedWorkspace) return Promise.resolve();
+    const actor=ui.actor,project=window.GatherMode.projectId;
+    const inScope=()=>!window.GatherAccessLost&&isOrganizer()&&ui.actor===actor&&window.GatherMode?.projectId===project;
     guideQueue = guideQueue.then(async () => {
-      if (checkpoint && guideProgress?.events?.some(item => item.checkpoint === checkpoint)) return;
+      if (!inScope() || checkpoint && guideProgress?.events?.some(item => item.checkpoint === checkpoint)) return;
       try {
         const response = await fetch('/api/tutorial',{
           cache:'no-store', credentials:'same-origin', signal:AbortSignal.timeout(6000),
           ...(checkpoint ? {method:'POST',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},
-            body:JSON.stringify({checkpoint,project:window.GatherMode.projectId})} : {}),
+            body:JSON.stringify({checkpoint,project})} : {}),
         });
         if(!response.ok) throw new Error('Guide unavailable');
-        guideProgress = await response.json();
+        const progress=await response.json();
+        if(!progress||(progress.projectId!==null&&typeof progress.projectId!=='string')||
+          !Array.isArray(progress.events)||progress.events.some(item=>typeof item?.checkpoint!=='string'))
+          throw new Error('Guide response unavailable');
+        if(!inScope())return;
+        guideProgress = progress;
         guideError = false;
       } catch {
+        if(!inScope())return;
         guideError = true;
       }
       paintGuide();
@@ -111,8 +120,47 @@
   }
   function guideExpectsTask() {
     return guidedWorkspace&&!guideTaskId&&guideProgress?.projectId===window.GatherMode.projectId&&
+      Array.isArray(guideProgress.events)&&
       guideProgress.events.some(event=>event.checkpoint==='project_created')&&
       !guideProgress.events.some(event=>event.checkpoint==='task_created');
+  }
+  async function loadInitialGuide() {
+    if(!guidedWorkspace)return;
+    guideInitialLoading=true;
+    try{await syncGuide();}
+    finally{guideInitialLoading=false;finishGuideTaskWait();}
+  }
+  function openGuideAwareTask(opener) {
+    if(window.GatherAccessLost||ui.pendingSave||!canCreateTasks())return false;
+    const backdrop=$('#dialogBackdrop');
+    if(!backdrop.hidden&&ui.dialogKind==='guide-task-loading')return false;
+    if(guidedWorkspace&&guideInitialLoading&&backdrop.hidden&&store.getState().tasks.length===0){
+      openDialog('Add a task',
+        '<p id="guideTaskWaiting" role="status">Checking where you left off in the guide…</p><p class="muted section-gap">You can wait for the guided task form or add a task now without the walkthrough.</p>',
+        '<button type="button" class="btn btn-secondary" data-action="close-dialog">Cancel</button><button type="button" class="btn btn-primary" data-action="guide-task-without-step">Add without the guide</button>',
+        false,'guide-task-loading',true);
+      guideTaskWait={marker:$('#guideTaskWaiting',$('#dialog')),view:ui.view,actor:ui.actor,project:window.GatherMode.projectId};
+      if(opener?.isConnected)ui.lastFocus=opener;
+    }else newTaskDialog(guideExpectsTask());
+    // Record the actual click once. A queued observation does not gate the form.
+    void syncGuide('add_task_clicked');
+    return true;
+  }
+  function finishGuideTaskWait(opener=null) {
+    const waiting=guideTaskWait;
+    if(!waiting)return false;
+    const dialog=$('#dialog');
+    if(!waiting.marker||waiting.marker!==$('#guideTaskWaiting',dialog)||ui.dialogKind!=='guide-task-loading'||
+      $('#dialogBackdrop').hidden||window.GatherAccessLost||!canCreateTasks()||
+      ui.view!==waiting.view||ui.actor!==waiting.actor||window.GatherMode?.projectId!==waiting.project){
+      guideTaskWait=null;return false;
+    }
+    if(document.hidden||ui.pendingSave)return false;
+    if(opener?opener!==$('[data-action="guide-task-without-step"]',dialog)||opener.disabled:guideInitialLoading)return false;
+    guideTaskWait=null;
+    newTaskDialog(!opener&&guideExpectsTask()&&store.getState().tasks.length===0);
+    if(!opener&&guideError)toast('The guide couldn’t load. You can still add your task.');
+    return true;
   }
   const planSidebar=GatherPlanningUI.createSidebar({
     getUrl:(mode='suggestions')=>window.GatherMode.demo?'/plan?demo=1&as=jack&mode='+mode+'&embed=1':window.GatherMode.projectUrl('/plan')+'&mode='+mode+'&embed=1',
@@ -1585,6 +1633,7 @@
     }
   }
   function openDialog(title,body,footer='',wide=false,kind='',focusHeading=false) {
+    if(kind!=='guide-task-loading')guideTaskWait=null;
     if(kind!=='task'){ui.notificationScheduleReview=null;ui.linkedResultsReview=null;ui.resumeReceipt=null;}
     if(kind!=='task')ui.planReceiptReturn=null;
     if(!['task','delete-task'].includes(kind))ui.completionLinkedReturn=null;
@@ -1634,6 +1683,7 @@
     });
   }
   function closeDialog(focusTarget) {
+    guideTaskWait=null;
     $('#dialogBackdrop').hidden=true;
     $('#dialogBackdrop').classList.remove('open');
     delete $('#dialogBackdrop').dataset.dialogKind;
@@ -4750,6 +4800,7 @@
     if(action==='accept-task'){await acceptReviewedTask(el);return;}
     if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
     if(action==='review-request-handoff-reply'){openRequestHandoffReply(id,el);return;}
+    if(action==='guide-task-without-step'){finishGuideTaskWait(el);return;}
     if(action==='review-personal-completion'){openPersonalCompletionReview(id,el);return;}
     if(action==='show-reconfirmed-activity-day'){showReconfirmedActivityDay(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
@@ -4842,7 +4893,7 @@
       if(action==='move-event-plan')rescheduleDialog();
       if(action==='add-task'||action==='guide-add-task'){
         if(el.id==='overviewAddTask'&&el===$('#overviewAddTask',$('#viewRoot')))el.focus({preventScroll:true});
-        newTaskDialog(guideExpectsTask());void syncGuide('add_task_clicked');
+        openGuideAwareTask(el);
       }
       if(action==='guide-task-reveal'||action==='guide-task-completion')revealGuideTask(action==='guide-task-completion');
       if(action==='guide-task-links')showGuideTaskLinks(id);
@@ -5544,7 +5595,7 @@
   window.addEventListener('focus',refreshAttentionDate);
   window.addEventListener('beforeprint',()=>{if(ui.dialogKind==='run-sheet')currentRunSheet();});
   window.addEventListener('pageshow',refreshAttentionDate);
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else refreshAttentionDate();});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)lockPrivate();else {refreshAttentionDate();finishGuideTaskWait();}});
   if(window.GatherMode&&!isOrganizer())ui.tab='mine';
   const tour=GatherPlanningUI.createTour({navigate:view=>{if(ui.pendingSave||!confirmDiscard($('#dialog'),$('#emailReviewForm')))return false;if(!$('#dialogBackdrop').hidden)closeDialog();return ui.view===view||navigate(view)!==false;},isOrganizer,storageKey:'weft-quick-tour-v1:'+(window.GatherMode?.projectId||'local')+':'+ui.actor});
   window.GatherWorkspaceTools?.create({
@@ -5567,7 +5618,7 @@
   if(initialActivity)navigate('timeline',{scheduleDay:activityDay});
   else navigate(initialTask?'tasks':navigation.initial());
   if(joinWelcome)$('#workspaceHandoffTitle')?.focus({preventScroll:true});
-  void syncGuide();
+  void loadInitialGuide();
   window.dispatchEvent(new Event('gather-workspace-ready'));
   if(window.GatherMode&&store.refresh)bindWorkspaceRefresh();
   if(initialActivity&&!window.GatherAccessLost&&ui.view==='timeline'){
