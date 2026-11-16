@@ -23,8 +23,12 @@ export function TeamClient({ projectId, guided = false, tutorial = false, handof
     invitationHeading = useRef<HTMLHeadingElement>(null);
   const endpoint = '/api/team?project=' + encodeURIComponent(projectId);
   const [tutorialInviteCreated, setTutorialInviteCreated] = useState(false);
+  const projectHref = '/project?project=' + encodeURIComponent(projectId);
+  function canLeaveInvitation() {
+    return !pending.current && (!email.trim() || window.confirm('Leave Team access? This email field won’t be kept.'));
+  }
   async function finishWithoutInviting() {
-    if (!tutorial || pending.current) return;
+    if (!tutorial || tutorialInviteCreated || !canLeaveInvitation()) return;
     pending.current = true;
     setBusy(true);
     setError('');
@@ -42,6 +46,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false, handof
   }
   const loaded = team !== null;
   const canReturnToHandoff = Boolean(handoffHref && team?.projectId === projectId);
+  const guardProjectBack = tutorial || canReturnToHandoff;
   useEffect(() => {
     if (tutorial && loaded) void observeTutorial('invite_form_viewed', projectId).catch(() => {});
   }, [tutorial, loaded, projectId]);
@@ -49,7 +54,7 @@ export function TeamClient({ projectId, guided = false, tutorial = false, handof
     if (canReturnToHandoff && document.activeElement === document.body) invitationHeading.current?.focus();
   }, [canReturnToHandoff]);
   function confirmLeavingInvitation(event: React.MouseEvent<HTMLAnchorElement>) {
-    if (pending.current || (email.trim() && !window.confirm('Leave Team access? This email field won’t be kept.'))) event.preventDefault();
+    if (!canLeaveInvitation()) event.preventDefault();
   }
   async function reload() {
     const epoch = ++readEpoch.current;
@@ -177,8 +182,9 @@ export function TeamClient({ projectId, guided = false, tutorial = false, handof
     <div className="space-y-6">
       <a
         className="text-sm underline"
-        href={'/project?project=' + encodeURIComponent(projectId)}
-        onClick={canReturnToHandoff ? confirmLeavingInvitation : undefined}
+        href={projectHref + (tutorial && !tutorialInviteCreated ? '&guide=1' : '')}
+        aria-disabled={guardProjectBack && busy ? true : undefined}
+        onClick={guardProjectBack ? confirmLeavingInvitation : undefined}
       >
         Back to project
       </a>
@@ -332,8 +338,9 @@ export function TeamClient({ projectId, guided = false, tutorial = false, handof
             </div>}
             {tutorial ? <div className="weft-guide-actions">
               {!tutorialInviteCreated && <Button type="button" variant="outline" disabled={busy} onClick={finishWithoutInviting}>Finish without inviting</Button>}
-              <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide">{tutorialInviteCreated ? 'Finish guide' : 'View guide progress'}</a>
-            </div> : guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={'/project?project=' + encodeURIComponent(projectId)}>Open project to add a task</a>}
+              <a className="inline-flex min-h-11 items-center text-sm underline" href="/guide"
+                aria-disabled={busy || undefined} onClick={confirmLeavingInvitation}>{tutorialInviteCreated ? 'Finish guide' : 'View guide progress'}</a>
+            </div> : guided && <a className="inline-flex min-h-11 items-center text-sm underline" href={projectHref}>Open project to add a task</a>}
           </section>
           <section className="space-y-4 rounded-xl border bg-card p-5">
             <h2 className="text-lg font-semibold">People</h2>

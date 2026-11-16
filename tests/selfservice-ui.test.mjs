@@ -286,6 +286,101 @@ test('Team access handoff is read-only on entry and confirms leaving an unsent d
     assert.equal(follow(blank.tree.find(node=>node.type==='a'&&text(node)==='Back to plan handoff')),false);
   } finally { Object.assign(globalThis,previous);delete globalThis.__selfserviceState; }
 });
+
+test('guided Team access preserves the guide link and protects unsent email on guide exits', async () => {
+  const projectId='p_12345678-1234-4234-8234-123456789abc';
+  const team={name:'Fictional guide event',projectId,owner:{name:'Organizer',email:'organizer@example.test'},members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@example.test'}};
+  const previous={fetch:globalThis.fetch,window:globalThis.window};
+  const calls=[],prompts=[],navigations=[];
+  let consent=false,release;
+  function defer(){return new Promise(resolve=>{release=resolve;});}
+  function link(tree,label){const control=tree.find(node=>node.type==='a'&&text(node)===label);assert.ok(control,label);return control;}
+  function follow(control){let stopped=false;control.props.onClick?.({preventDefault(){stopped=true;}});return stopped;}
+  const props={projectId,guided:true,tutorial:true};
+  try {
+    globalThis.window={confirm(message){prompts.push(message);return consent;},location:{assign:href=>navigations.push(href)}};
+    let response;
+    globalThis.fetch=async (url,options)=>{
+      const input=JSON.parse(options.body);
+      calls.push({url,method:options.method,input});return response;
+    };
+    const draftedAddress='fictional-teammate@example.test';
+    const {tree,state}=render(TeamClient,props,[team,'',draftedAddress,false,'']);
+    const back=link(tree,'Back to project'),progress=link(tree,'View guide progress');
+    const skip=tree.find(node=>node.type==='button'&&text(node)==='Finish without inviting');assert.ok(skip);
+    assert.equal(back.props.href,`/project?project=${projectId}&guide=1`);
+    assert.equal(progress.props.href,'/guide');
+    assert.equal(follow(back),true);assert.equal(follow(progress),true);await skip.props.onClick();
+    assert.equal(prompts.length,3);
+    for(const prompt of prompts)assert.match(prompt,/email field won’t be kept/i);
+    assert.deepEqual(calls,[]);assert.deepEqual(navigations,[]);assert.equal(state[2],draftedAddress);
+
+    consent=true;
+    assert.equal(follow(back),false);assert.equal(follow(progress),false);
+    assert.deepEqual(calls,[],'ordinary links do not send an invitation or write progress');
+    response=defer();
+    const finishing=skip.props.onClick();
+    assert.deepEqual(calls,[{url:'/api/tutorial',method:'POST',input:{checkpoint:'invite_skipped',project:projectId}}]);
+    assert.deepEqual(navigations,[],'skip waits for the durable checkpoint');
+    const beforePending=prompts.length;
+    assert.equal(follow(back),true);assert.equal(follow(progress),true);await skip.props.onClick();
+    assert.equal(prompts.length,beforePending);assert.equal(calls.length,1);
+    release(Response.json({projectId:'different-project',events:[{checkpoint:'invite_skipped'}]}));await finishing;
+    assert.deepEqual(navigations,[]);assert.equal(state[2],draftedAddress);assert.match(state[1],/Could not finish the guide/);
+
+    response=defer();
+    const retry=skip.props.onClick();
+    release(Response.json({projectId,events:[{checkpoint:'invite_skipped'}]}));await retry;
+    assert.deepEqual(navigations,['/guide']);assert.equal(calls.length,2);
+    assert.equal(calls.some(call=>call.url.includes('/api/team')),false);
+
+    const blank=render(TeamClient,props,[team,'','  ',false,'']);
+    assert.equal(follow(link(blank.tree,'Back to project')),false);
+    assert.equal(follow(link(blank.tree,'View guide progress')),false);
+    for(const ordinaryProps of [{projectId},{projectId,guided:true}]){
+      const ordinary=render(TeamClient,ordinaryProps,[team,'',draftedAddress,false,'']);
+      const ordinaryBack=link(ordinary.tree,'Back to project');
+      assert.equal(ordinaryBack.props.href,`/project?project=${projectId}`);
+      assert.equal(ordinaryBack.props.onClick,undefined);
+    }
+  } finally {Object.assign(globalThis,previous);delete globalThis.__selfserviceState;}
+});
+
+test('guided Team access cannot leave while saving a real invitation and protects a new email draft on Finish guide', async () => {
+  const projectId='p_12345678-1234-4234-8234-123456789abc';
+  const team={name:'Fictional guide event',projectId,owner:{name:'Organizer',email:'organizer@example.test'},members:[],invitations:[],
+    sender:{configured:true,connected:true,email:'invites@example.test'}};
+  const previous={fetch:globalThis.fetch,window:globalThis.window};
+  const calls=[],prompts=[];
+  let release;
+  const response=new Promise(resolve=>{release=resolve;});
+  const props={projectId,guided:true,tutorial:true};
+  function link(tree,label){const control=tree.find(node=>node.type==='a'&&text(node)===label);assert.ok(control,label);return control;}
+  function follow(control){let stopped=false;control.props.onClick?.({preventDefault(){stopped=true;}});return stopped;}
+  try {
+    globalThis.window={confirm(message){prompts.push(message);return false;},location:{assign:()=>assert.fail('must not redirect before confirmation')}};
+    globalThis.fetch=async (url,options)=>{calls.push({url,input:JSON.parse(options.body)});return response;};
+    const {tree,state}=render(TeamClient,props,[team,'','fictional-teammate@example.test',false,'']);
+    const save=tree.find(node=>node.type==='form').props.onSubmit({preventDefault(){}});
+    assert.equal(follow(link(tree,'Back to project')),true);
+    assert.equal(follow(link(tree,'View guide progress')),true);
+    await tree.find(node=>node.type==='button'&&text(node)==='Finish without inviting').props.onClick();
+    assert.deepEqual(prompts,[],'do not offer to discard an in-flight invitation');
+    assert.equal(calls.length,1);assert.equal(calls[0].url,`/api/team?project=${projectId}`);
+    assert.equal(calls[0].input.action,'invite');assert.equal(calls[0].input.guidedTutorial,true);
+    assert.equal(Object.hasOwn(calls[0].input,'senderEmail'),false);
+    release(Response.json({...team,invitations:[{id:calls[0].input.requestId,email:calls[0].input.email,expiresAt:1792200000000,delivery:{status:'none'}}]}));await save;
+    const next=render(TeamClient,props,state);
+    const finish=link(next.tree,'Finish guide');assert.equal(finish.props.href,'/guide');
+    assert.equal(follow(finish),false);assert.deepEqual(prompts,[]);
+    assert.ok(!next.tree.some(node=>node.type==='button'&&text(node)==='Finish without inviting'));
+    next.tree.find(node=>node.props.id==='invite-email').props.onChange({target:{value:'another-fictional@example.test'}});
+    const addingAnother=render(TeamClient,props,next.state);
+    assert.equal(follow(link(addingAnother.tree,'Finish guide')),true);
+    assert.equal(addingAnother.state[2],'another-fictional@example.test');assert.equal(prompts.length,1);assert.equal(calls.length,1);
+  } finally {Object.assign(globalThis,previous);delete globalThis.__selfserviceState;}
+});
 test('inviting sends email by default and reports the durable delivery result', async () => {
   const previous = globalThis.fetch;
   const team = { name: 'QA event', projectId: 'p_test', owner: {name:'Owner',email:'qa@example.com'},

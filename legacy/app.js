@@ -15,7 +15,7 @@
     new URLSearchParams(location.search).get('guide') === '1' && isOrganizer();
   let guideProgress = null, guideQueue = Promise.resolve(), guideError = false, guideViewReady = '';
   let guideTaskId = '', guideTaskNeedsReveal = false, guideTaskRestoreSuppressed = false;
-  let guideInitialLoading = false, guideTaskWait = null;
+  let guideInitialLoading = false, guideTaskWait = null, guideInviteClickStarted = false;
   let joinWelcome = false, renderedTeammateHandoff = '', taskLinkUnavailable = false;
   const unconfirmedRelatedSaves=new Map();
   const guideSteps = [
@@ -89,6 +89,25 @@
       </div>
     </section>`;
   }
+  function guideObservation(checkpoint,project) {
+    return {method:'POST',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},
+      body:JSON.stringify({checkpoint,project})};
+  }
+  function openGuideInvitation(opener) {
+    const host=$('#workspaceGuide'), project=window.GatherMode?.projectId;
+    if(!guidedWorkspace||!isOrganizer()||window.GatherAccessLost||document.hidden||!host||host.hidden||!project||
+      guideProgress?.projectId!==project||!opener.isConnected||opener.disabled||opener.closest('[hidden],[inert]')||
+      !opener.getClientRects().length||opener!==$('[data-action="guide-invite"]',host))return;
+    // A navigation must not wait behind guide telemetry. The server accepts
+    // this interaction independently of the form-view and invite milestones.
+    if(!guideInviteClickStarted&&!guideProgress.events.some(item=>item.checkpoint==='invite_clicked')){
+      guideInviteClickStarted=true;
+      void fetch('/api/tutorial',{...guideObservation('invite_clicked',project),cache:'no-store',
+        credentials:'same-origin',keepalive:true}).catch(()=>{});
+    }
+    // Leave unsaved-editor protection to the existing top-page unload guard.
+    window.top.location.href=window.GatherMode.projectUrl('/team?guide=1');
+  }
   function syncGuide(checkpoint) {
     if (!guidedWorkspace) return Promise.resolve();
     const actor=ui.actor,project=window.GatherMode.projectId;
@@ -98,8 +117,7 @@
       try {
         const response = await fetch('/api/tutorial',{
           cache:'no-store', credentials:'same-origin', signal:AbortSignal.timeout(6000),
-          ...(checkpoint ? {method:'POST',headers:{'Content-Type':'application/json','X-Gather-Request':'1'},
-            body:JSON.stringify({checkpoint,project})} : {}),
+          ...(checkpoint ? guideObservation(checkpoint,project) : {}),
         });
         if(!response.ok) throw new Error('Guide unavailable');
         const progress=await response.json();
@@ -4827,6 +4845,7 @@
     if(action==='next-up-timeline'){jumpFromNextUpToTimeline(id,el);return;}
     if(action==='review-request-handoff-reply'){openRequestHandoffReply(id,el);return;}
     if(action==='guide-task-without-step'){finishGuideTaskWait(el);return;}
+    if(action==='guide-invite'){openGuideInvitation(el);return;}
     if(action==='review-personal-completion'){openPersonalCompletionReview(id,el);return;}
     if(action==='show-reconfirmed-activity-day'){showReconfirmedActivityDay(id,el);return;}
     if(action==='refresh-timeline-schedule'){await refreshTimelineSchedule(el);return;}
@@ -4858,7 +4877,7 @@
     if(action==='verify-task'||action==='review-completion-evidence'){await saveReviewedCompletion(el);return;}
     if((action==='source'||action==='select-message')&&ui.view==='inbox'&&id===ui.messageId&&$('#dialogBackdrop').hidden)return;
     if(action==='task'&&ui.dialogKind==='task'&&id===ui.detailId)return;
-    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-attention-owner','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','guide-invite','demo-info','source','select-message','task-conversation'];
+    const replacesDialog=['close-dialog','review-completion-evidence','review-organizer-item','review-attention-owner','review-returned-completion','move-event-plan','task','delete-task','review-acceptance','review-event-acceptance','review-assignments','review-event-assignments','add-task','add-activity','schedule-task','schedule-set-start','schedule-review-activity','run-sheet','draft-guest-agenda','reuse-checklist','before-event-review','copy-schedule-day','followup','digest','demo-email','demo-reset','paste-email','report-task','participant-preview','event-context','draft-plan','edit-memory','new-booking','booking','feedback','thought-partner','event-info','invite','demo-info','source','select-message','task-conversation'];
     replacesDialog.push('related-checklist','notifications','return-to-event-task-review','return-from-event-review-schedule','return-to-acceptance-review','open-related-batch-child','return-to-related-batch','inspect-overlap-peer','return-to-overlap-review');
     const replacesReview=['source','select-message','select-conversation','close-briefing','task-conversation','sample-reply','ignore-message','task-filter','person-tasks','paste-email'];
     const exitsAssignment=hasAcceptanceReturnDraft()&&['task-conversation','notifications','event-context','event-info','followup','source','select-message','before-event-review','review-acceptance'].includes(action);
@@ -5126,10 +5145,6 @@
       if(action==='accept-insight'){const task=store.acceptSuggestion(id,ui.actor);render();if(ui.dialogKind==='thought')thoughtDialog();toast(task?`Added to plan: ${task.title}`:'This check is already covered by the plan.');}
       if(action==='dismiss-insight'){store.dismissSuggestion(id);render();if(ui.dialogKind==='thought')thoughtDialog();toast('Suggestion dismissed for this plan.');}
       if(action==='event-info')contextDialog();
-      if(action==='guide-invite'&&guidedWorkspace){
-        await syncGuide('invite_clicked');
-        window.top.location.href=window.GatherMode.projectUrl('/team?guide=1');return;
-      }
       if(action==='guide-skip-invite'&&guidedWorkspace){
         if(!confirmDiscard($('#dialog'),$('#emailReviewForm')))return;
         await syncGuide('invite_skipped');
