@@ -114,7 +114,7 @@
       .slice(0,Math.max(0,3-active.length)).map(row=>row.task);
     return {active,returned,suggested,hasOwned:owned.length>0};
   }
-  function suggestion(task,state) {
+  function suggestion(task,state,assignable=member=>member.active!==false) {
     const links=unresolved(task,state.tasks);
     const waits=links.map(link=>state.tasks.find(t=>t.id===link.taskId&&!t.archivedAt)).filter(Boolean);
     if(waits.length<links.length)return {text:'Review the unavailable required task links before completing this work.',targets:waits};
@@ -122,7 +122,7 @@
     const request=pendingRequest(task);
     if(request?.kind==='date')return {text:task.hardDeadline?'Check the vendor or external deadline before approving a new date.':'Check linked work before agreeing to the proposed date.',targets:downstream(task,state.tasks)};
     if(request?.kind==='help') {
-      const others=state.members.filter(m=>m.id!==task.owner&&m.active!==false).sort((a,b)=>nextUp(state.tasks,a.id).length-nextUp(state.tasks,b.id).length||a.id.localeCompare(b.id));
+      const others=state.members.filter(m=>m.id!==task.owner&&assignable(m)).sort((a,b)=>nextUp(state.tasks,a.id).length-nextUp(state.tasks,b.id).length||a.id.localeCompare(b.id));
       const member=others[0];
       if(member)return {text:'Consider '+member.name.split(' ')[0]+' ('+nextUp(state.tasks,member.id).length+'/3 next tasks). Confirm their availability first.',targets:[]};
     }

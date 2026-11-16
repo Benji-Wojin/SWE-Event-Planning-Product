@@ -221,6 +221,7 @@ function taskDialogHtml(actor,id='dietary',identity,store=create(),modules={}) {
     commitment:()=>'',member:id=>store.getState().members.find(item=>item.id===id)||({name:id}),avatar:()=>'',ownerOptions:()=>'',statusOptions:()=>'',options:items=>items.map(([value,label])=>`<option value="${value}">${label}</option>`).join(''),$:()=>null,
   });
   context.statuses={todo:'To do',progress:'In progress',blocked:'Blocked',done:'Done'};
+  vm.runInContext(source.slice(source.indexOf('  function assignableTaskOwner('),source.indexOf('  const ownerOptions =')),context);
   context.recovery=GatherRecoveryUI.create(context);
   context.schedule=GatherScheduleUI.create(context);
   const resumeReceipt=source.slice(source.indexOf('  function currentResumeReceipt('),source.indexOf('  function focusTaskOwnerEditor('));

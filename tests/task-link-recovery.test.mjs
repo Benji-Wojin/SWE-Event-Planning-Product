@@ -10,6 +10,7 @@ const notice=part('  function taskLinkNotice()', '  function tasksView(s)');
 const bootstrap=part('  ui.scheduleDate=navigation.initialScheduleDate();', "  if((!window.GatherMode||window.GatherMode.demo)&&ui.view");
 const handoffLink=part('  function openTaskHandoffLink(', '  function openScheduleReconfirmation(');
 const receiptReturn=part('  function setPlanReceiptReturn(', '  function openTaskHandoffLink(');
+const ownerChoices=part('  const options =', '  const statusOptions =');
 function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=false,openReview=false,activity='',date='',rows=[],fromPlanReceipt=false}={}){
   const events=[];
   const ui={tab:'mine',actor:'fictional-actor'},title={},frames=[],document={activeElement:title};
@@ -40,7 +41,7 @@ function land(id,tasks,{welcome=false,review='',organizer=false,mode,accessLost=
     workspaceUpdatesPending:()=>updatesPending,focusTaskScheduleEditor(id,setup){events.push(['schedule focus',id,setup]);},
     openOrganizerReview(...args){events.push(['review',...args]);return openReview;},
   });
-  vm.runInContext(notice+'\n'+receiptReturn+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
+  vm.runInContext(ownerChoices+'\n'+notice+'\n'+receiptReturn+'\n'+handoffLink+'\n'+part('  function focusTimelineRow(', '  function timelineView(')+'\n'+bootstrap,context);
   return {ui,events,context,document,elements,frames,pending(){updatesPending=true;},markup:()=>vm.runInContext('taskLinkNotice()',context)};
 }
 

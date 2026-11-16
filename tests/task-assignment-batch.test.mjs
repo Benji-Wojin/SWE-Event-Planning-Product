@@ -241,6 +241,9 @@ test('dialog is filtered, bounded, escaped, organizer-only and never preselects 
   });
   vm.runInContext(
     app.slice(
+      app.indexOf('  function assignableTaskOwner('),
+      app.indexOf('  const ownerOptions ='),
+    ) + app.slice(
       app.indexOf('  function assignmentCandidates('),
       app.indexOf('  function acceptanceCandidates('),
     ) + 'assignmentDialog();',

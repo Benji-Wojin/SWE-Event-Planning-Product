@@ -240,6 +240,7 @@
     function entry(actor, text, taskId, type) {
       state.activity.unshift({ id: id("activity"), actor, text, taskId: taskId || "", at: timestamp(), type });
     }
+    const assignableMember = member => !!member && member.active !== false && (!options.realProject || !member.role.includes('· example'));
     function taskFields(data, previous = {}) {
       const result = { ...previous };
       ["title", "category", "note"].forEach((field) => { if (data[field] !== undefined) result[field] = clean(data[field], field === "title" ? 200 : field === "category" ? 80 : 5000); });
@@ -248,8 +249,14 @@
       result.note ||= "";
       if (data.owner !== undefined) result.owner = clean(data.owner, 80);
       result.owner ??= "";
-      if (result.owner && !state.members.some((member) => member.id === result.owner)) throw new Error("Choose a valid task owner.");
-      if (result.owner && result.owner !== previous.owner && state.members.find(member=>member.id===result.owner)?.active === false) throw new Error('This teammate no longer has project access. Choose an active teammate.');
+      if (result.owner) {
+        const member = state.members.find(candidate => candidate.id === result.owner);
+        if (!member) throw new Error('Choose a valid task owner.');
+        if (result.owner !== previous.owner && !assignableMember(member)) {
+          if (member.active === false) throw new Error('This teammate no longer has project access. Choose an active teammate.');
+          throw new Error('Sample teammates can’t own work in a real project. Choose an active teammate or leave the task unassigned.');
+        }
+      }
       if (data.status !== undefined) result.status = data.status;
       if (result.status === undefined) result.status = "todo";
       if (!STATUSES.includes(result.status)) throw new Error("Choose a valid task status.");
@@ -621,7 +628,7 @@
       const threadTasks = [...new Set(state.messages.filter(item => item.id !== message.id && item.threadId === message.threadId && (item.appliedTaskId||item.linkedTaskId)).map(item => item.appliedTaskId||item.linkedTaskId))];
       const topic = /bus|northstar|transport/.test(subject) ? "bus" : /diet|allergen/.test(subject) ? "dietary" : /cater|menu/.test(subject) ? "catering" : /volunteer|briefing/.test(subject) ? "briefing" : "";
       const existing = state.tasks.find(task => task.id === selectedTaskId) || (threadTasks.length === 1 ? state.tasks.find(task => task.id === threadTasks[0]) : null) || (threadTasks.length > 1 ? null : state.tasks.find(task => task.id === topic) || state.tasks.find(task => normalize(message.subject).includes(normalize(task.title))));
-      const person = state.members.find((member) => normalize(message.sender).includes(normalize(member.name)) || normalize(message.sender).split(" ").includes(member.name.split(" ")[0].toLowerCase()));
+      const person = state.members.find((member) => assignableMember(member) && (normalize(message.sender).includes(normalize(member.name)) || normalize(message.sender).split(" ").includes(member.name.split(" ")[0].toLowerCase())));
       const blockerText=body.replace(/\b(?:no longer|not) (?:blocked|waiting|pending)\b/g,'');
       const isBlocked = /\b(blocked|waiting|pending|cannot|can't)\b|need.*approv|not (?:yet )?(?:complete|done|confirmed)|still need/.test(blockerText);
       const completionCaveat=/\b(?:not|never|isn't|aren't|wasn't|weren't|haven't|hasn't|can't|cannot|will|would|could|should|please|if|can|after|once|unless|until|might|may|except|but|however|still|remaining)\b|\?/;
@@ -1073,7 +1080,7 @@
         if (!match) continue;
         const who=normalize(match[1]).replace(/^(?:also|still|please) /,'');
         if (/^(?:i|we|me|myself|ourselves)$/.test(who)) continue;
-        const people=state.members.filter(member=>[normalize(member.name),normalize(member.name.split(/\s+/)[0])].some(name=>who===name||who.endsWith(' '+name)));
+        const people=state.members.filter(member=>assignableMember(member)&&[normalize(member.name),normalize(member.name.split(/\s+/)[0])].some(name=>who===name||who.endsWith(' '+name)));
         const title=clean((match[2]+match[3]).replace(/\s+(?:before (?:i|we) can|so (?:i|we) can)\b.*$/i,'').replace(/[,\s]+$/,''),200);
         if(title.length<5)continue;
         const key=requestKey(title), candidates=matchingRequestTasks(task,title);
@@ -1433,7 +1440,7 @@
         if (activeTasks.some((task) => task.memoryId === memory.id || task.suggestionId === `lesson-${memory.id}` || normalize(task.title) === normalize(title))) return;
         candidates.push({ id: `lesson-${memory.id}`, title: "Event feedback", body: memory.change, source: `Event feedback · ${memory.scope === 'outdoor' ? 'outdoor event' : memory.scope === 'transport' ? 'transport planned' : memory.scope === 'same-venue' ? 'same venue' : 'all events'}${memory.outcome === 'helped' ? ' · previously helped' : ''}`, category: memory.category || "Guest care", reason: "team-feedback", task: { title, category: memory.category || "Guest care", owner: "", dueDate: "", note: `From event feedback: ${memory.change}${memory.context ? `\nApplies when: ${memory.context}` : ''}${memory.wentWell ? `\nKeep what worked: ${memory.wentWell}` : ""}` } });
       });
-      return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner && member.active !== false) ? suggestion.task.owner : ''}}));
+      return candidates.map(suggestion => ({...suggestion, task: {...suggestion.task, owner: state.members.some(member => member.id === suggestion.task.owner && assignableMember(member)) ? suggestion.task.owner : ''}}));
     }
     function getSuggestions() { return copy(suggestionCandidates().filter((suggestion) => !state.dismissed.includes(suggestion.id))); }
     function acceptSuggestion(suggestionId, actor = "jack") {

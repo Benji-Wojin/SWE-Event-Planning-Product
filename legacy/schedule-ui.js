@@ -123,12 +123,13 @@
   const scheduledInScope = (tasks,scope) => ordered(scoped(tasks,scope).filter(task=>onDate(task,selectedDate(scope))));
   const assignmentGroup = key => key==='unassigned'||key==='owner-unavailable';
   const canReviewAssignment = task => active(task)&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt;
-  const assignmentIssue = (task,members) => !task.owner?'unassigned':
-    members.some(member=>member.id===task.owner&&member.active!==false)?'':'owner-unavailable';
-  function scheduleOwnerLabel(id,members=[]) {
+  const activeMember = member => member.active!==false;
+  const assignmentIssue = (task,members,assignable=activeMember) => !task.owner?'unassigned':
+    members.some(member=>member.id===task.owner&&assignable(member))?'':'owner-unavailable';
+  function scheduleOwnerLabel(id,members=[],assignable=activeMember) {
     if(!id)return 'Unassigned';
     const owner=members.find(member=>member.id===id);
-    return owner?owner.name+(owner.active===false?' · Inactive teammate':''):'Assigned owner unavailable';
+    return owner?owner.name+(owner.active===false?' · Inactive teammate':!assignable(owner)?' · Example only · unavailable owner':''):'Assigned owner unavailable';
   }
   function newActivityTask({title,owner,note,start='',end='',location=''}) {
     if(!start&&(end||location.trim()))throw new Error('Enter a start time to save an end time or activity location, or clear those fields to set the time later.');
@@ -155,8 +156,8 @@
   }
   const changesRequested = task => task.status!=='done'&&!task.reportedAt&&Boolean(task.completionReview);
   const canOpenOverlap = task => !waitingVerification(task)&&!evidenceAmended(task)&&!changesRequested(task)&&!planRequestKind(task);
-  const pendingAcceptance = (task,members) => !resolved(task)&&task.owner&&members.some(member=>member.id===task.owner&&member.active!==false)&&!task.acceptedAt&&!task.reportedAt&&!waitingVerification(task);
-  const awaitingScheduleAcceptance = (task,members) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members);
+  const pendingAcceptance = (task,members,assignable=activeMember) => !resolved(task)&&task.owner&&members.some(member=>member.id===task.owner&&assignable(member))&&!task.acceptedAt&&!task.reportedAt&&!waitingVerification(task);
+  const awaitingScheduleAcceptance = (task,members,assignable=activeMember) => pendingReconfirmation(task,task.owner)&&pendingAcceptance(task,members,assignable);
   const scheduleAcceptanceCue = 'Schedule changed · owner needs to accept again';
   const requiredResultReady = task => !!task&&!task.archivedAt&&resolved(task);
   function requiredWorkState(link,byId) {
@@ -283,7 +284,7 @@
 
   // A review of saved facts, not a safety certification or a readiness score.
   // Explicitly planned activities retain their intent before a time is set.
-  function reviewItems(state,now=Date.now(),scope={}) {
+  function reviewItems(state,now=Date.now(),scope={},assignable=activeMember) {
     const tasks=scoped(state.tasks,scope),open=tasks.filter(task=>!resolved(task));
     const byId=new Map(state.tasks.map(task=>[task.id,task]));
     const requiredSummaries=new Map(),needsRequiredWork=[];
@@ -305,10 +306,10 @@
       {key:'plan-requests',title:'Plan requests awaiting review',help:'A teammate asked for help or proposed a different preparation deadline. These requests do not change the saved plan or activity times.',tasks:open.filter(planRequestKind)},
       {key:'linked-results',title:'Review linked results',help:'Required linked work is complete. Open the task to review its results and check for other blockers. Its status stays Blocked until someone resumes it or updates it explicitly.',tasks:open.filter(task=>linkedResultsReady(task,byId))},
       {key:'blocked',title:'Marked blocked',help:'Review the latest update with the owner; this review does not change task status.',tasks:open.filter(task=>task.status==='blocked'&&!waitingVerification(task)&&!linkedResultsReady(task,byId))},
-      {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='unassigned')},
-      {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner is missing or inactive in this project. Review who will take responsibility.',tasks:open.filter(task=>assignmentIssue(task,state.members)==='owner-unavailable')},
-      {key:'schedule-reconfirmation',title:'Schedule changes awaiting owner acceptance',help:'An earlier acceptance was cleared when the schedule changed. Ask the assigned owner to review the current plan and accept again. This does not change progress.',tasks:open.filter(task=>awaitingScheduleAcceptance(task,state.members))},
-      {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members)&&!awaitingScheduleAcceptance(task,state.members))},
+      {key:'unassigned',title:'No owner assigned',help:'Choose who will take responsibility for this work.',tasks:open.filter(task=>assignmentIssue(task,state.members,assignable)==='unassigned')},
+      {key:'owner-unavailable',title:'Assigned owner unavailable',help:'The assigned owner cannot accept tasks in this project. Review who will take responsibility.',tasks:open.filter(task=>assignmentIssue(task,state.members,assignable)==='owner-unavailable')},
+      {key:'schedule-reconfirmation',title:'Schedule changes awaiting owner acceptance',help:'An earlier acceptance was cleared when the schedule changed. Ask the assigned owner to review the current plan and accept again. This does not change progress.',tasks:open.filter(task=>awaitingScheduleAcceptance(task,state.members,assignable))},
+      {key:'acceptance',title:'Owner acceptance not recorded',help:'An active owner is assigned, but acceptance or a completion report has not been recorded.',tasks:open.filter(task=>pendingAcceptance(task,state.members,assignable)&&!awaitingScheduleAcceptance(task,state.members,assignable))},
       {key:'overdue',title:'Preparation deadline passed',help:'The entered due date is before today in the event time zone. Check the real progress.',tasks:day?open.filter(task=>task.dueDate&&task.dueDate<day&&!waitingVerification(task)):[]},
       {key:'prerequisites',title:'Required work not complete',help:'These counts cover directly linked required tasks, not Related links. Open a task to review its links. If a link is unavailable, check it with the organizer.',tasks:needsRequiredWork,requiredSummaries},
       {key:'overlaps',title:'Activities with owner overlaps',help:'The same owner has overlapping entered activity times. Missing end times limit which overlaps can be detected.',tasks:open.filter(task=>overlapIds.has(task.id))},
@@ -317,7 +318,9 @@
     ];
   }
 
-  function create({h,options,statusBadge}) {
+  function create({h,options,statusBadge,assignableTaskOwner=activeMember}) {
+    const awaitingOwnerReconfirmation = (task,members) => awaitingScheduleAcceptance(task,members,assignableTaskOwner);
+    const ownerUnavailable = (task,members) => assignmentIssue(task,members,assignableTaskOwner)==='owner-unavailable';
     function reviewRoute(task,kind,organizer) {
       const reviewKind=organizerReviewKind(task,kind,organizer);
       return reviewKind
@@ -336,7 +339,7 @@
       return warning?`<span class="schedule-overlap-label">${h(warning)}</span>`:'';
     }
     function liveOwner(task,state) {
-      return `<span class="person-chip schedule-owner-label">${h(scheduleOwnerLabel(task.owner,state.members))}</span>`;
+      return `<span class="person-chip schedule-owner-label">${h(scheduleOwnerLabel(task.owner,state.members,assignableTaskOwner))}</span>`;
     }
     function liveHandoff(slot) {
       return `<span class="muted">${h(activityLocation(slot)||noActivityLocation)}</span>${slot.end?'':`<span class="muted">${noActivityEnd}</span>`}`;
@@ -351,9 +354,10 @@
       if(changesRequested(task))labels.push('Changes requested');
       const request=planRequestKind(task);
       if(request)labels.push(planRequestLabels[request]);
-      if(state.members?.some(member=>member.id===task.owner&&member.active===false))labels.push('Assigned owner unavailable');
-      if(awaitingScheduleAcceptance(task,state.members||[]))labels.push(scheduleAcceptanceCue);
-      else if(pendingAcceptance(task,state.members||[]))labels.push('Acceptance not recorded');
+      // A missing roster record already uses this text in the owner label.
+      if(state.members?.some(member=>member.id===task.owner&&!assignableTaskOwner(member)))labels.push('Assigned owner unavailable');
+      if(awaitingOwnerReconfirmation(task,state.members||[]))labels.push(scheduleAcceptanceCue);
+      else if(pendingAcceptance(task,state.members||[],assignableTaskOwner))labels.push('Acceptance not recorded');
       if(unfinishedRequiredWork(task,byId))labels.push('Required work not complete');
       if(linkedResultsReady(task,byId))labels.push('Review linked results');
       return labels.length?`<span class="schedule-warnings">${labels.map(label=>`<span>${h(label)}</span>`).join('')}</span>`:'';
@@ -488,14 +492,14 @@
     function reviewAssignmentTasks(state,scope,key) {
       if(!assignmentGroup(key))return [];
       return scoped(state.tasks,scope)
-        .filter(task=>canReviewAssignment(task)&&assignmentIssue(task,state.members)===key);
+        .filter(task=>canReviewAssignment(task)&&(key==='unassigned'?!task.owner:ownerUnavailable(task,state.members)));
     }
     function reviewAcceptanceTasks(state,scope={}) {
       if(!scope.actor)return [];
-      return state.tasks.filter(task=>task.owner===scope.actor&&canReviewAssignment(task)&&pendingAcceptance(task,state.members));
+      return state.tasks.filter(task=>task.owner===scope.actor&&canReviewAssignment(task)&&pendingAcceptance(task,state.members,assignableTaskOwner));
     }
     function preparationReview(state,now=Date.now(),scope={},organizer=false) {
-      const groups=reviewItems(state,now,scope),tasks=scoped(state.tasks,scope);
+      const groups=reviewItems(state,now,scope,assignableTaskOwner),tasks=scoped(state.tasks,scope);
       const local=momentKey(now,state.event.timeZone);
       const name=id=>state.members.find(member=>member.id===id)?.name||'Unassigned';
       const scopeLabel=scope.mine?'My tasks · '+name(scope.actor):'All tasks';
@@ -534,7 +538,7 @@
           const summaryId='eventRequiredWorkSummary-'+index;
           return `<li><button type="button" class="text-button" ${requiredReview
             ?`data-action="review-event-required-work" data-id="${h(task.id)}" aria-label="${group.key==='prerequisites'?'Review required work for':'Review linked results for'} ${h(task.title)}"`
-            :reviewRoute(task,groupReviewKind(group,task),organizer)}${requiredSummary?` aria-describedby="${summaryId}"`:''}>${h(task.title)}</button><span>${h(name(task.owner))}${task.owner&&!state.members.some(member=>member.id===task.owner&&member.active!==false)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${requiredSummary?`<span id="${summaryId}" class="event-required-work-summary">Required work: ${h(requiredSummary)}</span>`:''}${currentSchedule(group,task)}${scheduleAction(group,task)}</li>`;
+            :reviewRoute(task,groupReviewKind(group,task),organizer)}${requiredSummary?` aria-describedby="${summaryId}"`:''}>${h(task.title)}</button><span>${h(name(task.owner))}${ownerUnavailable(task,state.members)?' · owner unavailable':''}${task.dueDate?' · Due '+h(dateLabel(task.dueDate)):''}${requestLabel(group,task)}</span>${requiredSummary?`<span id="${summaryId}" class="event-required-work-summary">Required work: ${h(requiredSummary)}</span>`:''}${currentSchedule(group,task)}${scheduleAction(group,task)}</li>`;
         }).join('');
         return `<details class="before-event-group" data-event-review-group="${h(group.key)}"${expanded?' open':''}><summary>${h(group.title)} · ${group.tasks.length}</summary><p class="muted">${h(group.help)}</p>${assignmentAction(group)}${rows?`<ul>${rows}</ul>`:'<p class="muted">None found in the saved plan.</p>'}</details>`;
       };
@@ -549,21 +553,21 @@
       const untimedNotice=untimed?`${untimed} planned ${untimed===1?'activity is':'activities are'} not shown because ${untimed===1?'it has':'they have'} no start time.${day?' Undated activities are not tied to the selected date.':''} Check the live Timeline before sharing this copy.`:'';
       const missingDetails=tasks.filter(needsActivityDetails).length;
       const detailsNotice=missingDetails?`${missingDetails} ${missingDetails===1?'activity is':'activities are'} missing an end time or location. Confirm the missing details in the live Timeline before relying on this copy.`:'';
-      const name=id=>scheduleOwnerLabel(id,state.members);
+      const name=id=>scheduleOwnerLabel(id,state.members,assignableTaskOwner);
       const unassigned=tasks.filter(task=>!task.owner&&!resolved(task)).length;
       const unassignedNotice=unassigned?`${unassigned} ${unassigned===1?'activity has':'activities have'} no owner assigned. Confirm who will cover the work with the organizer.`:'';
       const invalidTimes=tasks.filter(task=>wallTimeIssue(task,state.event.timeZone)).length;
       const invalidTimeNotice=invalidTimes?`${invalidTimes} ${invalidTimes===1?'activity has a saved time that needs':'activities have saved times that need'} correction. Do not rely on the flagged times until the organizer confirms them in Timeline.`:'';
-      const unavailable=tasks.filter(task=>task.owner&&!resolved(task)&&!state.members.some(member=>member.id===task.owner&&member.active!==false)).length;
-      const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' a missing or inactive assigned owner. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
+      const unavailable=tasks.filter(task=>!resolved(task)&&ownerUnavailable(task,state.members)).length;
+      const ownerNotice=unavailable?unavailable+' '+(unavailable===1?'activity has':'activities have')+' an assigned owner who cannot accept tasks in this project. Confirm responsibility with the organizer; this snapshot does not reassign work.':'';
       const byId=new Map(state.tasks.map(task=>[task.id,task]));
       const prerequisites=new Set(tasks.filter(task=>unfinishedRequiredWork(task,byId)).map(task=>task.id));
       const prerequisiteNotice=prerequisites.size?prerequisites.size+' '+(prerequisites.size===1?'activity has':'activities have')+' unfinished required work. Required linked tasks are incomplete, awaiting verification or unavailable. Confirm the current plan with the organizer; this snapshot does not certify event readiness.':'';
       const linkedResults=new Set(tasks.filter(task=>linkedResultsReady(task,byId)).map(task=>task.id));
       const linkedResultsNotice=linkedResults.size?`${linkedResults.size} ${linkedResults.size===1?'activity remains':'activities remain'} marked Blocked after required linked work finished. Open the live project to review the linked results and check for other blockers before resuming.`:'';
       // Count unique scheduled activities before creating any carryover rows.
-      const reconfirmation=new Set(tasks.filter(task=>awaitingScheduleAcceptance(task,state.members)).map(task=>task.id));
-      const acceptance=new Set(tasks.filter(task=>!reconfirmation.has(task.id)&&pendingAcceptance(task,state.members)).map(task=>task.id));
+      const reconfirmation=new Set(tasks.filter(task=>awaitingOwnerReconfirmation(task,state.members)).map(task=>task.id));
+      const acceptance=new Set(tasks.filter(task=>!reconfirmation.has(task.id)&&pendingAcceptance(task,state.members,assignableTaskOwner)).map(task=>task.id));
       const acceptanceNotice=acceptance.size?acceptance.size+' '+(acceptance.size===1?'activity has':'activities have')+' owner acceptance not recorded. Assignment alone does not confirm responsibility. Check with the owner; this snapshot does not accept work for them.':'';
       const reconfirmationNotice=reconfirmation.size?`${reconfirmation.size} ${reconfirmation.size===1?'activity needs':'activities need'} renewed owner acceptance after a schedule change. Confirm responsibility against the current plan with the assigned owner.`:'';
       const changes=new Set(tasks.filter(changesRequested).map(task=>task.id));
@@ -629,7 +633,7 @@
       const timing=state.event.timeZone
         ? `<p class="muted">Leave the timing fields blank to set a start time later in Timeline.</p>${zone(state.event)}${fields({},false)}`
         : '<p class="muted">Add this activity now and set its start time later, after setting the event time zone in Project settings.</p>';
-      return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(member=>member.active!==false).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${timing}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
+      return `<form id="newTaskForm" data-scheduled="true"><div class="form-grid"><label class="field full-width">Activity name<input name="title" required maxlength="180" placeholder="e.g. Guest check-in"></label><label class="field full-width">Owner<select name="owner">${options([['','Unassigned'],...state.members.filter(assignableTaskOwner).map(member=>[member.id,member.name])],'')}</select></label><div data-owner-load class="full-width"></div></div>${timing}<label class="field section-gap">Instructions (optional)<textarea name="note" rows="3" maxlength="3000"></textarea></label><div class="form-actions"><button class="btn btn-primary" type="submit">Add activity</button></div></form>`;
     }
     function guestAgendaForm(snapshot,title) {
       return `<p>Choose only the activities guests should see, then review their titles and the preview. Check each title for internal details. Notes, owners, statuses, saved locations, bookings and guest records are not copied. Nothing is saved or sent.</p>
@@ -651,7 +655,7 @@
         <p class="muted" id="guestAgendaCopyHelp" role="status">Use Copy guest agenda to check the schedule before copying. Nothing is sent.</p>
         <label class="field section-gap">Guest agenda preview<textarea id="guestAgendaText" rows="8" readonly aria-describedby="guestAgendaCopyHelp"></textarea></label>`;
     }
-    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance};
+    return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance:awaitingOwnerReconfirmation};
   }
   root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,scheduledTimelineDay,personalTimelineDay,pendingReconfirmation,linkedResultsReady,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

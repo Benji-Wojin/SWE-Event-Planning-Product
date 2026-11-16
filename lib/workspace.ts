@@ -9,9 +9,10 @@ import { firstTaskAfterSave } from './onboarding-milestones';
 import { taskActivityAfterSave } from './product-activity';
 import { tutorialCheckpointAfterTask } from './guided-tutorial-store';
 const api = (globalThis as any).GatherStore;
-export function model(data?: string) {
+export function model(data?: string, { realProject = false } = {}) {
   let raw = data || null;
   const store = api.createStore({
+    realProject,
     storage: {
       getItem: (key: string) => (key === api.STORAGE_KEY ? raw : null),
       setItem: (_key: string, value: string) => {
@@ -72,7 +73,7 @@ export async function loadWorkspace(
     member.initials=member.name.split(/\s+/).map((part:string)=>part[0]).slice(0,2).join('').toUpperCase();
   }
   for (const member of state.members) if (member.id !== 'jack' && !roster.results.some((r:any)=>r.actor_id===member.id) && !member.role.includes('example')) member.role += ' · example';
-  return { row, store: model(JSON.stringify(state)) };
+  return { row, store: model(JSON.stringify(state), { realProject: true }) };
 }
 export function snapshot(
   store: any,

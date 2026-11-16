@@ -537,10 +537,22 @@
     ($('#taskMap .map-task-focused')||$('#taskSearch'))?.focus();
   }
   const options = (entries,value) => entries.map(([id,label])=>`<option value="${h(id)}" ${id===value?'selected':''}>${h(label)}</option>`).join('');
-  const ownerOptions = (value,all=false) => options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...store.getState().members.filter(p=>all||p.active!==false||p.id===value).map(p=>[p.id,p.name+(p.active===false?' · Former teammate':'')])],value);
+  function assignableTaskOwner(person) {
+    return !!person&&person.active!==false&&(!window.GatherMode||window.GatherMode.demo||!person.role?.includes('· example'));
+  }
+  const ownerOptions = (value,all=false) => {
+    const members=store.getState().members;
+    const choices=members.filter(person=>all||assignableTaskOwner(person)||person.id===value).map(person=>[
+      person.id,person.name+(person.active===false?' · Former teammate':!all&&!assignableTaskOwner(person)?' · Example only · unavailable':''),
+    ]);
+    // Keep the selected historical value explicit. A status or note edit must
+    // never silently remove ownership just because the recipient is unavailable.
+    if(!all&&value&&!choices.some(([id])=>id===value))choices.push([value,'Previous owner unavailable']);
+    return options([...(all?[['','All owners'],['unassigned','Unassigned']]:[['','Unassigned']]),...choices],value);
+  };
   const statusOptions = value => options(Object.entries(statuses),value);
-  const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member});
-  const schedule = GatherScheduleUI.create({h,options,statusBadge});
+  const recovery = GatherRecoveryUI.create({store,ui,h,options,dayLabel,member,assignableTaskOwner});
+  const schedule = GatherScheduleUI.create({h,options,statusBadge,assignableTaskOwner});
   const projectInfo=window.GatherInfoUI?.create({h,openDialog,closeDialog,toast,saveLock,isDialogOpen:kind=>!$('#dialogBackdrop').hidden&&(!kind||ui.dialogKind===kind),getWorkspace:()=>store.getState(),onLoaded:()=>recordLoadedGuideView('info')});
   const projectBudget=window.GatherBudgetUI?.create({h,openDialog,closeDialog,confirmClose:confirmCloseDialog,toast,saveLock,isDialogOpen:()=>!$('#dialogBackdrop').hidden,getWorkspace:()=>store.getState(),getActor:()=>ui.actor,focusControl:focusScheduleTarget,onLoaded:()=>recordLoadedGuideView('budget')});
   function confirmFixedDate(taskId,data) {
@@ -625,7 +637,7 @@
       if(resume){if(reviewGroup)beforeEventReview(reviewGroup);else closeDialog();}
       toast('No open tasks in this view can be assigned together. Review completed or reported work separately.');return;
     }
-    const people=state.members.filter(person=>person.active!==false&&(!window.GatherMode||window.GatherMode.demo||!person.role?.includes('· example')));
+    const people=state.members.filter(assignableTaskOwner);
     const title=reviewGroup==='unassigned'?'Assign unowned tasks':reviewGroup==='owner-unavailable'?'Reassign tasks with unavailable owners':'Assign tasks to a teammate';
     const source=reviewGroup?'this event review section':'the current filtered view';
     const stale=acceptanceReviewPending(null),revision=store.getSnapshotRevision?.();
@@ -1767,7 +1779,7 @@
       const state=store.getState(),task=state.tasks.find(item=>item.id===id);
       if(kind==='schedule')return !!task&&!task.archivedAt&&!workspaceUpdatesPending()&&!!schedule.firstTimeTask(state,id,{});
       return !!task&&!task.archivedAt&&task.status!=='done'&&!task.reportedAt&&!task.verifiedAt&&
-        (!task.owner||!state.members.some(member=>member.id===task.owner&&member.active!==false&&!member.role?.includes('· example')));
+        (!task.owner||!state.members.some(member=>member.id===task.owner&&assignableTaskOwner(member)));
     };
     const eligible=canFocusEditor();
     taskDialog(id,'',false,true,'',undefined,'',{readOnly:true});
@@ -3337,12 +3349,13 @@
   }
   function taskOwnerPresentation(task,state,organizer) {
     const owner=state.members.find(person=>person.id===task.owner);
-    const unavailable=!!task.owner&&(!owner||owner.active===false);
-    const name=!task.owner?'Unassigned':!owner?'Assigned owner unavailable':owner.name+(owner.active===false?' · Inactive teammate':'');
+    const unavailable=!!task.owner&&!assignableTaskOwner(owner);
+    const sample=!!owner&&owner.active!==false&&unavailable;
+    const name=!task.owner?'Unassigned':!owner?'Assigned owner unavailable':owner.name+(owner.active===false?' · Inactive teammate':sample?' · Example only · unavailable owner':'');
     const unresolved=task.status!=='done'||task.requiresVerification&&!task.verifiedAt;
     if(!unavailable||!unresolved)return {name,notice:''};
     const canReview=organizer&&!window.GatherAccessLost;
-    return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>The assigned owner is missing or inactive in this project. Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
+    return {name,notice:`<section class="notice section-gap" aria-label="Task ownership"><h3>Review task ownership</h3><p>${sample?'This sample teammate cannot accept tasks in a real project.':'The assigned owner is missing or inactive in this project.'} Confirm who can take responsibility; assignment alone does not record acceptance.</p>${canReview?`<p>Choose an active teammate in Edit task details. Changing the owner resets acceptance and Next up commitments. No message is sent.${task.reportedAt&&task.status!=='done'?' Saving a different owner also clears this pending completion report; review it first.':''}</p><button class="btn btn-secondary btn-small" data-action="review-task-owner" data-id="${h(task.id)}">Review owner</button>`:'<p>Ask the organizer to review the owner. You can add context in the conversation below.</p>'}</section>`};
   }
   function taskDialog(id,submittedForm='',discardDrafts=false,focusHeading=false,eventGroup='',relatedReceiptIds,overlapDay='',{readOnly=false,eventRequiredWork}={}) {
     const taskState=store.getState(),task=taskState.tasks.find(t=>t.id===id);
@@ -3634,7 +3647,7 @@
     const select=form.elements.owner;
     if(!isOrganizer()||!select?.options)return;
     const selected=select.value;
-    const current=state.members.find(person=>person.id===selected&&person.active!==false);
+    const current=state.members.find(person=>person.id===selected&&assignableTaskOwner(person));
     select.innerHTML=ownerOptions('')+(selected&&!current?`<option value="${h(selected)}">Previous owner unavailable — choose another</option>`:'');
     select.value=selected;
     const load=$('[data-owner-load]',form);if(load)load.innerHTML=recovery.ownerLoad(selected);

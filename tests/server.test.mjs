@@ -1643,6 +1643,109 @@ test('removing and re-inviting access preserves history, invalidates stale write
   await assert.rejects(accessCore.assertProjectAccess(authorization),error=>error.status===403);
   assert.equal((await workspace.POST(request('/api/workspace?project='+id,{method:'updateTask',args:[snap.state.tasks[0].id,{status:'progress',note:'Old request'}],revision:snap.revision}))).status,409);owner();
 });
+test('shared task assignments reject legacy examples without rewriting historical owners', async t => {
+  const project = await newTeamProject('Fictional legacy owner handoff');
+  t.after(() => {
+    owner();
+    sqlite.prepare('DELETE FROM project_invites WHERE project_id=?').run(project);
+    sqlite.prepare('DELETE FROM projects WHERE id=?').run(project);
+  });
+  const email = 'historical-owner-review@example.com', userId = 'historical-owner-review';
+  await joinPerson(project, email, userId);
+  const member = (await (await realRead(project)).json()).identity.actorId;
+  owner();
+
+  const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(project);
+  const read = async () => {
+    const response = await realRead(project);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const write = (revision, method, args) => workspace.POST(request('/api/workspace?project=' + project, { revision, method, args }));
+  const save = async (revision, method, args) => {
+    const response = await write(revision, method, args);
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const created = await save((await read()).revision, 'addTask', [{ title: 'Fictional hall handoff', note: 'Keep the venue notes.' }]);
+  const historicalId = created.result.id;
+  const commented = await save(created.revision, 'addComment', [historicalId, 'Fictional historical handoff details.']);
+  const open = await save(commented.revision, 'addTask', [{ title: 'Fictional loading check' }]);
+
+  // Seed an established assignment from before the workspace had a real roster.
+  // Keep the old actor unmarked in the stored record, as the real loader does the marking.
+  const seeded = JSON.parse(workspaceRow().data);
+  seeded.members.push({ id: 'maya', name: 'Maya Sample', initials: 'MS', role: 'Fictional logistics', color: 'mint' });
+  const snapshotTask = seeded.tasks.find(task => task.id === historicalId);
+  const acceptedAt = '2026-10-01T12:00:00Z';
+  Object.assign(snapshotTask, { owner: 'maya', acceptedBy: 'maya', acceptedAt });
+  sqlite.prepare('UPDATE workspaces SET data=? WHERE id=?').run(JSON.stringify(seeded), project);
+  const before = await read();
+  assert.match(before.state.members.find(person => person.id === 'maya').role, /· example/);
+  assert.equal(before.state.members.find(person => person.id === member).active, true);
+  assert.equal(before.state.tasks.find(task => task.id === historicalId).owner, 'maya');
+  assert.deepEqual(before.state.tasks.find(task => task.id === historicalId).comments, snapshotTask.comments);
+
+  const original = workspaceRow();
+  for (const [method, args] of [
+    ['addTask', [{ title: 'Fictional unsupported assignment', owner: 'maya' }]],
+    ['updateTask', [open.result.id, { owner: 'maya' }]],
+  ]) {
+    const rejected = await write(before.revision, method, args);
+    assert.equal(rejected.status, 400, await rejected.clone().text());
+    assert.match((await rejected.json()).error, /active.*teammate|example|sample/i);
+    assert.deepEqual(workspaceRow(), original, `${method} must not change task data or project revision`);
+  }
+
+  // The editor sends the unchanged owner, so it can still save other fields.
+  const patched = await save(before.revision, 'updateTask', [historicalId, { owner: 'maya', dueDate: '2026-12-04' }]);
+  assert.equal(patched.result.owner, 'maya');
+  assert.equal(patched.result.acceptedBy, 'maya');
+  assert.equal(patched.result.acceptedAt, acceptedAt);
+  assert.equal(patched.result.dueDate, '2026-12-04');
+  assert.deepEqual(patched.result.comments, snapshotTask.comments);
+  assert.equal(patched.result.note, 'Keep the venue notes.');
+
+  const reassigned = await save(patched.revision, 'updateTask', [historicalId, { owner: member }]);
+  assert.equal(reassigned.result.id, historicalId);
+  assert.equal(reassigned.result.owner, member);
+  assert.equal(reassigned.result.acceptedAt, '', 'assignment does not imply acceptance');
+  assert.equal(reassigned.result.acceptedBy, '');
+  assert.deepEqual(reassigned.result.comments, snapshotTask.comments);
+  asTeammate(email, userId);
+  const accepted = await save(reassigned.revision, 'acceptTask', [historicalId]);
+  assert.equal(accepted.result.acceptedBy, member);
+  assert.ok(accepted.result.acceptedAt);
+  assert.deepEqual(accepted.result.comments, snapshotTask.comments);
+});
+test('the isolated demo still lets sample personas receive and accept assignments', async t => {
+  owner();
+  const id = 'demo:owner-1';
+  const workspaceRow = () => sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get(id);
+  const previous = workspaceRow();
+  t.after(() => {
+    if (previous) sqlite.prepare('UPDATE workspaces SET data=?,revision=? WHERE id=?').run(previous.data, previous.revision, id);
+    else sqlite.prepare('DELETE FROM workspaces WHERE id=?').run(id);
+  });
+  const realBefore = sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get('main');
+  const read = await demoRead();
+  assert.equal(read.status, 200, await read.clone().text());
+  const demo = await read.json();
+  const created = await demoWrite('jack', {
+    revision: demo.revision,
+    method: 'addTask',
+    args: [{ title: 'Fictional demo handoff', owner: 'maya' }],
+  });
+  assert.equal(created.status, 200, await created.clone().text());
+  const draft = await created.json();
+  assert.equal(draft.result.owner, 'maya');
+  const accepted = await demoWrite('maya', { revision: draft.revision, method: 'acceptTask', args: [draft.result.id] });
+  assert.equal(accepted.status, 200, await accepted.clone().text());
+  const task = (await accepted.json()).result;
+  assert.equal(task.acceptedBy, 'maya');
+  assert.ok(task.acceptedAt);
+  assert.deepEqual(sqlite.prepare('SELECT revision,data FROM workspaces WHERE id=?').get('main'), realBefore);
+});
 test('run-sheet owner warnings follow real membership removal and rejoin without rewriting task history',async()=>{
   await import('../legacy/schedule-ui.js');
   const h=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1665,7 +1768,7 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   const reviewTask=snap.state.tasks.find(task=>task.title==='Verification still pending');
   asTeammate(email,userId);await write('reportCompletion',[reviewTask.id,'Fictional checklist ready for review.']);owner();
   const before=await (await realRead(id)).json();
-  assert.doesNotMatch(sheet.runSheet(before.state),/Inactive teammate|missing or inactive assigned owner/);
+  assert.doesNotMatch(sheet.runSheet(before.state),/Inactive teammate|assigned owner who cannot accept tasks/);
   const member=(await (await teamRead(id)).json()).members.find(member=>member.actorId===actor);
   assert.ok(member);assert.equal((await teamWrite(id,{action:'removeMember',id:member.id,revision:member.revision})).status,200);
   const removed=await (await realRead(id)).json();
@@ -1675,7 +1778,7 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   const persisted=sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
   const html=sheet.runSheet(removed.state);
   assert.match(html,/Maya Real · Inactive teammate/);
-  assert.match(html,/2 activities have a missing or inactive assigned owner/);
+  assert.match(html,/2 activities have an assigned owner who cannot accept tasks/);
   for(const live of [sheet.clock(removed.state,'2026-11-21T01:05:00Z').markup,sheet.view(removed.state,false,'2026-11-21T01:05:00Z')]){
     assert.match(live,/Assigned owner unavailable/);
     assert.doesNotMatch(live,/PRIVATE-RUN-SHEET-NOTE|run-sheet-member@example.com/);
@@ -1689,7 +1792,7 @@ test('run-sheet owner warnings follow real membership removal and rejoin without
   assert.equal(restored.identity.actorId,actor);assert.ok(restored.revision>removed.revision);
   assert.equal(restored.state.members.find(member=>member.id===actor).active,true);
   assert.deepEqual(restored.state.tasks,before.state.tasks);
-  assert.doesNotMatch(sheet.runSheet(restored.state),/Inactive teammate|missing or inactive assigned owner/);
+  assert.doesNotMatch(sheet.runSheet(restored.state),/Inactive teammate|assigned owner who cannot accept tasks/);
   assert.doesNotMatch(sheet.view(restored.state,false,'2026-11-21T01:05:00Z'),/Assigned owner unavailable/);
   owner();
 });

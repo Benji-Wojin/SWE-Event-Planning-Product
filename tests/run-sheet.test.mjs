@@ -178,14 +178,14 @@ test('run sheets distinguish unassigned work from inactive or missing assigned o
   const before=structuredClone(input),html=ui.runSheet(input,now);
   assert.match(html,/Maya Chen · Inactive teammate/);
   assert.match(html,/Assigned owner unavailable/);
-  assert.match(html,/3 activities have a missing or inactive assigned owner/);
+  assert.match(html,/3 activities have an assigned owner who cannot accept tasks/);
   assert.match(html,/Confirm responsibility with the organizer/);
   assert.match(html,/>Unassigned<\/td>/);
   assert.doesNotMatch(html,/missing-member|PRIVATE-EMAIL/);
   assert.deepEqual(input,before);
   const mine=ui.runSheet(input,now,{mine:true,actor:'missing-member'});
   assert.match(mine,/My activities · Assigned owner unavailable/);
-  assert.match(mine,/1 activity has a missing or inactive assigned owner/);
+  assert.match(mine,/1 activity has an assigned owner who cannot accept tasks/);
   assert.doesNotMatch(mine,/Maya Chen|Sound check/);
 });
 
@@ -194,15 +194,27 @@ test('owner availability warnings cover only unresolved activities in the select
   input.tasks=input.tasks.map(task=>({...task,status:'done'}));
   let html=ui.runSheet(input,now);
   assert.match(html,/Maya Chen · Inactive teammate/);
-  assert.doesNotMatch(html,/activities have a missing or inactive assigned owner/);
+  assert.doesNotMatch(html,/activities have an assigned owner who cannot accept tasks/);
   input.tasks[0].requiresVerification=true;
   html=ui.runSheet(input,now);
-  assert.match(html,/1 activity has a missing or inactive assigned owner/);
+  assert.match(html,/1 activity has an assigned owner who cannot accept tasks/);
   assert.match(html,/Awaiting verification/);
   input.tasks[0].verifiedAt='2026-11-20T22:05Z';
-  assert.doesNotMatch(ui.runSheet(input,now),/activity has a missing or inactive assigned owner/);
+  assert.doesNotMatch(ui.runSheet(input,now),/activity has an assigned owner who cannot accept tasks/);
   input.members[0].active=true;
   assert.doesNotMatch(ui.runSheet(input,now),/Inactive teammate|Assigned owner unavailable/);
+});
+
+test('real-project run sheets flag historical sample assignments without waiting for acceptance from them',()=>{
+  const input=state();
+  input.members[0].role='Teammate · example';
+  const realUI=GatherScheduleUI.create({h,options:()=>'',statusBadge:()=>'',
+    assignableTaskOwner:person=>person.active!==false&&!person.role?.includes('· example')});
+  const view=realUI.runSheet(input,now);
+  assert.match(view,/Maya Chen · Example only · unavailable owner/);
+  assert.match(view,/2 activities have an assigned owner who cannot accept tasks/);
+  assert.doesNotMatch(view,/Acceptance not recorded/);
+  assert.match(ui.runSheet(input,now),/Acceptance not recorded/,'simulation personas can still accept');
 });
 
 test('run sheets expose pending responsibility without treating a named owner as acceptance',()=>{
