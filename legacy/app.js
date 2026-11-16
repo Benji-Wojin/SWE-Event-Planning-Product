@@ -384,14 +384,14 @@
     if(!message){message=document.createElement('p');message.className='form-error';message.setAttribute('role','alert');form.prepend(message);}
     message.textContent=error.message||'Please check the form and try again.';
   }
-  function hasUnsavedFields(root,exclude=[]) {
+  function hasUnsavedFields(root,exclude=[],skipForm=null) {
     return !!root&&(root.dataset?.relatedDraft==='true'||!!root.querySelector?.('[data-related-draft="true"]')||
       root.dataset?.budgetUnconfirmed==='true'||root.dataset?.budgetRecoveryDraft==='true'||
       !!root.dataset?.completionAttachmentRecovery||root.dataset?.completionSaveUnconfirmed==='true'||
       !!root.dataset?.completionModeUnavailable||
       !!root.querySelector?.('[data-completion-attachment-recovery],[data-completion-save-unconfirmed="true"],[data-completion-mode-unavailable="true"]')||
       !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"],[data-poll-unconfirmed="true"]')||$$('input,textarea,select',root).some(input=>{
-      if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
+      if((skipForm&&input.form===skipForm)||input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'&&((input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')||
         (input.name==='assignTask'&&input.form?.id==='assignTasksForm')))return input.checked;
       if(input.name==='owner'&&input.form?.id==='assignTasksForm')return !!input.value;
@@ -1823,6 +1823,105 @@
     return link&&link.id===id&&link.actor===ui.actor&&link.view===ui.view&&link.project===mode?.projectId&&
       !mode.demo&&isOrganizer()&&!window.GatherAccessLost?link:null;
   }
+  function receiptOwnerReview(task,state) {
+    const link=activePlanReceiptReturn(task?.id);
+    return store.refresh&&link?.intent==='owner'&&task&&!task.archivedAt&&task.status!=='done'&&
+      !task.reportedAt&&!task.verifiedAt&&(!task.owner||!state.members.some(member=>member.id===task.owner&&assignableTaskOwner(member)))?link:null;
+  }
+  function receiptOwnerChoicesMarkup(task,state) {
+    if(!receiptOwnerReview(task,state))return '';
+    return '<div class="full-width"><p id="receiptOwnerChoicesStatus" class="muted" role="status">'+
+      'If a teammate just joined, refresh the owner choices. Refreshing never assigns work or saves your edits.</p>'+
+      '<button type="button" id="receiptOwnerChoicesRefresh" class="btn btn-secondary" data-action="refresh-receipt-owner-choices" '+
+      'aria-describedby="receiptOwnerChoicesStatus">Refresh owner choices</button></div>';
+  }
+  async function refreshReceiptOwnerChoices(button) {
+    const dialog=$('#dialog'),title=$('#dialogTitle',dialog),form=$('#taskDetailForm',dialog),
+      status=form&&$('#receiptOwnerChoicesStatus',form),id=form?.dataset.id;
+    const initial=store.getState(),link=receiptOwnerReview(initial.tasks.find(task=>task.id===id),initial);
+    const sameEditor=()=>!!link&&ui.dialogKind==='task'&&ui.detailId===id&&!$('#dialogBackdrop').hidden&&
+      activePlanReceiptReturn(id)===link&&!!title&&$('#dialogTitle',dialog)===title&&
+      !!form?.isConnected&&$('#taskDetailForm',dialog)===form&&!!status&&$('#receiptOwnerChoicesStatus',form)===status&&
+      !!button?.isConnected&&$('#receiptOwnerChoicesRefresh',form)===button;
+    const ready=()=>sameEditor()&&!document.hidden&&!ui.pendingSave&&
+      !button.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(button);
+    const safeDrafts=latest=>{
+      if(!hasUnsavedFields(dialog))return '';
+      const drafts=taskDrafts();
+      if(hasUnsavedFields(dialog,[],form)||!drafts.length||drafts.some(draft=>draft.form!==form.id)||taskCompletionDraftContext(drafts,'').length)
+        return 'Finish or clear other unsaved edits in this task before refreshing. Nothing was changed.';
+      if(String(latest.revision)!==form.dataset.taskRevision)
+        return 'The task itself changed. Your edits are still here. Copy them before returning to the plan handoff to review the current task.';
+      return '';
+    };
+    if(!ready()||ui.syncing)return;
+    ui.syncing=true;
+    button.setAttribute('aria-disabled','true');
+    status.textContent='Checking the latest owner choices…';
+    let reason='';
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready()||!Number.isSafeInteger(revision)||recoveryConflictPending(revision)||scheduleRevisionIsStale(revision)||
+          !Array.isArray(state?.tasks)||!Array.isArray(state.members))return false;
+        const latest=state.tasks.find(task=>task.id===id);
+        if(!latest||latest.archivedAt){
+          reason='This task is no longer available. Return to the plan handoff to check the current list.';
+          return false;
+        }
+        reason=safeDrafts(latest);
+        if(reason)return false;
+        const edits=taskDrafts().filter(draft=>draft.form===form.id);
+        const ownerEdit=edits.find(draft=>draft.name==='owner');
+        if(ownerEdit?.value&&!state.members.some(member=>member.id===ownerEdit.value&&assignableTaskOwner(member))){
+          reason='The owner you chose is no longer available. Clear that choice before refreshing; your edits are still here.';
+          return false;
+        }
+        if(edits.some(draft=>draft.name==='status'&&draft.value==='done')&&latest.status!=='done'&&dependencyInfo(latest,state).open.length){
+          reason='The required work changed. Your unsaved Done choice is still here. Review the linked work before marking this task done.';
+          return false;
+        }
+        return true;
+      },{requireFresh:true});
+      if(!sameEditor())return;
+      if(result.pending)rememberNewerSchedule(null,result.newerRevision);
+      if(!ready()||!result.verified||result.pending||recoveryConflictPending()||scheduleRevisionIsStale(store.getSnapshotRevision?.())){
+        status.textContent=reason||'Could not confirm the latest owner choices. Your current view is unchanged. Try again.';
+        return;
+      }
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      if(!result.changed&&!ui.toolUpdatePending){
+        status.textContent='Owner choices are current. No assignment was saved.';
+        delete status.dataset.stale;
+        return;
+      }
+      ui.toolUpdatePending=false;
+      const focusOwner=document.activeElement===button||document.activeElement===document.body;
+      const current=store.getState(),updated=current.tasks.find(task=>task.id===id);
+      const restoreOwnerLoad=taskDrafts().some(draft=>draft.form===form.id&&draft.name==='owner');
+      render();
+      taskDialog(id,'',false,focusOwner,'',undefined,'',{readOnly:true});
+      const currentForm=$('#taskDetailForm',dialog);
+      if(restoreOwnerLoad&&currentForm?.dataset.id===id){
+        const owner=$('select[name="owner"]',currentForm),load=$('[data-owner-load]',currentForm);
+        if(owner&&load)load.innerHTML=recovery.ownerLoad(owner.value);
+      }
+      const newTitle=$('#dialogTitle',dialog),newButton=$('#receiptOwnerChoicesRefresh',dialog),newStatus=$('#receiptOwnerChoicesStatus',dialog);
+      const message=newStatus?'Owner choices updated. No assignment was saved.':'This task no longer needs an owner. Review the current task before making changes.';
+      if(newStatus)newStatus.textContent=message;else toast(message);
+      if(focusOwner&&newButton)requestAnimationFrame(()=>{
+        if(!newTitle||$('#dialogTitle',dialog)!==newTitle||newButton!==$('#receiptOwnerChoicesRefresh',dialog)||!newButton.isConnected||
+          (document.activeElement!==newTitle&&document.activeElement!==newButton)||ui.pendingSave||document.hidden||
+          activePlanReceiptReturn(id)!==link||ui.dialogKind!=='task'||ui.detailId!==id||$('#dialogBackdrop').hidden||
+          !receiptOwnerReview(updated,current))return;
+        focusTaskOwnerEditor(id);
+      });
+    }catch{
+      if(sameEditor())status.textContent='Could not refresh owner choices. Your current view is unchanged. Try again.';
+    }finally{
+      ui.syncing=false;
+      if(button.isConnected)button.removeAttribute('aria-disabled');
+    }
+  }
   function focusPlanReceiptAfterSchedule(link) {
     const dialog=$('#dialog'),back=$('#planReceiptBack',dialog),title=$('#dialogTitle',dialog);
     requestAnimationFrame(()=>{
@@ -2596,6 +2695,14 @@
     }
     if(ui.dialogKind==='task'){paintTaskAcceptanceRefresh();paintCompletionReviewRefresh();}
     if($('#dialogBackdrop').hidden||ui.dialogKind==='notifications')return;
+    const ownerChoices=ui.dialogKind==='task'&&$('#receiptOwnerChoicesStatus',$('#dialog'));
+    if(ownerChoices&&!ownerChoices.closest('[hidden],[inert]')&&!hiddenByClosedDisclosure(ownerChoices)){
+      if(ownerChoices.dataset.stale!=='true'){
+        ownerChoices.dataset.stale='true';
+        ownerChoices.textContent='The project changed. Refresh owner choices to see the latest roster without saving anything.';
+      }
+      return;
+    }
     const previous=$('#dialogStaleNotice');
     if(previous){
       if(ui.dialogKind==='schedule-from-review'){
@@ -3589,7 +3696,7 @@
       ${window.GatherResourcesUI?.markup()||''}
       <section class="comments section-gap"><h3>Comments</h3>${task.comments.map(c=>`<article class="comment">${avatar(c.actor,true)}<div><strong>${h(member(c.actor).name)}</strong><time>${timeLabel(c.at)}</time><p>${h(c.text)}</p></div></article>`).join('')||'<p class="muted">No comments yet.</p>'}<form id="commentForm" class="comment-form" data-id="${h(id)}"><label class="field"><span class="sr-only">Add a comment</span><textarea name="text" required rows="2" maxlength="3000" placeholder="Add a comment…"></textarea></label><button class="btn btn-secondary btn-small" type="submit">Post as ${h(member(ui.actor).name.split(' ')[0])}</button></form></section>
       ${priorityMarkup(task,organizer)}
-      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div><label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details><div class="task-delete-action"><button type="button" class="text-button danger-button" data-action="delete-task" data-id="${h(id)}">Delete task…</button></div>`:''}`, '',false,'task',focusHeading);
+      ${organizer?`<details class="task-organizer section-gap"><summary>Edit task details <span>Organizer only</span></summary><form id="taskDetailForm" data-id="${h(id)}" data-task-revision="${h(task.revision)}" class="section-gap"><div class="form-grid"><label class="field full-width">Task name<input name="title" required maxlength="180" value="${h(task.title)}"></label><label class="field">Owner<select id="taskDetailOwner" name="owner">${ownerOptions(task.owner)}</select></label><div data-owner-load class="full-width">${recovery.ownerLoad(task.owner)}</div>${receiptOwnerChoicesMarkup(task,taskState)}<label class="field">Status<select name="status">${options(Object.entries(statuses).filter(([key])=>key!=='done'||!completionBlocked||task.status==='done'),task.status)}</select></label><label class="field">Due date<input name="dueDate" type="date" value="${h(task.dueDate)}"></label><label class="field">Category<select name="category">${options([...new Set(['Transport','Food & drink','Venue','Program','Guest care',task.category])].map(x=>[x,x]),task.category)}</select></label><label class="field full-width">Latest update<textarea name="note" rows="3" maxlength="3000">${h(task.note)}</textarea></label></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save task details</button></div></form><p class="muted">${h(commitment(task))}</p><div class="inline"><button class="text-button" data-action="verification-toggle" data-id="${h(id)}">${task.requiresVerification?'Turn off':'Require'} organizer verification</button><button class="text-button" data-action="followup" data-id="${h(id)}">Draft follow-up</button></div>${task.followupAfter?`<p class="muted">Next planned follow-up: ${dayLabel(task.followupAfter)}</p>`:''}</details><div class="task-delete-action"><button type="button" class="text-button danger-button" data-action="delete-task" data-id="${h(id)}">Delete task…</button></div>`:''}`, '',false,'task',focusHeading);
     if(window.GatherMode?.demo)for(const selector of ['#responseForm','#completionEvidenceForm']){
       const form=$(selector,$('#dialog'));
       if(form)form.dataset.completionDemoGeneration=String(taskState.demoGeneration??'');
@@ -4646,6 +4753,7 @@
       if(action==='before-event-review')beforeEventReview(ui.dialogKind==='assignment'?id:undefined);
       if(action==='refresh-event-review')await refreshBeforeEventReview(id);
       if(action==='refresh-activity-review')await refreshActivityReview(el);
+      if(action==='refresh-receipt-owner-choices')await refreshReceiptOwnerChoices(el);
       if(action==='schedule-review-activity')openEventReviewSchedule(id,el);
       if(action==='return-from-event-review-schedule')returnFromEventReviewSchedule();
       if(action==='print-run-sheet')printRunSheet();
