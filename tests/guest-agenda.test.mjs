@@ -60,6 +60,15 @@ test('agenda form identifies the actual source, not just the date',()=>{
   }
 });
 
+test('agenda source identity stays separate from the guest-visible model and markup',()=>{
+  const replaced=structuredClone(state),oldKey=GatherScheduleUI.guestAgendaSourceKey(state,scope);
+  replaced.tasks.find(task=>task.id==='overnight').id='private-identical-replacement';
+  const sameAgenda=GatherScheduleUI.guestAgendaSnapshot(replaced,scope);
+  assert.deepEqual(sameAgenda,snapshot,'a different task can look the same in a guest snapshot');
+  assert.notEqual(GatherScheduleUI.guestAgendaSourceKey(replaced,scope),oldKey);
+  assert.doesNotMatch(JSON.stringify(sameAgenda)+schedule.guestAgendaForm(sameAgenda,state.event.name),/private-identical-replacement|sourceKey|PRIVATE-LOCATION/);
+});
+
 function agendaHarness(){
   const source=readFileSync('legacy/app.js','utf8');
   const code=source.slice(source.indexOf('  function updateGuestAgendaWarning('),source.indexOf('  function digestDialog('));
@@ -67,21 +76,38 @@ function agendaHarness(){
   const field={
     agendaTitle:{value:'Guest schedule'},'include-0':{checked:false},'include-1':{checked:false},
     'title-0':{value:'Evening arrivals'},'location-0':{value:''},
+    'title-1':{value:''},'location-1':{value:''},
   };
-  const fields=[{},{}],form={elements:{namedItem:key=>field[key]},querySelector:selector=>fields[Number(selector.match(/\d+/)[0])]};
+  const fields=[{},{}],form={isConnected:true,elements:{namedItem:key=>field[key]},querySelector:selector=>fields[Number(selector.match(/\d+/)?.[0])]};
   const preview={value:'',selectionStart:0,selectionEnd:0,isConnected:true,focus(){actions.push('focused');},select(){this.selectionStart=0;this.selectionEnd=this.value.length;actions.push('selected');}};
-  const warning={},status={},help={},button={setAttribute(key,value){this[key]=value;}},actions=[],timers=[];
+  const control=()=>({isConnected:true,setAttribute(key,value){this[key]=value;},removeAttribute(key){delete this[key];},
+    getClientRects:()=>[{}],closest:()=>null});
+  const warning={},status={},help={},button=control(),refreshButton=control(),refreshStatus={isConnected:true},actions=[],timers=[],refreshReads=[];
+  const syncNotice={hidden:true},backdrop={hidden:false},dialog={isConnected:true,contains(node){return [fixture.form,fixture.preview,button,refreshButton].includes(node);}};
   const fixture={revision:1,organizer:true,clipboard:true,markup:undefined,duringCopy:undefined,failedRead:false,newer:false,inconclusive:false,reads:0,
-    state,confirm:true,prompts:0,opens:0};
+    state,confirm:true,prompts:0,opens:0,form,preview};
   const context=vm.createContext({
-    window:{navigator:{onLine:true}},ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:scope.date,actor:'jack'},
+    window:{navigator:{onLine:true},GatherMode:{projectId:'fictional-project',demo:false}},document:{hidden:false},
+    ui:{view:'timeline',timelineMode:'schedule',scheduleMine:true,scheduleDate:scope.date,actor:'jack'},
     store:{getState:()=>fixture.state,getSnapshotRevision:()=>fixture.revision,async confirmSnapshotRevision(expected,onNewer){
       fixture.reads++;
       if(fixture.failedRead)throw Error('Offline');
       if(fixture.newer){onNewer?.(expected+1);return false;}
       return !fixture.inconclusive&&expected===fixture.revision;
-    }},GatherScheduleUI,schedule,isOrganizer:()=>fixture.organizer,
-    $:selector=>({'#guestAgendaForm':form,'#guestAgendaText':preview,'#guestAgendaWarning':warning,'#guestAgendaSelectionStatus':status,'#guestAgendaCopyHelp':help,'[data-action="copy-guest-agenda"]':button})[selector],
+    },refresh(canApply,options){return new Promise((resolve,reject)=>refreshReads.push({options,reject,canApply,
+      finish({revision=2,next=fixture.state,result={verified:true,changed:revision!==fixture.revision}}={}){
+        if(!result.verified||result.pending){resolve(result);return;}
+        const accepted=canApply(revision,next);
+        if(accepted){fixture.revision=revision;fixture.state=next;}
+        resolve(accepted?result:{pending:true,newerRevision:revision});
+      },
+    }));}},GatherScheduleUI,schedule,isOrganizer:()=>fixture.organizer,
+    $:selector=>({'#guestAgendaForm':fixture.form,'#guestAgendaText':fixture.preview,'#guestAgendaWarning':warning,'#guestAgendaSelectionStatus':status,
+      '#guestAgendaCopyHelp':help,'[data-action="copy-guest-agenda"]':button,'[data-action="refresh-guest-agenda"]':refreshButton,
+      '#guestAgendaRefreshStatus':refreshStatus,'#workspaceSyncNotice':syncNotice,'#dialogBackdrop':backdrop,'#dialog':dialog})[selector],
+    workspaceUpdatesPending:()=>!syncNotice.hidden,recoveryConflictPending:()=>false,
+    showPendingUpdate(){syncNotice.hidden=false;},render(){actions.push('rendered');},refreshSuggestionSurfaces(){},
+    focusTaskDialogControl(element,host){assert.equal(element,refreshStatus);assert.equal(host,dialog);actions.push('schedule check status focused');},
     setTimeout(callback,delay){timers.push({callback,delay});},
     openDialog(_title,body,_footer,_wide,kind){fixture.opens++;fixture.markup=body;context.ui.dialogKind=kind;},
     confirmDiscard(root){assert.equal(root,form);fixture.prompts++;return fixture.confirm;},
@@ -95,7 +121,8 @@ function agendaHarness(){
     return {prevented,text:!prevented&&target===preview?preview.value.slice(preview.selectionStart,preview.selectionEnd):''};
   };
   const selectFirst=()=>{field['include-0'].checked=true;context.syncGuestAgenda(form);};
-  return {source,context,fixture,field,fields,form,preview,warning,help,button,actions,timers,directCopy,selectFirst};
+  return {source,context,fixture,field,fields,form,preview,warning,help,button,actions,timers,directCopy,selectFirst,
+    refreshButton,refreshStatus,refreshReads,backdrop,syncNotice};
 }
 
 test('starting over with all guest activities preserves date and leaves Timeline scope and clipboard untouched',()=>{
@@ -275,4 +302,135 @@ test('a visibility or connection reset invalidates even a clipboard fallback tha
   fixture.duringCopy=undefined;
   await context.copyGuestAgenda();
   assert.deepEqual(directCopy(),{prevented:false,text:expected});
+});
+
+function staleAgenda(){
+  const f=agendaHarness();
+  f.fixture.state=structuredClone(state);
+  f.context.guestAgendaDialog();
+  f.field.agendaTitle.value='  Fictional guest schedule  ';
+  f.field['include-0'].checked=true;
+  f.field['title-0'].value='  Evening arrivals  ';
+  f.field['location-0'].value='  Guest-facing entrance  ';
+  f.field['title-1'].value='Unselected draft title';
+  f.field['location-1'].value='Unselected draft location';
+  f.context.syncGuestAgenda(f.form);
+  f.expected=f.preview.value;f.raw=structuredClone(f.field);f.draft=f.context.ui.guestAgenda;
+  f.fixture.newer=true;
+  return f;
+}
+
+async function discoverStaleAgenda(f){
+  await f.context.copyGuestAgenda();f.fixture.newer=false;
+  assert.equal(f.fixture.reads,1);assert.equal(f.preview.value,'');assert.equal(f.button['aria-disabled'],'true');
+  f.actions.length=0;
+}
+
+test('a verified unchanged schedule refresh keeps every guest field and requires an independent copy action',async()=>{
+  const f=staleAgenda();await discoverStaleAgenda(f);
+  const updated=structuredClone(f.fixture.state);
+  updated.event.bookingReference='New private datum is not part of the draft';
+  updated.tasks.find(task=>task.id==='overnight').note='New internal note not shown';
+  updated.tasks.find(task=>task.id==='other').schedule.start='2030-03-16T08:40';
+  updated.tasks.find(task=>task.id==='later').schedule.start='2030-03-17T10:00';
+  f.context.document.activeElement=f.refreshButton;
+  const refreshing=f.context.refreshGuestAgenda(f.refreshButton);
+  assert.equal(f.refreshReads.length,1);assert.equal(f.refreshReads[0].options.requireFresh,true);
+  await f.context.refreshGuestAgenda(f.refreshButton);
+  assert.equal(f.refreshReads.length,1,'a duplicate check during a read is harmless');
+  assert.equal(f.preview.value,'');assert.equal(f.fixture.reads,1);
+  f.refreshReads[0].finish({next:updated});await refreshing;
+  assert.equal(f.fixture.opens,1,'a harmless revision does not replace the agenda form');
+  assert.equal(f.context.ui.guestAgenda,f.draft);assert.equal(f.draft.revision,2);
+  assert.deepEqual(f.field,f.raw);assert.equal(f.preview.value,f.expected);
+  assert.equal(f.button['aria-disabled'],'false');assert.equal(f.fixture.reads,1);
+  assert.equal(f.refreshButton.hidden,true);assert.match(f.refreshStatus.textContent,/Schedule checked/);
+  assert.ok(f.actions.includes('schedule check status focused'));
+  assert.ok(!f.actions.includes(f.expected),'checking the schedule never copies the draft');
+  f.preview.selectionEnd=f.expected.length;
+  assert.equal(f.directCopy().prevented,true,'checking latest does not authorize manual copy');
+  f.actions.length=0;
+  await f.context.copyGuestAgenda();
+  assert.equal(f.fixture.reads,2,'explicit copy confirms the revision again');
+  assert.deepEqual(f.actions,[f.expected,'Guest agenda copied. Nothing was sent.']);
+});
+
+test('matching-looking replacement IDs, scoped membership, changed times or zones stay locked',async()=>{
+  for(const [variant,change] of [
+    ['same title and time but replacement ID',data=>data.tasks.find(task=>task.id==='overnight').id='private-replacement-id'],
+    ['changed start',data=>data.tasks.find(task=>task.id==='overnight').schedule.start='2030-03-15T23:45'],
+    ['changed end',data=>data.tasks.find(task=>task.id==='overnight').schedule.end='2030-03-16T00:45'],
+    ['changed zone',data=>data.event.timeZone='America/New_York'],
+    ['changed private location',data=>data.tasks.find(task=>task.id==='overnight').schedule.location='PRIVATE-CHANGED-LOCATION'],
+    ['changed source title',data=>data.tasks.find(task=>task.id==='overnight').title='PRIVATE-CHANGED-TITLE'],
+    ['changed event name',data=>data.event.name='New event name'],
+    ['row moved out of Mine',data=>data.tasks.find(task=>task.id==='overnight').owner='other'],
+    ['new row in same scope',data=>data.tasks.push({id:'private-added-id',title:'New activity',owner:'jack',schedule:{start:'2030-03-16T10:00',end:'',location:''}})],
+  ]){
+    const f=staleAgenda();await discoverStaleAgenda(f);
+    const next=structuredClone(f.fixture.state);change(next);
+    const checking=f.context.refreshGuestAgenda(f.refreshButton);
+    f.refreshReads[0].finish({next});await checking;
+    assert.equal(f.draft.revision,1,variant);assert.equal(f.preview.value,'',variant);
+    assert.equal(f.button['aria-disabled'],'true',variant);assert.deepEqual(f.field,f.raw,variant);
+    assert.equal(f.fixture.opens,1,variant);assert.equal(f.directCopy().prevented,true,variant);
+    assert.match(f.warning.textContent,/schedule changed.*edits are still here/i,variant);
+    await f.context.copyGuestAgenda();assert.equal(f.fixture.reads,1,variant);
+    assert.ok(!f.actions.includes(f.expected),variant);
+    assert.doesNotMatch(f.fixture.markup+f.warning.textContent,/private-(replacement|added)-id|PRIVATE-/,variant);
+  }
+});
+
+test('inconclusive, older and failed refreshes keep the old draft gated and let the organizer retry',async()=>{
+  const f=staleAgenda();await discoverStaleAgenda(f);
+  const inconclusive=f.context.refreshGuestAgenda(f.refreshButton);
+  f.refreshReads.at(-1).finish({result:{changed:false}});await inconclusive;
+  assert.equal(f.preview.value,'');assert.equal(f.button['aria-disabled'],'true');
+  const older=f.context.refreshGuestAgenda(f.refreshButton);
+  f.refreshReads.at(-1).finish({revision:1});await older;
+  assert.equal(f.draft.revision,1);assert.equal(f.preview.value,'');
+  const offline=f.context.refreshGuestAgenda(f.refreshButton);
+  f.refreshReads.at(-1).reject(Error('Fictional offline'));await offline;
+  assert.equal(f.draft.revision,1);assert.equal(f.preview.value,'');assert.deepEqual(f.field,f.raw);
+  const confirmed=f.context.refreshGuestAgenda(f.refreshButton);
+  f.refreshReads.at(-1).finish();await confirmed;
+  assert.equal(f.draft.revision,2);assert.equal(f.preview.value,f.expected);assert.deepEqual(f.field,f.raw);
+  assert.equal(f.fixture.reads,1);assert.ok(!f.actions.includes(f.expected));
+});
+
+test('an in-flight schedule read cannot bless a replaced guest form or a different live scope',async()=>{
+  for(const change of ['actor','project','access','hidden','organizer','form','view']){
+    const f=staleAgenda();await discoverStaleAgenda(f);
+    const checking=f.context.refreshGuestAgenda(f.refreshButton);
+    if(change==='actor')f.context.ui.actor='different-organizer';
+    if(change==='project')f.context.window.GatherMode.projectId='different-project';
+    if(change==='access')f.context.window.GatherAccessLost=true;
+    if(change==='hidden')f.context.document.hidden=true;
+    if(change==='organizer')f.fixture.organizer=false;
+    if(change==='form')f.fixture.form={...f.form};
+    if(change==='view')f.context.ui.view='overview';
+    f.refreshReads[0].finish();await checking;
+    assert.equal(f.draft.revision,1,change);assert.equal(f.preview.value,'',change);
+    assert.equal(f.button['aria-disabled'],'true',change);assert.deepEqual(f.field,f.raw,change);
+    assert.equal(f.fixture.reads,1,change);assert.ok(!f.actions.includes(f.expected),change);
+  }
+});
+
+test('refresh uses the widened draft scope rather than the unchanged My activities Timeline filter',async()=>{
+  const f=staleAgenda();
+  await f.context.refreshGuestAgenda(f.refreshButton);
+  assert.equal(f.refreshReads.length,0,'the hidden refresh control cannot read a fresh draft');
+  f.context.useAllGuestActivities();
+  assert.equal(f.context.ui.scheduleMine,true);
+  f.draft=f.context.ui.guestAgenda;
+  assert.equal(f.draft.snapshot.mine,false);
+  f.context.syncGuestAgenda(f.form);
+  await discoverStaleAgenda(f);
+  const next=structuredClone(f.fixture.state);
+  next.tasks.find(task=>task.id==='other').schedule.start='2030-03-16T08:45';
+  const checking=f.context.refreshGuestAgenda(f.refreshButton);
+  f.refreshReads[0].finish({next});await checking;
+  assert.equal(f.context.ui.guestAgenda,f.draft);assert.equal(f.draft.revision,1);
+  assert.match(f.warning.textContent,/schedule changed.*edits are still here/i);
+  assert.equal(f.preview.value,'');assert.deepEqual(f.field,f.raw);assert.equal(f.fixture.reads,1);
 });

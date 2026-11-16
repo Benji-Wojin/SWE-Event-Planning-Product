@@ -38,9 +38,18 @@
     return !!(change&&actor&&change.owner===actor&&task.owner===actor&&!task.acceptedAt&&
       !task.reportedAt&&!task.verifiedAt&&!task.archivedAt&&task.status!=='done');
   }
-  function guestAgendaSnapshot(state,scope={}) {
+  function guestAgendaCandidates(state,scope) {
     const date=selectedDate(scope);
-    const candidates=ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)));
+    return ordered(scoped(state.tasks,scope).filter(task=>onDate(task,date)));
+  }
+  // Internal binding only. Guest-facing snapshots never include task IDs or
+  // saved locations; they still matter when deciding whether a draft is safe.
+  function guestAgendaSourceKey(state,scope={}) {
+    return JSON.stringify([!!scope.mine,scope.actor||'',selectedDate(scope),state.event.timeZone||'',state.event.name||'',state.event.date||'',
+      guestAgendaCandidates(state,scope).map(task=>[task.id,task.title,task.schedule.start,task.schedule.end||'',task.schedule.location||''])]);
+  }
+  function guestAgendaSnapshot(state,scope={}) {
+    const date=selectedDate(scope),candidates=guestAgendaCandidates(state,scope);
     const activities=candidates.filter(task=>!wallTimeIssue(task,state.event.timeZone));
     return {date,mine:!!scope.mine,timeZone:state.event.timeZone,
       ...(activities.length<candidates.length?{invalidTimes:candidates.length-activities.length}:{}),
@@ -653,6 +662,8 @@
         ${snapshot.invalidTimes?`<p class="notice">${snapshot.invalidTimes} ${snapshot.invalidTimes===1?'activity was':'activities were'} left out because the saved time needs correction. Review the schedule in Timeline before sharing.</p>`:''}
         ${snapshot.mine?'<div class="notice"><p>Activities assigned to someone else or with no owner are not listed. If you need them, start a new draft with all activities. This replaces your current draft.</p><button type="button" class="btn btn-secondary" data-action="all-guest-agenda-activities">Start over with all activities</button></div>':''}
         <p id="guestAgendaWarning" class="notice" role="status" hidden></p>
+        <button type="button" class="btn btn-secondary" data-action="refresh-guest-agenda" aria-describedby="guestAgendaWarning" hidden>Check latest schedule</button>
+        <p id="guestAgendaRefreshStatus" class="muted" role="status" tabindex="-1" hidden></p>
         <form id="guestAgendaForm" class="section-gap">
           <label class="field">Agenda title<input name="agendaTitle" maxlength="180" value="${h(agendaText(title))}"></label>
           <div class="acceptance-list">${snapshot.activities.map((slot,index)=>`<div class="section-gap">
@@ -669,5 +680,5 @@
     }
     return {view,details,picker,firstTimeTask,firstTimeForm,newActivity,clock,runSheet,runSheetModel,runSheetMarkup,runSheetText,firstMissingRunSheetDetail,preparationReview,activityReviewForm,reviewScheduleTask,reviewAssignmentTasks,reviewAcceptanceTasks,activityDays,guestAgendaForm,reconfirmation,awaitingScheduleAcceptance:awaitingOwnerReconfirmation};
   }
-  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,scheduledTimelineDay,personalTimelineDay,pendingReconfirmation,linkedResultsReady,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgenda};
+  root.GatherScheduleUI={create,newActivityTask,ordered,range,dateLabel,activitySummary,activityVisibility,scheduledTimelineDay,personalTimelineDay,pendingReconfirmation,linkedResultsReady,ownerOverlaps,locationOverlaps,overlapKindForDay,overlapPairIsCurrent,timing,momentKey,reviewItems,guestAgendaSnapshot,guestAgendaSourceKey,guestAgenda};
 })(typeof window!=='undefined'?window:globalThis);

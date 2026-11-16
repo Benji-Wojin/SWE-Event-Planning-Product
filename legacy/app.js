@@ -4383,10 +4383,13 @@
     if(ui.dialogKind!=='guest-agenda'||!ui.guestAgenda)return false;
     const draft=ui.guestAgenda, sync=$('#workspaceSyncNotice');
     const stale=draft.stale||scheduleRevisionIsStale(draft.revision)||(sync&&!sync.hidden)||(store.getSnapshotRevision&&store.getSnapshotRevision()!==draft.revision);
-    const offline=window.navigator?.onLine===false;
-    const message=window.GatherAccessLost||!isOrganizer()?'Project access changed. This agenda cannot be copied.':
-      stale?'The shared plan changed. Close this draft and open a new agenda from the current schedule.':
-      offline?'Couldn’t check the shared plan. Reconnect before copying the agenda.':'';
+    const offline=window.navigator?.onLine===false,accessLost=window.GatherAccessLost||!isOrganizer();
+    const message=accessLost?'Project access changed. This agenda cannot be copied.':
+      offline?'Couldn’t check the shared plan. Reconnect before copying the agenda.':
+      draft.refreshing?'Checking the latest schedule…':
+      stale?(draft.sourceChanged?'The schedule changed. Your edits are still here, but this draft can’t be copied. Open a new draft to review the current schedule.':
+        store.refresh?'The shared plan changed. Check the latest schedule to see if this draft is still current.':
+        'The shared plan changed. Close this draft and open a new agenda from the current schedule.'):'';
     const notice=$('#guestAgendaWarning');
     if(notice){if(notice.textContent!==message)notice.textContent=message;notice.hidden=!message;}
     const preview=$('#guestAgendaText');
@@ -4401,6 +4404,11 @@
     }
     $('[data-action="copy-guest-agenda"]')?.setAttribute('aria-disabled',String(!!message||!draft.text||draft.copying));
     $('[data-action="all-guest-agenda-activities"]')?.setAttribute('aria-disabled',String(!!message||draft.copying));
+    const check=$('[data-action="refresh-guest-agenda"]');
+    if(check){
+      check.hidden=!store.refresh||accessLost||!(stale||draft.refreshing);
+      check.setAttribute('aria-disabled',String(accessLost||offline||draft.copying||draft.refreshing));
+    }
     return !!message;
   }
   function guestAgendaDialog(allActivitiesFrom=null) {
@@ -4412,7 +4420,9 @@
     if(activities.length>80){toast(allActivitiesFrom?'All activities has more than 80 entries in this date range. Your draft is unchanged. Choose a narrower date on Timeline to include the whole team.':'Choose a day or My activities to review at most 80 activities at a time.');return;}
     if(!GatherScheduleUI.momentKey(Date.now(),timeZone)){toast('Set the event time zone in Project settings before drafting an agenda.');return;}
     if(allActivitiesFrom&&!confirmDiscard(allActivitiesFrom.form))return;
-    ui.guestAgenda={snapshot,revision:store.getSnapshotRevision?.(),text:'',copying:false,stale:false,manualCopy:null,copyEpoch:0};
+    const entry={actor:ui.actor,project:window.GatherMode?.projectId,view:ui.view,mode:ui.timelineMode,mine:ui.scheduleMine,date:ui.scheduleDate};
+    ui.guestAgenda={snapshot,scope,sourceKey:GatherScheduleUI.guestAgendaSourceKey(state,scope),entry,
+      revision:store.getSnapshotRevision?.(),text:'',copying:false,refreshing:false,sourceChanged:false,stale:false,manualCopy:null,copyEpoch:0};
     openDialog('Draft guest agenda',schedule.guestAgendaForm(snapshot,state.event.name),
       '<button class="btn btn-secondary" data-action="close-dialog">Back to schedule</button><button class="btn btn-primary" data-action="copy-guest-agenda" aria-disabled="true">Copy guest agenda</button>',true,'guest-agenda',!!allActivitiesFrom);
     updateGuestAgendaWarning();
@@ -4467,9 +4477,54 @@
     ui.guestAgenda.copyEpoch++;
     updateGuestAgendaWarning();
   }
+  async function refreshGuestAgenda(button) {
+    const draft=ui.guestAgenda,form=$('#guestAgendaForm'),preview=$('#guestAgendaText'),status=$('#guestAgendaRefreshStatus');
+    const entry=draft?.entry;
+    const sameDialog=()=>!!entry&&!!form?.isConnected&&!!preview?.isConnected&&!!status?.isConnected&&!!button?.isConnected&&
+      ui.dialogKind==='guest-agenda'&&ui.guestAgenda===draft&&!window.GatherAccessLost&&isOrganizer()&&
+      entry.actor===ui.actor&&entry.project===window.GatherMode?.projectId&&entry.view===ui.view&&entry.mode===ui.timelineMode&&
+      entry.mine===ui.scheduleMine&&entry.date===ui.scheduleDate&&form===$('#guestAgendaForm')&&preview===$('#guestAgendaText')&&
+      status===$('#guestAgendaRefreshStatus')&&button===$('[data-action="refresh-guest-agenda"]');
+    const ready=()=>sameDialog()&&!ui.pendingSave&&!draft.copying&&!document.hidden&&window.navigator?.onLine!==false;
+    if(!store.refresh||!ready()||ui.syncing||draft.refreshing||button.hidden||!Number.isSafeInteger(draft.revision))return;
+    const revisionIsCurrent=rev=>Number.isSafeInteger(rev)&&rev>=draft.revision&&!recoveryConflictPending(rev)&&!scheduleRevisionIsStale(rev);
+    const sourceMatches=state=>!!state?.event&&Array.isArray(state.tasks)&&GatherScheduleUI.guestAgendaSourceKey(state,draft.scope)===draft.sourceKey;
+    const say=message=>{status.textContent=message;status.hidden=!message;};
+    draft.manualCopy=null;draft.copyEpoch++;draft.refreshing=true;ui.syncing=true;
+    say('');updateGuestAgendaWarning();
+    let changedSchedule=false;
+    try{
+      const result=await store.refresh((revision,state)=>{
+        if(!ready()||!revisionIsCurrent(revision))return false;
+        changedSchedule=!sourceMatches(state);return !changedSchedule;
+      },{requireFresh:true});
+      if(!sameDialog())return;
+      if(result.pending)rememberNewerSchedule(draft,result.newerRevision);
+      if(!ready()){say('Check paused. Your edits are unchanged. Check again before copying.');return;}
+      if(changedSchedule){draft.sourceChanged=true;draft.stale=true;return;}
+      const revision=store.getSnapshotRevision?.();
+      if(!result.verified||result.pending||!revisionIsCurrent(revision)||!sourceMatches(store.getState())){
+        say('Couldn’t confirm the latest schedule. Your edits are unchanged. Try again before copying.');return;
+      }
+      draft.revision=revision;draft.stale=false;draft.sourceChanged=false;
+      const sync=$('#workspaceSyncNotice');if(sync)sync.hidden=true;
+      const needsRender=result.changed||ui.toolUpdatePending;
+      ui.toolUpdatePending=false;
+      if(needsRender)render();
+      if(needsRender||result.suggestionsChanged)refreshSuggestionSurfaces();
+      if(!sameDialog())return;
+      say('Schedule checked. Your edits and selections are still here. Review the preview, then copy it when you’re ready.');
+      if(document.activeElement===button)focusTaskDialogControl(status,$('#dialog'));
+    }catch{
+      if(sameDialog())say('Couldn’t check the latest schedule. Your edits are unchanged. Try again before copying.');
+    }finally{
+      ui.syncing=false;draft.refreshing=false;
+      if(sameDialog())syncGuestAgenda(form);
+    }
+  }
   async function copyGuestAgenda() {
     const draft=ui.guestAgenda, form=$('#guestAgendaForm'), preview=$('#guestAgendaText');
-    if(!draft||!form||!preview||draft.copying||ui.dialogKind!=='guest-agenda'||!isOrganizer()||window.GatherAccessLost)return;
+    if(!draft||!form||!preview||draft.copying||draft.refreshing||ui.dialogKind!=='guest-agenda'||!isOrganizer()||window.GatherAccessLost)return;
     const shown=preview.value;
     syncGuestAgenda(form);
     if(updateGuestAgendaWarning()){toast('This agenda is not current. Check the warning before copying.');return;}
@@ -4499,9 +4554,9 @@
       if(ui.guestAgenda!==draft||!preview.isConnected||window.GatherAccessLost||!isOrganizer())return;
       const stale=updateGuestAgendaWarning();
       if(stale||draft.copyEpoch!==epoch||draft.text!==text){
-        if(copied)toast(stale?'An older agenda was copied. Don’t share it; open a new draft from the current schedule.':
+        if(copied)toast(stale?'An older agenda was copied. Don’t share it; check the latest schedule before copying again.':
           'An older agenda was copied. Review the current preview and copy it again before sharing.');
-        else toast(stale?'The agenda is no longer current. Open a new draft before copying.':'The preview changed. Review it before copying again.');
+        else toast(stale?'The agenda is no longer current. Check the latest schedule before copying.':'The preview changed. Review it before copying again.');
       }else if(copied)toast('Guest agenda copied. Nothing was sent.');
       else {
         const approved={text,expiresAt:Date.now()+30000};
@@ -5257,6 +5312,7 @@
       }
       if(action==='clear-schedule-date'&&!window.GatherAccessLost){ui.scheduleDate='';navigation.replaceScheduleDate('');render();($('#scheduleDate')||$('[data-action="timeline-mode"][data-id="schedule"]'))?.focus();}
       if(action==='draft-guest-agenda')guestAgendaDialog();
+      if(action==='refresh-guest-agenda')await refreshGuestAgenda(el);
       if(action==='all-guest-agenda-activities')useAllGuestActivities();
       if(action==='copy-guest-agenda')await copyGuestAgenda();
       if(action==='copy-schedule-day'&&!window.GatherAccessLost&&window.GatherMode&&!window.GatherMode.demo){
