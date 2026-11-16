@@ -138,6 +138,34 @@ test('ambiguous existing matches never choose a task silently', () => {
   assert.equal(result.reusable.size, 0);
   assert.equal(result.missing.length, 1);
 });
+test('multiple aliases resolve to one existing prerequisite per dependent while preserving reference order', () => {
+  const existing = [{ id: 'saved', title: item.title, start: '' }, { id: 'different', title: 'Check accessibility', start: '' }];
+  const alias = { ...item, id: 'alias', title: 'Get the location confirmed', existingTaskIndex: 0, duplicateChoice: 'reuse' };
+  const other = { ...item, id: 'other', title: existing[1].title };
+  const newTask = { ...item, id: 'new', title: 'Make a sign', included: true };
+  const first = { ...dependent, dependsOn: [item.id, newTask.id, alias.id, other.id] };
+  const second = { ...dependent, id: 'second', title: 'Share directions', dependsOn: [alias.id, item.id] };
+  const rows = [item, alias, other, newTask, first, second];
+  const before = structuredClone(rows);
+  const hints = duplicateSuggestions([alias], existing);
+  const review = planSelection(rows, existing, hints);
+  const sameTask = { kind: 'existing', taskId: 'saved' };
+  assert.deepEqual(review.prerequisites.get(first.id), [
+    { ...sameTask, proposalIds: [item.id, alias.id] },
+    { kind: 'draft', proposalId: newTask.id },
+    { kind: 'existing', taskId: 'different', proposalIds: [other.id] },
+  ]);
+  assert.deepEqual(review.prerequisites.get(second.id), [{ ...sameTask, proposalIds: [alias.id, item.id] }]);
+  assert.deepEqual(review.missing, []);
+  assert.deepEqual(rows, before);
+
+  const changed = rows.map(row => row.id === alias.id ? { ...row, note: 'A different condition' } : row);
+  const stale = planSelection(changed, existing, hints);
+  assert.ok(stale.invalidReuse.has(alias.id));
+  assert.deepEqual(stale.prerequisites.get(second.id), [
+    { kind: 'draft', proposalId: alias.id }, { ...sameTask, proposalIds: [item.id] },
+  ]);
+});
 test('selected duplicates are rejected both within the draft and against existing tasks', () => {
   const selected = { ...item, included: true };
   assert.deepEqual(

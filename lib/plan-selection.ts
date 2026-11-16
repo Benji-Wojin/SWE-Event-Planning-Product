@@ -9,6 +9,9 @@ export type DuplicateSuggestion = {
   itemIdentity: string;
   taskIdentity: string;
 };
+type PlanPrerequisite =
+  | { kind: 'existing'; taskId: string; proposalIds: string[] }
+  | { kind: 'draft'; proposalId: string };
 // Bind suggestions to reviewed content, not just a mutable item ID. Any change
 // to meaning or timing invalidates the old AI suggestion and reuse decision.
 export function duplicateItemIdentity(item: ReviewedItem) {
@@ -130,6 +133,28 @@ export function planSelection(
       .filter((id) => !selectedIds.has(id) && !reusable.has(id))
       .map((id) => ({ itemId: item.id, prerequisiteId: id })),
   );
+  // Review and apply agree on one required edge per shared task. Preserve the
+  // original draft references (and their order) for editing and approval receipts.
+  const prerequisites = new Map<string, PlanPrerequisite[]>();
+  for (const item of selected) {
+    const targets: PlanPrerequisite[] = [];
+    const shared = new Map<string, Extract<PlanPrerequisite, { kind: 'existing' }>>();
+    for (const proposalId of item.dependsOn) {
+      const taskId = invalidReuse.has(proposalId) ? undefined : reusable.get(proposalId);
+      if (!taskId) {
+        targets.push({ kind: 'draft', proposalId });
+        continue;
+      }
+      const previous = shared.get(taskId);
+      if (previous) previous.proposalIds.push(proposalId);
+      else {
+        const target = { kind: 'existing' as const, taskId, proposalIds: [proposalId] };
+        shared.set(taskId, target);
+        targets.push(target);
+      }
+    }
+    prerequisites.set(item.id, targets);
+  }
   const seen = new Set(existing.map(planTaskSignature));
   const duplicates = new Set<string>();
   for (const item of selected) {
@@ -141,6 +166,7 @@ export function planSelection(
     matches,
     reusable,
     selected,
+    prerequisites,
     missing,
     duplicates,
     possible,

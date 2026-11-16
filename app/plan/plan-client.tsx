@@ -243,6 +243,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
   const existingById = new Map(existingTasks.map(task => [task.id, task]));
   const {
     selected,
+    prerequisites,
     reusable,
     matches,
     missing,
@@ -1045,10 +1046,11 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
               const similar = possible.get(item.id);
               const reusedTask = existingById.get(reusable.get(item.id) || '');
               const keepsOtherMatch = reusedTask && !exact.some(task => task.id === reusedTask.id);
-              const existingPrerequisites = !applied && item.included
-                ? item.dependsOn.flatMap(id => {
-                    const task = invalidReuse.has(id) ? undefined : existingById.get(reusable.get(id) || '');
-                    return task ? [{ id, task }] : [];
+              const existingPrerequisites = !applied
+                ? (prerequisites.get(item.id) || []).flatMap(target => {
+                    if (target.kind !== 'existing') return [];
+                    const task = existingById.get(target.taskId);
+                    return task ? [{ task, proposalIds: target.proposalIds }] : [];
                   })
                 : [];
               return (
@@ -1204,16 +1206,21 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                           : 'These shared tasks are matched to this proposal’s required links. Opening a task won’t change the draft.'}
                       </p>
                       <ul aria-label="Existing prerequisites" className="mt-1 divide-y">
-                        {existingPrerequisites.map(({ id, task }) => (
-                          <li key={id} className="flex flex-wrap items-center justify-between gap-x-3 py-1">
-                            {existingTaskLink(task, params, guideReturn)}
+                        {existingPrerequisites.map(({ task, proposalIds }) => (
+                          <li key={task.id} className="flex flex-wrap items-center justify-between gap-x-3 py-1">
+                            <div className="min-w-0">
+                              {existingTaskLink(task, params, guideReturn)}
+                              {proposalIds.length > 1 && <p className="mb-2 text-muted-foreground">
+                                {proposalIds.length} draft references point to this task.{!data.contextChanged && ' One required link will be added.'} Removing the link clears these references from this proposal only.
+                              </p>}
+                            </div>
                             <Button type="button" variant="outline" className="min-h-11"
                               aria-label={`Remove link to prerequisite: ${task.title}`}
                               onClick={event => {
                                 if (document.activeElement === event.currentTarget) {
                                   document.getElementById('include-' + item.id)?.focus({ preventScroll: true });
                                 }
-                                updateItem(item.id, { dependsOn: item.dependsOn.filter(other => other !== id) });
+                                updateItem(item.id, { dependsOn: item.dependsOn.filter(other => !proposalIds.includes(other)) });
                               }}>
                               Remove link
                             </Button>

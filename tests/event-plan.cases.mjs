@@ -1373,6 +1373,50 @@ export async function eventPlanTests({
       assert.equal(state.tasks.find(task=>task.title==='Welcome attendees').dependencies[0].taskId,before.id);
       assert.equal((await post(project,approval(snap))).status,200);
     });
+    await t.test('multiple draft references to one shared prerequisite create one link without losing other reviewed links', async test => {
+      const project = await setup();
+      test.after(() => sqlite.prepare('DELETE FROM projects WHERE id=?').run(project));
+      const existing = (await change(project, 'addTask', [{ title: baseItem.title, owner: 'jack', note: 'Keep the original approval note.' }])).state.tasks[0];
+      const generated = output();
+      const alias = { ...baseItem, id: 'approval-alias', title: 'Get organizer signoff', existingTaskIndex: 0 };
+      const references = [baseItem.id, 'cleanup', alias.id];
+      generated.items[1].dependsOn = references;
+      generated.items.push(alias);
+      provider(generated);
+      const draft = await ready(project);
+      assert.equal(draft.draft.items[0].included, false, 'the exact match already exists');
+      assert.equal(draft.draft.duplicateSuggestions.find(suggestion => suggestion.itemId === alias.id)?.taskId, existing.id);
+      const items = draft.draft.items.map(item => item.id === alias.id ? { ...item, included: false, duplicateChoice: 'reuse' } : item);
+      const savedResponse = await post(project, save(draft, { items }));
+      assert.equal(savedResponse.status, 200, await savedResponse.clone().text());
+      const reviewed = await savedResponse.json();
+      assert.deepEqual(reviewed.draft.items.find(item => item.id === 'arrive').dependsOn, references);
+      const beforeApproval = await (await realRead(project)).json();
+      assert.deepEqual(beforeApproval.state.tasks, [existing], 'private review creates no shared work');
+
+      const input = approval(reviewed);
+      const response = await post(project, input);
+      assert.equal(response.status, 200, await response.clone().text());
+      const result = await response.json();
+      assert.deepEqual(result.draft.items.find(item => item.id === 'arrive').dependsOn, references, 'the receipt still reflects the reviewed private input');
+      assert.equal(result.draft.items.find(item => item.id === alias.id).duplicateChoice, 'reuse');
+      const afterApproval = await (await realRead(project)).json();
+      const { tasks } = afterApproval.state;
+      assert.equal(tasks.length, 3);
+      assert.deepEqual(tasks.find(task => task.id === existing.id), existing);
+      const arrival = tasks.find(task => task.title === generated.items[1].title);
+      const cleanup = tasks.find(task => task.title === generated.items[2].title);
+      assert.deepEqual(result.receipt.taskIds, [arrival.id, cleanup.id]);
+      assert.deepEqual(arrival.dependencies.map(link => [link.taskId, link.kind]), [[existing.id, 'dependency'], [cleanup.id, 'dependency']]);
+
+      const retry = await post(project, input);
+      assert.equal(retry.status, 200, await retry.clone().text());
+      assert.deepEqual((await retry.json()).receipt, result.receipt);
+      const changed = approval(reviewed, { items: input.items.map(item => item.id === 'arrive' ? { ...item, dependsOn: references.slice(0, 2) } : item) });
+      assert.equal((await post(project, changed)).status, 409, 'different private references cannot reuse the same approval receipt');
+      assert.deepEqual(await (await realRead(project)).json(), afterApproval, 'retries do not duplicate or edit shared links');
+      assert.equal(calls.length, 1, 'review and approval must not call the provider again');
+    });
     await t.test('semantic suggestions can be kept separate and invalid provider references are ignored', async () => {
       for (const index of [0,199]) {
         const project=await setup();

@@ -729,7 +729,7 @@ async function applyDraft(c: Context, input: any) {
   } catch (error) {
     throw new HttpError(400, (error as Error).message);
   }
-  const { selected, reusable, missing, duplicates, unresolved, invalidReuse } = planSelection(
+  const { selected, prerequisites, missing, duplicates, unresolved, invalidReuse } = planSelection(
     items,
     existingPlanTasks(c),
     data.draft.duplicateSuggestions || [],
@@ -743,7 +743,8 @@ async function applyDraft(c: Context, input: any) {
       400,
       'A selected task depends on an unchecked item. Include that item or remove the dependency.',
     );
-  const ids = new Map<string, string>(reusable);
+  const selectedById = new Map(selected.map(item => [item.id, item]));
+  const ids = new Map<string, string>();
   const createdIds: string[] = [];
   let addedTasks = 0;
   try {
@@ -752,8 +753,9 @@ async function applyDraft(c: Context, input: any) {
     // teammate proposals. Reused shared tasks are never edited.
     const createReviewed = (item: ReviewedItem): void => {
       if(ids.has(item.id))return;
-      for(const prerequisite of item.dependsOn){
-        if(!ids.has(prerequisite))createReviewed(selected.find(other=>other.id===prerequisite)!);
+      const targets = prerequisites.get(item.id)!;
+      for (const target of targets) {
+        if (target.kind === 'draft' && !ids.has(target.proposalId)) createReviewed(selectedById.get(target.proposalId)!);
       }
       if (duplicates.has(item.id))
         throw new Error(
@@ -775,7 +777,11 @@ async function applyDraft(c: Context, input: any) {
           dueDate: item.dueDate,
           status: 'todo',
           ...(item.kind === 'activity' ? {eventActivity: true} : {}),
-          dependencies:item.dependsOn.map(prerequisite=>({taskId:ids.get(prerequisite)!,kind:'dependency',reason:item.note||'Required output reviewed in the private plan.'})),
+          dependencies: targets.map(target => ({
+            taskId: target.kind === 'existing' ? target.taskId : ids.get(target.proposalId)!,
+            kind: 'dependency',
+            reason: item.note || 'Required output reviewed in the private plan.',
+          })),
           ...(item.start
             ? {
                 schedule: {

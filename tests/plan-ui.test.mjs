@@ -1897,6 +1897,95 @@ test('a selected proposal shows the exact shared prerequisite before Add and can
     app.dispose();
   }
 });
+
+function sharedPrerequisiteReferencesFixture() {
+  const initial = fixture();
+  const exact = { ...copy(item), included: false };
+  const alias = { ...exact, id: 'alias', title: 'Confirm the event program', duplicateChoice: 'reuse' };
+  const supplies = { ...exact, id: 'supplies', title: 'Reserve volunteer supplies' };
+  initial.existingTasks = [
+    { id: 'saved-program', title: exact.title, start: '' },
+    { id: 'saved-supplies', title: supplies.title, start: '' },
+  ];
+  initial.draft.duplicateSuggestions = [{
+    itemId: alias.id,
+    taskId: 'saved-program',
+    taskIdentity: 'confirm activities|',
+    itemIdentity: JSON.stringify([alias.title, alias.kind, alias.note, alias.dueDate, alias.start, alias.end, alias.location, alias.category]),
+  }];
+  initial.draft.items = [exact, alias, supplies,
+    { ...copy(item), id: 'arrival', title: 'Prepare arrival', dependsOn: [exact.id, supplies.id, alias.id] },
+    { ...copy(item), id: 'hosts', title: 'Brief hosts', dependsOn: [alias.id, exact.id] },
+  ];
+  return initial;
+}
+
+test('two private references to the same shared prerequisite appear as one link per dependent and can be removed together', async () => {
+  const initial = sharedPrerequisiteReferencesFixture();
+  const app = harness(undefined, initial, 'project=p_school', false, true);
+  const groupFor = id => {
+    const card = nodes(app.tree).find(node => node.type === 'article' && nodes(node).includes(app.find('include-' + id)));
+    return existingPrerequisites(card)[0];
+  };
+  const groupLinks = id => existingTaskLinks(groupFor(id)).map(link => link.props.href);
+  const add = () => planButton(app.tree, 'Add 2 selected items to project');
+  try {
+    await app.start();
+    assert.equal(existingPrerequisites(app.tree).length, 2);
+    assert.deepEqual(groupLinks('arrival'), [
+      '/project?project=p_school&task=saved-program&guide=1',
+      '/project?project=p_school&task=saved-supplies&guide=1',
+    ]);
+    assert.deepEqual(groupLinks('hosts'), ['/project?project=p_school&task=saved-program&guide=1']);
+    for (const id of ['arrival', 'hosts']) {
+      assert.match(text(groupFor(id)), /2 draft references point to this task\./i);
+      assert.match(text(groupFor(id)), /One required link will be added\./i);
+      assertExistingTaskLink(existingTaskLinks(groupFor(id), item.title)[0],
+        '/project?project=p_school&task=saved-program&guide=1');
+    }
+    assert.equal(add().props.disabled, false, 'reusing one shared task through two draft references does not block approval');
+
+    await app.edit('note-arrival', 'Keep this private arrival note.');
+    const removals = nodes(groupFor('arrival')).filter(node => node.type === 'button' &&
+      node.props['aria-label'] === `Remove link to prerequisite: ${item.title}`);
+    assert.equal(removals.length, 1);
+    const button = {}, focus = [];
+    globalThis.document.activeElement = button;
+    globalThis.document.getElementById = id => ({ focus: options => focus.push({ id, options }) });
+    await removals[0].props.onClick({ currentTarget: button });
+    await app.start();
+    assert.deepEqual(focus, [{ id: 'include-arrival', options: { preventScroll: true } }]);
+    assert.deepEqual(groupLinks('arrival'), ['/project?project=p_school&task=saved-supplies&guide=1']);
+    assert.deepEqual(groupLinks('hosts'), ['/project?project=p_school&task=saved-program&guide=1']);
+    for (const [id, checked] of [
+      ['arrival:one', false], ['arrival:alias', false], ['arrival:supplies', true],
+      ['hosts:one', true], ['hosts:alias', true],
+    ]) assert.equal(app.find('required-' + id).props.checked, checked, id);
+    assert.equal(app.find('note-arrival').props.value, 'Keep this private arrival note.');
+    assert.equal(add().props.disabled, false);
+    assert.deepEqual(app.requests, [{ action: 'get' }], 'previewing and removing a grouped link do not write');
+    assert.deepEqual(app.saved, initial);
+  } finally { app.dispose(); }
+});
+
+test('grouped prerequisite matches do not override stale-draft recheck', async () => {
+  const initial = sharedPrerequisiteReferencesFixture();
+  initial.contextChanged = true;
+  const app = harness(undefined, initial);
+  try {
+    await app.start();
+    const groups = existingPrerequisites(app.tree);
+    assert.equal(groups.length, 2);
+    assert.match(text(app.tree), /These are the current matches.*Recheck the draft/i);
+    for (const group of groups) {
+      assert.equal(existingTaskLinks(group, item.title).length, 1);
+      assert.doesNotMatch(text(group), /One required link will be added\./i);
+    }
+    assert.equal(planButton(app.tree, 'Add 2 selected items to project').props.disabled, true);
+    assert.deepEqual(app.requests, [{ action: 'get' }]);
+  } finally { app.dispose(); }
+});
+
 test('ambiguous exact matches and invalid semantic reuse never appear as resolved prerequisites', async () => {
   for (const invalidReuse of [false, true]) {
     const initial = fixture();
