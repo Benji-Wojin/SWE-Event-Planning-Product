@@ -13,6 +13,7 @@ import { planApprovalHash } from '@/lib/plan-approval-hash';
 import { planPrerequisiteDependents, planPrerequisiteLimit, planPrerequisiteLoopSources } from '@/lib/plan-prerequisites';
 import { planActivityHref, planTaskHref } from '@/lib/workspace-task-link';
 import { workspaceScheduleDate } from '@/lib/workspace-day';
+import type { StarterChecklistPreview } from '@/lib/starter-checklists';
 import {AskWeftPanel} from './ask-weft-panel';
 import { examplePlanBrief, PlanGuideHint, type PlanGuideStage } from './guide-hint';
 import { PlanApprovalImpact } from './approval-impact';
@@ -93,8 +94,9 @@ async function api(query: string, body?: unknown, signal?: AbortSignal) {
     );
   return data;
 }
-export function PlanReview({ query, embedded = false, guided = false, receiptTask = '', receiptHandoff = false }: {
+export function PlanReview({ query, embedded = false, guided = false, receiptTask = '', receiptHandoff = false, starterPreviews }: {
   query: string; embedded?: boolean; guided?: boolean; receiptTask?: string; receiptHandoff?: boolean;
+  starterPreviews?: Readonly<Record<string, StarterChecklistPreview>>;
 }) {
   const [data, setData] = useState<any>(null),
     [brief, setBrief] = useState<PlanBrief>(emptyBrief),
@@ -542,6 +544,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
       }
       accept(await api(query,starterRequest.current));
       starterRequest.current = null;
+      focusNotice.current = true;
       setNotice('Starter checklist ready to review. No AI was used; no shared tasks were added.');
     });
   }
@@ -693,6 +696,71 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         </a>
       </section>
     );
+  const eventTypeControl = (
+    <div className="space-y-2">
+      <Label htmlFor="plan-kind">Event type</Label>
+      <NativeSelect
+        id="plan-kind"
+        className={guideReturn ? 'w-full [&_select]:min-h-11 [&_select]:scroll-mt-6' : 'w-full [&_select]:min-h-11'}
+        value={brief.kind}
+        onChange={(e) => updateBrief('kind', e.target.value)}
+      >
+        {eventKinds.map((kind) => (
+          <option key={kind} value={kind}>
+            {names[kind]}
+          </option>
+        ))}
+      </NativeSelect>
+    </div>
+  );
+  const scheduleControls = (
+    <details>
+      <summary className="cursor-pointer text-sm font-medium">
+        Dates and activity hours
+      </summary>
+      <p className="my-3 text-sm text-muted-foreground">
+        {data.event.date || 'No event date'} ·{' '}
+        {data.event.timeZone || 'No time zone'}.{' '}
+        {demo ? (
+          'Edit event details in the demo.'
+        ) : (
+          <a href={'/setup?' + query} target={embedded ? '_top' : undefined} className="underline">
+            Project settings
+          </a>
+        )}
+      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {(
+          [
+            ['endDate', 'Last day (optional)', 'date'],
+            ['startTime', 'Daily start (optional)', 'time'],
+            ['endTime', 'Daily end (optional)', 'time'],
+          ] as const
+        ).map(([key, label, type]) => (
+          <div className="space-y-2" key={key}>
+            <Label htmlFor={'brief-' + key}>{label}</Label>
+            <Input
+              id={'brief-' + key}
+              type={type}
+              min={
+                key === 'endDate'
+                  ? data.event.date || undefined
+                  : undefined
+              }
+              value={brief[key]}
+              onChange={(e) => updateBrief(key, e.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-sm text-muted-foreground">
+        Without a date, time zone, and start time, activities stay
+        unscheduled. Daily end must be later than start; leave it blank
+        for overnight activities and set the last day.
+      </p>
+    </details>
+  );
+  const starterPreview = starterPreviews?.[brief.kind];
   return (
     <section aria-busy={checkingLocked} className={embedded ? 'plan-sidebar-review' : undefined}>
       {alert}
@@ -707,9 +775,10 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         </Button>
       )}
       {notice && (
-        <p role="status" ref={noticeBox} tabIndex={-1} className="mb-4 text-sm">
-          {notice}
-        </p>
+        <div className="mb-4 text-sm">
+          <p role="status" ref={noticeBox} tabIndex={-1}>{notice}</p>
+          {!assistant && !suggestions && data.draft?.source === 'starter' && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to proposed items</a>}
+        </div>
       )}
       {approvalCheck && <section aria-labelledby="plan-approval-check-title" className="mb-5 space-y-3 rounded-lg border p-4 text-sm">
         <h2 id="plan-approval-check-title" className="font-semibold">{approvalCheck.kind === 'uncertain' ? 'Adding tasks was not confirmed' : 'This approval needs a fresh review'}</h2>
@@ -791,6 +860,43 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           ) : receiptTasks.length > 0 && <ol className="list-decimal space-y-1 ps-5 text-sm">{receiptTasks.map(receiptTaskRow)}</ol>}
         </section>
       )}
+      {!assistant && !suggestions && (
+        <section className="mb-4" aria-labelledby="plan-starter-title">
+          <Card>
+            <CardContent className="space-y-4 pt-6">
+              <header className="space-y-2">
+                <h2 id="plan-starter-title" className="text-xl font-semibold">Starter checklist</h2>
+                <p id="plan-starter" tabIndex={-1} className="scroll-mt-6 text-sm text-muted-foreground">Start with a checklist for your event, then edit and select what to add. No AI call or AI quota is used.</p>
+              </header>
+              <fieldset disabled={locked} className="space-y-4">
+                <legend className="sr-only">Starter checklist options</legend>
+                {eventTypeControl}
+                {starterPreview && <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-sm">
+                  <p role="status" aria-atomic="true" className="font-medium">{starterPreview.preparationCount} preparation tasks · {starterPreview.activityCount} optional event-day activities</p>
+                  <p className="text-muted-foreground">Example preparation tasks</p>
+                  <ul className="list-disc space-y-1 break-words ps-5">
+                    {starterPreview.sampleTitles.map(title => <li key={title}>{title}</li>)}
+                  </ul>
+                </div>}
+                {scheduleControls}
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-1" checked={suggestStarterDates} disabled={!data.event.date || !data.event.timeZone} onChange={e=>{setSuggestStarterDates(e.target.checked);starterRequest.current=null;}} />
+                  <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input id="starter-activities" type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
+                  <span>Add event-day activities <span className="block text-muted-foreground">Give activities start times in the draft to put them on the run sheet, or add them now and set their times later in Timeline.</span></span>
+                </label>
+                <Button type="button" className="min-h-11" disabled={locked} onClick={()=>void useStarter()}>
+                  {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
+                </Button>
+                <p className="text-sm text-muted-foreground">Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
+                {data.draft?.source === 'starter' && <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline underline-offset-4">Review your saved checklist</a>}
+              </fieldset>
+            </CardContent>
+          </Card>
+        </section>
+      )}
       {assistant ? <AskWeftPanel query={query} onBusy={setResearchBusy} key={chatReset} initialMessage={chatSeed} taskContextTitle={taskContext?.title} onDismissTaskContext={()=>setTaskContext(null)} brief={brief} replyAt={data.draft?.generatedAt} proposalCount={data.draft?.items?.length||0} proposalTitles={data.draft?.items?.map((item:ReviewedItem)=>item.title)||[]} question={chatStartingNew?undefined:data.draft?.questions?.[0]} reply={chatStartingNew?undefined:data.draft?.work?.content} work={chatStartingNew?undefined:data.draft?.work} applied={applied} locked={locked} configured={data.configured} failed={!!data.issue && !chatStartingNew} onSend={generate} onDirty={setChatDirty} onNew={(seed='')=>{
         if(locked||pending.current)return;
         if(dirty&&!window.confirm('Discard the unsaved message and draft edits to start a new conversation? The saved draft remains until you replace it.'))return;
@@ -799,23 +905,13 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
         <summary className={embedded ? 'cursor-pointer text-sm font-medium' : 'hidden'}>Review focus & event details</summary>
       <Card>
         <CardContent className="space-y-5 pt-6">
+          {!suggestions && <header className="space-y-2">
+            <h2 className="text-xl font-semibold">Draft with AI (optional)</h2>
+            <p className="text-sm text-muted-foreground">Describe what you’re planning to get a draft tailored to your event. This also uses the event type and dates above.</p>
+          </header>}
           <fieldset disabled={locked} className="space-y-5">
             <legend className="sr-only">Event brief</legend>
-            <div className="space-y-2">
-              <Label htmlFor="plan-kind">Event type</Label>
-              <NativeSelect
-                id="plan-kind"
-                className={guideReturn ? 'w-full [&_select]:scroll-mt-6' : 'w-full'}
-                value={brief.kind}
-                onChange={(e) => updateBrief('kind', e.target.value)}
-              >
-                {eventKinds.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {names[kind]}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
+            {suggestions && eventTypeControl}
             <div className="space-y-2">
               <Label htmlFor="plan-brief">{suggestions ? 'What should AI check for?' : 'What are you planning?'}</Label>
               <Textarea
@@ -828,51 +924,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
                 placeholder={suggestions ? 'Optional focus: anything missing from our launch evening?' : 'Purpose, activities, constraints, and decisions still to make'}
               />
             </div>
-            <details>
-              <summary className="cursor-pointer text-sm font-medium">
-                Dates and activity hours
-              </summary>
-              <p className="my-3 text-sm text-muted-foreground">
-                {data.event.date || 'No event date'} ·{' '}
-                {data.event.timeZone || 'No time zone'}.{' '}
-                {demo ? (
-                  'Edit event details in the demo.'
-                ) : (
-                  <a href={'/setup?' + query} target={embedded ? '_top' : undefined} className="underline">
-                    Project settings
-                  </a>
-                )}
-              </p>
-              <div className="grid gap-4 sm:grid-cols-3">
-                {(
-                  [
-                    ['endDate', 'Last day (optional)', 'date'],
-                    ['startTime', 'Daily start (optional)', 'time'],
-                    ['endTime', 'Daily end (optional)', 'time'],
-                  ] as const
-                ).map(([key, label, type]) => (
-                  <div className="space-y-2" key={key}>
-                    <Label htmlFor={'brief-' + key}>{label}</Label>
-                    <Input
-                      id={'brief-' + key}
-                      type={type}
-                      min={
-                        key === 'endDate'
-                          ? data.event.date || undefined
-                          : undefined
-                      }
-                      value={brief[key]}
-                      onChange={(e) => updateBrief(key, e.target.value)}
-                    />
-                  </div>
-                ))}
-              </div>
-              <p className="mt-3 text-sm text-muted-foreground">
-                Without a date, time zone, and start time, activities stay
-                unscheduled. Daily end must be later than start; leave it blank
-                for overnight activities and set the last day.
-              </p>
-            </details>
+            {suggestions && scheduleControls}
             <p id={guideReturn ? 'plan-generate' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-sm text-muted-foreground">
               Generate sends this brief, event details, task names, and relevant
               saved feedback to Groq. Emails, guest lists, files, and private
@@ -918,20 +970,6 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
             {guideReturn && guideStage === 'review' && !locked && <p className="text-sm text-muted-foreground">
               Your draft is private. <a href="#plan-proposed-items" className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-4">Jump to your draft</a>{guideDraftNeedsRecheck ? ' to review it against the current project.' : ' to choose what to add.'}
             </p>}
-            {!suggestions && <div className="space-y-3 border-t pt-4">
-              <p id={guideReturn ? 'plan-starter' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-sm text-muted-foreground">Prefer a starting checklist? Choose the event type above, then edit and assign only the items you need. No AI call or AI quota is used. Owners start unset; dates stay unset unless you request suggestions. This is not a complete policy or safety checklist.</p>
-              <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" className="mt-1" checked={suggestStarterDates} disabled={!data.event.date || !data.event.timeZone} onChange={e=>{setSuggestStarterDates(e.target.checked);starterRequest.current=null;}} />
-                <span>Suggest preparation dates from the event date <span className="block text-muted-foreground">{data.event.date && data.event.timeZone ? `${data.event.date} · ${data.event.timeZone}. Editable lead times, not confirmed deadlines. Short-notice items are flagged for review. Activity times stay blank; wrap-up uses the last day when supplied.` : 'Set an event date and time zone in Project settings to use this option.'}</span></span>
-              </label>
-              <label className="flex items-start gap-2 text-sm">
-                <input id="starter-activities" type="checkbox" className="mt-1" checked={includeStarterActivities} onChange={e=>{setIncludeStarterActivities(e.target.checked);starterRequest.current=null;}} />
-                <span>Add event-day activities <span className="block text-muted-foreground">Give activities start times in the draft to put them on the run sheet, or add them now and set their times later in Timeline.</span></span>
-              </label>
-              <Button variant="outline" disabled={locked} onClick={()=>void useStarter()}>
-                {starterRequest.current ? 'Retry checklist request' : data.draft ? 'Replace with starter checklist' : 'Use starter checklist'}
-              </Button>
-            </div>}
           </fieldset>
         </CardContent>
       </Card>
@@ -973,7 +1011,7 @@ export function PlanReview({ query, embedded = false, guided = false, receiptTas
           {assistant && !items.length && !data.draft.questions?.length && <p role="status" className="rounded-lg border p-4 text-sm">No tasks proposed. Check the assumptions below or describe the task more specifically.</p>}
           {suggestions && !items.length && <p role="status" className="rounded-lg border p-4 text-sm">No additional tasks were supported by this review. Check the questions below or add more context—AI does not guarantee that the plan is complete.</p>}
           <div>
-            <h2 id={guideReturn ? 'plan-proposed-items' : undefined} tabIndex={guideReturn ? -1 : undefined} className="scroll-mt-6 text-xl font-semibold">Review proposed items</h2>
+            <h2 id="plan-proposed-items" tabIndex={-1} className="scroll-mt-6 text-xl font-semibold">Review proposed items</h2>
             {guideReturn && guideDraftNeedsRecheck && !locked && <p className="mt-2 rounded-lg border p-3 text-sm">
               The project has changed. <a className="inline-flex min-h-11 items-center font-medium text-primary underline" href={guideRecovery[0]}>{guideRecovery[1]}</a> before adding items.
             </p>}

@@ -1,10 +1,10 @@
 import {test,before} from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-let starterChecklist,parsePlanItems,eventKinds;
+let starterChecklist,starterChecklistPreviews,parsePlanItems,eventKinds;
 before(async()=>{
-  const bundle=await build({stdin:{contents:"export {starterChecklist} from './lib/starter-checklists';export {parsePlanItems,eventKinds} from './lib/plan-generation';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
-  ({starterChecklist,parsePlanItems,eventKinds}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64')));
+  const bundle=await build({stdin:{contents:"export {starterChecklist,starterChecklistPreviews} from './lib/starter-checklists';export {parsePlanItems,eventKinds} from './lib/plan-generation';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+  ({starterChecklist,starterChecklistPreviews,parsePlanItems,eventKinds}=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].text).toString('base64')));
 });
 test('every supported event kind has a bounded editable starter with unknown dates and owners left unset',()=>{
   for(const kind of eventKinds){
@@ -31,6 +31,33 @@ test('formal events get deeper delivery checks while celebrations stay proportio
   assert.match(titles(corporate),/AV and remote participation/);assert.match(titles(corporate),/post-event actions/);
   assert.match(titles(starterChecklist('trip')),/flexible itinerary/);
   assert.match(titles(starterChecklist('anniversary')),/personal touches/);
+});
+test('starter previews are immutable summaries of the actual event-specific preparation and optional activities',()=>{
+  assert.deepEqual(Object.keys(starterChecklistPreviews),eventKinds);
+  assert.ok(Object.isFrozen(starterChecklistPreviews));
+  assert.deepEqual(JSON.parse(JSON.stringify(starterChecklistPreviews)),starterChecklistPreviews);
+  for(const kind of eventKinds){
+    const preview=starterChecklistPreviews[kind];
+    assert.deepEqual(Object.keys(preview).sort(),['activityCount','preparationCount','sampleTitles'],kind);
+    assert.ok(Object.isFrozen(preview)&&Object.isFrozen(preview.sampleTitles),kind);
+    const preparation=starterChecklist(kind).items;
+    const withActivities=starterChecklist(kind,undefined,true).items;
+    const activities=withActivities.filter(item=>item.kind==='activity');
+    assert.equal(preview.preparationCount,preparation.length,kind);
+    assert.equal(preview.preparationCount,withActivities.filter(item=>item.kind==='preparation').length,kind);
+    assert.equal(preview.activityCount,activities.length,kind);
+    assert.equal(preview.preparationCount+preview.activityCount,withActivities.length,kind);
+    assert.ok(preview.sampleTitles.length>=2&&preview.sampleTitles.length<=3,kind);
+    assert.equal(new Set(preview.sampleTitles).size,preview.sampleTitles.length,kind);
+    assert.ok(preview.sampleTitles.every(title=>preparation.some(task=>task.title===title&&task.kind==='preparation')),kind);
+  }
+  const sample=kind=>starterChecklistPreviews[kind].sampleTitles.join(' ');
+  assert.match(sample('school'),/school approval.*arrival and release.*brief the event team/i);
+  assert.match(sample('corporate'),/stakeholder decisions.*AV and remote participation.*post-event actions/);
+  assert.match(sample('offsite'),/travel, arrival and check-in/);
+  assert.match(sample('trip'),/flexible itinerary/);
+  assert.match(sample('party'),/food, drinks and a spending limit/);
+  assert.match(sample('anniversary'),/personal touches/);
 });
 test('opt-in event-day activities are useful for each event type without inventing a schedule',()=>{
   const activities=kind=>starterChecklist(kind,undefined,true).items.filter(item=>item.kind==='activity');

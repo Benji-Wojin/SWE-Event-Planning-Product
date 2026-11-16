@@ -131,7 +131,7 @@ function assertExistingTaskLink(link, href) {
   assert.equal(link.props.rel, 'noopener noreferrer');
   assert.equal(link.props.onClick, undefined);
 }
-function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true) {
+function harness(server, initial = fixture(), query = 'project=p_example', embedded = false, guided = false, receiptTask, receiptHandoff = true, starterPreviews) {
   const previous = {
     fetch: globalThis.fetch,
     window: globalThis.window,
@@ -223,7 +223,7 @@ function harness(server, initial = fixture(), query = 'project=p_example', embed
   function render() {
     changed = false;
     index = 0;
-    tree = PlanReview({ query, embedded, guided, receiptTask, receiptHandoff });
+    tree = PlanReview({ query, embedded, guided, receiptTask, receiptHandoff, starterPreviews });
     // The hook renderer has no real DOM; attach focus refs before effects.
     for (const target of nodes(tree).filter(node => node.props?.ref && ['plan-receipt-heading', 'plan-receipt-return-status', 'plan-brief'].includes(node.props.id))) {
       target.props.ref.current = {
@@ -613,6 +613,7 @@ test('guided planner without AI configuration points to the real starter option 
     await app.start();
     assert.equal(planLink(app.tree, 'Go to starter checklist')?.props.href, '#plan-starter');
     assert.match(text(app.find('plan-starter')), /No AI call or AI quota is used/);
+    assert.ok(nodes(starterCard(app.tree)).includes(app.find('plan-starter')), 'the guided anchor lands in the dedicated checklist card');
     assert.equal(planButton(app.tree, 'Use starter checklist').props.disabled, false);
     assert.equal(planButton(app.tree, 'Generate draft').props.disabled, true);
     assert.ok(nodes(app.tree).some(node => node.type === 'p' && text(node).includes('AI isn’t configured for this planner')));
@@ -759,6 +760,92 @@ test('starter checklist is available with an empty brief and no AI configuration
   }finally{active.dispose();}
 });
 
+const starterPreviews = {
+  school: { preparationCount: 7, activityCount: 3, sampleTitles: ['Check school accessibility', 'Prepare the school welcome desk'] },
+  trip: { preparationCount: 5, activityCount: 2, sampleTitles: ['Confirm the trip pickup spots', 'Pack the trip materials'] },
+  party: { preparationCount: 9, activityCount: 4, sampleTitles: ['Plan the party entrance', 'Choose the party music'] },
+};
+const eventBriefFieldset = tree => nodes(tree).findLast(node => node.type==='fieldset' &&
+  nodes(node).some(child=>child.props?.id==='plan-brief'));
+const starterCard = tree => nodes(tree).findLast(node => ['article','section'].includes(node.type) &&
+  nodes(node).some(child=>child.props?.id==='plan-starter') &&
+  nodes(node).some(child=>child.type==='button'&&/starter checklist/.test(text(child))));
+
+test('the full planner leads with a separate no-AI starter checklist and one shared event type',async()=>{
+  const initial={...fixture(),draft:null,status:'empty',brief:{...brief,description:''}};
+  const active=harness(context=>{
+    if(context.input?.action!=='starter')return;
+    assert.deepEqual(context.input.brief,{...initial.brief,kind:'party',description:'Example event'});
+    assert.equal(context.input.revision,initial.revision);
+    assert.equal(context.input.workspaceRevision,initial.workspaceRevision);
+    assert.equal(context.input.replace,false);
+    assert.equal(context.input.includeActivities,true);
+    assert.ok(context.input.requestId);
+    context.value={...context.saved,revision:3,status:'ready',brief:context.input.brief,
+      draft:{...fixture().draft,source:'starter',brief:context.input.brief}};
+  },initial,'project=p_example',false,false,undefined,true,starterPreviews);
+  try{
+    await active.start();
+    const ordered=nodes(active.tree);
+    const kind=active.find('plan-kind'), ai=eventBriefFieldset(active.tree), starter=starterCard(active.tree);
+    assert.ok(starter,'the starter checklist is a distinct card');
+    assert.ok(ai,'the optional AI brief remains available');
+    assert.equal(kind?.type,'select');
+    assert.equal(ordered.filter(node=>node.props?.id==='plan-kind').length,1);
+    assert.ok(nodes(starter).includes(kind),'the shared event type is visible next to the starter options');
+    assert.ok(!nodes(ai).includes(kind),'the shared event type is not duplicated inside the AI brief');
+    assert.ok(ordered.indexOf(starter)<ordered.indexOf(ai),'the starter checklist comes before the optional brief');
+    assert.ok(planButton(starter,'Use starter checklist'));
+    assert.ok(planButton(ai,'Generate draft'));
+    assert.match(text(active.tree),/Draft with AI \(optional\)/);
+    assert.match(text(starter),/No AI call or AI quota is used/);
+    assert.doesNotMatch(text(starter),/Groq|Generate draft/);
+    assert.match(text(ai),/Groq/);
+
+    await active.check('starter-activities',true);
+    for(const [kind,preview] of Object.entries(starterPreviews)){
+      if(kind!==initial.brief.kind)await active.edit('plan-kind',kind);
+      const card=starterCard(active.tree), copy=text(card);
+      const count=nodes(card).find(node=>node.props?.role==='status');
+      assert.equal(active.find('plan-kind').props.value,kind);
+      assert.equal(text(count),preview.preparationCount+' preparation tasks · '+preview.activityCount+' optional event-day activities');
+      for(const example of preview.sampleTitles)assert.ok(copy.includes(example),example);
+      for(const other of Object.keys(starterPreviews).filter(value=>value!==kind)){
+        for(const example of starterPreviews[other].sampleTitles)assert.ok(!copy.includes(example),example);
+      }
+      assert.deepEqual(active.requests.map(row=>row.action),['get'],'preview controls send no requests');
+      assert.deepEqual(active.saved,initial);
+    }
+    await active.click('Use starter checklist');
+    assert.deepEqual(active.requests.map(row=>row.action),['get','starter']);
+    assert.match(text(active.tree),/no shared tasks were added/);
+    assert.equal(planLink(active.tree,'Jump to proposed items')?.props.href,'#plan-proposed-items');
+    assert.equal(planLink(starterCard(active.tree),'Review your saved checklist')?.props.href,'#plan-proposed-items');
+    assert.equal(active.find('plan-proposed-items')?.props.tabIndex,-1);
+    assert.equal(active.saved.receipt,null);
+  }finally{active.dispose();}
+});
+
+test('suggestion mode keeps its event type in its own brief and never exposes the starter card',async()=>{
+  const active=harness(undefined,{...fixture(),draft:null,status:'empty'},'project=p_example&mode=suggestions',false,false,undefined,true,starterPreviews);
+  try{
+    await active.start();
+    const ordered=nodes(active.tree);
+    const kind=active.find('plan-kind'), ai=eventBriefFieldset(active.tree);
+    assert.equal(ordered.filter(node=>node.props?.id==='plan-kind').length,1);
+    assert.ok(nodes(ai).includes(kind));
+    assert.equal(active.find('plan-starter'),undefined);
+    assert.equal(active.find('starter-activities'),undefined);
+    assert.equal(starterCard(active.tree),undefined);
+    assert.ok(planButton(ai,'Find next steps with AI'));
+    const saved=copy(active.saved);
+    await active.edit('plan-kind','trip');
+    assert.equal(active.find('plan-kind').props.value,'trip');
+    assert.deepEqual(active.requests.map(row=>row.action),['get']);
+    assert.deepEqual(active.saved,saved);
+  }finally{active.dispose();}
+});
+
 test('pasted text and pending edits survive a lost response and retry without changing selection',async()=>{
   const pasted={...item,id:'pasted-signage',title:'Prepare signage',note:'',included:false};
   let loseResponse=true;
@@ -811,7 +898,19 @@ test('starter replacement saves edited work and retries the same request after a
 
 test('starter replacement cancellation does not save, generate or replace the draft',async()=>{
   const active=harness();
-  try{await active.start();globalThis.window.confirm=()=>false;await active.click('Replace with starter checklist');assert.deepEqual(active.requests.map(r=>r.action),['get']);}
+  try{
+    await active.start();
+    const saved=copy(active.saved);
+    await active.edit('plan-kind','trip');
+    globalThis.window.confirm=message=>{
+      assert.match(message,/Replace the saved private draft/);
+      return false;
+    };
+    await active.click('Replace with starter checklist');
+    assert.equal(active.find('plan-kind').props.value,'trip');
+    assert.deepEqual(active.requests.map(r=>r.action),['get']);
+    assert.deepEqual(active.saved,saved);
+  }
   finally{active.dispose();}
 });
 

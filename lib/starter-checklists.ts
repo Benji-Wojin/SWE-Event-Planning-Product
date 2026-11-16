@@ -1,5 +1,5 @@
 import type { PlanItem, PlanOutput } from './plan-generation';
-import { validPlanDate } from './plan-generation';
+import { eventKinds, validPlanDate } from './plan-generation';
 
 // Product-authored starting points, not AI output or a complete policy/safety checklist.
 // Unknown dates, bookings, costs and people must stay unknown until the team decides.
@@ -113,6 +113,38 @@ const dayOf: Record<string, Activity[]> = {
     ['day_close','Hand off cleanup and follow-ups','Venue','Confirm who finishes cleanup and who will handle open decisions or returns.','The team has named owners for cleanup and remaining work.'],
   ],
 };
+
+type StarterChecklistKind = (typeof eventKinds)[number];
+export type StarterChecklistPreview = Readonly<{
+  preparationCount: number;
+  activityCount: number;
+  sampleTitles: readonly string[];
+}>;
+
+// The preview names existing preparation tasks; it doesn't expose the whole template.
+const previewTaskIds = {
+  school: ['approval', 'arrival', 'briefing'],
+  corporate: ['decisions', 'av', 'followup'],
+  offsite: ['travel', 'roles', 'contingency'],
+  trip: ['travel', 'itinerary', 'meeting'],
+  party: ['shape', 'food', 'activities'],
+  anniversary: ['shape', 'memories', 'day'],
+  other: ['purpose', 'venue', 'programme'],
+} as const satisfies Record<StarterChecklistKind, readonly string[]>;
+
+export const starterChecklistPreviews = Object.freeze(Object.fromEntries(eventKinds.map(kind => {
+  const preparation = checklists[kind];
+  const titles = previewTaskIds[kind].map(id => {
+    const task = preparation.find(entry => entry[0] === id);
+    if (!task) throw new Error(`Unknown starter preview task: ${kind}/${id}`);
+    return task[1];
+  });
+  return [kind, Object.freeze({
+    preparationCount: preparation.length,
+    activityCount: dayOf[kind].length,
+    sampleTitles: Object.freeze(titles),
+  })];
+})) as Record<StarterChecklistKind, StarterChecklistPreview>);
 
 // Proposed results for human review, not evidence of approval or completion.
 const outcomes: Record<string,string> = {
