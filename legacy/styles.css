@@ -700,6 +700,10 @@ button.timeline-task:hover{background:#f7faef;border-color:#ccdabc}
 .wrap-up-attention{padding:16px;margin:16px 0;border:1px solid var(--line);border-left:3px solid var(--ink);border-radius:8px}
 .wrap-up-attention h3{font-size:1rem;margin:0}.wrap-up-attention h4{font-size:.875rem;margin:12px 0 4px}.wrap-up-attention p,.wrap-up-attention li span{color:var(--muted);font-size:.875rem}.wrap-up-attention p{margin:4px 0}.wrap-up-attention ul{margin:0;padding-left:20px}.wrap-up-attention li+li{margin-top:6px}.wrap-up-attention .text-button{text-align:left;min-height:44px;white-space:normal;overflow-wrap:anywhere}.wrap-up-attention li span{display:block}
 .empty-plan{padding:clamp(16px,3vw,24px);overflow-wrap:anywhere}.empty-plan p{margin:12px 0;max-width:62ch}.empty-plan .form-actions{justify-content:flex-start;flex-wrap:wrap;margin-top:20px}
+#overviewHeader .empty-plan .btn{min-height:44px;white-space:normal}
+.overview-start-links{display:flex;flex-wrap:wrap;align-items:center;gap:4px 18px;margin:8px 0 14px}
+.overview-start-links .text-button{min-height:44px;text-align:start}
+#overviewMain[hidden] + aside{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));align-items:start}
 .event-run-sheet{font-size:.875rem;line-height:1.6;overflow-wrap:anywhere}.event-run-sheet header h2{font-size:1.5rem;margin:8px 0}.event-run-sheet header p{margin:8px 0}.run-sheet-snapshot{font-weight:600}.run-sheet-table-wrap{max-width:100%;overflow-x:auto;margin-top:24px}.run-sheet-table{width:100%;border-collapse:collapse;min-width:540px;text-align:left}.run-sheet-table caption{text-align:left;font-weight:650;font-size:1rem;margin-bottom:10px}.run-sheet-table th,.run-sheet-table td{border-bottom:1px solid var(--line);padding:12px 10px;vertical-align:top;overflow-wrap:anywhere}.run-sheet-table thead th{font-size:.75rem;color:var(--muted)}.run-sheet-table tbody th{font-weight:600;width:38%}.run-sheet-table span{display:block;font-weight:400;margin-top:4px}.run-sheet-table td:first-child{width:22%}
 .run-sheet-repeat-heading{display:none}
 #eventRunSheet [data-run-sheet-update-warning]{display:none}

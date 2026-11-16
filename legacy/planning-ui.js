@@ -6,14 +6,14 @@
   function emptyPlanMarkup({organizer=false,canCreate=false,planBuilder=false,hasArchived=false}={}) {
     const title=organizer?'Start your event plan':canCreate?'No shared tasks yet':'The shared plan is still empty';
     const copy=organizer
-      ?(hasArchived?'No active tasks in this plan. ':'No tasks have been added yet. ')+(planBuilder?'Choose a starter checklist for your event or make an optional AI draft.':(hasArchived?'Add a task':'Add the first task')+' with the result you need, then choose an owner and dates as the plan takes shape.')
+      ?(hasArchived?'No active tasks in this plan. ':'No tasks have been added yet. ')+(hasArchived?'Add a task':'Add the first task')+' to Shared tasks, like “Confirm the venue” or “Make a packing list.” You can add an owner, a date, or links as the plan takes shape.'
       :canCreate?'Add a task for yourself or leave it unassigned for someone to claim. The organizer manages the event plan and schedule.'
         :hasArchived?'There are no active tasks right now. When work appears, accept responsibility for your tasks, share progress and report what’s done.':'The organizer can add the first tasks. When work appears, accept responsibility for your tasks, share progress and report what’s done.';
-    const hint=organizer&&planBuilder?'<p class="muted">Review tasks, owners and dates before adding them. Opening the planner does not call AI.</p>':'';
-    const actions=(organizer&&planBuilder?'<button class="btn btn-primary" data-action="draft-plan">Open plan builder</button>':'')
-      +(organizer||canCreate?'<button class="btn btn-secondary" data-action="add-task">Add task</button>':'<button class="btn btn-secondary" data-view="team">View people</button>')
-      +(organizer&&planBuilder?'<button class="btn btn-secondary" data-action="invite">Invite a teammate</button>':'');
-    return '<section class="panel empty-plan" aria-labelledby="emptyPlanHeading"><h2 class="section-title" id="emptyPlanHeading">'+title+'</h2><p>'+copy+'</p>'+hint+'<div class="form-actions">'+actions+'</div></section>';
+    const builder=organizer&&planBuilder;
+    const hint=builder?'<p id="emptyPlanBuilderHint" class="muted">Want a head start? Use a starter checklist or make an optional AI draft in the plan builder. Opening the planner does not call AI.</p>':'';
+    const actions=(organizer||canCreate?'<button type="button" class="btn btn-primary" data-action="add-task" id="overviewAddTask">Add task</button>':'<button type="button" class="btn btn-secondary" data-view="team">View people</button>')
+      +(builder?'<button type="button" class="btn btn-secondary" data-action="draft-plan" aria-describedby="emptyPlanBuilderHint">Open plan builder</button><button type="button" class="btn btn-secondary" data-action="invite">Invite a teammate</button>':'');
+    return '<section class="panel empty-plan" aria-labelledby="emptyPlanHeading"><h2 class="section-title" id="emptyPlanHeading">'+title+'</h2><p>'+copy+'</p><div class="form-actions">'+actions+'</div>'+hint+'</section>';
   }
   function readiness(task,tasks) {
     const index=new Map(tasks.map(t=>[t.id,t]));
@@ -107,7 +107,7 @@
   function createTour({navigate,isOrganizer,storageKey}) {
     let box,step=0,previousFocus,resizeObserver;
     const steps=()=>[
-      {view:'overview',target:'#overviewHeader',title:'Welcome to Weft. Bring the plan together.',copy:'Weft is a shared home for your event: what needs doing, who owns it, and what happens on the day. Start small and build the plan together. This tour is optional—skip it or reopen Quick tour any time.'},
+      {view:'overview',target:'#overviewHeader .page-heading',title:'Welcome to Weft. Bring the plan together.',copy:'Weft is a shared home for your event: what needs doing, who owns it, and what happens on the day. Start small and build the plan together. This tour is optional—skip it or reopen Quick tour any time.'},
       {view:'tasks',target:'#taskSearch',title:'Find work you can take',copy:'Search task names, notes, categories, or people. Use My tasks or Unassigned to narrow the list.'},
       {view:'tasks',target:'.task-view-switch',title:'See how work connects',copy:'Open Link map. Solid arrows are prerequisites; dashed links are related work. Related tasks do not prevent completion. Click a task for the reason.'},
       {view:'timeline',target:'.page-heading',title:'From getting ready to the day itself',copy:'Timeline keeps preparation deadlines separate from scheduled activities. The event schedule uses the same tasks and progress—not a second checklist. Clock time alone never marks work complete.'},

@@ -461,7 +461,7 @@
   const latestUpdate = task => latestUpdateRecord(task).text;
   const toast = message => {const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),3200);};
   const pageHeading = (eyebrow,title,subtitle,actions='') => `<div class="page-heading"><div>${eyebrow?`<div class="eyebrow">${eyebrow}</div>`:''}<h1>${title}</h1>${subtitle?`<p>${subtitle}</p>`:''}</div><div class="header-actions">${actions}</div></div>`;
-  const addButton = () => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task">${icon('plus')} Add task</button>`:'';
+  const addButton = (id='') => canCreateTasks()?`<button class="btn btn-primary" data-action="add-task"${id?` id="${h(id)}"`:''}>${icon('plus')} Add task</button>`:'';
   const sourceButton = task => {const group=GatherInbox.conversations(store.getState()).find(g=>g.taskId===task.id);return group?`<button class="text-button" data-action="task-conversation" data-id="${h(task.id)}">${icon('mail')} Email briefing (${group.messages.length})</button>`:'';};
   const completionNeedsReview = task => task.status!=='done'&&(task.requiresVerification||dependencyInfo(task).open.length>0);
 
@@ -528,14 +528,16 @@
     const days=s.event.date?Math.max(0,(Date.parse(s.event.date+'T00:00:00Z')-Date.parse(today+'T00:00:00Z'))/86400000):null;
     const suggestions=store.getSuggestions();
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
-    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${taskCount&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${taskCount?addButton():''}`)+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+`
-      <section class="stat-grid" aria-label="Project status">
+    const firstPlan=taskCount?'':GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode,hasArchived:s.tasks.length>0});
+    const firstPlanLinks=taskCount?'':`<div class="overview-start-links" role="group" aria-label="Project shortcuts"><button type="button" class="text-button" data-view="team">People <span class="muted">(${s.members.length})</span></button>${emails.length?`<button type="button" class="text-button" data-view="inbox">Email to review <span class="muted">(${emails.length})</span></button>`:''}</div>`;
+    return '<div id="overviewHeader">'+pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`${taskCount&&window.GatherMode&&isOrganizer()?'<button class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}<button class="btn btn-secondary" data-action="digest">Summary</button>${taskCount?addButton('overviewAddTask'):''}`)+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+`
+      ${taskCount?`<section class="stat-grid" aria-label="Project status">
         <button class="stat-card" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}<span class="metric-icon">${icon('alert')}</span></strong></button>
         <button class="stat-card" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${taskCount}</span></strong><span class="progress-track"><span class="progress-fill" style="width:${progress}%"></span></span></button>
         <button class="stat-card" data-view="inbox"><span class="stat-label">Email to review</span><strong class="stat-number">${emails.length}<span class="metric-icon">${icon('mail')}</span></strong></button>
         <button class="stat-card" data-view="team"><span class="stat-label">People</span><strong class="stat-number">${s.members.length}<span class="metric-icon">${icon('people')}</span></strong></button>
-      </section></div>
-      <div class="workspace-grid"><div class="stack" id="overviewMain">
+      </section>`:firstPlan+firstPlanLinks}</div>
+      <div class="workspace-grid"><div class="stack" id="overviewMain"${taskCount?'':' hidden'}>
         ${taskCount?`
         ${isOrganizer()?recovery.organizerReviewPanel(s,{expanded:ui.organizerReviewsExpanded}):''}
         ${recovery.nextUpPanel(s,{overview:true})}
@@ -544,12 +546,12 @@
           <div class="attention-list">${needs.slice(0,4).map(task=>attentionItemMarkup(task,s,roster)).join('') || empty('No tasks need attention.','')}</div>
         </section>
         <section class="panel"><div class="panel-heading"><div><h2 class="section-title">Recently completed</h2></div><button class="text-button" data-action="task-filter" data-filter="done">All completed ${icon('arrow')}</button></div><div class="mini-feed">${done.slice(0,3).map(t=>`<article class="feed-item">${avatar(t.completedBy)}<div class="feed-copy"><button class="task-title" data-action="task" data-id="${h(t.id)}">${h(t.title)}</button><p>${h(completionText(t))}</p><time class="feed-time">${timeLabel(t.completedAt)}</time></div><span class="status-badge status-done">${icon('done')} Done</span></article>`).join('') || empty('No completed tasks.','')}</div></section>
-        `:GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode,hasArchived:s.tasks.length>0})}
+        `:''}
       </div><aside class="stack">
         <section class="ai-panel planning-assistant" id="thoughtPartner"><span class="eyebrow">SUGGESTIONS</span><h2>What’s next?</h2>${window.GatherMode&&isOrganizer()?'<div id="planningSidebarSlot"></div>':'<p class="muted">The organizer can enable automatic AI suggestions. Ask Weft is coming soon. You can still create tasks manually when teammate task creation is enabled.</p>'}<div class="planning-checks-heading"><h3>Automatic checks</h3><span>Rules · not AI</span></div><div id="overviewSuggestions">${suggestions.slice(0,2).map(insightMarkup).join('') || '<p class="muted">No automatic checks right now.</p>'}</div><button class="text-button" data-action="thought-partner">All checks (<span data-suggestion-count>${suggestions.length}</span>) ${icon('arrow')}</button></section>
         <section class="panel email-preview" id="overviewEmail"><div class="panel-heading"><div><h2 class="section-title">Email briefing</h2></div></div>${GatherInbox.conversations(s).filter(g=>g.pending.length).slice(0,2).map(g=>{const b=GatherInbox.briefing(g,s),m=b.message;return `<button class="email-item" data-action="source" data-id="${h(m.id)}"><span class="email-icon">${icon('mail')}</span><span class="email-copy"><strong>${h(g.title)}</strong><span class="briefing-summary-preview">${h(m.sender)}: ${h(b.summary)}</span></span>${icon('arrow')}</button>`;}).join('') || '<p class="notice">No emails to review.</p>'}<button class="text-button" data-view="inbox">Open email briefing ${icon('arrow')}</button></section>
       </aside></div>
-      <section class="panel section-gap" id="overviewActivity"><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,taskIds,true)).join('')}</div></section>`;
+      <section class="panel section-gap" id="overviewActivity"${taskCount||s.activity.length?'':' hidden'}><div class="panel-heading"><div><h2 class="section-title">Recent activity</h2></div><button class="text-button" data-view="updates">All updates ${icon('arrow')}</button></div><div class="mini-feed">${s.activity.slice(0,3).map(a=>activityItem(a,taskIds,true)).join('')}</div></section>`;
   }
 
   function filteredTasks(s) {
@@ -4570,7 +4572,10 @@
         ui.organizerReviewsExpanded=!ui.organizerReviewsExpanded;render();
       }
       if(action==='move-event-plan')rescheduleDialog();
-      if(action==='add-task'||action==='guide-add-task'){newTaskDialog(guideExpectsTask());void syncGuide('add_task_clicked');}
+      if(action==='add-task'||action==='guide-add-task'){
+        if(el.id==='overviewAddTask'&&el===$('#overviewAddTask',$('#viewRoot')))el.focus({preventScroll:true});
+        newTaskDialog(guideExpectsTask());void syncGuide('add_task_clicked');
+      }
       if(action==='guide-task-reveal'||action==='guide-task-completion')revealGuideTask(action==='guide-task-completion');
       if(action==='guide-task-links')showGuideTaskLinks(id);
       if(action==='guide-retry'){await syncGuide();if(guideViewReady===ui.view)recordLoadedGuideView(ui.view);}

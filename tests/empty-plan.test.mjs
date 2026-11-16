@@ -10,28 +10,47 @@ const start=app.indexOf('  function overview(s,');
 const overview=app.slice(app.indexOf('  function assignableTaskOwner('),app.indexOf('  const ownerOptions ='))+
   app.slice(app.indexOf('  const attentionRoster ='),app.indexOf('  const reason ='))+
   app.slice(app.indexOf('  const completed ='),app.indexOf('  const completionText ='))+
+  app.slice(app.indexOf('  const addButton ='),app.indexOf('  const sourceButton ='))+
+  app.slice(app.indexOf('  function activityItem('),app.indexOf('  function attentionItemMarkup('))+
   app.slice(start,app.indexOf('  function filteredTasks(s)',start));
 const linkedResults=app.slice(app.indexOf('  function personalLinkedResults('),app.indexOf('  function openLinkedResults('));
-function render({organizer=true,canCreate=organizer,hosted=true,tasks=[],actor='maya'}={}){
-  const state={event:{date:'',setupCompletedAt:'fixture'},tasks,members:[],messages:[],activity:[]};
+function render({organizer=true,canCreate=organizer,hosted=true,demo=false,tasks=[],actor='maya',
+  setupCompleted=true,showGuideTask=false,members=[],messages=[],suggestions=[],activity=[]}={}){
+  const state={event:{date:'',setupCompletedAt:setupCompleted?'fixture':''},tasks,members,messages,activity};
   const before=structuredClone(state),requests=[];
+  const h=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const context=vm.createContext({
-    window:{GatherMode:hosted?{}:undefined},ui:{actor},isOrganizer:()=>organizer,canCreateTasks:()=>canCreate,
-    store:{getState:()=>state,getSuggestions:()=>[]},attention:()=>[],pending:()=>[],
-    avatar:()=>'',completionText:()=>'',timeLabel:()=> '',
-    dateKey:()=> '2026-11-01',dayLabel:value=>value,h:value=>String(value),icon:()=>'',insightMarkup:()=>'',
+    window:{GatherMode:hosted?{demo,projectUrl:path=>path+'?project=fixture'}:undefined},ui:{actor},isOrganizer:()=>organizer,canCreateTasks:()=>canCreate,
+    store:{getState:()=>state,getSuggestions:()=>suggestions},attention:()=>[],pending:s=>s.messages.filter(message=>!message.appliedTaskId&&!message.ignoredAt),
+    avatar:()=>'',completionText:()=>'',timeLabel:()=> '',member:id=>members.find(person=>person.id===id)||{name:id},
+    dateKey:()=> '2026-11-01',dayLabel:value=>value,h,icon:()=>'',
     pageHeading:(_eyebrow,title,copy,actions)=>'<h1>'+title+'</h1><p>'+copy+'</p>'+actions,
-    addButton:()=>canCreate?'<button data-action="add-task">Add task</button>':'',
     empty:(title,copy)=>'<strong>'+title+'</strong><p>'+copy+'</p>',
-    GatherInbox:{conversations:()=>[]},fetch:()=>{requests.push('fetch');throw Error('Rendering must be local');},
+    guideTaskPanel:(s,away)=>{assert.equal(s,state);assert.equal(away,true);return '<section id="fixtureGuidePanel">Guide result</section>';},
+    fetch:()=>{requests.push('fetch');throw Error('Rendering must be local');},
   });
-  for(const file of ['calendar','priorities','planning-ui','recovery-ui','schedule-ui'])vm.runInContext(readFileSync('legacy/'+file+'.js','utf8'),context);
+  for(const file of ['calendar','priorities','planning-ui','recovery-ui','schedule-ui','inbox'])vm.runInContext(readFileSync('legacy/'+file+'.js','utf8'),context);
   context.GatherScheduleUI=context.window.GatherScheduleUI;
+  context.GatherInbox=context.window.GatherInbox;
   context.recovery=context.window.GatherRecoveryUI.create({store:context.store,ui:{actor},h:context.h,options:()=>'',dayLabel:context.dayLabel,member:id=>({name:id})});
   vm.runInContext(linkedResults+overview+'globalThis.renderOverview=overview;',context);
-  const html=context.renderOverview(state);
+  const html=context.renderOverview(state,showGuideTask);
   assert.deepEqual(state,before);assert.deepEqual(requests,[]);
   return html;
+}
+
+const tag=(html,id)=>html.match(new RegExp(`<[^<>]+\\bid="${id}"[^<>]*>`))?.[0];
+const startPanel=html=>html.match(/<section\b[^>]*aria-labelledby="emptyPlanHeading"[^>]*>[\s\S]*?<\/section>/)?.[0];
+const countAction=(html,action)=>Array.from(html.matchAll(new RegExp(`data-action="${action}"`,'g'))).length;
+function region(html,id){
+  const open=tag(html,id);assert.ok(open,id);
+  const name=open.match(/^<(\w+)/)[1],start=html.indexOf(open);
+  let depth=0;
+  for(const match of html.slice(start).matchAll(new RegExp(`<(\\/?)${name}\\b[^>]*>`,'g'))){
+    depth+=match[1]?-1:1;
+    if(depth===0)return html.slice(start,start+match.index+match[0].length);
+  }
+  assert.fail(`Unclosed region: ${id}`);
 }
 
 test('empty organizer overview gives a plan-building starting point instead of an attention all-clear',()=>{
@@ -42,6 +61,14 @@ test('empty organizer overview gives a plan-building starting point instead of a
   assert.match(html,/data-action="draft-plan"/);assert.match(html,/data-action="add-task"/);
   assert.match(html,/aria-labelledby="emptyPlanHeading"/);assert.match(html,/<h2[^>]*id="emptyPlanHeading"/);
   assert.match(html,/class="panel empty-plan"/);
+  const panel=startPanel(html);
+  assert.match(panel,/<button\b[^>]*\bclass="[^"<>]*\bbtn-primary\b[^"<>]*"[^>]*data-action="add-task"[^>]*>Add task<\/button>/);
+  for(const action of ['draft-plan','invite']){
+    assert.match(panel,new RegExp(`<button\\b[^>]*\\bclass="[^"<>]*\\bbtn-secondary\\b[^"<>]*"[^>]*data-action="${action}"`));
+    assert.ok(panel.indexOf('data-action="add-task"')<panel.indexOf(`data-action="${action}"`));
+    assert.equal(countAction(html,action),1);
+  }
+  assert.equal(countAction(html,'add-task'),1,'there is one first-task CTA, not a second header duplicate');
   const css=readFileSync('legacy/styles.css','utf8');
   assert.match(css,/\.empty-plan\{[^}]*padding:clamp\(16px,3vw,24px\)/);
   assert.match(css,/\.empty-plan p\{[^}]*margin:12px 0/);
@@ -49,38 +76,93 @@ test('empty organizer overview gives a plan-building starting point instead of a
   assert.doesNotMatch(html,/No tasks need attention\.|No completed tasks\.|Recently completed/);
 });
 
+test('the first task follows setup and guide in the header without replacing real sidebar and history content',()=>{
+  const html=render({setupCompleted:false,showGuideTask:true,
+    members:[{id:'maya',name:'Fictional organizer'}],
+    suggestions:[{id:'short-timeline',source:'Fixture project check',title:'Review the short timeline',body:'A check from the ordinary project rules.'}],
+    messages:[{id:'fixture-mail',threadId:'fixture-thread',subject:'Vendor timing',sender:'Fictional supplier',body:'Access begins at noon.',
+      receivedAt:'2026-11-01T10:00:00Z',suggested:{mode:'new',analysisVersion:4}}],
+    activity:[{actor:'maya',text:'Updated the event date',at:'2026-11-01T08:00:00Z'}],
+  });
+  const header=region(html,'overviewHeader'), main=region(html,'overviewMain');
+  const order=['<h1>Overview</h1>','setup-notice','fixtureGuidePanel','id="emptyPlanHeading"'].map(part=>header.indexOf(part));
+  assert.ok(order.every((offset,index)=>offset>=0&&(index===0||offset>order[index-1])),order.join(', '));
+  assert.match(header,/href="\/setup\?project=fixture" target="_top"/);
+  assert.equal(countAction(header,'add-task'),1);
+  assert.doesNotMatch(html,/aria-label="Project status"|stat-grid|0<span class="muted"> \/ 0<\/span>/);
+  assert.match(tag(main,'overviewMain'),/\bhidden\b/);
+  assert.doesNotMatch(main,/emptyPlanHeading|Needs attention|Recently completed/);
+  assert.match(region(html,'thoughtPartner'),/id="planningSidebarSlot"/);
+  assert.match(region(html,'overviewSuggestions'),/Review the short timeline/);
+  const email=region(html,'overviewEmail');
+  assert.match(email,/data-action="source" data-id="fixture-mail"/);
+  assert.match(email,/Vendor timing.*Fictional supplier: Access begins at noon\./);
+  const history=region(html,'overviewActivity');
+  assert.doesNotMatch(tag(history,'overviewActivity'),/\bhidden\b/);
+  assert.match(history,/Fictional organizer<\/strong> Updated the event date/);
+  assert.ok(html.indexOf(header)<html.indexOf(region(html,'thoughtPartner')));
+  for(const options of [{organizer:false},{demo:true},{hosted:false}]){
+    assert.doesNotMatch(render({setupCompleted:false,...options}),/Finish project setup/);
+  }
+});
+
 test('enabled teammates start with their own task controls, never organizer planning controls',()=>{
   const html=render({organizer:false,canCreate:true});
   assert.match(html,/No shared tasks yet/);assert.match(html,/for yourself or leave it unassigned/);
-  assert.match(html,/data-action="add-task"/);
-  assert.doesNotMatch(html,/data-action="draft-plan"|Start your event plan|starter checklist/);
+  assert.match(startPanel(html),/<button\b[^>]*\bbtn-primary\b[^>]*data-action="add-task"/);
+  assert.equal(countAction(html,'add-task'),1);
+  assert.doesNotMatch(html,/data-action="(?:draft-plan|invite)"|Start your event plan|starter checklist/);
 });
 
 test('read-only teammates get an honest waiting state and a people link without mutation controls',()=>{
   const html=render({organizer:false,canCreate:false});
   assert.match(html,/The shared plan is still empty/);assert.match(html,/The organizer can add the first tasks/);
   assert.match(html,/data-view="team"[^>]*>View people/);
-  assert.doesNotMatch(html,/data-action="add-task"|data-action="draft-plan"|No tasks need attention\./);
+  assert.doesNotMatch(html,/data-action="(?:add-task|draft-plan|invite)"|No tasks need attention\./);
 });
 
 test('standalone empty plans offer only the available manual path',()=>{
   const html=render({hosted:false});
   assert.match(html,/Start your event plan/);assert.match(html,/Add the first task/);
   assert.match(html,/data-action="add-task"/);
-  assert.doesNotMatch(html,/data-action="draft-plan"|Opening the planner|starter checklist/);
+  assert.doesNotMatch(html,/data-action="(?:draft-plan|invite)"|Opening the planner|starter checklist/);
 });
 
 test('adding work replaces the starting panel with the ordinary attention and results panels',()=>{
   const html=render({tasks:[{id:'fictional-task',status:'todo'}]});
   assert.doesNotMatch(html,/emptyPlanHeading|No tasks have been added yet/);
   assert.match(html,/Needs attention/);assert.match(html,/Recently completed/);
+  assert.match(html,/<section\b[^>]*aria-label="Project status"/);
+  assert.doesNotMatch(tag(html,'overviewMain'),/\bhidden\b/);
+});
+
+test('Add task keeps a single Overview focus target across the first save, only for allowed planners',()=>{
+  const tasks=[{id:'first-task',status:'todo'}];
+  for(const [organizer,canCreate] of [[true,true],[false,true],[false,false]])for(const visibleTasks of [[],tasks]){
+    const html=render({organizer,canCreate,tasks:visibleTasks});
+    const targets=Array.from(html.matchAll(/\bid="overviewAddTask"/g));
+    assert.equal(targets.length,Number(canCreate));
+    if(canCreate)assert.match(tag(html,'overviewAddTask'),/data-action="add-task"/);
+  }
+  const start=app.indexOf("      if(action==='add-task'||action==='guide-add-task'){");
+  const end=app.indexOf("      if(action==='guide-task-reveal'",start);
+  assert.ok(start>=0&&end>start);
+  for(const sameControl of [true,false]){
+    const calls=[],view={},control={id:'overviewAddTask',focus(){calls.push('focus');}};
+    vm.runInNewContext(app.slice(start,end),{action:'add-task',el:control,
+      $(selector,root){if(selector==='#viewRoot')return view;assert.equal(root,view);return sameControl?control:{};},
+      guideExpectsTask:()=>true,newTaskDialog:()=>calls.push('dialog'),syncGuide:()=>calls.push('guide'),
+    });
+    assert.deepEqual(calls,sameControl?['focus','dialog','guide']:['dialog','guide']);
+  }
 });
 
 test('archived work does not count toward active Overview progress or stop its empty state',()=>{
   const archives=[{id:'retired',title:'Fictional retired work',status:'done',archivedAt:'2026-11-01'}];
   const empty=render({tasks:archives});
   assert.match(empty,/No active tasks in this plan/);
-  assert.match(empty,/0<span class="muted"> \/ 0<\/span>/);
+  assert.doesNotMatch(empty,/aria-label="Project status"|stat-grid|0<span class="muted"> \/ 0<\/span>|Fictional retired work/);
+  assert.match(tag(empty,'overviewMain'),/\bhidden\b/);
   const available=render({tasks:[...archives,{id:'live-done',title:'Current finished work',status:'done'},{id:'live-open',status:'todo'}]});
   assert.match(available,/1<span class="muted"> \/ 2<\/span>/);
   assert.match(available,/width:50%/);
