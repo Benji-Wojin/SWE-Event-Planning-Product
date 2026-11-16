@@ -46,6 +46,52 @@ export async function dateAvailabilityTests({t,sqlite,owner,infoRead,infoWrite,e
     member.as();assert.equal((await write(query,state,{action:'respondDatePoll',id:poll.id,answers:[]})).status,409);
     owner();state=await (await write(query,state,{action:'closeDatePoll',id:poll.id,closed:false})).json();assert.equal(state.datePolls[0].closedAt,'');assert.equal(state.datePolls[0].responses.length,1);
   });
+  await t.test('date response recovery rebases only the signed-in vote; exact replay returns a newer same-account vote',async t=>{
+    const {id,query}=setup();
+    const initial=await create(query), poll=initial.datePolls[0], [first,second]=poll.dates;
+    const a=join(id), b=join(id);
+    t.after(owner);
+    const stored=()=>sqlite.prepare('SELECT payload,revision FROM project_info WHERE scope=?').get(id);
+    const workspace=()=>sqlite.prepare('SELECT data,revision FROM workspaces WHERE id=?').get(id);
+    const unchangedWorkspace=workspace();
+    const input=(state,answers)=>({action:'respondDatePoll',id:poll.id,revision:state.revision,requestId:crypto.randomUUID(),answers});
+    const answer=(date,availability)=>({date,availability});
+    const response=(state,member)=>state.datePolls[0].responses.find(row=>row.actor===member.actor);
+    const send=async(member,request,expected=200)=>{
+      member.as();
+      const result=await infoWrite(request,query);
+      assert.equal(result.status,expected,await result.clone().text());
+      return result.json();
+    };
+    const openedByA=await send(a,input(initial,[answer(first,'available'),answer(second,'maybe')]));
+    const newerByB=await send(b,input(openedByA,[answer(second,'unavailable')]));
+    const otherVote=response(newerByB,b), latestBefore=stored();
+    const draft=[answer(second,'available')]; // Removing the first date is an explicit clear for that date.
+    await send(a,input(openedByA,draft),409);
+    assert.deepEqual(stored(),latestBefore,'a stale response must not change either vote or add a receipt');
+    const refreshed=await (await infoRead(query)).json();
+    assert.equal(refreshed.identity.actor,a.actor);
+    assert.equal(refreshed.revision,newerByB.revision);
+    assert.deepEqual(response(refreshed,a),response(openedByA,a));
+    assert.deepEqual(response(refreshed,b),otherVote);
+    const rebasedInput=input(refreshed,draft);
+    const rebased=await send(a,rebasedInput);
+    assert.equal(rebased.revision,refreshed.revision+1);
+    assert.deepEqual(response(rebased,a).answers,draft);
+    assert.deepEqual(response(rebased,b),otherVote);
+
+    const newerSameAccount=await send(a,input(rebased,[answer(second,'unavailable')]));
+    const afterNewer=stored();
+    const replay=await send(a,rebasedInput);
+    assert.deepEqual(replay,newerSameAccount,'a receipt replay reads the current response, not the previously submitted answer');
+    assert.deepEqual(response(replay,a).answers,[answer(second,'unavailable')]);
+    assert.deepEqual(response(replay,b),otherVote);
+    assert.deepEqual(stored(),afterNewer,'the exact replay must not write or append a receipt');
+    const cleared=await send(a,input(replay,[]));
+    assert.equal(response(cleared,a),undefined);
+    assert.deepEqual(response(cleared,b),otherVote);
+    assert.deepEqual(workspace(),unchangedWorkspace);
+  });
   await t.test('foreign project IDs and revoked memberships cannot read, write or replay date-poll receipts',async()=>{
     const {id,query}=setup();let state=await create(query),poll=state.datePolls[0];const foreign=setup();let other=await (await infoRead(foreign.query)).json();
     assert.equal((await write(foreign.query,other,{action:'respondDatePoll',id:poll.id,answers:[]})).status,404);

@@ -292,10 +292,209 @@
       });
     }
     function pollVoteDialog(id) {
-      const poll=(state.datePolls||[]).find(row=>row.id===id);
-      if(!poll||poll.closedAt)return;
-      const own=poll.responses.find(row=>row.actor===state.identity.actor);
-      pollForm('Your date availability',`<h3>${h(poll.title)}</h3><p>Calendar dates in ${h(poll.timeZone)}. Your name and choices will be visible to the project team.</p>${poll.dates.map(date=>`<label class="field section-gap">${h(dateLabel(date))}<select name="${h(date)}"><option value="">No response for this date</option>${Object.entries(availability).map(([value,label])=>`<option value="${h(value)}" ${own?.answers.some(answer=>answer.date===date&&answer.availability===value)?'selected':''}>${h(label)}</option>`).join('')}</select></label>`).join('')}<p class="muted">Saving replaces only your answers. Choose “No response” for every date to clear your response.</p>`,data=>({action:'respondDatePoll',id,answers:poll.dates.filter(date=>data.get(date)).map(date=>({date,availability:data.get(date)}))}),'Your availability was saved.');
+      const poll=(state?.datePolls||[]).find(row=>row.id===id), identity=state?.identity;
+      if(!poll||poll.closedAt||!arrivalIdentity(identity)||root.GatherAccessLost)return;
+      const dates=poll.dates, target=host, scope=endpoint(), allowRetry=!root.GatherMode?.demo;
+      const ownChoices = row => {
+        const responses=row.responses.filter(response=>response?.actor===identity.actor);
+        if(responses.length>1||(responses.length&&!Array.isArray(responses[0].answers)))
+          throw new Error('Could not confirm the latest responses.');
+        const byDate=new Map();
+        for(const answer of responses[0]?.answers||[]){
+          if(!dates.includes(answer?.date)||byDate.has(answer.date)||
+            typeof answer.availability!=='string'||!Object.hasOwn(availability,answer.availability))
+            throw new Error('Could not confirm the latest responses.');
+          byDate.set(answer.date,answer.availability);
+        }
+        return dates.map(date=>byDate.get(date) ?? '');
+      };
+      let baseline;
+      try{baseline=ownChoices(poll);}catch{toast('Could not read your saved answers. Refresh event info and try again.');return;}
+      let revision=state.revision, phase='ready', sending=false, reading=false,
+        pending=null, retryAllowed=false, comparison=null;
+      openDialog('Your date availability',`<form id="datePollForm"><h3>${h(poll.title)}</h3><p>Calendar dates in ${h(poll.timeZone)}. Your name and choices will be visible to the project team.</p>${dates.map((date,index)=>`<label class="field section-gap">${h(dateLabel(date))}<select name="${h(date)}"><option value="">No response for this date</option>${Object.entries(availability).map(([value,label])=>`<option value="${value}" ${baseline[index]===value?'selected':''}>${h(label)}</option>`).join('')}</select></label>`).join('')}<p class="muted">Saving replaces only your answers. Choose “No response” for every date to clear your response.</p><p class="notice" data-poll-notice role="status" tabindex="-1" hidden></p><div data-poll-conflicts hidden></div><div class="form-actions"><button class="btn btn-primary" type="submit">Save</button><button class="btn btn-secondary" type="button" data-poll-review hidden>Review latest responses</button><button class="text-button" type="button" data-poll-retry hidden>Retry original save</button></div></form>`,'',false,'info');
+      const form=document.getElementById('datePollForm'),
+        notice=form.querySelector('[data-poll-notice]'), conflicts=form.querySelector('[data-poll-conflicts]'),
+        saveButton=form.querySelector('button[type="submit"]'), reviewButton=form.querySelector('[data-poll-review]'),
+        retryButton=form.querySelector('[data-poll-retry]');
+      const live=()=>host===target&&target?.isConnected&&scope===endpoint()&&!root.GatherAccessLost&&
+        sameArrivalIdentity(state?.identity,identity)&&document.getElementById('datePollForm')===form;
+      const fields=dates.map(date=>form.elements.namedItem(date));
+      const valid=value=>value===''||Object.hasOwn(availability,value);
+      const same=(a,b)=>a.length===b.length&&a.every((answer,i)=>answer===b[i]);
+      function draft() {
+        const values=fields.map(field=>field?.value);
+        if(values.some(value=>typeof value!=='string'||!valid(value)))throw new Error('Review your answers before saving.');
+        return values;
+      }
+      function show(text,focus=false) {
+        notice.textContent=text;
+        notice.hidden=!text;
+        saveButton.setAttribute('aria-disabled',String(phase!=='ready'));
+        reviewButton.hidden=phase==='ready';
+        retryButton.hidden=!pending||!retryAllowed;
+        if(focus)notice.focus();
+      }
+      function inspect(next,minRevision) {
+        if(arrivalIdentity(next?.identity)&&!sameArrivalIdentity(next.identity,identity)){
+          const error=new Error('Your project identity changed. Reload event info.');
+          error.status=403;
+          throw error;
+        }
+        if(!sameArrivalIdentity(next?.identity,identity)||!Number.isSafeInteger(next.revision)||
+          next.revision<minRevision||!Array.isArray(next.datePolls)||!Array.isArray(next.guests)||!Array.isArray(next.files))
+          throw new Error('Could not confirm the latest responses.');
+        const latest=next.datePolls.find(row=>row?.id===id);
+        if(!latest || !Array.isArray(latest.dates) || !same(latest.dates,dates) || latest.timeZone!==poll.timeZone)
+          return {unavailable:'This poll is no longer available with the same dates and time zone. Your draft is still here.'};
+        if(!Array.isArray(latest.responses)||typeof latest.closedAt!=='string')
+          throw new Error('Could not confirm the latest responses.');
+        if(latest.closedAt)return {unavailable:'This poll is closed. Your draft is still here, but cannot be saved unless the organizer reopens it.'};
+        return {own:ownChoices(latest)};
+      }
+      function clearComparison() {
+        comparison=null;
+        conflicts.hidden=true;
+        conflicts.replaceChildren();
+      }
+      function showSaved(own) {
+        conflicts.innerHTML=`<section class="section-gap" aria-label="Your latest saved answers"><h4>Your latest saved answers</h4><ul>${own.map((answer,i)=>`<li>${h(dateLabel(dates[i]))}: ${h(availability[answer]||'No response')}</li>`).join('')}</ul></section>`;
+        conflicts.hidden=false;
+      }
+      function adopt(next,own,merged,text) {
+        baseline=own;
+        revision=next.revision;
+        pending=null;
+        retryAllowed=false;
+        phase='ready';
+        delete form.dataset.pollUnconfirmed;
+        fields.forEach((field,index)=>{
+          for(const option of field.options)option.defaultSelected=option.value===own[index];
+          field.value=merged[index];
+        });
+        clearComparison();
+        show(text,true);
+      }
+      function mergePreview(next,own) {
+        const local=draft(), overlap=[], merged=own.map((saved,i)=>{
+          if(local[i]!==baseline[i]&&saved!==baseline[i]&&local[i]!==saved)overlap.push(i);
+          return local[i]===baseline[i]?saved:local[i];
+        });
+        if(!overlap.length){
+          adopt(next,own,merged,same(own,merged)
+            ? 'Your draft matches the latest saved answers. Nothing was written by this check.'
+            : 'Latest answers loaded. Your edits are still here. Review the draft, then choose Save.');
+          return;
+        }
+        phase='compare';
+        const shown={next,own,local,merged,overlap};
+        comparison=shown;
+        conflicts.innerHTML=`<section class="section-gap" aria-label="Conflicting dates">${overlap.map(i=>`<label class="field section-gap">${h(dateLabel(dates[i]))}<select data-poll-choice="${h(dates[i])}"><option value="">Choose which answer to keep</option><option value="saved">Use latest saved: ${h(availability[own[i]]||'No response')}</option><option value="draft">Keep my draft: ${h(availability[local[i]]||'No response')}</option></select></label>`).join('')}<button class="btn btn-secondary section-gap" type="button" data-poll-apply>Apply choices to draft</button></section>`;
+        conflicts.hidden=false;
+        show('Your saved answer and your draft changed for the same date. Choose which answer to keep for each date. Nothing saves until you choose Save.',true);
+        conflicts.querySelector('[data-poll-apply]').addEventListener('click',()=>{
+          if(!live()||reading||sending||phase!=='compare'||comparison!==shown)return;
+          const current=comparison;
+          let latestDraft;
+          try{latestDraft=draft();}catch(e){show(e.message,true);return;}
+          if(!same(latestDraft,current.local)){mergePreview(current.next,current.own);return;}
+          const selectors=[...conflicts.querySelectorAll('[data-poll-choice]')];
+          if(selectors.length!==current.overlap.length||selectors.some(control=>!['saved','draft'].includes(control.value))){
+            show('Choose an answer for every conflicting date before applying.',true);
+            return;
+          }
+          current.overlap.forEach((index,i)=>{
+            if(selectors[i].value==='saved')current.merged[index]=current.own[index];
+          });
+          adopt(current.next,current.own,current.merged,'Choices applied to your draft. Review them, then choose Save.');
+        });
+      }
+      reviewButton.addEventListener('click',async()=>{
+        if(!live()||phase==='ready'||sending||reading)return;
+        reading=true;
+        const ticket=++loadTicket;
+        clearComparison();
+        phase=pending?'uncertain':'review';
+        show('Checking the latest responses. Nothing will be saved.');
+        try {
+          const next=await request(undefined,undefined,AbortSignal.timeout(12000));
+          if(!live()||ticket!==loadTicket)return;
+          const latest=inspect(next,Math.max(revision,state.revision));
+          state=next;
+          render();
+          if(latest.unavailable){retryAllowed=false;show(latest.unavailable,true);return;}
+          if(pending) {
+            if(next.revision>pending.input.revision&&same(latest.own,pending.values))
+              adopt(next,latest.own,draft(),'The latest saved answers match your earlier submission. No change was made by this check.');
+            else {
+              showSaved(latest.own);
+              show('The latest saved answers don’t confirm your earlier submission. Your draft is still here. No change was made by this check.',true);
+            }
+          } else mergePreview(next,latest.own);
+        }catch(e){
+          if(!live()||ticket!==loadTicket)return;
+          if(accessDenied(e))loadError(e);
+          else show('Could not check the latest responses. Your draft is still here.',true);
+        }finally{reading=false;}
+      });
+      async function send(event,retrying=false) {
+        event.preventDefault();
+        event.stopPropagation();
+        if(!live()||reading||sending||(retrying?!pending||!retryAllowed:phase!=='ready'))return;
+        let attempt;
+        try {
+          if(retrying)attempt=pending;
+          else {
+            const values=draft();
+            attempt={values,input:{action:'respondDatePoll',id,answers:dates.flatMap((date,i)=>
+              values[i]?[{date,availability:values[i]}]:[]),revision,requestId:crypto.randomUUID()}};
+          }
+        } catch(e){show(e.message,true);return;}
+        sending=true;
+        const ticket=++loadTicket;
+        await submit(form,event,async()=>{
+          try {
+            const next=await request(attempt.input,undefined,AbortSignal.timeout(12000));
+            if(!live()||ticket!==loadTicket)return;
+            const latest=inspect(next,Math.max(attempt.input.revision+1,state.revision));
+            state=next;
+            render();
+            if(latest.unavailable||!same(latest.own,attempt.values)){
+              phase='uncertain';
+              pending=attempt;
+              retryAllowed=false;
+              form.dataset.pollUnconfirmed='true';
+              if(!latest.unavailable)showSaved(latest.own);
+              show(latest.unavailable||'The latest saved answers differ from the submission. Your draft is still here. Review before making any new change.',true);
+              return;
+            }
+            const current=draft();
+            if(!same(current,attempt.values)){
+              adopt(next,latest.own,current,'The latest saved answers match your earlier submission. Your newer edits are still in the draft.');
+              return;
+            }
+            closeDialog();
+            toast(retrying?'The latest saved answers match your submission.':'Your availability was saved.');
+          }catch(e){
+            if(!live()||ticket!==loadTicket)return;
+            if(accessDenied(e))throw e;
+            const ambiguous=!e.status||[408,429].includes(e.status)||e.status>=500;
+            if(ambiguous||retrying){
+              phase='uncertain';
+              pending=attempt;
+              retryAllowed=allowRetry&&ambiguous;
+              form.dataset.pollUnconfirmed='true';
+              show('Could not confirm whether your answers saved. Review the latest responses.'+
+                (retryAllowed?' You can also retry the original save.':''),true);
+            }else if(e.status===409){
+              phase='review';
+              show('The poll or event info changed. Review the latest responses to keep your draft.',true);
+            }else show(e.message,true);
+          }
+        }).finally(()=>{sending=false;});
+      }
+      form.addEventListener('submit',event=>send(event));
+      retryButton.addEventListener('click',event=>send(event,true));
     }
     function pollCloseDialog(id) {
       const poll=(state.datePolls||[]).find(row=>row.id===id);

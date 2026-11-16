@@ -388,7 +388,7 @@
       !!root.dataset?.completionAttachmentRecovery||root.dataset?.completionSaveUnconfirmed==='true'||
       !!root.dataset?.completionModeUnavailable||
       !!root.querySelector?.('[data-completion-attachment-recovery],[data-completion-save-unconfirmed="true"],[data-completion-mode-unavailable="true"]')||
-      !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"]')||$$('input,textarea,select',root).some(input=>{
+      !!root.querySelector?.('[data-budget-unconfirmed="true"],[data-budget-recovery-draft="true"],[data-poll-unconfirmed="true"]')||$$('input,textarea,select',root).some(input=>{
       if(input.readOnly||input.type==='hidden'||exclude.includes(input.name))return false;
       if(input.type==='checkbox'&&((input.name==='acceptTask'&&input.form?.id==='acceptTasksForm')||
         (input.name==='assignTask'&&input.form?.id==='assignTasksForm')))return input.checked;
@@ -409,6 +409,8 @@
   function confirmCloseDialog(keepAssignmentReview=false) {
     if($('#budgetForm')?.dataset?.budgetUnconfirmed==='true')
       return window.confirm('Close without confirming this Budget change? Your original change may have saved. Check Recent budget changes before entering it again.');
+    if($('#datePollForm')?.dataset?.pollUnconfirmed==='true')
+      return window.confirm('Close without confirming your availability save? It may have gone through. Check your saved answers before submitting them again.');
     if($('#dialog [data-completion-save-unconfirmed="true"]'))
       return window.confirm('Close without confirming this completion save? Your edits may have saved. Copy anything you need before closing, then reload the project to check.');
     if(!keepAssignmentReview&&hasAcceptanceReturnDraft())
