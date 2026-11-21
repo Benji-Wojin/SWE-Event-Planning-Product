@@ -72,12 +72,38 @@ export function ProjectsHome({
 
       <main className="projects-main">
           <>
-            <div className="projects-title-row">
-              <div className="projects-title-copy">
-                <h1>Projects</h1>
+            <section className="projects-hero" aria-label="Workspace summary">
+              <div className="projects-title-row">
+                <div className="projects-title-copy">
+                  <span className="projects-kicker">Event workspaces</span>
+                  <h1>Projects</h1>
+                </div>
+                {canCreate && <Button size="lg" onClick={onCreate}><Plus /> New project</Button>}
               </div>
-              {canCreate && <Button onClick={onCreate}><Plus /> New project</Button>}
-            </div>
+              {!isLoading && !error && projects.length > 0 ? (
+                <div className="projects-hud" aria-label="Portfolio summary">
+                  <span className="projects-hud-item">
+                    <span>PROJECTS</span>
+                    <strong className="tabular-nums">{projects.length}</strong>
+                  </span>
+                  <span className="projects-hud-item is-mint">
+                    <span>OPEN TASKS</span>
+                    <strong className="tabular-nums">
+                      {projects.reduce((sum, p) => sum + p.openTaskCount, 0)}
+                    </strong>
+                  </span>
+                  <span className="projects-hud-item is-amber">
+                    <span>NEXT DATED</span>
+                    <strong>
+                      {projects
+                        .map((p) => p.eventDate)
+                        .filter((d): d is string => Boolean(d))
+                        .sort()[0] || "Not set"}
+                    </strong>
+                  </span>
+                </div>
+              ) : null}
+            </section>
 
             {isLoading ? <ProjectsLoadingState /> : null}
             {!isLoading && !error && resumeGuide ? <ResumeGuideCard resume={resumeGuide} projects={projects} /> : null}
