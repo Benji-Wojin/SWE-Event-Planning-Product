@@ -341,8 +341,24 @@ export function SuggestionFeed({ query }: { query: string }) {
             Optional: let Weft suggest missing next steps automatically as your
             plan changes. Suggestions never add tasks on their own.
           </p>
-          <details className="rounded-md border border-border/80 bg-background/60 px-2.5 py-2 text-xs text-muted-foreground">
-            <summary className="cursor-pointer font-medium text-foreground select-none">
+          <details className="group rounded-md border border-border/80 bg-background/60 px-2.5 py-2 text-xs text-muted-foreground">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 font-medium text-foreground select-none [&::-webkit-details-marker]:hidden">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+                className="shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-90"
+              >
+                <path
+                  d="M4.5 2.5L8 6L4.5 9.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
               What’s shared with AI?
             </summary>
             <p className="mt-1.5 leading-relaxed">
