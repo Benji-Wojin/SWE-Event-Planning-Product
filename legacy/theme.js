@@ -18,7 +18,7 @@
     root.dataset.theme = theme;
     root.classList.toggle('dark', theme === 'dark');
     root.style.colorScheme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111820' : '#f7f8f2');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0c111d' : '#ffffff');
     updateButtons();
     window.dispatchEvent(new CustomEvent('gather-theme-change', { detail: theme }));
   }

@@ -54,6 +54,11 @@ export function ProjectsHome({
     <div className="projects-home">
       <header className="projects-header">
         <a className="projects-brand" href="/" aria-label="Weft projects">
+          <svg width="20" height="20" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+            <rect x="4" y="4" width="7" height="20" rx="3.5" transform="rotate(-10 4 4)" fill="#7AD6A3"/>
+            <circle cx="17.5" cy="9.5" r="3.6" fill="#7AD6A3"/>
+            <circle cx="19.5" cy="18.5" r="3.8" fill="#F29B7E"/>
+          </svg>
           <strong>weft</strong>
         </a>
         <div className="projects-header-actions">
@@ -84,15 +89,17 @@ export function ProjectsHome({
             {!isLoading && !error && projects.length > 0 ? (
               <div className="projects-grid" aria-label="Projects">
                 {projects.map((project) => (
-                  <button className="project-card" key={project.id} onClick={() => onOpen(project)}>
-                    <span className="project-card-title">{project.name}</span>
-                    <span className="project-card-meta">
-                      <span><CalendarDays /> {project.eventDate || "Date not set"}</span>
-                      <span><MapPin /> {project.location || "Location not set"}</span>
+                  <button type="button" className="project-card" key={project.id} onClick={() => onOpen(project)}>
+                    <span className="project-card-well">
+                      <span className="project-card-title">{project.name}</span>
+                      <span className="project-card-meta">
+                        <span><CalendarDays /> {project.eventDate || "Date not set"}</span>
+                        <span><MapPin /> {project.location || "Location not set"}</span>
+                      </span>
                     </span>
                     <span className="project-card-footer">
-                      <span>{project.openTaskCount} open {project.openTaskCount === 1 ? "task" : "tasks"}</span>
-                      <span aria-hidden="true">Open</span>
+                      <span className="tabular-nums">{project.openTaskCount} open {project.openTaskCount === 1 ? "task" : "tasks"}</span>
+                      <span aria-hidden="true">Open →</span>
                     </span>
                   </button>
                 ))}
