@@ -641,37 +641,28 @@
     const setupNote=window.GatherMode&&!window.GatherMode.demo&&isOrganizer()&&!s.event.setupCompletedAt?'<div class="notice setup-notice"><span>Finish project setup. Existing work is kept.</span><a href="'+h(window.GatherMode.projectUrl('/setup'))+'" target="_top" class="btn btn-secondary btn-small">Project settings</a></div>':'';
     const firstPlan=taskCount?'':GatherPlanningUI.emptyPlanMarkup({organizer:isOrganizer(),canCreate:canCreateTasks(),planBuilder:!!window.GatherMode,hasArchived:s.tasks.length>0});
     const firstPlanLinks=taskCount?'':`<div class="overview-start-links" role="group" aria-label="Project shortcuts"><button type="button" class="text-button" data-view="team">People <span class="muted">(${s.members.length})</span></button>${emails.length?`<button type="button" class="text-button" data-view="inbox">Email to review <span class="muted">(${emails.length})</span></button>`:''}</div>`;
-    const heroMeta=days===null?(s.event.location||'Event date not set'):`${dayLabel(s.event.date)}${s.event.location?` · ${s.event.location}`:''}`;
-    const ringOffset=(157.08*(1-progress/100)).toFixed(2);
-    const overviewTop=taskCount?`<section class="overview-hero" aria-label="Event overview">
-        <div class="overview-hero-top">
-          <div class="overview-hero-main">
-            <div class="overview-ring" aria-hidden="true">
-              <svg viewBox="0 0 60 60" width="60" height="60">
-                <circle class="overview-ring-track" cx="30" cy="30" r="25"></circle>
-                <circle class="overview-ring-fill" cx="30" cy="30" r="25" stroke-dasharray="157.08" stroke-dashoffset="${ringOffset}"></circle>
-              </svg>
-              <span>${progress}%</span>
-            </div>
-            <div class="overview-hero-copy">
-              <p class="overview-hero-meta">${h(heroMeta)}</p>
-              <h1>${h(s.event.name||'Overview')}</h1>
-            </div>
-          </div>
-          <div class="overview-hero-actions header-actions">
-            <button type="button" class="btn btn-secondary" data-action="map-focus" data-id="">Link map ${icon('arrow')}</button>
-            ${window.GatherMode&&isOrganizer()?'<button type="button" class="btn btn-secondary" data-action="draft-plan">Build a plan</button>':''}
-            <button type="button" class="btn btn-secondary" data-action="digest">Summary</button>
-            ${addButton('overviewAddTask')}
-          </div>
+    const dateBits=[];
+    if(days!==null)dateBits.push(dayLabel(s.event.date));
+    if(s.event.location)dateBits.push(s.event.location);
+    if(days!==null&&s.event.date>=today)dateBits.push(`${days} ${days===1?'day':'days'} away`);
+    const heroMeta=dateBits.length?dateBits.join(' · '):'Event date not set';
+    const overviewTop=taskCount?`<header class="overview-head">
+        <div class="overview-head-copy">
+          <h1>${h(s.event.name||'Overview')}</h1>
+          <p class="overview-head-meta">${h(heroMeta)}</p>
         </div>
-        <section class="stat-grid overview-hud" aria-label="Project status">
-          ${days!==null&&s.event.date>=today?`<div class="overview-hud-countdown"><span class="stat-label">Countdown</span><strong class="stat-number">${days}d</strong></div>`:''}
-          <button class="stat-card is-mint" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${taskCount}</span></strong><span class="progress-track" aria-hidden="true"><span class="progress-fill" style="width:${progress}%"></span></span></button>
-          <button class="stat-card${needs.length?' is-amber':''}" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}</strong></button>
-          <button class="stat-card${emails.length?' is-coral':''}" data-view="inbox"><span class="stat-label">Email to review</span><strong class="stat-number">${emails.length}</strong></button>
-          <button class="stat-card" data-view="team"><span class="stat-label">People</span><strong class="stat-number">${s.members.length}</strong></button>
-        </section>
+        <div class="overview-head-actions header-actions">
+          <button type="button" class="btn btn-secondary btn-small" data-action="map-focus" data-id="">Link map</button>
+          ${window.GatherMode&&isOrganizer()?'<button type="button" class="btn btn-secondary btn-small" data-action="draft-plan">Build a plan</button>':''}
+          <button type="button" class="btn btn-secondary btn-small" data-action="digest">Summary</button>
+          ${addButton('overviewAddTask')}
+        </div>
+      </header>
+      <section class="stat-grid overview-kpi" aria-label="Project status">
+        <button class="stat-card is-mint" data-action="task-filter" data-filter="done"><span class="stat-label">Completed</span><strong class="stat-number">${done.length}<span class="muted"> / ${taskCount}</span></strong><span class="stat-pct">${progress}%</span><span class="progress-track" aria-hidden="true"><span class="progress-fill" style="width:${progress}%"></span></span></button>
+        <button class="stat-card${needs.length?' is-amber':''}" data-action="task-filter" data-filter="attention"><span class="stat-label">Needs attention</span><strong class="stat-number">${needs.length}</strong><span class="stat-note">${needs.length?'Review open blockers':'All clear'}</span>${needs.length?'<span class="stat-dot is-amber" aria-hidden="true"></span>':''}</button>
+        <button class="stat-card${emails.length?' is-coral':''}" data-view="inbox"><span class="stat-label">Email to review</span><strong class="stat-number">${emails.length}</strong><span class="stat-note">${emails.length?'Waiting for review':'Inbox caught up'}</span>${emails.length?'<span class="stat-dot is-coral" aria-hidden="true"></span>':''}</button>
+        <button class="stat-card" data-view="team"><span class="stat-label">People</span><strong class="stat-number">${s.members.length}</strong><span class="stat-note">${s.members.length===1?'Team member':'Team members'}</span></button>
       </section>`:pageHeading('', 'Overview', days===null?'Event date not set':`${dayLabel(s.event.date)}${s.event.date>=today?` · ${days} ${days===1?'day':'days'} until event`:''}`,`<button class="btn btn-secondary" data-action="digest">Summary</button>`);
     return '<div id="overviewHeader">'+overviewTop+setupNote+(showGuideTask?guideTaskPanel(s,true):'')+(taskCount?'':firstPlan+firstPlanLinks)+'</div>'+`
       <div class="workspace-grid"><div class="stack" id="overviewMain"${taskCount?'':' hidden'}>

@@ -72,38 +72,31 @@ export function ProjectsHome({
 
       <main className="projects-main">
           <>
-            <section className="projects-hero" aria-label="Workspace summary">
-              <div className="projects-title-row">
-                <div className="projects-title-copy">
-                  <span className="projects-kicker">Event workspaces</span>
-                  <h1>Projects</h1>
-                </div>
-                {canCreate && <Button size="lg" onClick={onCreate}><Plus /> New project</Button>}
-              </div>
-              {!isLoading && !error && projects.length > 0 ? (
-                <div className="projects-hud" aria-label="Portfolio summary">
-                  <span className="projects-hud-item">
-                    <span>PROJECTS</span>
-                    <strong className="tabular-nums">{projects.length}</strong>
-                  </span>
-                  <span className="projects-hud-item is-mint">
-                    <span>OPEN TASKS</span>
-                    <strong className="tabular-nums">
-                      {projects.reduce((sum, p) => sum + p.openTaskCount, 0)}
-                    </strong>
-                  </span>
-                  <span className="projects-hud-item is-amber">
-                    <span>NEXT DATED</span>
-                    <strong>
-                      {projects
+            <div className="projects-header-bar">
+              <div className="projects-title-copy">
+                <h1>Projects</h1>
+                {!isLoading && !error && projects.length > 0 ? (
+                  <p className="projects-summary tabular-nums">
+                    <span>{projects.length} {projects.length === 1 ? "project" : "projects"}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{projects.reduce((sum, p) => sum + p.openTaskCount, 0)} open tasks</span>
+                    {(() => {
+                      const nextDated = projects
                         .map((p) => p.eventDate)
                         .filter((d): d is string => Boolean(d))
-                        .sort()[0] || "Not set"}
-                    </strong>
-                  </span>
-                </div>
-              ) : null}
-            </section>
+                        .sort()[0];
+                      return nextDated ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>Next dated {nextDated}</span>
+                        </>
+                      ) : null;
+                    })()}
+                  </p>
+                ) : null}
+              </div>
+              {canCreate && <Button onClick={onCreate}><Plus /> New project</Button>}
+            </div>
 
             {isLoading ? <ProjectsLoadingState /> : null}
             {!isLoading && !error && resumeGuide ? <ResumeGuideCard resume={resumeGuide} projects={projects} /> : null}
@@ -116,8 +109,11 @@ export function ProjectsHome({
               <div className="projects-grid" aria-label="Projects">
                 {projects.map((project) => (
                   <button type="button" className="project-card" key={project.id} onClick={() => onOpen(project)}>
-                    <span className="project-card-well">
-                      <span className="project-card-title">{project.name}</span>
+                    <span className="project-card-body">
+                      <span className="project-card-top">
+                        <span className={`project-status-dot${project.openTaskCount > 0 ? " is-active" : ""}`} aria-hidden="true" />
+                        <span className="project-card-title">{project.name}</span>
+                      </span>
                       <span className="project-card-meta">
                         <span><CalendarDays /> {project.eventDate || "Date not set"}</span>
                         <span><MapPin /> {project.location || "Location not set"}</span>

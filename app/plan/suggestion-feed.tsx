@@ -336,14 +336,16 @@ export function SuggestionFeed({ query }: { query: string }) {
       aria-busy={working}
     >
       {!enabled ? (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
+        <div className="space-y-3 rounded-[10px] border border-border bg-secondary/45 p-3.5">
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
             Optional: let Weft suggest missing next steps automatically as your
             plan changes. Suggestions never add tasks on their own.
           </p>
-          <details className="text-xs">
-            <summary>What’s shared with AI?</summary>
-            <p>
+          <details className="rounded-md border border-border/80 bg-background/60 px-2.5 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground select-none">
+              What’s shared with AI?
+            </summary>
+            <p className="mt-1.5 leading-relaxed">
               Enabling shares event details, shared task names, the saved plan
               brief and saved event feedback with Groq. No emails, guest lists,
               files or private bookings. Each refresh uses an AI attempt. You
@@ -351,6 +353,9 @@ export function SuggestionFeed({ query }: { query: string }) {
             </p>
           </details>
           <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-center"
             disabled={!data.configured || locked}
             onClick={() => {
               remember(consentKey, 'enabled');
